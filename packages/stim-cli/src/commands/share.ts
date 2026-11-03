@@ -314,6 +314,9 @@ async function stopShares(root: string, opts: ShareOptions, deps: ShareDeps, ver
     physical: link.physical,
     expiresAt: link.expiresAt,
   }));
+  const pausedLinks = stopped.some((row) =>
+    reusable.some((link) => link.platform === row.platform && link.slot === row.slot && link.physical === row.physical),
+  );
   return {
     ok: true,
     output: {
@@ -323,7 +326,7 @@ async function stopShares(root: string, opts: ShareOptions, deps: ShareDeps, ver
     },
     text: [
       stopped.length
-        ? `Stopped ${plural(stopped.length)}; ${stopped.length === 1 ? 'its link stops' : 'their links stop'} working${reusable.length && !opts.forget ? ' until reused' : ''}.`
+        ? `Stopped ${plural(stopped.length)}; ${stopped.length === 1 ? 'its link stops' : 'their links stop'} working${pausedLinks && !opts.forget ? ' until reused' : ''}.`
         : 'This workspace has no live web share.',
       ...(opts.forget
         ? [

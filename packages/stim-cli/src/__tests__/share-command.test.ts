@@ -421,6 +421,14 @@ describe('stim share', () => {
       expect(links()).toHaveProperty('android');
     });
 
+    it('says a stopped share can be reused only when its link was saved', async () => {
+      const deps = fake([started(), () => ({ result: { stopped: [{ ...ROW, platform: 'ios' }] } })]);
+      await runShare('android', {}, deps, '1.0.0');
+      const result = await runShare('stop', {}, deps, '1.0.0');
+      expect(result).toMatchObject({ ok: true, text: expect.stringContaining('Reusable until') });
+      expect(JSON.stringify(result)).not.toContain('until reused');
+    });
+
     it('says when the stim-server it stopped has not exited yet', async () => {
       const deps = fake([() => ({ result: { stopped: [ROW] } })]);
       deps.stopServer = async () => ({ pid: 4242, exited: false });
