@@ -624,6 +624,75 @@ interface Run {
   session: string | null;
 }
 
+/** What agent-device answers for a hosted session the host's restarted daemon no longer knows. */
+const TAIL_BYTES = 4096;
+const SESSION_LOST = /SESSION_NOT_FOUND|requires an active app session/;
+
+/** The `open` that brings a hosted workspace's app session back: its recorded app on the same session and config. */
+function hostedReopen(root: string, plan: AgentDevicePlan): { appId: string; args: string[] } | null {
+  const { device } = plan;
+  if (device.kind !== 'hosted' || !device.remoteConfig) return null;
+  const appId = readWorkspaceLaunches(root)[deviceSlotKey(device.platform, device.slot)]?.appId;
+  if (!appId) return null;
+  const session = plan.session ?? `stim-${device.slot}-${device.platform}`;
+  return { appId, args: ['open', appId, '--session', session, '--remote-config', device.remoteConfig] };
+}
+
+interface AgentDeviceExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  /** The end of what agent-device printed, when `watch` was set. */
+  tail: string;
+}
+
+/**
+ * Runs agent-device on this terminal. `tee` hands the child's stdout to `onStdout` as well as to ours; `watch` also
+ * keeps the end of both streams for the caller.
+ */
+async function spawnAgentDevice(
+  invocation: { command: string; args: string[] },
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  { tee, watch }: { tee: boolean; watch: boolean },
+  onStdout: (chunk: Buffer) => void = () => {},
+): Promise<AgentDeviceExit> {
+  const piped = tee || watch;
+  const child = getExecutor().spawn(invocation.command, [...invocation.args, ...args], {
+    stdio: ['inherit', piped ? 'pipe' : 'inherit', watch ? 'pipe' : 'inherit'],
+    env,
+  });
+  const handlers = [
+    ...FORWARDED_SIGNALS.map((signal) => [signal, () => child.kill(signal)] as const),
+    ['SIGINT', () => {}] as const,
+  ];
+  for (const [signal, handler] of handlers) process.on(signal, handler);
+  let tail = '';
+  const keep = (chunk: Buffer) => {
+    if (watch) tail = (tail + chunk.toString()).slice(-TAIL_BYTES);
+  };
+  if (piped && child.stdout) {
+    process.stdout.on('error', () => {});
+    child.stdout.pipe(process.stdout, { end: false });
+    child.stdout.on('data', (chunk: Buffer) => {
+      keep(chunk);
+      onStdout(chunk);
+    });
+  }
+  if (watch && child.stderr) {
+    child.stderr.pipe(process.stderr, { end: false });
+    child.stderr.on('data', keep);
+  }
+  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.once('error', (error) => {
+      console.error(chalk.red(phaseLine('error', `agent-device could not start: ${error.message}`)));
+      resolve({ code: 127, signal: null });
+    });
+    child.once('close', (code, signal) => resolve({ code, signal }));
+  });
+  for (const [signal, handler] of handlers) process.off(signal, handler);
+  return { ...exit, tail };
+}
+
 async function execute(
   invocation: { command: string; args: string[] },
   argv: string[],
@@ -655,33 +724,21 @@ async function execute(
     : null;
   const started = target && command ? publish(version, { ...target, command, phase: 'start' }) : null;
   const tee = Boolean(tracked) && command === 'snapshot' && argv.includes('--json') && !process.stdout.isTTY;
-  const child = getExecutor().spawn(invocation.command, [...invocation.args, ...(run?.args ?? argv)], {
-    stdio: ['inherit', tee ? 'pipe' : 'inherit', 'inherit'],
-    env,
-  });
-  const handlers = [
-    ...FORWARDED_SIGNALS.map((signal) => [signal, () => child.kill(signal)] as const),
-    ['SIGINT', () => {}] as const,
-  ];
-  for (const [signal, handler] of handlers) process.on(signal, handler);
+  const reopen = run && hosted && command !== 'open' ? hostedReopen(hosted.root, run.plan) : null;
+  const args = run?.args ?? argv;
   const chunks: Buffer[] = [];
   let bytes = 0;
-  if (tee && child.stdout) {
-    process.stdout.on('error', () => {});
-    child.stdout.pipe(process.stdout, { end: false });
-    child.stdout.on('data', (chunk: Buffer) => {
-      bytes += chunk.length;
-      if (bytes <= MAX_SNAPSHOT_BYTES) chunks.push(chunk);
-    });
-  }
-  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-    child.once('error', (error) => {
-      console.error(chalk.red(phaseLine('error', `agent-device could not start: ${error.message}`)));
-      resolve({ code: 127, signal: null });
-    });
-    child.once('close', (code, signal) => resolve({ code, signal }));
+  let exit = await spawnAgentDevice(invocation, args, env, { tee, watch: reopen !== null }, (chunk) => {
+    bytes += chunk.length;
+    if (bytes <= MAX_SNAPSHOT_BYTES) chunks.push(chunk);
   });
-  for (const [signal, handler] of handlers) process.off(signal, handler);
+  if (reopen && exit.code !== 0 && SESSION_LOST.test(exit.tail)) {
+    console.error(
+      phaseLine('agent-device', `the host no longer holds this agent-device session; opening ${reopen.appId} again`),
+    );
+    const opened = await spawnAgentDevice(invocation, reopen.args, env, { tee: false, watch: false });
+    if (opened.code === 0) exit = await spawnAgentDevice(invocation, args, env, { tee: false, watch: false });
+  }
   process.exitCode = exit.signal ? 128 + (constants.signals[exit.signal] ?? 0) : (exit.code ?? 1);
   if (hosted && target) {
     await started;

@@ -1070,6 +1070,10 @@ Stim adds what agent-device needs to reach the device:
 - `--remote-config` for a [hosted iOS](./owned-devices.md#run-ios-on-another-mac)
   or [hosted Android](./remote-machines.md) session.
 - `--session stim-<slot>-<platform>` unless you pass `--session`.
+- For a hosted session whose host no longer holds the agent-device session (its
+  stim-server restarted, so agent-device answers `SESSION_NOT_FOUND`), the app the
+  workspace last launched is opened again on the same session and the command runs
+  once more. The remote config and its token survive a host restart.
 - `AGENT_DEVICE_STATE_DIR`, the workspace's
   [agent-device state directory](./dev-server-and-logs.md#agent-device-actions),
   except for a hosted session, which keeps agent-device's own.

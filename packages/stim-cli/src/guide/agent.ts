@@ -78,7 +78,10 @@ remote config of a hosted iOS or Android session (guide lifecycle hosted-ios or
 hosted-android), and the session (stim-<slot>-<platform> unless you pass
 --session).
 --slot picks a slot; --platform is needed only when the slot has both. It
-revives an idle-stopped workspace before the command (progress on stderr) and
+revives an idle-stopped workspace before the command (progress on stderr), and,
+for a hosted session whose host lost the agent-device session (it restarted:
+SESSION_NOT_FOUND), opens the recorded app again on the same session and runs the
+command once more, and
 refuses with STIM_BAD_ARG a UDID, serial, device or remote config that is not
 this workspace's, and boot and shutdown: Stim owns the device lifecycle. stdout, stderr and the exit
 code are agent-device's, so --json output stays parseable. Take snapshots with
