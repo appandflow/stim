@@ -1214,6 +1214,112 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
+  test('a run that accepts a pending creation gets it while the boot queue is full, and creates only once a slot frees', async () => {
+    const root = projectDir();
+    process.env.STIM_MAX_DEVICES = '8';
+    const held = holdBootMarkers();
+    const { run, exec } = iosExecutor([]);
+    setExecutor(exec);
+    const created = () => run.some((cmd) => cmd.includes('simctl create'));
+    const sleepers: (() => void)[] = [];
+    const ensure = (deviceSlotWait: DeviceSlotWaitPolicy) =>
+      ensureOwnedDevice({
+        platform: 'ios',
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        flags: { deviceSlotWait, allowPendingCreation: true },
+      });
+    try {
+      await expect(ensure({ noWait: true })).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+      expect(created()).toBe(false);
+
+      const pending = await ensure({ sleep: () => new Promise<void>((resolve) => sleepers.push(resolve)) });
+      expect(pending.deviceUdid).toBeUndefined();
+      const creating = pending.creating;
+      assert(creating);
+      expect(creating.runtimeId).toBe('com.apple.CoreSimulator.SimRuntime.iOS-26-2');
+      expect(created()).toBe(false);
+      expect(getProject(root)?.platforms?.ios).toBeUndefined();
+
+      releaseClaim(held[0]);
+      sleepers.shift()?.();
+      const sim = await creating.created;
+      expect(sim).toMatchObject({ deviceUdid: 'NEW-UDID', created: true });
+      expect(created()).toBe(true);
+      await sim.booting?.done;
+    } finally {
+      delete process.env.STIM_MAX_DEVICES;
+      for (const marker of held) releaseClaim(marker);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a run that accepts a pending creation still gets the created simulator when no boot waits', async () => {
+    const root = projectDir();
+    const { exec } = iosExecutor([]);
+    setExecutor(exec);
+    try {
+      const sim = await ensureOwnedDevice({
+        platform: 'ios',
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        flags: { allowPendingCreation: true },
+      });
+      expect(sim).toMatchObject({ deviceUdid: 'NEW-UDID', created: true });
+      expect(sim.creating).toBeUndefined();
+      await sim.booting?.done;
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a pending creation that fails after the run queued rejects with its cause and frees the slot', async () => {
+    const root = projectDir();
+    process.env.STIM_MAX_DEVICES = '8';
+    const held = holdBootMarkers();
+    const { exec } = iosExecutor([]);
+    const executor = {
+      ...exec,
+      async runFileAsync(file: string, args: string[] = [], opts?: { timeoutMs?: number }) {
+        if (args[1] === 'create') throw new Error('simctl create timed out');
+        return executor.runFile(file, args, opts);
+      },
+    };
+    setExecutor(executor);
+    const sleepers: (() => void)[] = [];
+    try {
+      const pending = await ensureOwnedDevice({
+        platform: 'ios',
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        flags: {
+          allowPendingCreation: true,
+          deviceSlotWait: { sleep: () => new Promise<void>((resolve) => sleepers.push(resolve)) },
+        },
+      });
+      const creating = pending.creating;
+      assert(creating);
+      const outcome = creating.created.then(
+        () => 'created',
+        (error: Error) => error.message,
+      );
+      releaseClaim(held[0]);
+      sleepers.shift()?.();
+      await expect(outcome).resolves.toBe('simctl create timed out');
+      expect(readClaimSet(join(tmpHome, 'device-boots')).live.map((holder) => holder.details.key)).toEqual([
+        'booting-1',
+      ]);
+      expect(getProject(root)?.platforms?.ios).toBeUndefined();
+    } finally {
+      delete process.env.STIM_MAX_DEVICES;
+      for (const marker of held) releaseClaim(marker);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('a simulator creation that fails inside its boot slot releases the slot and records no device', async () => {
     const root = projectDir();
     const { exec } = iosExecutor([]);

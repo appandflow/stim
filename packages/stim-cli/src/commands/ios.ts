@@ -26,7 +26,7 @@ import { join } from 'node:path';
 import { artifactCachePolicy, optimizationBuildProfile } from '../optimizations.ts';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
-import { formatDuration, phaseLine, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
+import { phaseLine, stepClock, stepTimer } from '../command-output.ts';
 import { waitFlagConflict, leaseExpiryText, type RunLease } from '../engine/device-lease-run.ts';
 import { parseMachine } from '@stim-cli/core/state';
 import {
@@ -58,7 +58,7 @@ import type { IosCommandOptions, IosBootLike, FailArgs, BuildFailureFields } fro
 import { type IosDeps, DEFAULT_DEPS } from './ios/dependencies.ts';
 import { DEFAULT_METRO_PORT } from '../engine/app-install.ts';
 import { createIosSimSnapshot } from '../devices/ios.ts';
-import { didSetUpDevice, ensureOwnedDevice } from '../engine/device.ts';
+import { ensureOwnedDevice } from '../engine/device.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { REMOTE_SESSION_ERROR, binOnPath } from '../engine/device-remote.ts';
 import {
@@ -83,7 +83,6 @@ import { ensureDevServer, isPhysicalDeviceRequest, type MobileRuntimePreparation
 import {
   PLATFORM,
   buildLogFile,
-  deviceLabel,
   resolveConfiguration,
   resolveDeviceType,
   resolveSchemeSelection,
@@ -91,6 +90,10 @@ import {
   resolveSimulatorAppFlag,
   resolveIosWait,
   createIosDeviceWaitRun,
+  iosDeviceSettler,
+  pendOwnedDevice,
+  startWhenCreated,
+  type PendingOwnedDevice,
   deviceModelRefusal,
   iosProjectPathError,
   isReleaseConfiguration,
@@ -318,6 +321,7 @@ function iosProjectTargetRefusal(
 
 function iosArtifactTargetInputs({
   udid,
+  pendingDevice,
   physical,
   remote,
   hosted,
@@ -328,6 +332,8 @@ function iosArtifactTargetInputs({
   settings,
 }: {
   udid: string;
+  /** The simulator this run is still waiting to create, which a build cannot name by udid. */
+  pendingDevice: PendingOwnedDevice | null;
   physical: boolean;
   remote: boolean;
   hosted: Awaited<ReturnType<IosDeps['prepareHostedIos']>> | null;
@@ -337,16 +343,18 @@ function iosArtifactTargetInputs({
   metroPort: number | null;
   settings: ReturnType<IosDeps['resolveSettings']>;
 }): Pick<IosArtifactContext, 'target' | 'device'> {
+  const unbound = pendingDevice !== null;
+  const pendingRuntimeId = pendingDevice?.runtimeId ?? null;
   return {
     target: {
-      udid,
-      destination: remote || hosted ? 'generic/platform=iOS Simulator' : null,
+      udid: unbound ? null : udid,
+      destination: remote || hosted || unbound ? 'generic/platform=iOS Simulator' : null,
       sdk: physical ? 'iphoneos' : 'iphonesimulator',
       // Xcode narrows a local simulator build to the booted device's arch only when the configuration sets
       // ONLY_ACTIVE_ARCH=YES, which Debug does and Release does not by default.
-      arch: remote || hosted || isReleaseConfiguration(configuration) ? simulatorArch : null,
+      arch: remote || hosted || unbound || isReleaseConfiguration(configuration) ? simulatorArch : null,
       keyArch: simulatorArch,
-      offloadRuntime: () => hosted?.choice.runtimeId ?? (remote ? null : simulatorRuntime(udid)),
+      offloadRuntime: () => hosted?.choice.runtimeId ?? (remote ? null : (pendingRuntimeId ?? simulatorRuntime(udid))),
       hostedArchitecture: hosted?.choice.architecture,
       offloadRefusal: physical ? 'device builds build here' : remote ? '--remote builds build here' : null,
     },
@@ -881,6 +889,7 @@ async function runIos(
     metroPort = runtimePreparation.metroPort;
 
     let device: Awaited<ReturnType<typeof ensureOwnedDevice>>;
+    let pendingDevice: PendingOwnedDevice | null = null;
     if (physicalDevice) {
       device = { deviceUdid: physicalDevice.udid, deviceName: physicalDevice.name, owned: false } as Awaited<
         ReturnType<typeof ensureOwnedDevice>
@@ -888,7 +897,17 @@ async function runIos(
     } else if (hostedTarget) {
       device = { owned: false, deviceName: hostedTarget.choice.deviceType, runtime: hostedTarget.choice.runtime };
     } else {
-      const prepare = stepClock(d.now);
+      const settleDevice = iosDeviceSettler({
+        prepare: stepClock(d.now),
+        phase,
+        progress,
+        deviceWaitRun,
+        remote: Boolean(remoteDevice),
+        onSettled: (prepared) => {
+          device = prepared;
+          builtDevice = iosLedgerDevice(prepared);
+        },
+      });
       try {
         device = await d.ensureOwnedDevice({
           platform: PLATFORM,
@@ -903,6 +922,7 @@ async function runIos(
             runtimeFlag: resolveRuntime(opts.runtime, null),
             simulatorApp,
             expectedDevice: opts.expectedDevice,
+            allowPendingCreation: true,
           },
           note,
           out: note,
@@ -911,15 +931,7 @@ async function runIos(
       } catch (e) {
         return fail(ownedSimFailure(e));
       }
-      deviceWaitRun.booting(device.booting);
-      progress.deviceSetup(didSetUpDevice(device, Boolean(remoteDevice)));
-      const prepareMs = prepare();
-      if (device.created || prepareMs >= SLOW_STEP_MS) {
-        phase(
-          'device',
-          `${deviceLabel(device, device.deviceUdid)} ${device.created ? 'created' : 'prepared'} (${formatDuration(prepareMs)})`,
-        );
-      }
+      pendingDevice = pendOwnedDevice(device, settleDevice, deviceWaitRun);
     }
 
     builtDevice = iosLedgerDevice(device);
@@ -1144,7 +1156,8 @@ async function runIos(
       // A remote device boots after the build: agent-device's daemon exits five
       // minutes after its last request while no session is open, and nothing
       // restarts it on an EAS host (https://github.com/appandflow/stim/issues/1212).
-      const localBoot = remoteDevice || hostedTarget ? null : startBoot();
+      const localBoot = remoteDevice || hostedTarget || pendingDevice ? null : startBoot();
+      const deviceCreated = startWhenCreated(pendingDevice, startBoot);
       udid = (device.deviceUdid as string | undefined) ?? (await localBoot) ?? '';
       const simulatorArch = simulatorBuildArch({
         physical,
@@ -1171,6 +1184,7 @@ async function runIos(
               buildProfile,
               ...iosArtifactTargetInputs({
                 udid,
+                pendingDevice,
                 physical,
                 remote: Boolean(remoteDevice),
                 hosted: hostedTarget,
@@ -1257,7 +1271,12 @@ async function runIos(
           selectors,
           logWriter,
         });
-      if (!localBoot) {
+      if (deviceCreated) {
+        progress.step('device');
+        const created = await deviceCreated.then(() => device.deviceUdid ?? '', ownedSimFailure);
+        if (typeof created !== 'string') return fail(created);
+        udid = created;
+      } else if (!localBoot) {
         progress.step('device');
         udid = await startBoot();
       }

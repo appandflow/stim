@@ -1011,9 +1011,9 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   device listing that fails) for max(10 minutes, position x 5 minutes) without
   the run's position improving, a device wait outlived \`--wait <seconds>\`, or
   \`--no-wait\` / \`--wait 0\` found a cap full or another run queued. The message names what it waited
-  for, who holds it and the queue. iOS waits for an existing simulator beside
-  its build, so a rerun can reuse the artifact; a run that creates its
-  simulator waits before it builds. While a run waits to boot at a full device
+  for, who holds it and the queue. iOS waits for a device beside its build, so
+  a rerun can reuse the artifact; a run that creates its simulator builds for
+  any simulator while it waits and installs once the simulator exists. While a run waits to boot at a full device
   cap, the stim-daemon shuts down the longest-idle device of another workspace
   idle 2 minutes, one per tick (\`guide lifecycle concurrency\`). A boot that
   needs a new simulator or emulator creates it inside its slot.
