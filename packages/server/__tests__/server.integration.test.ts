@@ -15,6 +15,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import fsPromises from 'node:fs/promises';
@@ -663,6 +664,15 @@ async function records(client: Client, count: number): Promise<unknown[]> {
     seen.push(...message.records);
   }
   return seen;
+}
+
+/** STIM_HOME as a link to the home: a test takes the home away by unlinking it, since Windows refuses to rename a directory the server watches. */
+function linkedHome(): { away: () => void; back: () => void } {
+  const link = join(root, 'home-link');
+  const create = () => symlinkSync(join(root, 'home'), link, process.platform === 'win32' ? 'junction' : 'dir');
+  create();
+  process.env.STIM_HOME = link;
+  return { away: () => unlinkSync(link), back: create };
 }
 
 beforeEach(() => {
@@ -1411,6 +1421,7 @@ describe('pairing', () => {
     },
   );
   it('keeps sessions and revokes nothing while the Stim home is away, then serves again once it is back', async () => {
+    const home = linkedHome();
     const port = await start();
     const { keyPair } = await pair(port);
     const live = await returning(port, keyPair);
@@ -1418,9 +1429,8 @@ describe('pairing', () => {
     const revoke = vi.spyOn(DeviceHost.prototype, 'revoke');
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     const health = async () => (await fetch(`http://127.0.0.1:${port}/health`)).status;
-    const home = join(root, 'home');
     try {
-      renameSync(home, `${home}.away`);
+      home.away();
       for (let tries = 0; tries < 300 && (await health()) !== 503; tries++)
         await new Promise((resolve) => setTimeout(resolve, 10));
       expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toMatchObject({
@@ -1433,7 +1443,7 @@ describe('pairing', () => {
       expect(live.socket.readyState).toBe(WebSocket.OPEN);
       expect(revoke).not.toHaveBeenCalled();
 
-      renameSync(`${home}.away`, home);
+      home.back();
       for (let tries = 0; tries < 300 && (await health()) !== 200; tries++)
         await new Promise((resolve) => setTimeout(resolve, 10));
       expect(await health()).toBe(200);
@@ -1447,12 +1457,12 @@ describe('pairing', () => {
   });
 
   it('still closes hosted devices when it stops while the Stim home is away', async () => {
+    const home = linkedHome();
     const port = await start();
-    const home = join(root, 'home');
     const hostedClose = vi.spyOn(DeviceHost.prototype, 'close');
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      renameSync(home, `${home}.away`);
+      home.away();
       for (let tries = 0; tries < 300; tries++) {
         if ((await fetch(`http://127.0.0.1:${port}/health`)).status === 503) break;
         await new Promise((resolve) => setTimeout(resolve, 10));
