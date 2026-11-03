@@ -7355,12 +7355,6 @@ describe('ios --device: the lease on the phone', () => {
   });
 });
 
-  expect(off.exitCode).toBe(null);
-  expect(off.calls.args.ensureBooted).toMatchObject({ deviceSlotWait: { reclaimIdleMinutes: 0 } });
-  const unset = await run({}, { resolveSettings: () => ({}) });
-  expect(unset.calls.args.ensureBooted).toMatchObject({ deviceSlotWait: { reclaimIdleMinutes: 10 } });
-});
-
 describe('--simulator-app', () => {
   test.each(['xcode', 'siniulator', 'stim-desktop'])(
     'parses %s and passes it to preparation and boot',
