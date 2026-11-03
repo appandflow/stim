@@ -532,11 +532,15 @@ button.primary.small {
 .people-button {
   --ring: var(--bg);
   display: block;
-  padding: 3px 6px;
+  margin-block: -6px;
+  padding: 6px;
   border: 0;
   border-radius: 999px;
   background: transparent;
   cursor: pointer;
+}
+.people-button:focus-visible {
+  outline-offset: -2px;
 }
 .people-button:hover,
 .people-button[aria-expanded='true'] {
@@ -545,7 +549,6 @@ button.primary.small {
 }
 .roster {
   display: flex;
-  padding: 0 2px;
 }
 .avatar {
   position: relative;
