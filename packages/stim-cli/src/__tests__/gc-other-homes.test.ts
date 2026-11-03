@@ -70,6 +70,7 @@ describe('the other Stim homes of gc', () => {
             id: 'UDID-1',
             name: 'stim-scratch (iPhone 17 iOS 27)',
             present: true,
+            command: null,
           }),
         ],
         teardown: [

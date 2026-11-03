@@ -23,7 +23,7 @@ interface OtherHomeDevice {
   name: string | null;
   /** Whether the device is on this machine; null when the listing was unavailable. */
   present: boolean | null;
-  /** The command that deletes it by hand, when it is present. */
+  /** The command that deletes it by hand, for a present device of a gone home; null while its home still exists. */
   command: string | null;
 }
 
@@ -79,7 +79,11 @@ function workspaceRoots(home: string): (string | null)[] {
   });
 }
 
-function homeDevices(ids: { ios: Iterable<string>; android: Iterable<string> }, listing: DeviceListing) {
+function homeDevices(
+  ids: { ios: Iterable<string>; android: Iterable<string> },
+  listing: DeviceListing,
+  deletable: boolean,
+) {
   const devices: OtherHomeDevice[] = [];
   for (const id of new Set(ids.ios)) {
     const sim = listing.sims?.find((entry) => entry.udid === id);
@@ -89,7 +93,7 @@ function homeDevices(ids: { ios: Iterable<string>; android: Iterable<string> }, 
       id,
       name: sim?.name ?? null,
       present,
-      command: present ? unverifiedDeviceCommand({ kind: 'ios', id, name: sim?.name ?? id }) : null,
+      command: deletable && present ? unverifiedDeviceCommand({ kind: 'ios', id, name: sim?.name ?? id }) : null,
     });
   }
   for (const id of new Set(ids.android)) {
@@ -99,7 +103,7 @@ function homeDevices(ids: { ios: Iterable<string>; android: Iterable<string> }, 
       id,
       name: null,
       present,
-      command: present ? unverifiedDeviceCommand({ kind: 'android', id, name: id }) : null,
+      command: deletable && present ? unverifiedDeviceCommand({ kind: 'android', id, name: id }) : null,
     });
   }
   return devices;
@@ -124,7 +128,7 @@ async function describeHome(
   const base = { path: entry.path, createdAt: entry.createdAt, lastSeenAt: entry.lastSeenAt };
   if (isAbsentPath(entry.path)) {
     const gone = isOnMountedVolume(entry.path, mountedVolumes);
-    const devices = homeDevices(entry.devices, listing);
+    const devices = homeDevices(entry.devices, listing, true);
     return {
       ...base,
       state: gone ? 'gone' : 'unverified',
@@ -148,6 +152,7 @@ async function describeHome(
     devices: homeDevices(
       { ios: [...ledger.ios, ...entry.devices.ios], android: [...ledger.android, ...entry.devices.android] },
       listing,
+      false,
     ),
     teardown: teardownCommands(entry.path, roots),
     forgettable: false,
