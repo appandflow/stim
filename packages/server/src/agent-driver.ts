@@ -60,7 +60,7 @@ const none = (notice?: string): AgentAccess => ({ grant: { driver: 'none' }, ...
  * Reference-counts a driver on live hosted macOS apps and owns a separate driver lifetime per native device session. It starts the driver with the first app that gets a
  * grant and stops it after the last one, on revocation and on close. Grants live only here, in memory:
  * a driver restart drops the leases they name, so a restart issues new grants that the client reads
- * again through `app.attach`.
+ * again through `app.attach`. With `tokenFor` the token of each grant is the same after a restart.
  */
 export class HostedAgentHost {
   private readonly options: HostedAgentHostOptions;
