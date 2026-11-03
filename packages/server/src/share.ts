@@ -1159,7 +1159,8 @@ export class ShareHub {
         viewer.socket.send(JSON.stringify({ type: 'clipboard', id: fields.id, error: VIEWER_TEXT.clipboardRefused }));
       }
     };
-    const session = await this.controlSession(share, viewer);
+    const polling = method === 'input.clipboard.get' && fields.poll === true;
+    const session = polling ? share.controlSession : await this.controlSession(share, viewer);
     if (!session || share.ended || !share.viewers.has(viewer)) return failRead();
     const parsed = parseInput(method, { ...params, session }, (name) => share.source.targetOf(share.owner, name));
     if ('code' in parsed) return failRead();

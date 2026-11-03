@@ -954,13 +954,14 @@ export class ControlHub {
       void this.end(session, 'device-gone', 'The hosted session is no longer available.');
       return Promise.resolve({ code: 'forbidden', message: 'The hosted session is no longer available.' });
     }
-    session.idle.refresh();
+    const reads = command.input === 'clipboard-get';
+    if (!reads) session.idle.refresh();
     if (session.target.physical && session.lease && Date.parse(session.lease.expiresAt) <= Date.now()) {
       const message = "The workspace's lease on this device expired.";
       void this.end(session, 'device-gone', message);
       return Promise.resolve({ code: 'unknown-session', message });
     }
-    this.options.onInput?.(session.device);
+    if (!reads) this.options.onInput?.(session.device);
     if (command.input === 'touch') {
       const dropped = this.touch(session, command, participant);
       if (dropped !== undefined) return Promise.resolve(dropped);

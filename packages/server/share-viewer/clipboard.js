@@ -24,7 +24,6 @@ function writeClipboard(clipboard, ClipboardItemClass, BlobClass, text) {
   return text.then((value) => clipboard.writeText(value));
 }
 
-/** The device clipboard is polled this often while sync is on, and no slower than the cap after repeated failures. */
 const POLL_MS = 2000;
 const POLL_MAX_MS = 30000;
 
@@ -32,35 +31,33 @@ function nextPollDelay(current, ok) {
   return ok ? POLL_MS : Math.min(current * 2, POLL_MAX_MS);
 }
 
-/**
- * What to do with each text the page reads, so the two clipboards never echo: the last text seen or sent in each
- * direction is remembered, and the first read in each direction only records.
- */
 function createClipboardSync() {
   let device = null;
   let browser = null;
   return {
-    /** True when the device text is new and should be written to the browser clipboard. */
     deviceRead(text) {
       const first = device === null;
       if (typeof text !== 'string' || text === device) return false;
       device = text;
-      if (first || text === '' || text === browser) return false;
-      browser = text;
-      return true;
+      return !(first || text === '' || text === browser);
     },
-    /** The `clipboard-set` message or note for a browser clipboard text, or null when there is nothing to send. */
+    wrote(text) {
+      browser = text;
+    },
     browserRead(text) {
       if (typeof text !== 'string' || text === browser) return null;
-      const first = browser === null;
-      browser = text;
-      if (first || text === '' || text === device) return null;
-      const request = pasteRequest(text);
-      if (request && request.message) {
-        device = text;
-        return { message: { type: 'clipboard-set', text } };
+      if (browser === null || text === '' || text === device) {
+        browser = text;
+        return null;
       }
+      const request = pasteRequest(text);
+      if (request && request.message) return { message: { type: 'clipboard-set', text } };
+      browser = text;
       return request;
+    },
+    sent(text) {
+      browser = text;
+      device = text;
     },
   };
 }

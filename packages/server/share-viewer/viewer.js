@@ -583,7 +583,9 @@ function useJpeg() {
 }
 
 const send = (message) => {
-  if (socket && socket.readyState === 1) socket.send(JSON.stringify(message));
+  if (!socket || socket.readyState !== 1) return false;
+  socket.send(JSON.stringify(message));
+  return true;
 };
 
 void canDecodeVideo().then((supported) => connect(supported ? 'h264' : 'jpeg'));
@@ -651,14 +653,14 @@ else {
     socket !== null &&
     socket.readyState === WebSocket.OPEN;
 
-  function requestDeviceText() {
+  function requestDeviceText(poll) {
     const id = ++copyId;
     return new Promise((resolve, reject) => {
       copies.set(id, { resolve, reject });
       setTimeout(() => {
         if (copies.delete(id)) reject(new Error('The device did not answer in time.'));
       }, COPY_TIMEOUT_MS);
-      send({ type: 'clipboard-get', id });
+      send({ type: 'clipboard-get', id, ...(poll ? { poll: true } : {}) });
     });
   }
 
@@ -675,6 +677,7 @@ else {
   async function writeToBrowser(text) {
     try {
       await navigator.clipboard.writeText(text);
+      sync.wrote(text);
       showChip(null);
     } catch {
       showChip(text);
@@ -692,7 +695,7 @@ else {
     polling = true;
     let ok = true;
     try {
-      const text = await requestDeviceText();
+      const text = await requestDeviceText(true);
       if (sync.deviceRead(text)) await writeToBrowser(text);
     } catch {
       ok = false;
@@ -706,10 +709,11 @@ else {
     if (!active() || readPermission !== 'granted') return;
     try {
       const request = sync.browserRead(await navigator.clipboard.readText());
-      if (request && request.message) send(request.message);
-      else if (request) showNote(request.note);
-    } catch {
-      readPermission = 'denied';
+      if (request && request.message) {
+        if (send(request.message)) sync.sent(request.message.text);
+      } else if (request) showNote(request.note);
+    } catch (error) {
+      if (error && error.name === 'NotAllowedError') readPermission = 'denied';
       refreshNote();
     }
   }
@@ -724,12 +728,13 @@ else {
     if (asked || !syncOn || readPermission !== 'prompt') return;
     asked = true;
     try {
-      sync.browserRead(await navigator.clipboard.readText());
+      await navigator.clipboard.readText();
       readPermission = 'granted';
-    } catch {
-      readPermission = 'denied';
+    } catch (error) {
+      if (error && error.name === 'NotAllowedError') readPermission = 'denied';
     }
     refreshNote();
+    void readBrowser();
   }
 
   async function queryRead() {
@@ -770,6 +775,7 @@ else {
     if (text === null) return;
     try {
       await navigator.clipboard.writeText(text);
+      sync.wrote(text);
       showChip(null);
       showNote('Copied the device clipboard.');
     } catch {
@@ -784,6 +790,7 @@ else {
     });
     try {
       await writeClipboard(navigator.clipboard, globalThis.ClipboardItem, Blob, text);
+      sync.wrote(await text);
       showChip(null);
       showNote('Copied the device clipboard.');
     } catch (error) {
@@ -801,6 +808,7 @@ else {
     if (!optionsPanel.hidden && !options.contains(event.target)) setOptionsOpen(false, false);
     void askToRead();
   });
+  document.addEventListener('keydown', () => void askToRead());
   window.addEventListener('focus', returned);
   window.addEventListener('blur', schedule);
   document.addEventListener('visibilitychange', () =>
