@@ -41,7 +41,6 @@ export interface DeviceInput {
   send: (command: Record<string, unknown>) => void;
   /** Whether the helper can type and press buttons on an emulator: once it reports a hardware keyboard. */
   keys: () => boolean;
-  /** Sets or reads the device clipboard through the helper; see {@link HelperSource.clipboard}. */
   clipboard: (request: { text: string; paste: boolean } | null) => Promise<string | null>;
   detach: () => void;
 }

@@ -386,11 +386,6 @@ export class HelperSource {
     if (!this.stopped) this.child.stdin!.write(`${JSON.stringify(command)}\n`);
   }
 
-  /**
-   * Sets (`request` with the text) or reads (`request` null) the device clipboard in the helper, which owns the
-   * emulator's gRPC connection and the scrcpy control socket. Resolves with the text read, or null after a set. The
-   * helper's failure messages never carry clipboard text.
-   */
   clipboard(request: { text: string; paste: boolean } | null): Promise<string | null> {
     if (this.stopped) return Promise.reject(new Error('The capture helper stopped.'));
     const id = ++this.clipboardId;

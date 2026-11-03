@@ -458,7 +458,6 @@ const POSTURE_TIMEOUT_MS = 5_000;
 
 const CLIPBOARD_TIMEOUT_MS = 10_000;
 
-/** What one clipboard call takes from a connection's input budget: each spawns a process or reaches a device. */
 export const CLIPBOARD_INPUT_COST = 10;
 
 /** `simctl pbcopy` reads its stdin as bytes in the process's locale, so a non-ASCII clipboard needs UTF-8. */
@@ -466,7 +465,6 @@ function simctlEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return { ...env, LC_ALL: 'en_US.UTF-8' };
 }
 
-/** Text for a child's stdin, and the most stdout bytes to keep; a child that writes more fails. */
 interface ChildText {
   input?: string;
   maxOutput?: number;
@@ -991,12 +989,6 @@ export class ControlHub {
     return this.pending.track(run);
   }
 
-  /**
-   * An iOS simulator's clipboard is `simctl pbcopy` and `pbpaste`, and its paste is Command-V through the helper's HID
-   * connection. An Android emulator's is the helper's gRPC `setClipboard` and `getClipboard`, pasted with a
-   * `KEYCODE_PASTE` over adb, queued behind earlier adb input. An Android phone's is the helper's scrcpy SET_CLIPBOARD
-   * with its paste flag and GET_CLIPBOARD. No message, log line or audit record carries the text.
-   */
   private clipboard(
     session: Session,
     command: Extract<InputCommand, { input: 'clipboard' | 'clipboard-get' }>,
