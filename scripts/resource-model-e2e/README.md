@@ -131,7 +131,7 @@ leaves a file named by `ballast.path` and nothing else to find it by.
    the run created them and they are empty. The home is kept, with a note in the report, when `simctl list` failed
    or a simulator of the run could not be deleted, because its ledger is the proof that the simulator is the run's.
 
-Each worktree gets `stim worktree warm`, then, when `ios/Pods` holds dangling symlinks (the source checkout's Pods can
+Each worktree gets `stim worktree warm`, then the harness removes the worktree's copy of `ios/.xcode.env.local` when it is untracked (`warm` carries that gitignored file from the source checkout, and it holds the source machine's `NODE_BINARY`, which breaks the first build on another host; Xcode then falls back to the committed `ios/.xcode.env`; the source checkout's file is never touched), then, when `ios/Pods` holds dangling symlinks (the source checkout's Pods can
 point into an `ios/build` that was cleaned), `bundle exec pod install` in `ios/` (`pod install` without a Gemfile)
 with the Ruby the Gemfile or `.ruby-version` names taken from `~/.rvm` when present and `LANG` and `LC_ALL` set to
 `en_US.UTF-8`. `pod install` rewrites the checkout-path-dependent `Podfile.lock`, which would give every worktree its
@@ -153,17 +153,24 @@ for dormancy), so leave `--idle-minutes` unset there.
 
 ## Sampler and report
 
-The sampler is its own process. Every 5 seconds it appends a row to `samples.csv`: 1-minute load, memory pressure level
-(`kern.memorystatus_vm_pressure_level`), `vm_stat` free, active, wired and compressed pages with the page size, swap
+The sampler is its own process. Every 5 seconds (nominal; under load a row can take 3 to 11 s, so every duration in the report uses the recorded
+timestamps, and `took_ms` says how long the measurement took) it appends a row to `samples.csv`: 1-minute load,
+memory pressure level (`kern.memorystatus_vm_pressure_level`), `vm_stat` free, active, inactive, speculative, purgeable,
+wired and compressed pages with the page size, swap
 used, free space on the simulators', the home's and the worktrees' volumes, booted simulators on the machine and the
 run's own booted and booting simulators (those in the private ledger), and the count and RSS of the run's supervisors,
 collectors, daemon, Metro and `xcodebuild`. A process is the run's when its pid is recorded in the private home (or
 descends from one that is) or its command line names the home or the worktrees. Every 30 seconds it saves
 `stim status --json` to `status/<epoch ms>.json`, run from `--out` so the read is never attributed to a workspace. The
-driver also polls status every 15 seconds for the assertions.
+driver also polls status every 15 seconds for the assertions. The report's Sampler section lists gaps of more than three
+nominal intervals, and 1-minute load readings that fell faster than an exponential 1-minute average can (a suspect
+reading is flagged, not removed). A critical period that a gap follows counts up to the next sample.
 
 `report.md` has the headline table, the assertions with their evidence lines, per-workspace results, the timeline, the
-sampler as one table of per-bucket extremes (a bar column for load; no images), and the teardown result. Beside it:
+sampler as one table of per-bucket extremes (a bar column for load; no images; the memory column is available memory,
+the sum of free, inactive, speculative and purgeable pages, as in the headline), and the teardown result. A path that is
+absent at teardown reads as "could not verify" when its parent is absent too (a vanished volume), not as removed: the
+headline then says the host was left unclean and lists the paths. Beside it:
 `samples.csv`, `status/`, `runs/` (stdout, stderr and an index of every stim command), `events.ndjson`,
 `assertions.json`, and `evidence/` (the daemon log and snapshot, the maintenance log, the device ledger, and each
 workspace's state and the tail of its Metro log, copied before the home is deleted). The headline reads `PASS` only when something passed, nothing failed, the harness did not stop early and teardown
@@ -185,7 +192,7 @@ N workspaces start (`stim start`) and launch (`stim ios`) one after another, the
 | `idle-stage`              | each workspace is seen idle within its idle window plus one 60 s tick of its last activity, and not before the end of its last command plus the window minus one tick, except that an earlier stop passes when the build's `status` reports `daemon.pressure.level` `high` or `critical` and the workspace had been idle 2 minutes; a build without that field keeps the failure (see below) |
 | `idle-metro-down`         | at that poll `metro.running` is false (the idle-stop record is shown as evidence)                                                                                                                                                                                                                                                                                                            |
 | `idle-devices-down`       | at that poll none of the workspace's iOS devices is `Booted` or `Booting`; `N/A` when status lists no iOS device                                                                                                                                                                                                                                                                             |
-| `idle-stage-reported`     | the environment has an `idleStage` or `dormantStage` record; `stage.kind` is read only to fail a workspace that is still `running` or `building` with Metro and the devices down; `N/A` otherwise                                                                                                                                                                                            |
+| `idle-stage-reported`     | the environment has an `idleStage` or `dormantStage` record, looked for again once after the first idle poll because the record can be written just after Metro and the devices go down; `stage.kind` is read only to fail a workspace that is still `running` or `building` with Metro and the devices down; `N/A` otherwise                                                                |
 | `idle-derived-data-gone`  | the workspace's `derived-data/` held files after launch and is empty or gone after the idle stop; `N/A` for a cache-hit run that built nothing                                                                                                                                                                                                                                               |
 | `revive`                  | `stim revive --json` exits 0 with `revived.metro.restarted` true and every device's app `launched` true or `bundling`, and status then shows Metro running, a device up                                                                                                                                                                                                                      |
 | `dormant-devices-deleted` | with `--dormant-minutes`: after the revives, each workspace's recorded simulators are gone from `simctl` within the dormant window plus one tick; `N/A` where the build has no `idle.dormantDays`                                                                                                                                                                                            |
@@ -227,22 +234,22 @@ One `stim ios` in the first worktree builds the app and fills the build cache, a
 `stim ios` start at once, every worktree needs only a boot. After they finish, everything is left idle, and three
 workspaces (first, middle, last of those that went idle) revive at once.
 
-| Id                  | Passes when                                                                                                                                                                                                      |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `seed`              | the seed `stim ios` launches                                                                                                                                                                                     |
-| `exit-zero`         | every concurrent `stim ios` exits 0                                                                                                                                                                              |
-| `booted-cap`        | the sampled count of the run's booted plus booting simulators never exceeds `max(2, floor((RAM - 4 GB) / 1.5 GB))` (8 on a 16 GB Mac); rows without a simulator reading are left out and counted in the evidence |
-| `boots-in-flight`   | `capacity.devices` holders marked `booting` never exceed 2 in any status poll; `N/A` where status lists no holders (they exist only while a device cap is set)                                                   |
-| `booting-sampled`   | the sampled count of the run's simulators in the `Booting` state never exceeds 2 (supplementary, 5 s resolution)                                                                                                 |
-| `no-refusals`       | no run's output carries `STIM_AT_CAPACITY` or `STIM_LOW_DISK`                                                                                                                                                    |
-| `pressure-critical` | memory pressure level 4 never lasts more than 60 s (a run of k samples lasts `(k - 1)` intervals plus one); rows without a level are left out and counted                                                        |
-| `sampler-data`      | fails when `booted_ours`, `booting_ours` or `pressure` has no value at all for the batch; each sampler-based check above is `N/A` then                                                                           |
-| `idle-*`            | as in `normal`, for every run that exited 0                                                                                                                                                                      |
-| `revive`            | as in `normal`, for the three chosen workspaces                                                                                                                                                                  |
+| Id                  | Passes when                                                                                                                                                                                                                                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `seed`              | the seed `stim ios` launches                                                                                                                                                                                                                                                                                                 |
+| `exit-zero`         | every concurrent `stim ios` exits 0                                                                                                                                                                                                                                                                                          |
+| `booted-cap`        | the sampled count of the run's booted plus booting simulators never exceeds `max(2, floor((RAM - 4 GB) / 1.5 GB))` (8 on a 16 GB Mac); rows without a simulator reading are left out and counted in the evidence                                                                                                             |
+| `boots-in-flight`   | `capacity.devices` holders marked `booting` never exceed 2 in any status poll; `N/A` where status lists no holders (they exist only while a device cap is set); the sampler's count of simulators in simctl's `Booting` state is shown in the headline for information only, because that state can be shorter than a sample |
+| `no-refusals`       | no concurrent run is refused: a run that exits non-zero with a `STIM_` code (from its JSON failure payload or its output) is a refusal, listed by code in the evidence                                                                                                                                                       |
+| `pressure-critical` | memory pressure level 4 never lasts more than 60 s (a run of k samples lasts `(k - 1)` intervals plus one); rows without a level are left out and counted                                                                                                                                                                    |
+| `sampler-data`      | fails when `booted_ours` or `pressure` has no value at all for the batch; each sampler-based check above is `N/A` then                                                                                                                                                                                                       |
+| `idle-*`            | as in `normal`, for every run that exited 0                                                                                                                                                                                                                                                                                  |
+| `revive`            | as in `normal`, for the three chosen workspaces                                                                                                                                                                                                                                                                              |
 
 ### `check`
 
-`worktrees` (created, warmed, repaired, one shared fingerprint) and `clocks` (the idle clock is written and read back).
+`worktrees` (created, warmed, repaired, one shared fingerprint) and `clocks` (the idle clock is written and read back). It
+polls `stim status` once so the report's daemon line is read from a real payload.
 
 ## What it reads from a build
 

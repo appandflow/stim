@@ -50,6 +50,15 @@ async function danglingLinks(dir) {
   return found.stdout.split('\n').filter((link) => link && !existsSync(link)).length;
 }
 
+async function dropSourceMachineEnv(workspace) {
+  const file = join(workspace.path, 'ios', '.xcode.env.local');
+  if (!existsSync(file)) return false;
+  const tracked = await run('git', ['ls-files', '--error-unmatch', 'ios/.xcode.env.local'], { cwd: workspace.path });
+  if (tracked.code === 0) return false;
+  rmSync(file);
+  return true;
+}
+
 async function prepareNativeDirs(ctx, workspace) {
   const ios = join(workspace.path, 'ios');
   if (!existsSync(join(ios, 'Podfile'))) return { skipped: 'no ios/Podfile' };
@@ -93,6 +102,13 @@ export async function createWorkspaces(ctx, count) {
   if (badWarm)
     throw new HarnessError(`stim worktree warm failed in ${badWarm.cwd}: ${badWarm.stderr.trim().slice(-400)}`);
   emit('setup', `warmed ${count} worktrees`);
+
+  const dropped = (await pool(ctx.workspaces, 4, dropSourceMachineEnv)).filter(Boolean).length;
+  if (dropped)
+    emit(
+      'setup',
+      `dropped ios/.xcode.env.local, which holds the source machine's node path, from ${dropped} worktrees`,
+    );
 
   const pods = await pool(ctx.workspaces, 2, (workspace) => prepareNativeDirs(ctx, workspace));
   const repaired = pods.filter((result) => result.dangling).length;
@@ -149,6 +165,11 @@ async function waitFor(check, timeoutMs, stepMs = 2000) {
   return check();
 }
 
+export function removalState(path, parent, exists = existsSync) {
+  if (exists(path)) return false;
+  return exists(parent) ? true : null;
+}
+
 export async function teardown(ctx) {
   const { stim, project, home, emit } = ctx;
   const report = {
@@ -158,12 +179,21 @@ export async function teardown(ctx) {
     trashEmpty: null,
     homeDeleted: false,
     ballastGone: null,
+    unverified: [],
+    uncleanPaths: [],
     errors: [],
   };
   const note = (error) => report.errors.push(String(error?.message ?? error));
   const noAbort = { signal: undefined };
 
   await ctx.trackLedger();
+  const homeVanished = !existsSync(home);
+  const unverifiable = (path) => {
+    report.unverified.push(path);
+    report.uncleanPaths.push(path);
+  };
+  if (homeVanished)
+    note(`the private home ${home} is not there at the start of teardown, so nothing in it can be checked`);
   emit('teardown', 'stim stop in every worktree');
   await pool(ctx.workspaces, 4, async (workspace) => {
     if (existsSync(workspace.path))
@@ -175,7 +205,12 @@ export async function teardown(ctx) {
 
   emit('teardown', 'stim worktree remove in every worktree');
   await pool(ctx.workspaces, 4, async (workspace) => {
-    if (!existsSync(workspace.path)) return;
+    if (!existsSync(workspace.path)) {
+      const gone = removalState(workspace.path, ctx.workDir);
+      report.worktrees.push({ label: workspace.label, path: workspace.path, removed: gone });
+      if (gone === null) unverifiable(workspace.path);
+      return;
+    }
     const removed = await stim.exec(
       `teardown-remove-${workspace.label}`,
       workspace.path,
@@ -186,7 +221,10 @@ export async function teardown(ctx) {
       await run('git', ['-C', project, 'worktree', 'remove', '--force', workspace.path], noAbort);
       if (existsSync(workspace.path)) rmSync(workspace.path, { recursive: true, force: true });
     }
-    report.worktrees.push({ label: workspace.label, removed: !existsSync(workspace.path) });
+    const state = removalState(workspace.path, ctx.workDir);
+    report.worktrees.push({ label: workspace.label, path: workspace.path, removed: state });
+    if (state === null) unverifiable(workspace.path);
+    else if (state === false) report.uncleanPaths.push(workspace.path);
   }).catch(note);
 
   emit('teardown', 'deleting leftover simulators from the run ledger');
@@ -201,7 +239,9 @@ export async function teardown(ctx) {
   }
 
   const trash = join(home, 'trash');
-  report.trashEmpty = await waitFor(() => !existsSync(trash) || readdirSync(trash).length === 0, 180_000);
+  report.trashEmpty = homeVanished
+    ? null
+    : await waitFor(() => !existsSync(trash) || readdirSync(trash).length === 0, 180_000);
 
   emit('teardown', "waiting for the run's stim processes to exit");
   await waitFor(async () => (await liveOurs(ctx)).length === 0, 200_000);
@@ -220,8 +260,13 @@ export async function teardown(ctx) {
     } catch (error) {
       note(error);
     }
-    report.ballastGone = !existsSync(ctx.ballast.file);
-    if (!report.ballastGone) note(`the ballast file ${ctx.ballast.file} is still there`);
+    const state = removalState(ctx.ballast.file, ctx.homeDir);
+    report.ballastGone = state;
+    if (state === null) unverifiable(ctx.ballast.file);
+    else if (state === false) {
+      note(`the ballast file ${ctx.ballast.file} is still there`);
+      report.uncleanPaths.push(ctx.ballast.file);
+    }
   }
 
   try {
@@ -231,9 +276,15 @@ export async function teardown(ctx) {
       note(
         `the private home ${home} is kept: its ledger is the proof that ${sims === null ? 'the' : survivors} simulator(s) are the run's`,
       );
+      report.uncleanPaths.push(home);
+    } else if (homeVanished) {
+      report.homeDeleted = null;
+      unverifiable(home);
     } else if (dirname(home) === ctx.homeDir && basename(home).startsWith(ctx.runId)) {
       rmSync(home, { recursive: true, force: true });
-      report.homeDeleted = !existsSync(home);
+      report.homeDeleted = removalState(home, ctx.homeDir);
+      if (report.homeDeleted === null) unverifiable(home);
+      else if (report.homeDeleted === false) report.uncleanPaths.push(home);
     }
   } catch (error) {
     note(error);

@@ -157,7 +157,7 @@ export async function runNormal(ctx) {
       launched.map((workspace) => ({ workspace, commandEndMs: ctx.record(workspace).launchedAt })),
       { windowMs: ctx.idleWindowMs, graceMs: 5 * 60_000 },
     );
-    assertIdleDown(ctx, SCENARIO, waited, ctx.idleWindowMs);
+    await assertIdleDown(ctx, SCENARIO, waited, ctx.idleWindowMs);
 
     const revivable = launched.filter((workspace) => waited.get(workspace.label)?.resolved);
     await reviveWorkspaces(ctx, SCENARIO, revivable, { concurrent: false });

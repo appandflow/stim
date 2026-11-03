@@ -343,7 +343,11 @@ async function runLocal(opts) {
 
   const endedAt = Date.now();
   const tearDownFailed =
-    torn.errors.length > 0 || torn.worktrees.some((w) => !w.removed) || !torn.homeDeleted || torn.ballastGone === false;
+    torn.errors.length > 0 ||
+    torn.worktrees.some((w) => w.removed !== true) ||
+    torn.homeDeleted !== true ||
+    torn.ballastGone === false ||
+    torn.unverified.length > 0;
   const samples = existsSync(join(ctx.out, 'samples.csv'))
     ? parseCsv(readFileSync(join(ctx.out, 'samples.csv'), 'utf8'))
     : [];
@@ -366,6 +370,7 @@ async function runLocal(opts) {
     sampleIntervalSec: SAMPLE_INTERVAL_SEC,
     daemonLabel: daemonLabel(ctx),
     teardownClean: !tearDownFailed,
+    uncleanPaths: torn.uncleanPaths,
   };
   const workspaces = ctx.workspaces.map((workspace) => ({
     label: workspace.label,
