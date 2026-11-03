@@ -405,7 +405,7 @@ function renderPeople() {
     selfName.replaceChildren(...describe(own).childNodes);
     selfRole.textContent = own.role;
   }
-  for (const child of [...peopleList.children]) if (child !== selfRow) child.remove();
+  for (const child of peopleList.querySelectorAll(':scope > li')) if (child !== selfRow) child.remove();
   if (!own) selfRow.remove();
   else if (peopleList.firstChild !== selfRow) peopleList.prepend(selfRow);
   peopleList.append(...items);
