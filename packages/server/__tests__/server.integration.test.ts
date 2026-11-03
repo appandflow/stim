@@ -1007,11 +1007,17 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       ['machines.update.status', { machine: 'mini' }],
       ['device-host.sessions', undefined],
       ['device-host.sessions.stop', { session: 'missing' }],
+      ['share.start', { workspace: root, platform: 'ios', control: true }],
+      ['share.stop', { workspace: root }],
+      ['share.list', undefined],
     ] as const) {
       expect(await remote.request(method, params)).toMatchObject({ error: { code: 'forbidden' } });
     }
     const loopback = await authed(fixture.port, true);
     expect(await loopback.request('route.setup')).toMatchObject({ error: { code: 'forbidden' } });
+    expect(await loopback.request('share.start', { workspace: root, platform: 'ios' })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
     expect(fixture.commands()).toEqual([]);
 
     const local = await desktop();
@@ -1023,6 +1029,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       result: { remote: null, unreachable: expect.stringContaining('has not approved this machine'), upload: null },
     });
     expect(await local.request('route.setup')).toMatchObject({ result: { state: 'routed' } });
+    expect(await local.request('share.list')).toEqual(expect.objectContaining({ result: { shares: [] } }));
   });
 
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {

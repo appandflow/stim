@@ -291,7 +291,6 @@ export function xcodebuildArgs({
   udid = null,
   destination = null,
   configuration = 'Debug',
-  sdk = 'iphonesimulator',
   derivedDataPath,
   extraArgs = [],
   buildSettings = [],
@@ -301,7 +300,6 @@ export function xcodebuildArgs({
   udid?: string | null;
   destination?: string | null;
   configuration?: string;
-  sdk?: string;
   derivedDataPath: string;
   extraArgs?: string[];
   buildSettings?: string[];
@@ -313,8 +311,6 @@ export function xcodebuildArgs({
     scheme,
     '-configuration',
     configuration,
-    '-sdk',
-    sdk,
     '-destination',
     destination || `id=${udid}`,
     '-derivedDataPath',
@@ -730,7 +726,6 @@ async function buildXcodeWithEnv({
     udid,
     destination,
     configuration,
-    sdk,
     derivedDataPath: dd,
     extraArgs,
     buildSettings,
@@ -909,8 +904,6 @@ async function buildXcodeWithEnv({
             buildScheme,
             '-configuration',
             configuration,
-            '-sdk',
-            sdk,
             '-destination',
             destination || `id=${udid}`,
             '-derivedDataPath',

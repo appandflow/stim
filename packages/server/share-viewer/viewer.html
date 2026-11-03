@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Shared app</title>
+    <link rel="stylesheet" href="/s/assets/viewer.css" />
+  </head>
+  <body
+    class="viewer"
+    data-control="{{control}}"
+    data-platform="{{platform}}"
+    data-buttons="{{buttons}}"
+    data-can-rotate="{{rotate}}"
+  >
+    <header class="bar">
+      {{logo}}
+      <p class="status" id="status" role="status">
+        <span class="dot"></span><span id="status-text">Connecting</span><span class="left" id="left"></span>
+      </p>
+    </header>
+    <main class="stage" id="stage">
+      <div class="device" id="device">
+        <img class="layer" id="bezel-back" alt="" draggable="false" hidden />
+        <div class="aperture" id="aperture">
+          <canvas id="screen" aria-label="Shared device screen" role="img"></canvas>
+          <p class="note" id="note" role="status"></p>
+        </div>
+        <img class="layer" id="bezel-front" alt="" draggable="false" hidden />
+      </div>
+    </main>
+    <nav class="toolbar" id="toolbar" aria-label="Device controls">
+      <div class="group" data-group="hardware">
+        <button type="button" data-button="back" data-tip="Back" aria-label="Back">
+          <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg>
+        </button>
+        <button type="button" data-button="home" data-tip="Home" aria-label="Home">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" /></svg>
+        </button>
+        <button type="button" data-button="app-switch" data-tip="Apps" aria-label="Apps">
+          <svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3" /></svg>
+        </button>
+        <button type="button" data-button="lock" data-tip="Lock" aria-label="Lock">
+          <svg viewBox="0 0 24 24">
+            <rect x="6" y="11" width="12" height="9" rx="2" />
+            <path d="M8.5 11V8a3.5 3.5 0 017 0v3" />
+          </svg>
+        </button>
+      </div>
+      <div class="group" data-group="rotate">
+        <button type="button" data-rotate="left" data-tip="Rotate left" aria-label="Rotate left">
+          <svg viewBox="0 0 24 24"><path d="M4 9a8 8 0 1114 7M4 4v5h5" /></svg>
+        </button>
+        <button type="button" data-rotate="right" data-tip="Rotate right" aria-label="Rotate right">
+          <svg viewBox="0 0 24 24"><path d="M20 9a8 8 0 10-14 7M20 4v5h-5" /></svg>
+        </button>
+      </div>
+      <div class="group" data-group="tools">
+        <button type="button" id="shot" data-tip="Save screenshot" aria-label="Save screenshot">
+          <svg viewBox="0 0 24 24">
+            <path d="M4 8h3l1.5-2h7L17 8h3v11H4z" />
+            <circle cx="12" cy="13" r="3.5" />
+          </svg>
+        </button>
+        <button type="button" id="full" data-tip="Fullscreen" aria-label="Fullscreen">
+          <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
+        </button>
+      </div>
+    </nav>
+    <footer>
+      Shared with <a href="https://stim.appandflow.com" target="_blank" rel="noopener noreferrer">Stim</a>
+    </footer>
+    <script src="/s/assets/viewer.js"></script>
+  </body>
+</html>

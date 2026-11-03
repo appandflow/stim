@@ -57,6 +57,11 @@ struct DeviceTileMenuItems: View {
         }
         .disabled(building || busy)
       }
+      if device.canShare {
+        Button("Share\u{2026}", systemImage: "link") {
+          OpenRequests.shared.shareRequest = ShareRequest(workspace: workspace, platform: device.platform, slot: device.slot)
+        }
+      }
       Button("Stop", systemImage: "stop.fill") {
         actions.run("Stop \(device.label)", steps: [stopCommand(for: device, cwd: workspace)], present: false)
       }
@@ -95,6 +100,16 @@ private struct MacosWindowItems: View {
     if let openBuildLogs {
       Divider()
       Button("Build Logs", systemImage: "doc.text.magnifyingglass", action: openBuildLogs)
+    }
+  }
+}
+
+extension DeviceRef {
+  /// A running simulator or emulator on this Mac, which `share.start` serves.
+  var canShare: Bool {
+    switch self {
+    case .ios, .android: isRunning && !isPhysical && hostedMachine == nil
+    case .remote, .web, .macos: false
     }
   }
 }

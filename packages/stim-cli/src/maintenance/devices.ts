@@ -203,6 +203,7 @@ export function finishedWorkspaces(
     'bare-repository',
     'source-checkout',
     'source-checkout-unknown',
+    'not-registered',
     'locked',
     'nested-worktree',
     'recent-activity',
