@@ -1,4 +1,5 @@
 import type { ArchivedWorkspace } from './archive.ts';
+import type { DaemonStatus } from './daemon.ts';
 import type { MaintenanceStatus } from './maintenance.ts';
 import type { BuildHistoryEntry, EnvironmentState, LastBuildReport, StatusPayload, WorktreeFacts } from './status.ts';
 
@@ -50,13 +51,15 @@ export interface ArchivedSummary {
   newest: Pick<ArchivedWorkspace, 'id' | 'projectRoot' | 'project' | 'workspace' | 'removedAt'>[];
 }
 
-/** The machine, as the always-visible capacity, memory and maintenance indicators show it. */
+/** The machine, as the always-visible capacity, memory, maintenance and pressure indicators show it. */
 export interface MachineView {
   capacity: StatusPayload['capacity'];
   machine: StatusPayload['machine'];
   deviceLeases: StatusPayload['deviceLeases'];
   simctlAvailable: boolean;
   maintenance: Omit<MaintenanceStatus, 'recent' | 'sizes'> | null;
+  /** The home daemon: its mode, the pressure level of its last tick and its last actions. */
+  daemon: DaemonStatus | null;
 }
 
 export interface StatusViews {
@@ -158,6 +161,7 @@ export function statusViews(payload: StatusPayload): StatusViews {
       maintenance: payload.maintenance
         ? (({ recent: _recent, sizes: _sizes, ...rest }) => rest)(payload.maintenance)
         : null,
+      daemon: payload.daemon ?? null,
     },
     details: new Map(payload.environments.map((environment) => [environment.path, environment])),
   };

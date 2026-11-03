@@ -10,6 +10,7 @@ import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
 import { runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { parkSim } from '../devices/sim-pool.ts';
 import * as ios from '../devices/ios.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
@@ -19,6 +20,7 @@ import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/
 import * as lightened from '../workspace/lightened.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { serveShareList, shareRow } from './_share-list-server.ts';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -177,19 +179,26 @@ describe('the dormant stage', () => {
     expect(await dormant()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
   });
 
-  test('a booted device, maintenance.keep, or a failed simulator listing keeps a workspace out of it', async () => {
+  test('a booted device, maintenance.keep, a live web share, or a failed simulator listing keeps a workspace out of it', async () => {
     const booted = workspace('booted', 4 * DAY_MS, 'Booted');
     const pinned = workspace('pinned', 4 * DAY_MS, 'Shutdown');
     writeFileSync(join(pinned.root, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+    const shared = process.platform === 'win32' ? null : workspace('shared', 4 * DAY_MS, 'Shutdown');
+    if (shared) {
+      const server = await serveShareList(() => ({ shares: [shareRow(shared.root, '2099-01-01T00:00:00.000Z')] }));
+      onTestFinished(() => server.close());
+    }
     expect(
       await runDormantPass({ config: loadConfig(), act: true, log, devices: await devicesNow(), simsFailed: false }),
     ).toEqual([]);
     const listed = workspace('unlisted', 4 * DAY_MS, 'Shutdown');
     expect(await dormant(true)).toEqual([]);
     expect(deleted).toEqual([]);
-    expect([booted, pinned, listed].every(({ root }) => readDormantStage(readWorkspaceState(root)) === null)).toBe(
-      true,
-    );
+    expect(
+      [booted, pinned, ...(shared ? [shared] : []), listed].every(
+        ({ root }) => readDormantStage(readWorkspaceState(root)) === null,
+      ),
+    ).toBe(true);
   });
 
   test('idle.dormantDays 0 turns the dormant stage off, and idle.minutes 0 keeps a workspace out of it', async () => {
@@ -366,6 +375,52 @@ describe('the pressure ladder', () => {
     const rungs = actions.map((action) => action.rung);
     expect(rungs).toEqual(rungs.toSorted((a, b) => a - b));
     expect(actions.some((action) => action.rung === 4 && action.kind === 'dormant-stage')).toBe(true);
+  });
+});
+
+describe('the ladder stim gc forces', () => {
+  test('runs every rung at the forced level whatever the measured level, and gc --older-than limits rung 2 to devices parked that long', async () => {
+    vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+    for (const [udid, days] of [
+      ['OLD-PARKED', 10],
+      ['NEW-PARKED', 1],
+    ] as const) {
+      const source = join(projects, `source-${udid}`);
+      mkdirSync(source, { recursive: true });
+      upsertProject(source, { platforms: { ios: { deviceUdid: udid, deviceName: `stim-${udid}`, owned: true } } });
+      parkSim({
+        platform: 'ios',
+        projectPath: source,
+        max: 3,
+        record: {
+          udid,
+          name: `stim-${udid}`,
+          runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+          deviceTypeIdentifier: 'iphone',
+          simslimManaged: false,
+          parkedAt: new Date(Date.now() - days * DAY_MS).toISOString(),
+        },
+      });
+    }
+    const parkedTargets = async (parkedOlderThanDays?: number) =>
+      (
+        await runLadder(
+          {
+            config: loadConfig()!,
+            act: false,
+            log,
+            devices: [],
+            simsFailed: false,
+            remeasure: async () => pressure('normal'),
+            force: { level: 'high', why: 'stim gc --delete', ...(parkedOlderThanDays ? { parkedOlderThanDays } : {}) },
+            fromRung: 2,
+          },
+          pressure('normal'),
+        )
+      ).actions.flatMap((action) => (action.kind === 'delete-parked-device' ? [action.target] : []));
+
+    expect(await parkedTargets()).toEqual(['OLD-PARKED', 'NEW-PARKED']);
+    expect(await parkedTargets(5)).toEqual(['OLD-PARKED']);
   });
 });
 

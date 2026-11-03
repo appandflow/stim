@@ -52,15 +52,17 @@ import {
   type FinishedDevice,
   type OwnedDeviceDisk,
 } from './finished-devices.ts';
-import { idleDeviceLines, type IdleDevice } from './idle.ts';
+import { gcLadderLines, type GcLadder, type GcLadderLevel } from './ladder.ts';
 import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from './recordings.ts';
 import { tempLeftoverLines, tempLeftoverSection, type TempLeftoverReport } from './temp-leftovers.ts';
 import { trashLines, type TrashReport } from './trash.ts';
-import type { WorktreeDependencies } from './dependencies.ts';
 import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, type WatchmanRoot } from './memory.ts';
 
 export interface GcReport {
   maintenance?: MaintenancePreview;
+  ladder?: GcLadder;
+  /** The level `--delete` runs the pressure ladder at after this report, when it runs it. */
+  ladderRun?: GcLadderLevel;
   archives?: ArchiveSelection;
   skipped: GcSkip[];
   deadProjects: string[];
@@ -83,7 +85,6 @@ export interface GcReport {
   buildLocks: { stale: BuildLockInfo[]; live: BuildLockInfo[]; unresolved?: BuildLockInfo[] };
   buildSlots: { stale: BuildSlotInfo[]; live: BuildSlotInfo[]; unresolved?: BuildSlotInfo[] };
   deviceLeases: DeviceLeaseGarbage;
-  idleDevices: IdleDevice[];
   deviceSweepNotices: string[];
   easSessionSweep: EasSessionSweep;
   agentDeviceUsage?: AgentDeviceUsage | null;
@@ -94,7 +95,6 @@ export interface GcReport {
   gradleVersions?: GradleVersionSweep | null;
   caches: GcCache[];
   workspaceOutputs: WorkspaceOutputsReport | null;
-  worktreeDependencies?: WorktreeDependencies | null;
   workspaceLogs: WorkspaceLogs[];
   recordings: WorkspaceRecordings[];
   worktreeSweep?: WorktreeSweep | null;
@@ -236,6 +236,8 @@ function staleEasLedgerLines(entries: StaleEasLedgerEntry[] = []): string[] {
 export function formatGcReport(
   {
     maintenance,
+    ladder,
+    ladderRun,
     archives,
     skipped = [],
     deadProjects = [],
@@ -258,7 +260,6 @@ export function formatGcReport(
     buildLocks = { stale: [], live: [], unresolved: [] },
     buildSlots = { stale: [], live: [], unresolved: [] },
     deviceLeases = { expired: [], kept: [] },
-    idleDevices = [],
     deviceSweepNotices = [],
     easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
     agentDeviceUsage = null,
@@ -269,7 +270,6 @@ export function formatGcReport(
     gradleVersions,
     caches = [],
     workspaceOutputs = null,
-    worktreeDependencies,
     workspaceLogs = [],
     recordings = [],
     worktreeSweep = null,
@@ -309,8 +309,7 @@ export function formatGcReport(
       staleSlots,
       expiredLeases,
       easSessionSweep.orphaned,
-      workspaceOutputs?.workspaces.filter((entry) => entry.willClear) ?? [],
-      dependencyCandidates(worktreeDependencies),
+      ladder?.levels.flatMap((level) => level.actions) ?? [],
       workspaceLogs.filter((entry) => entry.willTrim),
       worktreeSweep?.worktrees.filter((entry) => !entry.skipped) ?? [],
     ].every((found) => found.length === 0)
@@ -325,10 +324,11 @@ export function formatGcReport(
     if (easSessionSweep.notices.length > 0) {
       reasons.push('EAS session sweep incomplete');
     }
+    const before = ladderRun ? ` before the pressure ladder runs at ${ladderRun}` : '';
     if (reasons.length > 0) {
-      lines.push(`Nothing to reclaim (${reasons.join('; ')}; see below).`);
+      lines.push(`Nothing to reclaim${before} (${reasons.join('; ')}; see below).`);
     } else {
-      lines.push('Nothing to reclaim.');
+      lines.push(`Nothing to reclaim${before}.`);
     }
   }
 
@@ -375,8 +375,6 @@ export function formatGcReport(
   }
 
   lines.push(...finishedLines, ...ownedDeviceDiskLines(ownedDeviceDisk));
-
-  lines.push(...idleDeviceLines(idleDevices));
 
   if (staleDeviceRecords.length) {
     lines.push(`Stale device records (${staleDeviceRecords.length}) - the device is gone, the project is not:`);
@@ -452,10 +450,9 @@ export function formatGcReport(
     for (const entry of skipped) lines.push(`  ${entry.dir}: ${entry.reason}`);
   }
 
-  lines.push(...worktreeDependencyLines(worktreeDependencies));
   lines.push(...workspaceLogLines(workspaceLogs));
   lines.push(...recordingLines(recordings));
-  lines.push(...cacheLines(caches, workspaceOutputs));
+  lines.push(...cacheLines(caches, workspaceOutputs, cacheScope !== null));
   lines.push(...agentDeviceLines(agentDeviceUsage, true, now));
   lines.push(...swiftpmCacheLines(swiftpmCacheUsage, now));
   lines.push(...machineCacheLines(machineCaches, now));
@@ -464,21 +461,8 @@ export function formatGcReport(
   lines.push(...gradleVersionLines(gradleVersions));
   lines.push(...memoryLines(memory, memoryCacheKind(cacheScope), now));
   lines.push(...maintenanceReportLines(maintenance));
+  lines.push(...gcLadderLines(ladder, now));
 
-  return lines;
-}
-
-function dependencyCandidates(found: WorktreeDependencies | null | undefined): string[] {
-  return found?.candidates.map(({ path }) => path) ?? [];
-}
-
-function worktreeDependencyLines(found: WorktreeDependencies | null | undefined): string[] {
-  if (!found || (!found.candidates.length && !found.skips.length)) return [];
-  const lines = [
-    `Worktree dependencies (${found.candidates.length} of ${found.candidates.length + found.skips.length} would be LIGHTENED; the next start, ios or android restores them with worktree warm):`,
-  ];
-  for (const { path } of found.candidates) lines.push(`  ${path}`, '              would be LIGHTENED');
-  for (const { target, reason } of found.skips) lines.push(`  ${target}`, `              kept: ${reason}`);
   return lines;
 }
 
@@ -548,7 +532,7 @@ function orphanedWorkspaceLines(orphaned: readonly OrphanedWorkspace[]): string[
   return lines;
 }
 
-function workspaceOutputLines(outputs: WorkspaceOutputsReport, bytes: number): string[] {
+function workspaceOutputLines(outputs: WorkspaceOutputsReport, bytes: number, scoped: boolean): string[] {
   const lines = [
     `  ${formatBytes(bytes).padStart(10)}  Workspace build outputs (detected)`,
     `              ${outputs.root}`,
@@ -559,19 +543,27 @@ function workspaceOutputLines(outputs: WorkspaceOutputsReport, bytes: number): s
     const idle = w.idleDays === null ? 'last use unknown' : `idle ${w.idleDays}d`;
     lines.push(`    ${sizeText(w.bytes).padStart(8)}  ${w.projectRoot ?? w.dir} (${idle})`);
     if (w.inTreeDirs.length) lines.push(`                with ${w.inTreeDirs.join(', ')}`);
-    lines.push(w.willClear ? '                would be LIGHTENED' : `                kept: ${w.keptReason}`);
+    lines.push(
+      w.willClear
+        ? `                ${scoped ? 'would be LIGHTENED' : '--delete --cache workspaces would lighten it'}`
+        : `                kept: ${w.keptReason}`,
+    );
   }
   return lines;
 }
 
-function cacheLines(caches: readonly GcCache[], workspaceOutputs: WorkspaceOutputsReport | null): string[] {
+function cacheLines(
+  caches: readonly GcCache[],
+  workspaceOutputs: WorkspaceOutputsReport | null,
+  scoped: boolean,
+): string[] {
   const lines: string[] = [];
   const outputs = workspaceOutputs?.workspaces.length ? workspaceOutputs : null;
   if (caches.length || outputs) {
     const outputBytes = outputs ? outputs.workspaces.reduce((n, w) => n + (w.bytes ?? 0), 0) : 0;
     const total = caches.reduce((n, c) => n + (c.bytes ?? 0), 0) + outputBytes;
     lines.push(`Shared build caches (${caches.length + (outputs ? 1 : 0)}) - alive, not garbage:`);
-    if (outputs) lines.push(...workspaceOutputLines(outputs, outputBytes));
+    if (outputs) lines.push(...workspaceOutputLines(outputs, outputBytes, scoped));
     for (const c of caches) {
       const tag = c.source ? ` (${c.source})` : '';
       lines.push(`  ${sizeText(c.bytes ?? null).padStart(10)}  ${c.name}${tag}`);
@@ -593,7 +585,7 @@ function cacheLines(caches: readonly GcCache[], workspaceOutputs: WorkspaceOutpu
         `  would empty ${doomed.length} of these (${doomed.some((c) => c.bytes === undefined) ? 'at least ' : ''}${formatBytes(doomedBytes)})`,
       );
     }
-    const clearing = outputs?.workspaces.filter((w) => w.willClear) ?? [];
+    const clearing = scoped ? (outputs?.workspaces.filter((w) => w.willClear) ?? []) : [];
     if (clearing.length) {
       const clearBytes = clearing.reduce((n, w) => n + (w.bytes ?? 0), 0);
       lines.push(
@@ -761,7 +753,6 @@ export interface GcJsonSections {
   staleLedgerEntries: { kind: 'ios' | 'android' | 'web'; id: string }[];
   staleEasLedgerEntries: { id: string; workspaceRoot: string }[];
   staleStatusCaches: { kind: 'disk-usage' | 'pull-request' | 'git-merge'; path: string; file: string; bytes: number }[];
-  idleDevices: IdleDevice[];
   orphanedEasSessions: {
     id: string;
     name: string;
@@ -794,7 +785,6 @@ export interface GcJsonSections {
     reason: WorkspaceLogsKeptCode | null;
     detail: string | null;
   }[];
-  worktreeDependencies: { path: string; willDelete: boolean; detail: string | null }[];
   recordings: {
     dir: string;
     projectRoot: string | null;
@@ -860,12 +850,10 @@ export function gcReportSections({
   buildLocks = { stale: [], live: [], unresolved: [] },
   buildSlots = { stale: [], live: [], unresolved: [] },
   deviceLeases = { expired: [], kept: [] },
-  idleDevices = [],
   deviceSweepNotices = [],
   easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
   workspaceOutputs = null,
   workspaceLogs = [],
-  worktreeDependencies = null,
   recordings = [],
   agentDeviceUsage = null,
   swiftpmCacheUsage = null,
@@ -955,16 +943,6 @@ export function gcReportSections({
     staleLedgerEntries: staleLedgerEntries.map(({ kind, id }) => ({ kind, id })),
     staleEasLedgerEntries: staleEasLedgerEntries.map(({ id, workspaceRoot }) => ({ id, workspaceRoot })),
     staleStatusCaches: staleStatusCaches.map(({ kind, path, file, bytes }) => ({ kind, path, file, bytes })),
-    idleDevices: idleDevices.map(({ kind, id, name, project, slot, lastActivityAt, idleForMs, buildInProgress }) => ({
-      kind,
-      id,
-      name,
-      project,
-      slot,
-      lastActivityAt,
-      idleForMs,
-      buildInProgress,
-    })),
     orphanedEasSessions: easSessionSweep.orphaned.map((s) => ({
       id: s.id,
       name: s.name,
@@ -1005,14 +983,6 @@ export function gcReportSections({
       reason: w.keptCode,
       detail: w.keptReason,
     })),
-    worktreeDependencies: [
-      ...(worktreeDependencies?.candidates ?? []).map(({ path }) => ({ path, willDelete: true, detail: null })),
-      ...(worktreeDependencies?.skips ?? []).map(({ target, reason }) => ({
-        path: target,
-        willDelete: false,
-        detail: reason,
-      })),
-    ],
     recordings: recordings.map((r) => ({
       dir: r.dir,
       projectRoot: r.projectRoot,

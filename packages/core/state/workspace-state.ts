@@ -89,6 +89,14 @@ export function readDormantStage(state: WorkspaceState | null | undefined): Dorm
   };
 }
 
+/** A stage record the daemon wrote, while no Stim command has run in the workspace since; null otherwise. */
+export function currentStage<T extends { at: string }>(
+  state: WorkspaceState | null | undefined,
+  stage: T | null,
+): T | null {
+  return stage && !(Date.parse(String(state?.lastUsedAt ?? '')) > Date.parse(stage.at)) ? stage : null;
+}
+
 export const INTERACTIONS_KEY = 'interactions';
 
 /** When a person last used each device slot's focused Simulator or emulator window, by device slot key. */

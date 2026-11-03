@@ -270,7 +270,7 @@ test('rung 6 plans and deletes the idle leftovers', async () => {
   const idle = oldDir('stim-server-AbC123', { 'state.json': '{}' });
   const recent = join(fakeTmp, 'stim-server-recent');
   mkdirSync(recent);
-  const settings = { ...resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'on' }), removeFinishedWorktrees: false };
+  const settings = { ...resolveMaintenanceSettings(null, { STIM_DAEMON: 'on' }), removeFinishedWorktrees: false };
 
   const planned = await planRung6(settings);
   const action = planned.actions.find((entry) => entry.kind === 'would-delete-temp-leftovers');

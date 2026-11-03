@@ -16,6 +16,7 @@ import * as client from '../daemon/client.ts';
 import { liveWaiters } from '../engine/wait-queue.ts';
 import { createRunRecorder, readStats, recordRunStats } from '../engine/stats.ts';
 import { makeIosSim, makeConfig, makeAdbDevices } from './_factories.ts';
+import { serveShareList, shareRow } from './_share-list-server.ts';
 import { admissionLimits } from '../workspace/config.ts';
 
 let root: string;
@@ -24,6 +25,7 @@ beforeEach(() => {
   process.env.STIM_HOME = root;
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
 });
@@ -150,6 +152,35 @@ describe('per-platform device caps', () => {
   });
 });
 
+test('a wait under the derived device cap says the cap is derived and names the setting that overrides it', async () => {
+  vi.stubEnv('STIM_MAX_DEVICES', '0');
+  const { maxDevices, derived } = admissionLimits();
+  expect(derived.devices).toBe(true);
+  const sims = Array.from({ length: maxDevices }, (_, index) =>
+    makeIosSim({ udid: `held-${index}`, name: `stim-held-${index}`, state: 'Booted' }),
+  );
+  let now = Date.now();
+  const lines: string[] = [];
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+      root,
+      waitMs: 12_000,
+      sources: { ...empty, sims },
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      out: (line) => lines.push(line),
+    }),
+  ).rejects.toMatchObject({
+    code: 'STIM_AT_CAPACITY',
+    remedy: expect.stringContaining('or set concurrency.maxDevices'),
+  });
+  expect(lines[0]).toContain(
+    `(${maxDevices}/${maxDevices} devices booted, the derived device cap of ${maxDevices}; set concurrency.maxDevices to override)`,
+  );
+});
+
 test('a timed-out wait reports elapsed time and count, records both events, and releases its ticket', async () => {
   let now = Date.now();
   const lines: string[] = [];
@@ -247,6 +278,51 @@ test('waiting progress names workspaces for live devices and boot claims', async
   expect(lines[0]).toBe(
     'device      waiting for a device slot (2/2 devices booted, concurrency.maxDevices) held by tree-one, tree-two: queue position 1 of 1, 0s elapsed -- stim guide lifecycle concurrency',
   );
+});
+
+const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
+describe.skipIf(process.platform === 'win32')('a web share', () => {
+  test.each([
+    {
+      list: 'a live share',
+      answer: { shares: [shareRow('/work/holder-root', expiresAt)] },
+      named: `tree-one stays booted: it has a live web share (ios until ${expiresAt}); stim share stop ends it`,
+    },
+    {
+      list: 'a share list stim-server cannot give',
+      answer: { error: { code: 'internal', message: 'The share hub is closing.' } },
+      named: "tree-one stays booted: this home's web shares cannot be listed (The share hub is closing)",
+    },
+  ])('waiting progress names $list as what keeps a holder booted', async ({ answer, named }) => {
+    let now = Date.now();
+    const lines: string[] = [];
+    const server = await serveShareList(() => answer);
+    onTestFinished(() => server.close());
+    await expect(
+      withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+        root,
+        max: 1,
+        waitMs: 1,
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+        out: (line) => lines.push(line),
+        sources: {
+          ...empty,
+          sims: occupied,
+          config: makeConfig({
+            projects: {
+              '/work/holder-root': { label: 'tree-one', platforms: { ios: { deviceUdid: 'holder', owned: true } } },
+            },
+          }),
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+    expect(lines[0]).toBe(
+      `device      waiting for a device slot (1/1 devices booted, concurrency.maxDevices) held by tree-one; ${named}: queue position 1 of 1, 0s elapsed -- stim guide lifecycle concurrency`,
+    );
+  });
 });
 
 test('cancelling a queued run promptly releases its ticket without booting', async () => {

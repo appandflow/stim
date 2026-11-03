@@ -75,8 +75,19 @@ A workspace's last activity is the newest of:
 Never activity: device logs, in-app console logs (`client.ndjson`), Metro and Expo stdout, collector events, log mtimes.
 
 Blockers keep a workspace in its stage: a build in progress, a live driver (agent-device claim or lease, driver
-process, Android instrumentation), a held device lease, a hosted placement, unreadable evidence (fail closed), and
-`maintenance.keep`.
+process, Android instrumentation), a held device lease, a live web share, a hosted placement, unreadable evidence (fail
+closed), and `maintenance.keep`.
+
+Amended 2026-11-02 (approved): a web share (`stim share`) that has started, not ended and not passed its expiry is a
+blocker, whether or not a viewer is connected, for every automatic path that would shut down or delete its workspace's
+devices: the idle stage, every pressure rung, the dormant stage, the admission reclaim (4.3) and the deletion of a
+finished worktree's devices by automatic maintenance and `gc --delete`. The activity reader asks this home's stim-server
+for `share.list`. No running stim-server, or one without `share.list` (a server before 1.39), means no share, since a
+share lives only in its server's memory; a list a running server cannot give keeps the workspace. Each path reads it
+again under the workspace's native-run claim before it acts. `share.start` takes no workspace lock, so a share started
+during that locked shutdown can still lose its device (#4863). With no daemon, the supervisor fallback reads it before
+its own idle stop and device shutdown, and logs nothing new: the share blocks the idle probe as a driver does. `stim
+share stop` or the expiry lets the idle stage proceed.
 
 Per-slot exceptions: none. Release and native-process slots use signals 1 and 3 to 6; their app has no Metro, so 2
 never fires. This replaces the #4799 rule that device logs count for those slots.
@@ -169,6 +180,10 @@ arrival order per resource.
 
 While a run waits for a device slot, the daemon shuts down the longest-idle booted device of another workspace that has
 been idle 2 min or more and has no blocker, one per tick, and wakes the waiter.
+
+Amended 2026-11-02 (approved): a device whose workspace has a live web share (section 2) is never reclaimed. The
+waiter keeps waiting, since the shared device is a live holder, and its progress line names the share as what keeps
+that holder booted. The daemon and the waiter read shares through the same reader.
 
 Build slots: `acquireBuildSlot` subscribes through the daemon and keeps the 1 s poll as the fallback when no daemon
 runs.

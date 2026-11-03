@@ -1171,7 +1171,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     setExecutor(exec);
     upsertProject(root, {
       metroPort: port,
-      settings: { metro: { tunnel: 'ngrok', idleStopMinutes: 0 }, devices: { idleShutdownMinutes: 30 } },
+      settings: { metro: { tunnel: 'ngrok' }, idle: { minutes: 0 } },
     });
 
     try {

@@ -66,6 +66,9 @@ export interface DaemonLadderAction {
   restore?: string;
 }
 
+/** A ladder, stage or reclaim action a daemon took, or would have in report mode, with the tick that took it. */
+export type DaemonRecentAction = DaemonLadderAction & { at: string };
+
 /** A run waiting for a build slot or a device boot, in arrival order per resource. */
 export interface DaemonWaiter {
   resource: 'build' | 'boot';
@@ -92,6 +95,8 @@ export interface DaemonSnapshot {
   pressure?: DaemonPressure;
   /** The ladder and dormant actions this tick took, or would take in report mode. */
   actions?: DaemonLadderAction[];
+  /** The last 20 actions any daemon of this home took, the idle stage included, oldest first. */
+  recent?: DaemonRecentAction[];
   waiting?: DaemonWaiter[];
 }
 
@@ -109,6 +114,8 @@ export interface DaemonStatus {
   pressure?: DaemonPressure;
   /** Runs waiting for a build slot or a device boot now, read from the wait queues. */
   waiting?: DaemonWaiter[];
+  /** The last actions a daemon of this home took, oldest first, from its snapshot. */
+  recent?: DaemonRecentAction[];
 }
 
 function isDaemonSnapshot(record: Record<string, unknown> | null): record is Record<string, unknown> & DaemonSnapshot {

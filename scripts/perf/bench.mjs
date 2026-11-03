@@ -204,7 +204,7 @@ async function measure(cli, cwd, step, label) {
   const began = performance.now();
   const result = await runAsync(process.execPath, [cli, ...step.args], {
     cwd,
-    env: { ...process.env, STIM_TRACE: traceFile, STIM_NO_UPDATE_CHECK: '1', STIM_MAINTENANCE: 'off' },
+    env: { ...process.env, STIM_TRACE: traceFile, STIM_NO_UPDATE_CHECK: '1', STIM_DAEMON: 'off' },
     timeout: COMMAND_TIMEOUT_MS,
   });
   const wallMs = Math.round(performance.now() - began);

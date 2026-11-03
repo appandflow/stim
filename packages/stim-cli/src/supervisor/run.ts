@@ -49,6 +49,7 @@ import {
 } from './stop-cause.ts';
 import { trackMetroWatchRoots } from './watchman-roots.ts';
 import { daemonClaimHeld } from '../daemon/client.ts';
+import { liveShareKeepReason } from '../local-server.ts';
 import { runWatchman, type WatchmanCommand } from '../watchman.ts';
 
 export {
@@ -399,12 +400,12 @@ export async function runSupervisor({
       lastUseAt: () => workspaceDeviceLastUseAt(root),
       hasDue: () => deviceIdle.due(root, deviceIdleMs).length > 0,
       onDue: async () => {
-        if (daemonHeld()) return;
+        if (daemonHeld() || (await liveShareKeepReason(root))) return;
         try {
           await withIdleWorkspace(
             root,
             async () => {
-              if (!stopping)
+              if (!stopping && !(await liveShareKeepReason(root)))
                 await deviceIdle.shutDown(root, deviceIdleMs, (entry) => writer.write({ src: 'metro', ...entry }));
             },
             { purpose: 'device idle shutdown', supervisor: false, managedLocks: false },
@@ -425,7 +426,7 @@ export async function runSupervisor({
       onIdle: async (idleMinutesNow) => {
         if (daemonHeld()) return;
         const stopIfStillIdle = async () => {
-          const idleMinutes = idleMinutesNow();
+          const idleMinutes = await idleMinutesNow();
           if (stopping || idleMinutes === null) return;
           const devices: string[] = [];
           if (deviceIdleMinutes > 0) {

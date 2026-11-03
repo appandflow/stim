@@ -185,8 +185,6 @@ export type StimGcOptions = GcReadOptions & StimReadOptions;
 export type StimGcReport = Exclude<GcPayload, { code: string }>;
 export type StimGcMutationOptions = Omit<StimGcOptions, 'measureBuildState'> & {
   delete?: boolean;
-  /** Shuts down owned devices idle for at least this many milliseconds, including without `delete`. */
-  idleMs?: number;
 };
 export interface StimGcMutationResult {
   report: StimGcReport;

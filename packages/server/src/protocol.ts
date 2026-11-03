@@ -1753,7 +1753,6 @@ export function protocolJsonSchema(): JsonSchema {
               olderThan: { type: 'integer', minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
               worktrees: { type: 'boolean' },
               delete: { type: 'boolean' },
-              idleMs: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
             },
           }),
           request('desktop.worktree.warm.subscribe', {

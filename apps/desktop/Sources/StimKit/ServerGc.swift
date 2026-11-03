@@ -38,7 +38,7 @@ public struct ServerGcResult: Sendable {
     case "--json": json = true
     case "--delete": params["delete"] = .bool(true)
     case "--worktrees": params["worktrees"] = .bool(true)
-    case "--cache", "--older-than", "--idle":
+    case "--cache", "--older-than":
       index += 1
       guard index < command.arguments.count, !command.arguments[index].hasPrefix("--") else {
         throw ServerError(code: "bad-request", message: "Desktop cleanup option requires a value.")
@@ -50,20 +50,11 @@ public struct ServerGcResult: Sendable {
           throw ServerError(code: "bad-request", message: "Choose a cache for cleanup.")
         }
         params["cache"] = .string(value)
-      case "--older-than":
+      default:
         guard let days = Int(value), (-maxInteger...maxInteger).contains(days) else {
           throw ServerError(code: "bad-request", message: "Cleanup age must be a whole number of days.")
         }
         params["olderThan"] = .number(Double(days))
-      default:
-        let duration = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let digits = duration.dropLast()
-        let units = ["m": 60_000, "h": 3_600_000, "d": 86_400_000]
-        guard let unit = duration.last, let multiplier = units[String(unit)],
-          digits.first != "0", digits.allSatisfy({ $0 >= "0" && $0 <= "9" }),
-          let count = Int(digits), count > 0, count <= maxInteger / multiplier
-        else { throw ServerError(code: "bad-request", message: "Choose a positive whole idle duration in m, h or d.") }
-        params["idleMs"] = .number(Double(count * multiplier))
       }
     default: throw ServerError(code: "bad-request", message: "Unsupported Desktop cleanup option.")
     }

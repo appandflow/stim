@@ -173,11 +173,11 @@ function machineSetting(key: string, env: NodeJS.ProcessEnv): { value: unknown }
 
 /**
  * The window after which stim-server stops a hosted session whose client is gone: the machine-scope
- * `maintenance.idleStopHours` of the home it runs in, 0 unless `maintenance.mode` is on. An invalid value is reported
- * so the caller stops nothing.
+ * `maintenance.idleStopHours` of the home it runs in, 0 unless `daemon.mode` is on. An invalid value is reported so
+ * the caller stops nothing.
  */
 export function hostedIdleStopHours(env: NodeJS.ProcessEnv): { hours: number } | { invalid: string } {
-  const mode = machineSetting('maintenance.mode', env);
+  const mode = machineSetting('daemon.mode', env);
   if ('invalid' in mode) return mode;
   if (mode.value !== 'on') return { hours: 0 };
   const hours = machineSetting('maintenance.idleStopHours', env);

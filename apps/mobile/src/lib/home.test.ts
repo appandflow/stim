@@ -887,25 +887,22 @@ describe('budgetRows', () => {
   it('describes the budget settings stim settings --json reports', () => {
     const settings = {
       settings: [
-        { key: 'budget.minFreeDiskGb', value: 20 },
-        { key: 'budget.hardFloorDiskGb', value: 0 },
-        { key: 'budget.maxCommittedMemoryGb', value: null },
-        { key: 'budget.maxLiveWorkspaces', value: 4 },
+        { key: 'disk.minFreeGb', value: 20 },
+        { key: 'disk.hardFloorGb', value: 0 },
+        { key: 'budget.minFreeDiskGb', value: 99 },
         { key: 'ios.runtime', value: null },
       ],
     };
     expect(budgetRows(settings)).toEqual([
       { label: 'Reclaims Disk', value: 'below 20 GB free' },
       { label: 'Refuses to Run', value: 'never' },
-      { label: 'Memory Budget', value: '60% of memory' },
-      { label: 'Active Workspaces', value: '4' },
     ]);
     expect(budgetRows({ settings: 'nope' })).toEqual([]);
   });
 });
 
 describe('minFreeDiskGb', () => {
-  const setting = (value: unknown) => ({ settings: [{ key: 'budget.minFreeDiskGb', value }] });
+  const setting = (value: unknown) => ({ settings: [{ key: 'disk.minFreeGb', value }] });
 
   it('reads the positive floor the Mac reports', () => {
     expect(minFreeDiskGb(setting(20))).toBe(20);

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { collectIdleDevicesAsync } from '../commands/gc/idle.ts';
+import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
 
 import { createIosSimSnapshot } from '../devices/ios.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -114,9 +114,9 @@ test.each(['host', 'instrumentation'])(
     });
     setExecutor(executor);
     const devices = await responsive(() =>
-      collectIdleDevicesAsync(loadConfig(), [], [], NOW, { HOME: join(base, 'private-user') }),
+      collectOwnedDeviceActivityAsync(loadConfig(), [], NOW, { HOME: join(base, 'private-user') }),
     );
-    expect(devices).toEqual([]);
+    expect(devices.filter((device) => device.activity.state === 'idle')).toEqual([]);
   },
 );
 

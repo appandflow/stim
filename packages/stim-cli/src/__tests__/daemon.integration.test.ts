@@ -13,7 +13,6 @@ import { beforeCommand, ensureDaemon, requestDaemonTick } from '../daemon/client
 import * as measure from '../daemon/measure.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
 import { runDaemon } from '../daemon/run.ts';
-import { daemonStatus } from '../daemon/status.ts';
 import * as maintenanceRun from '../maintenance/run.ts';
 import { saveConfig } from '../workspace/config.ts';
 
@@ -193,7 +192,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       CI: '1',
       STIM_HOME: home,
       STIM_DAEMON: 'report',
-      STIM_MAINTENANCE: 'off',
+      STIM_DISK_MIN_FREE_GB: '12',
       STIM_MAINTENANCE_IDLE_STOP_HOURS: '2',
       AGENT_DEVICE_CLAIMS_DIR: '/claims',
       ANDROID_SDK_HOME: '/android',
@@ -249,7 +248,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
   }, 20_000);
 });
 
-test('win32 runs no daemon: a command starts none and status reports it off, whatever STIM_DAEMON says', async () => {
+test('on win32 a command starts no daemon, whatever STIM_DAEMON says', async () => {
   const spawn = vi.fn<ReturnType<typeof getExecutor>['spawn']>(() => {
     throw new Error('not started in this test');
   });
@@ -259,16 +258,21 @@ test('win32 runs no daemon: a command starts none and status reports it off, wha
     platform.mockRestore();
     resetExecutor();
   });
-  const env = { ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' };
 
-  expect(await ensureDaemon(env)).toBe(false);
+  expect(await ensureDaemon({ ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' })).toBe(false);
   expect(spawn).not.toHaveBeenCalled();
-  expect(daemonStatus(env)).toMatchObject({ mode: 'off', running: null });
 });
 
-test('doctor, and start, ios and android with no daemon holding the home, run automatic maintenance in-process', async () => {
+test('doctor, and start, ios and android with no daemon holding the home, run automatic maintenance in-process unless daemon.mode is off', async () => {
   const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
-  const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'off' };
+  setExecutor({
+    ...getExecutor(),
+    spawn() {
+      throw new Error('no daemon starts in this test');
+    },
+  });
+  onTestFinished(() => resetExecutor());
+  const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'on' };
   delete env[HOME_PASSES_TEST_GUARD_ENV];
 
   for (const name of ['start', 'ios', 'android', 'doctor', 'web', 'macos', 'revive', 'logs', 'status'])
@@ -276,6 +280,8 @@ test('doctor, and start, ios and android with no daemon holding the home, run au
   expect(ran.mock.calls).toEqual(['start', 'ios', 'android', 'doctor'].map((name) => [name, { report: false }]));
 
   ran.mockClear();
+  for (const name of ['start', 'doctor']) await beforeCommand(name, { ...env, STIM_DAEMON: 'off' });
+  expect(ran).not.toHaveBeenCalled();
   await beforeCommand('doctor', { ...env, [HOME_PASSES_TEST_GUARD_ENV]: '1' });
   const claim = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon' }).acquired;
   assert(claim);

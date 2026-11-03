@@ -1019,11 +1019,11 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   capacityRefusals for this code. See \`guide lifecycle concurrency\`.`,
     },
     STIM_LOW_DISK: {
-      summary: 'free disk stayed below budget.hardFloorDiskGb after the pressure ladder ran',
+      summary: 'free disk stayed below disk.hardFloorGb after the pressure ladder ran',
       body: () => `STIM_LOW_DISK
   \`start\`, \`ios\` and \`android\` check free disk on the volumes holding
   the app and $STIM_HOME before they build or boot anything. Under
-  budget.hardFloorDiskGb (5 GB by default) they first have the pressure
+  disk.hardFloorGb (5 GB by default) they first have the pressure
   ladder run (\`guide lifecycle budget\`): idle workspaces, parked devices,
   shared caches, dormant devices, node_modules and Pods of idle worktrees,
   Gradle and TMPDIR leftovers. This code means a volume was still under the
@@ -1035,13 +1035,13 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Android emulators. \`stim status\` shows the pressure level and
   $STIM_HOME/daemon/daemon.ndjson what the ladder did. To free more:
 
-    stim gc                            # what else Stim can reclaim
-    stim gc --delete                   # clear idle workspace outputs, dead entries
-    stim gc --delete --cache all       # empty the shared caches
+    stim gc                            # what the ladder and gc would reclaim
+    stim gc --delete                   # run the ladder at high, prune dead entries
+    stim gc --delete --cache all       # the ladder at critical, empty the caches
     stim gc --delete --worktrees       # remove clean, idle worktrees
 
   Ask before deleting anything outside Stim, such as Xcode DerivedData or
-  simulators Stim did not create. Lowering budget.hardFloorDiskGb (0 never
+  simulators Stim did not create. Lowering disk.hardFloorGb (0 never
   refuses) only removes the protection.`,
     },
     STIM_NO_REMOTE_SESSION: {
@@ -1433,7 +1433,13 @@ captured"  (in metro.ndjson, bare RN)
   image that has it, or an sdkmanager install when none does.
   \`gc --json --cache <name>\` refuses with STIM_BAD_ARG when no shared cache
   carries the name; the remedy names the caches on this machine. \`gc\`
-  refuses --cache together with --worktrees the same way.
+  refuses --cache together with --worktrees the same way. \`stim settings
+  set\` and \`get\` refuse a removed setting, naming what replaced it, and
+  \`start\`, \`ios\`, \`android\`, \`web\`, \`macos\`, \`revive\` and \`gc\` refuse
+  while the environment sets a removed setting's variable, such as
+  STIM_MAINTENANCE, or a config file still holds a removed setting's old value
+  that turned something off; unset it, or set its replacement, such as
+  STIM_DAEMON or daemon.mode (\`guide settings\`, REMOVED SETTINGS).
   A working directory with no supported project above it gets the same
   STIM_NO_PROJECT refusal from \`start\`, \`ios\`, \`android\`, \`stop\`,
   \`reload\`, \`logs\`, \`doctor\` and \`device lock|unlock\`. With \`--json\` the { code, message, remedy } object

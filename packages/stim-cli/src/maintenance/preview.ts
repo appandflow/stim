@@ -40,7 +40,6 @@ export async function plannedMaintenance(
     sweep = false,
     worktrees = false,
     idle = false,
-    idleHostedOnly = true,
     refresh = true,
     background = false,
     operation,
@@ -49,7 +48,6 @@ export async function plannedMaintenance(
     sweep?: boolean;
     worktrees?: boolean;
     idle?: boolean;
-    idleHostedOnly?: boolean;
     refresh?: boolean;
     background?: boolean;
     operation?: StimContext;
@@ -147,7 +145,7 @@ export async function plannedMaintenance(
           now,
           env,
           operation,
-          hostedOnly: idleHostedOnly,
+          hostedOnly: true,
           devices: operation
             ? cachedDeviceActivityAsync(now, env, operation.signal, operation)
             : cachedDeviceActivity(now),
@@ -196,7 +194,7 @@ export async function previewMaintenance({
         actions: [],
         blocked: [],
         skips: [],
-        note: 'maintenance.mode is off',
+        note: 'daemon.mode is off',
       };
     const pressure = operation
       ? await measurePressureAsync(state?.pressure ?? null, Date.now(), operation)
@@ -204,8 +202,6 @@ export async function previewMaintenance({
     const result = await plannedMaintenance(state?.sizes ?? [], settings, {
       devices,
       sweep: true,
-      idle: true,
-      idleHostedOnly: false,
       refresh,
       operation,
     });
