@@ -935,6 +935,13 @@ export class DeviceHost {
     if (owned.metro === metro) delete owned.metro;
   }
 
+  /** Whether `session` is a ready session of `client` that this server holds. */
+  owns(client: string, session: string): boolean {
+    if (this.closed || !this.options.allowed(client)) return false;
+    const record = readHostedSessions().find((each) => each.client === client && each.id === session);
+    return record?.state === 'ready' && this.owned.has(session);
+  }
+
   viewTarget(client: string, session: string, probeRunning = false): HostedViewTarget {
     if (this.closed || !this.options.allowed(client)) throw new Error('Current device-host approval is required.');
     const record = readHostedSessions().find((each) => each.client === client && each.id === session);

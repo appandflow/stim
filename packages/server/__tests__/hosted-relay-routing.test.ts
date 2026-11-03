@@ -208,3 +208,63 @@ it('refuses the clipboard calls for a host without device-clipboard, without sen
     { id: 3, error: { code: 'action-failed', message: expect.stringContaining('update its Stim') } },
   ]);
 });
+
+describe('presence of a hosted device on the relay', () => {
+  function relayOf() {
+    const routes = new Map<string, Parameters<Upstream['route']>[1]>();
+    const connection = {
+      request: async (method: string) => ({
+        result: method === 'device-host.frames.subscribe' ? { subscription: 'upstream' } : { session: 'host-control' },
+      }),
+      supports: () => false,
+      route: (name: string, route: Parameters<Upstream['route']>[1]) => {
+        routes.set(name, route);
+        return () => routes.delete(name);
+      },
+    } as unknown as Upstream;
+    const touch = vi.fn<(key: string, who: unknown, touch: unknown) => void>();
+    const leave = vi.fn<(key: string, id: string) => void>();
+    const relay = new HostedRelay(
+      { acquire: async () => ({ connection, release: () => {} }) } as unknown as HostConnections,
+      () => {},
+      () => 0,
+      () => 'local',
+      () => {},
+      () => {},
+      { touch, leave },
+    );
+    return { relay, routes, touch, leave };
+  }
+  const host = { machine: 'mini', session: 'host-session' };
+
+  it("shows the connection's own touches on a hosted device as the host's and takes them off when control ends", async () => {
+    const f = relayOf();
+    await f.relay.begin(1, host, false, () => true, {
+      workspace: '/w',
+      device: { id: 'viewer', name: 'Desktop' },
+      platform: 'ios',
+      slot: 'tablet',
+    });
+    f.relay.control(2, 'input.touch', { session: 'h1', phase: 'down', x: 0.2, y: 0.7 });
+    f.relay.control(3, 'input.touch', { session: 'h1', phase: 'up', x: 0.3, y: 0.8, x2: 0.4, y2: 0.9 });
+    f.relay.control(4, 'input.touch', { session: 'h1', phase: 'sideways', x: 0.2, y: 0.7 });
+    const key = JSON.stringify(['/w', 'ios', 'tablet', false]);
+    const who = { id: 'h1', kind: 'host', name: 'Host', color: 0 };
+    expect(f.touch.mock.calls).toEqual([
+      [key, who, { phase: 'down', x: 0.2, y: 0.7, at: expect.any(Number) }],
+      [key, who, { phase: 'up', x: 0.3, y: 0.8, second: { x: 0.4, y: 0.9 }, at: expect.any(Number) }],
+    ]);
+    f.relay.control(5, 'control.end', { session: 'h1' });
+    expect(f.leave).toHaveBeenCalledWith(key, 'h1');
+  });
+
+  it('starts presence for a subscription once it has its local id, and stops it when the subscription ends', async () => {
+    const f = relayOf();
+    const stop = vi.fn<() => void>();
+    const presence = vi.fn<(subscription: string) => () => void>(() => stop);
+    await f.relay.subscribe(1, host, { platform: 'ios', slot: 'default' }, () => {}, presence);
+    expect(presence).toHaveBeenCalledWith('local');
+    f.routes.get('s:upstream')!.closed(new Error('host offline'));
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+});

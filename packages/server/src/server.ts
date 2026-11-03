@@ -63,6 +63,8 @@ import { agentActionReaders, configuredAgentDriver, stoppingAgentDriver } from '
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
 import { HOSTED_IDLE_SWEEP_MS } from './hosted-idle.ts';
+import { HostedPresence } from './hosted-presence.ts';
+import { HostedPresenceBridge } from './hosted-presence-bridge.ts';
 import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
@@ -1612,6 +1614,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const controllers = new Map<ServerSocket, Controller>();
   const controlLimits: ControlLimits = { ...CONTROL_LIMITS, ...options.controlLimits };
   const adbEmulators = options.env[ADB_EMULATORS_SWITCH] === '1';
+  const hostedPresence = new HostedPresence();
   const agentDrivers = new HostedAgentHost({
     resolve: () => configuredAgentDriver(loadConfig()?.hosting?.agentDriver, options.env, serverDir()),
     resolveDevice: (app, stopping) =>
@@ -1625,6 +1628,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ('client' in from ? from.client === client : from.node !== null && agentNodes.get(client) === from.node) &&
       approved().deviceHost.some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
     withdrawn: (session) => {
+      hostedPresence.forget(session);
       for (const stream of agentStreams.get(session) ?? []) stream.destroy();
     },
   });
@@ -1671,6 +1675,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const header = request.headers['x-agent-device-token'];
     const token = bearer ?? (typeof header === 'string' ? header : null);
     const from = link ? { client: link.client } : { node: peer === 'local' ? null : await peerNode(request, peer) };
+    if (request.method === 'POST') hostedPresence.watch(session, response);
     const verdict = agentDrivers.forward(session, token, request, response, from);
     if (verdict === 'forbidden') agentLimiter.record(peer);
     else if (verdict === 'ok') hostedDevices.clientActed(session);
@@ -1774,7 +1779,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         failed: listener.failed,
       }),
     route: exposedRoute,
-    hosted: (host, request) => new HostedShareSource(hostConnections, host, request, auditSafely),
+    hosted: (host, request) =>
+      new HostedShareSource(hostConnections, host, request, auditSafely, {
+        hub: presence,
+        key: presenceKey(request.workspace, request.platform, request.slot ?? 'default', false),
+        follow: (key) => hostedBridge.follow(key, host),
+      }),
     lookup: { adbEmulators },
     limits: leaseGrace(controlLimits.leaseFor),
     recordingChanged: () => recorder?.refresh(),
@@ -1851,6 +1861,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
     options.serverVersion,
   );
+  const hostedBridge = new HostedPresenceBridge(hostConnections, presence);
   let revocationCheck: NodeJS.Timeout | null = null;
   let checkedRegistry: string | null = null;
   const checkRevocations = () => {
@@ -2003,6 +2014,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       openSubscription,
       (subscription) => subscriptions.delete(subscription),
       auditSafely,
+      presence,
     );
     relays.set(socket, relay);
 
@@ -2550,6 +2562,27 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       running.add(cancel);
     }
 
+    /** Presence for a relayed hosted subscription that asked for it: the host's, and this machine's own. */
+    function hostedPresenceFor(
+      target: JsonObject,
+      host: { machine: string; session: string },
+      dir: string | null,
+    ): ((subscription: string) => () => void) | undefined {
+      const { platform, slot } = target;
+      if (target.presence !== true || (platform !== 'ios' && platform !== 'android') || !dir) return undefined;
+      const key = presenceKey(dir, platform, typeof slot === 'string' ? slot : 'default', false);
+      return (subscription) => {
+        const unfollow = hostedBridge.follow(key, host);
+        const unsubscribe = presence.subscribe(key, (participants) =>
+          send(socket, { event: 'presence', subscription, participants }),
+        );
+        return () => {
+          unsubscribe();
+          unfollow();
+        };
+      };
+    }
+
     function subscribeFrames(
       id: RequestId,
       params: unknown,
@@ -2611,7 +2644,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 : 'Hosted macOS frames require the default, non-physical target without replay.',
           );
         }
-        return void relay.subscribe(id, host, target, (subscription, stop) => subscriptions.set(subscription, stop));
+        return void relay.subscribe(
+          id,
+          host,
+          target,
+          (subscription, stop) => subscriptions.set(subscription, stop),
+          hostedPresenceFor(target, host, resolvedDir),
+        );
       }
       const offersVideo = wantsVideo && !wantsDuo && (archive !== undefined || frameHelper() !== null);
       const replayAt = parseReplay(at, rate);
@@ -4747,6 +4786,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return error(id, 'action-failed', (cause as Error).message);
         }
       }
+      if (method === 'device-host.presence.subscribe') {
+        if (typeof params.session !== 'string' || !hostedDevices.owns(session.id, params.session))
+          return error(id, 'unknown-session', 'This client has no such ready hosted session.');
+        const subscription = openSubscription(id);
+        if (!subscription) return;
+        subscriptions.set(
+          subscription,
+          hostedPresence.subscribe(params.session, (participants) =>
+            send(socket, { event: 'presence', subscription, participants }),
+          ),
+        );
+        return;
+      }
       if (method === 'device-host.frames.keyframe') {
         const name = params.subscription;
         const keyframe = typeof name === 'string' ? keyframes.get(name) : undefined;
@@ -5306,6 +5358,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       sampler.stop();
       await settle(shares.close());
       presence.close();
+      hostedPresence.close();
       await settle(control.close());
       await settle(agentDrivers.close());
       await settle(hostedDevices.close());

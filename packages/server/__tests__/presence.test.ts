@@ -1,4 +1,4 @@
-import { AGENT_LINGER_MS, MOVE_FLUSH_MS, PresenceHub } from '../src/presence.ts';
+import { AGENT_LINGER_MS, MOVE_FLUSH_MS, parseHostedAgent, PresenceHub } from '../src/presence.ts';
 
 test('a late subscriber gets the agent at once, and the agent leaves the roster after its last command ended', () => {
   vi.useFakeTimers();
@@ -58,5 +58,32 @@ describe('human presence', () => {
     hub.leave('d', 'v1');
     expect(seen).toEqual([[ann], [{ ...ann, touch: null }]]);
     hub.close();
+  });
+});
+
+describe('agent actions another machine published', () => {
+  const agent = { id: 'a1', kind: 'agent', name: 'Agent · press', color: 1 };
+  const gesture = {
+    kind: 'tap',
+    from: { x: 0.5, y: 0.5 },
+    durationMs: 0,
+    target: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+  };
+
+  test('takes the agent with its command and gesture, and nothing else a host Mac could put in the event', () => {
+    expect(parseHostedAgent([{ ...agent, gesture }, agent, { ...agent, touch: null }])).toEqual([
+      { command: 'press', gesture },
+      { command: 'press' },
+    ]);
+    expect(
+      parseHostedAgent([
+        { id: 'v1', kind: 'viewer', name: 'Agent · press', color: 2 },
+        { ...agent, name: 'Ann' },
+        { ...agent, name: 'Agent · Press; rm' },
+        { ...agent, gesture: { kind: 'tap', from: { x: 'left', y: 0 }, durationMs: 0 } },
+        null,
+      ]),
+    ).toEqual([]);
+    expect(parseHostedAgent({ participants: [agent] })).toEqual([]);
   });
 });

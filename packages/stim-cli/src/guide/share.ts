@@ -56,7 +56,10 @@ share a device that shows secrets. One viewer at a time holds the touch
 pointer, from finger down to finger up or ten seconds without input: another
 viewer's touch meanwhile is dropped and that viewer sees who is using the
 screen. A view-only viewer sees the same and sends nothing. Hosted sessions
-(--remote) show a viewer only its own touches.
+(--remote) work the same: viewers, touches and the pointer grab live in this
+machine's stim-server, and the agent's actions on the hosted device come from
+the host Mac (a host on an older Stim shows none; stim agent-device still shows
+the agent's command).
 
 With --no-password, anyone with the link can watch, or control with
 --control; stim share warns about it on stderr, and share list shows such a

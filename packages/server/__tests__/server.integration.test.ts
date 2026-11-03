@@ -1340,6 +1340,7 @@ describe('pairing', () => {
           'presence',
           'device-clipboard',
           'share-view-password',
+          'hosted-presence',
         ],
         actions: [],
         device: { name: 'Test phone' },

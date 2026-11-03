@@ -114,7 +114,10 @@ little, but keep it in mind when the device shows secrets.
 One viewer at a time holds the touch pointer: from finger down to finger up,
 or until ten seconds pass without input. A touch from another viewer in the
 meantime is dropped, and that viewer sees "Name is using the screen". A share
-of a hosted session shows each viewer only its own touches.
+of a hosted session works the same, and also shows what an agent does on the
+hosted device with `stim agent-device`: its command as "Agent", a ripple where
+it tapped or swiped and an outline of the element it pressed. The outline
+needs a `snapshot` of that session first.
 
 A watch-only share has no button groups. The page fits the window without
 scrolling. With `--control`, click the screen to tap and type with the keyboard. While the screen has focus,
