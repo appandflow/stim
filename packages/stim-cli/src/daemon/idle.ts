@@ -226,7 +226,7 @@ export function writeWorkspaceEvent(
 }
 
 /** Whether `stim revive` resumes the workspace: its dev server recorded an idle stop and its port is still reserved. */
-function revivable(path: string): boolean {
+export function revivable(path: string): boolean {
   return readIdleStop(readWorkspaceState(path)) !== null && typeof getProject(path)?.metroPort === 'number';
 }
 

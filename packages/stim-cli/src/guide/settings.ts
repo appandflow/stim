@@ -669,14 +669,17 @@ run waiting to boot, and automatic maintenance.
 
   on      start, ios, android, web, macos and revive start one stim-daemon per
           Stim home, scoped homes included. It ticks each minute while
-          anything runs there and every 5 minutes otherwise, and exits two
-          ticks after nothing runs and every workspace is dormant or removed,
-          so the dormant stage fires in a quiet home. Each tick it measures
-          the machine once, classifies the pressure level, moves idle
-          workspaces into the idle stage (idle.minutes) and dormant ones into
-          the dormant stage (idle.dormantDays), runs the pressure ladder above
-          normal, reclaims a device for a run waiting to boot, and runs
-          automatic maintenance.
+          anything runs there or the pressure level is above normal, and
+          every 5 minutes otherwise. It exits two ticks after nothing runs and
+          no workspace waits for its dormant stage, so the stage fires in a
+          quiet home; a workspace waits until its idle.dormantDays have
+          passed, unless maintenance.keep, idle.minutes 0, a hosted placement
+          or an unreadable state keeps it out. Each tick it measures the
+          machine once, classifies the pressure level, moves idle workspaces
+          into the idle stage (idle.minutes) and dormant ones into the dormant
+          stage (idle.dormantDays), runs the pressure ladder above normal,
+          reclaims a device for a run waiting to boot, and runs automatic
+          maintenance.
   report  the same passes log what they would do and act on nothing.
   off     no daemon and no pass: each dev server supervisor stops its own dev
           server and devices after idle.minutes, and nothing times a device

@@ -3,7 +3,7 @@ import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonPressure } from '@stim-cli/core/state';
-import { readDormantStage, readIdleStage } from '@stim-cli/core/state';
+import { IDLE_STOP_KEY, readDormantStage, readIdleStage } from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
 import { runIdlePass } from '../daemon/idle.ts';
@@ -17,6 +17,7 @@ import * as teardown from '../devices/teardown.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as fsUtil from '../fs-util.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
+import * as lightened from '../workspace/lightened.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
@@ -137,6 +138,36 @@ describe('the dormant stage', () => {
       expect(await dormant()).toEqual([]);
     },
   );
+
+  test('the restore hint names stim revive while the idle stop survives and no device was deleted', async () => {
+    const root = join(projects, 'revivable');
+    mkdirSync(root);
+    ensureWorkspaceStorage(root);
+    upsertProject(root, { metroPort: 59126 });
+    recordWorkspaceUse(root, new Date(Date.now() - 4 * DAY_MS));
+    writeWorkspaceState(root, {
+      [IDLE_STOP_KEY]: { reason: 'idle', at: new Date(Date.now() - 4 * DAY_MS).toISOString(), idleMinutes: 15 },
+    });
+    mkdirSync(workspaceLogsDir(root), { recursive: true });
+    writeFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), '{}\n');
+    const other = join(projects, 'never-served');
+    mkdirSync(other);
+    ensureWorkspaceStorage(other);
+    upsertProject(other, {});
+    recordWorkspaceUse(other, new Date(Date.now() - 4 * DAY_MS));
+    mkdirSync(workspaceLogsDir(other), { recursive: true });
+    writeFileSync(join(workspaceLogsDir(other), 'metro.ndjson'), '{}\n');
+
+    const actions = await dormant();
+
+    expect(actions.map(({ target, restore }) => [target, restore])).toEqual(
+      expect.arrayContaining([
+        [root, 'stim revive'],
+        [other, 'stim ios or stim android'],
+      ]),
+    );
+    expect(actions.find(({ target }) => target === root)?.detail).toMatch(/stim revive resumes it\.$/);
+  });
 
   test('a fraction of a day shortens the clock, and a Stim command since restarts it', async () => {
     saveConfig({ ...loadConfig()!, idle: { dormantDays: 0.01 } });
@@ -395,10 +426,16 @@ describe('rung 5', () => {
       ...real,
       runFileQuiet: (file, args, opts) =>
         file === 'git' ? real.runFileQuiet(file, args, opts) : file === 'ps' ? '' : null,
+      runFileQuietAsync: async (file, args, opts) =>
+        file === 'ps'
+          ? `${process.pid} node\n`
+          : file === 'lsof'
+            ? `p${process.pid}\nn${tmpdir()}\n`
+            : real.runFileQuietAsync(file, args, opts),
     });
   });
 
-  function linkedWorktrees(names: string[]): Record<string, string> {
+  function linkedWorktrees<const N extends string>(names: readonly N[]): Record<N, string> {
     const repo = join(projects, 'repo');
     mkdirSync(repo, { recursive: true });
     const git = (args: string, cwd = repo) =>
@@ -419,7 +456,7 @@ describe('rung 5', () => {
       mkdirSync(join(root, 'ios', 'Pods'), { recursive: true });
       writeFileSync(join(root, 'ios', 'Pods', 'Manifest.lock'), 'PODFILE CHECKSUM: 1\n');
     }
-    const roots: Record<string, string> = {};
+    const roots = {} as Record<N, string>;
     for (const name of names) {
       git(`worktree add -q "${join(projects, name)}" -b ${name}`);
       const root = realpathSync.native(join(projects, name));
@@ -452,24 +489,42 @@ describe('rung 5', () => {
       pressure(level),
     );
 
-  test('at critical it deletes node_modules and Pods of an idle linked worktree in one tick, and nothing at high', async () => {
-    const { idle } = linkedWorktrees(['idle']);
-    register(idle!);
+  test('at critical it deletes node_modules and Pods of an idle linked worktree in one tick, and nothing at high; it keeps one used since', async () => {
+    const { idle, recent, late } = linkedWorktrees(['idle', 'recent', 'late']);
+    register(idle);
+    register(recent);
+    recordWorkspaceUse(recent, new Date(Date.now() - MINUTE_MS));
+    register(late);
+    const restoreProblem = lightened.restoreProblem;
+    vi.spyOn(lightened, 'restoreProblem').mockImplementation(async (candidate, ...rest) => {
+      if (candidate.worktree === late) recordWorkspaceUse(late);
+      return restoreProblem(candidate, ...rest);
+    });
     await ladder('high');
-    expect(existsSync(join(idle!, 'node_modules'))).toBe(true);
+    expect(existsSync(join(idle, 'node_modules'))).toBe(true);
     const { actions } = await ladder('critical');
-    expect(existsSync(join(idle!, 'node_modules'))).toBe(false);
-    expect(existsSync(join(idle!, 'ios', 'Pods'))).toBe(false);
-    expect(actions.filter((action) => action.rung === 5).map((action) => action.outcome)).toEqual(['done', 'done']);
+    expect(existsSync(join(idle, 'node_modules'))).toBe(false);
+    expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(false);
+    for (const root of [recent, late]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
+    const rung5 = actions.filter((action) => action.rung === 5);
+    expect(rung5.filter((action) => action.workspace === idle).map((action) => action.outcome)).toEqual([
+      'done',
+      'done',
+    ]);
+    expect(rung5.filter((action) => action.workspace === recent)).toEqual([]);
+    expect(rung5.find((action) => action.workspace === late)).toMatchObject({
+      outcome: 'kept',
+      detail: 'it is no longer idle',
+    });
   });
 
   test("it skips a worktree with no workspace in this home, the command's own workspace and one whose dev server runs", async () => {
     const { stranger, own, serving } = linkedWorktrees(['stranger', 'own', 'serving']);
     register(realpathSync.native(join(projects, 'repo')));
-    register(own!);
-    register(serving!, { metroPort: 59125, supervisor: { pid: process.pid, port: 59999 } });
+    register(own);
+    register(serving, { metroPort: 59125, supervisor: { pid: process.pid, port: 59999 } });
     const { actions } = await ladder('critical', own);
-    for (const root of [stranger!, own!, serving!]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
+    for (const root of [stranger, own, serving]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
     expect(actions.filter((action) => action.rung === 5)).toEqual([]);
   });
 });

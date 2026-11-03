@@ -1,27 +1,41 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { daemonNdjsonFile, readDaemonSnapshot, readDormantStage } from '@stim-cli/core/state';
+import { connect } from 'node:net';
+import {
+  daemonNdjsonFile,
+  daemonSocket,
+  maintenanceStateFile,
+  workspaceStateFile,
+  readDaemonSnapshot,
+  readDormantStage,
+  readMaintenanceState,
+  type DaemonMode,
+} from '@stim-cli/core/state';
 import * as measure from '../daemon/measure.ts';
 import { runDaemon } from '../daemon/run.ts';
+import { pendingDormant } from '../daemon/stages.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import * as idleStop from '../maintenance/idle-stop.ts';
 import * as maintenanceRun from '../maintenance/run.ts';
-import { saveConfig, upsertProject } from '../workspace/config.ts';
+import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
 const MINUTE_MS = 60_000;
 let home: string;
+let freeMb: number;
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cadence-')));
   process.env.STIM_HOME = home;
+  freeMb = 500_000;
   const real = getExecutor();
   setExecutor({ ...real, runFileQuiet: (file) => (file === 'ps' ? '' : null) });
   vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue(undefined as never);
   vi.spyOn(measure, 'measureTick').mockImplementation(async () => ({
     measurement: {
-      disk: [{ volume: '/', freeMb: 500_000 }],
+      disk: [{ volume: '/', freeMb }],
       memory: { level: 'normal', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
       load1: 0,
       cores: 8,
@@ -33,6 +47,12 @@ beforeEach(() => {
     simsError: null,
     devices: [],
   }));
+  vi.spyOn(measure, 'measureDisk').mockImplementation(async () => [{ volume: '/', freeMb }]);
+  vi.spyOn(measure, 'measureMemory').mockResolvedValue({
+    level: 'normal',
+    availableBytes: 8 * 1024 ** 3,
+    totalBytes: 16 * 1024 ** 3,
+  });
 });
 
 afterEach(() => {
@@ -88,4 +108,187 @@ test('a quiet home with a workspace not yet dormant keeps the daemon at the 5-mi
   await vi.waitFor(() => expect(exited).toBe(true));
   await daemon;
   expect(ticks().map(({ at }) => Math.round((at - started) / MINUTE_MS))).toEqual([1, 6, 11, 16, 21, 26]);
+});
+
+test('a quiet home ticks every minute while the pressure level is high, and every 5 minutes once it clears', async () => {
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  const root = join(home, 'app');
+  mkdirSync(root);
+  ensureWorkspaceStorage(root);
+  upsertProject(root, {});
+  mkdirSync(workspaceLogsDir(root), { recursive: true });
+  writeFileSync(join(workspaceLogsDir(root), 'device.ndjson'), '{}\n');
+  recordWorkspaceUse(root, new Date(Date.now() - MINUTE_MS));
+  freeMb = 10 * 1024;
+
+  let exited = false;
+  const daemon = (async () => {
+    await runDaemon({ mode: 'on' });
+    exited = true;
+  })();
+  await vi.advanceTimersByTimeAsync(MINUTE_MS);
+  await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+  expect(readDaemonSnapshot()).toMatchObject({ pressure: { level: 'high' }, intervalMs: MINUTE_MS });
+  await vi.advanceTimersByTimeAsync(MINUTE_MS);
+  await vi.waitFor(() => expect(ticks()).toHaveLength(2));
+
+  freeMb = 500_000;
+  await vi.advanceTimersByTimeAsync(MINUTE_MS);
+  await vi.waitFor(() => expect(ticks()).toHaveLength(3));
+  expect(readDaemonSnapshot()).toMatchObject({ pressure: { level: 'normal' }, intervalMs: 5 * MINUTE_MS });
+
+  rmSync(workspaceLogsDir(root), { recursive: true, force: true });
+  await vi.advanceTimersByTimeAsync(2 * 5 * MINUTE_MS);
+  await vi.waitFor(() => expect(exited).toBe(true));
+  await daemon;
+});
+
+function quietWorkspace(usedAgoMs = MINUTE_MS): string {
+  const root = join(home, 'app');
+  mkdirSync(root, { recursive: true });
+  ensureWorkspaceStorage(root);
+  upsertProject(root, {});
+  mkdirSync(workspaceLogsDir(root), { recursive: true });
+  writeFileSync(join(workspaceLogsDir(root), 'device.ndjson'), '{}\n');
+  recordWorkspaceUse(root, new Date(Date.now() - usedAgoMs));
+  return root;
+}
+
+function planRemoval({ kept = false }: { kept?: boolean } = {}): void {
+  mkdirSync(join(home, 'maintenance'), { recursive: true });
+  writeFileSync(
+    maintenanceStateFile(),
+    JSON.stringify({
+      version: 1,
+      lastAt: {},
+      pressure: null,
+      sizes: [],
+      lastPass: null,
+      recent: [],
+      plan: [{ kind: 'would-remove-worktree', target: '/w/merged', bytes: 0, reason: 'merged', check: 'worktree' }],
+      ...(kept ? { skipKeys: ['/w/merged'] } : {}),
+    }),
+  );
+  expect(readMaintenanceState()?.plan).toHaveLength(1);
+}
+
+/** Runs a quiet daemon for its first tick and two slow ones; ends one still running and says whether it exited first. */
+async function exitsAfterTwoQuietTicks(mode: DaemonMode = 'on'): Promise<boolean> {
+  const before = existsSync(daemonNdjsonFile()) ? ticks().length : 0;
+  let exited = false;
+  const daemon = (async () => {
+    await runDaemon({ mode });
+    exited = true;
+  })();
+  await vi.advanceTimersByTimeAsync(MINUTE_MS);
+  await vi.waitFor(() => expect(ticks()).toHaveLength(before + 1));
+  await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+  await vi.waitFor(() => expect(ticks()).toHaveLength(before + 2));
+  await vi.advanceTimersByTimeAsync(10);
+  const result = exited;
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  rmSync(join(home, 'maintenance'), { recursive: true, force: true });
+  await vi.advanceTimersByTimeAsync(3 * 5 * MINUTE_MS);
+  await vi.waitFor(() => expect(exited).toBe(true));
+  await daemon;
+  return result;
+}
+
+describe('what keeps a quiet daemon alive', () => {
+  test('a workspace not yet dormant does, and a planned removal in on mode that was not kept does', async () => {
+    quietWorkspace();
+    expect(await exitsAfterTwoQuietTicks()).toBe(false);
+    vi.stubEnv('STIM_DAEMON', 'on');
+    planRemoval();
+    expect(await exitsAfterTwoQuietTicks()).toBe(false);
+  });
+
+  test.each([
+    [
+      'idle.dormantDays 0',
+      () => {
+        quietWorkspace();
+        saveConfig({ version: 2, projects: loadConfig()?.projects ?? {}, repos: {}, idle: { dormantDays: 0 } });
+      },
+    ],
+    [
+      'maintenance.keep',
+      () => writeFileSync(join(quietWorkspace(), '.stim.json'), JSON.stringify({ maintenance: { keep: true } })),
+    ],
+    [
+      'idle.minutes 0',
+      () => writeFileSync(join(quietWorkspace(), '.stim.json'), JSON.stringify({ idle: { minutes: 0 } })),
+    ],
+    [
+      'a hosted placement',
+      () => {
+        quietWorkspace();
+        vi.spyOn(idleStop, 'hostedFacts').mockReturnValue({ placements: [], unreadable: ['hosted.json'] });
+      },
+    ],
+    [
+      'an unreadable state.json',
+      () => {
+        const root = quietWorkspace();
+        writeFileSync(workspaceStateFile(root), '{ not json');
+        expect(readWorkspaceState(root)).toBeNull();
+      },
+    ],
+    [
+      'a workspace past its dormant due time that the dormant pass keeps',
+      () => {
+        quietWorkspace(4 * 24 * 60 * MINUTE_MS);
+        vi.spyOn(idleStop, 'idleStopEvidence').mockResolvedValue({ activity: [], keep: ['a test blocker'] });
+      },
+    ],
+  ])('%s does not', async (_, setup) => {
+    setup();
+    expect(await exitsAfterTwoQuietTicks()).toBe(true);
+  });
+
+  test.each([
+    ['in report mode', 'on', 'report', false],
+    ['with STIM_DAEMON report', 'report', 'on', false],
+    ['once its last outcome was kept', 'on', 'on', true],
+  ] as const)('a planned removal %s does not', async (_, maintenance, mode, kept) => {
+    vi.stubEnv('STIM_DAEMON', maintenance);
+    planRemoval({ kept });
+    expect(await exitsAfterTwoQuietTicks(mode)).toBe(true);
+  });
+});
+
+test("a command's hello brings a quiet daemon back to the 60 s tick", async () => {
+  quietWorkspace();
+  let exited = false;
+  const daemon = (async () => {
+    await runDaemon({ mode: 'on' });
+    exited = true;
+  })();
+  await vi.advanceTimersByTimeAsync(MINUTE_MS);
+  await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+  expect(readDaemonSnapshot()).toMatchObject({ intervalMs: 5 * MINUTE_MS });
+  await new Promise<void>((resolve, reject) => {
+    const socket = connect(daemonSocket());
+    socket.once('error', reject);
+    socket.once('connect', () => socket.write(`${JSON.stringify({ op: 'hello' })}\n`));
+    socket.once('data', () => {
+      socket.destroy();
+      resolve();
+    });
+  });
+  await vi.advanceTimersByTimeAsync(MINUTE_MS);
+  await vi.waitFor(() => expect(ticks()).toHaveLength(2));
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  await vi.advanceTimersByTimeAsync(3 * 5 * MINUTE_MS);
+  await vi.waitFor(() => expect(exited).toBe(true));
+  await daemon;
+});
+
+test('an owned simulator is not pending dormancy while the simulator listing fails, since the dormant pass keeps it', () => {
+  const root = quietWorkspace();
+  const config = loadConfig();
+  expect(pendingDormant(config, { simsFailed: true }, { graceMs: 0 })).toBe(root);
+  upsertProject(root, { platforms: { ios: { deviceUdid: 'U1', owned: true } } });
+  expect(pendingDormant(loadConfig(), { simsFailed: false }, { graceMs: 0 })).toBe(root);
+  expect(pendingDormant(loadConfig(), { simsFailed: true }, { graceMs: 0 })).toBeNull();
 });

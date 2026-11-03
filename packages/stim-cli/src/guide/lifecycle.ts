@@ -2307,8 +2307,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   parked pool is untouched) and its logs are archived when archive.enabled is
   on. node_modules and Pods stay. \`stim status\` shows a dormant stage line,
   and --json \`dormantStage\` { at, dormantDays, deletedDevices, archived },
-  until the next Stim command in it; the next \`stim ios\` or \`stim
-  android\` creates a device.
+  until the next Stim command in it. When it deleted a device, the next
+  \`stim ios\` or \`stim android\` creates one; with none deleted, \`stim
+  revive\` resumes the workspace while its dev server's idle stop survives.
 
   IDLE SHUTDOWN (15 MINUTES BY DEFAULT): once a workspace has had no activity
   for idle.minutes, the stim-daemon shuts its owned simulators and emulators
@@ -2346,8 +2347,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   start           --json --wait <seconds> --remote --reset-cache
   ios             --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --install-runtime --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|local|auto|remote|remote-only|machine>
   android         --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas|local|auto|remote|remote-only|machine>
-  ios/android --wait bounds owned-device slot waits (default 600s), or physical
-  leases with --device (default 60s). Remote targets do not join this local
+  ios/android --wait bounds owned-device slot waits (without it, up to 90
+  minutes while the devices ahead are listed), or physical leases with
+  --device (default 60s). Remote targets do not join this local
   slot queue. --no-wait refuses a full/queued owned
   slot at once; its existing physical lease bypass is unchanged.
 
@@ -2916,7 +2918,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   and when Stim cannot read the holder's app id it says so rather than
   guessing. A free device is leased as usual under \`--no-wait\`. The two flags
   together are STIM_BAD_ARG. Without \`--device\`, they instead bound the
-  FIFO owned-device slot wait (default 600s); \`--no-wait\` refuses at once
+  FIFO owned-device slot wait (without it, up to 90 minutes while the devices
+  ahead are listed); \`--no-wait\` refuses at once
   when the cap is full or another run is queued. See \`guide lifecycle concurrency\`.
 
   A successful \`--device\` run reports \`lease: { kind, expiresAt }\` in its

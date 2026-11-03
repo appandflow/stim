@@ -161,7 +161,10 @@ function timeIn(at: string, now: number): string {
 function stageLine(state: EnvironmentState, snapshot: DaemonSnapshot | null, now: number): string {
   if (state.dormantStage) {
     const { at, deletedDevices, archived } = state.dormantStage;
-    return `  stage: dormant${timeIn(at, now)}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${archived ? '; logs archived' : ''}; the next \`stim ios\` or \`stim android\` creates a device`;
+    const back = deletedDevices.length
+      ? 'the next `stim ios` or `stim android` creates a device'
+      : `${state.metro?.idleStop ? '`stim revive`' : '`stim ios` or `stim android`'} resumes it`;
+    return `  stage: dormant${timeIn(at, now)}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${archived ? '; logs archived' : ''}; ${back}`;
   }
   if (state.idleStage) {
     const { at, idleMinutes, freedBytes } = state.idleStage;

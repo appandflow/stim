@@ -28,6 +28,7 @@ import {
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
+import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
@@ -152,22 +153,30 @@ function homeAlive(config: Config | null, measured: TickMeasurement): string | n
 
 /**
  * Work the daemon still has to do in a quiet home, which keeps it alive at the slow cadence: a workspace the dormant
- * stage will take, or a finished-worktree removal that automatic maintenance planned and has not done.
+ * stage will take (until its due time plus one slow tick), or a finished-worktree removal that automatic maintenance
+ * planned in `on` mode and did not keep the last time it ran.
  */
-function pendingWork(config: Config | null): string | null {
-  const dormant = pendingDormant(config);
+function pendingWork(
+  config: Config | null,
+  measured: TickMeasurement,
+  { mode, slowTickMs }: { mode: DaemonMode; slowTickMs: number },
+): string | null {
+  const dormant = pendingDormant(config, { simsFailed: measured.sims === null }, { graceMs: slowTickMs });
   if (dormant) return `${dormant} is not dormant yet`;
-  const removal = readMaintenanceState()?.plan.find((action) => action.kind === 'would-remove-worktree');
+  if (mode !== 'on' || resolveMaintenanceSettings(config).mode !== 'on') return null;
+  const state = readMaintenanceState();
+  const kept = new Set(state?.skipKeys ?? []);
+  const removal = state?.plan.find((action) => action.kind === 'would-remove-worktree' && !kept.has(action.target));
   return removal ? `the removal of ${removal.target} is pending` : null;
 }
 
 /**
  * The per-home daemon: holds `$STIM_HOME/daemon/claim`, serves its socket, and ticks every minute while something
- * runs in the home, every 5 minutes otherwise, and on demand, each tick measuring once, running the activity, dormant
- * and pressure passes and automatic maintenance, and writing `snapshot.json`. A command's contact brings it back to
- * the minute. It exits after two ticks in a row with nothing running, no work pending (a workspace not yet dormant, a
- * planned finished-worktree removal) and no contact, when `daemon.mode` turns off, or when a tick throws, releasing its
- * claim so each supervisor's own idle timer takes over.
+ * runs in the home or the pressure level is above normal, every 5 minutes otherwise, and on demand, each tick measuring
+ * once, running the activity, dormant and pressure passes and automatic maintenance, and writing `snapshot.json`. A
+ * command's contact brings it back to the minute. It exits after two ticks in a row with nothing running, no work
+ * pending (`pendingWork`) and no contact, when `daemon.mode` turns off, or when a tick throws, releasing its claim so
+ * each supervisor's own idle timer takes over.
  */
 export async function runDaemon({
   tickMs = TICK_MS,
@@ -175,7 +184,7 @@ export async function runDaemon({
   mode: startMode = daemonMode({}),
 }: {
   tickMs?: number;
-  /** The tick interval while nothing runs in the home: 5 minutes. */
+  /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
   slowTickMs?: number;
   /** The mode the starting command resolved; a later `daemon.mode` change in config can only make it stricter. */
   mode?: DaemonMode;
@@ -353,9 +362,9 @@ export async function runDaemon({
         waiters.build.length || waiters.boot.length || waiting.length
           ? 'a run waits for a build slot or a device boot'
           : homeAlive(config, measured);
-      pending = alive ? null : pendingWork(config);
+      pending = alive ? null : pendingWork(config, measured, { mode, slowTickMs });
       wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
-      interval = alive ? tickMs : slowTickMs;
+      interval = alive || pressure.level !== 'normal' ? tickMs : slowTickMs;
       for (const { path: workspace, outcome, detail } of workspaces) {
         if (outcome !== 'kept') kept.delete(workspace);
         else if (kept.get(workspace) !== detail) {

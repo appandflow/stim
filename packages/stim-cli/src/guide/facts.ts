@@ -1467,7 +1467,9 @@ RULES
 
   dormantStage  { at, dormantDays, deletedDevices, archived }
   deletedDevices names the owned devices it deleted; archived says its logs
-  moved to the archive. The next stim ios or stim android creates a device.
+  moved to the archive. When it deleted a device, the next stim ios or stim
+  android creates one; with none deleted, stim revive resumes the workspace
+  while its dev server's idle stop survives.
 
   An owned booted simulator or detected emulator also carries app, whether
   the workspace's app process is alive on it now:

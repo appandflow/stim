@@ -26,8 +26,13 @@ dropping its own autopilot thresholds.
   `ensureDaemon` from #4792. It exits after two consecutive ticks with nothing running in the home and no waiter. Any
   command restarts it. Amended 2026-11-02 (approved): "nothing running" for this rule also means no workspace has
   pending future work. While any workspace is idle but not yet dormant, or a finished-worktree removal is pending, the
-  daemon stays alive and ticks every 5 minutes instead of 60 s; it exits two ticks after every registered workspace is
-  dormant or removed and nothing runs.
+  daemon stays alive and ticks every 5 minutes instead of 60 s while the pressure level is normal, and every 60 s while
+  it is high or critical, until it clears; it exits two ticks after every registered workspace is dormant or removed and
+  nothing runs. A workspace counts only until its dormant due time plus one slow tick, and never while the dormant pass
+  keeps skipping it for a reason the daemon's presence does not change (a hosted placement, an unreadable state, a
+  failing device listing, `maintenance.keep`, `idle.minutes` 0, `idle.dormantDays` 0). A removal counts only in `on`
+  mode and only while its last execution was not kept. After that the daemon exits as if nothing were pending, and the
+  next command restarts it.
 - Ownership claim `$STIM_HOME/daemon/claim` through `@stim-cli/core/ownership-claim`; a second daemon finds the claim
   held and exits. A tick that throws logs the error, releases the claim and exits, so the fallbacks resume.
 - Socket `$STIM_HOME/daemon/daemon.sock` (mode 0600, same long-path fallback as stim-server), messages: `hello`,

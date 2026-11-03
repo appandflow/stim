@@ -33,6 +33,7 @@ import {
   dormantCandidates,
   enterDormantStage,
   idleStageCandidates,
+  stillIdle,
   stoppedOutputCandidates,
 } from './stages.ts';
 
@@ -391,6 +392,7 @@ async function dormantRung(context: RungContext): Promise<void> {
           bytes: context.measure ? await workspaceDeviceBytes(context, candidate.project) : 0,
           detail: wouldDetail(context),
           deleted: [],
+          restore: '',
         };
     recordAction(
       context,
@@ -402,7 +404,7 @@ async function dormantRung(context: RungContext): Promise<void> {
         outcome: result.outcome,
         bytes: result.bytes,
         detail: result.detail,
-        ...(result.outcome === 'done' ? { restore: 'stim ios or stim android' } : {}),
+        ...(result.outcome === 'done' ? { restore: result.restore } : {}),
       },
       `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes`,
     );
@@ -481,7 +483,12 @@ async function dependenciesRung(context: RungContext): Promise<void> {
     }
     let result;
     try {
-      result = await clearArtifact(plan, 'dependencies', { ...options, worktrees, requireRestorable: true });
+      result = await clearArtifact(plan, 'dependencies', {
+        ...options,
+        worktrees,
+        requireRestorable: true,
+        recheck: async (key) => ((await stillIdle(key, PRESSURE_IDLE_MS)) ? null : 'it is no longer idle'),
+      });
     } catch (error) {
       result = { status: 'failed' as const, bytes: 0, detail: error instanceof Error ? error.message : String(error) };
     }

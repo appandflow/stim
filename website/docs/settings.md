@@ -781,7 +781,9 @@ together with its dev server, once the workspace has had no activity for
 After `idle.dormantDays` (3 by default; fractions of a day allowed; `0` never)
 without activity a workspace goes dormant: its owned devices are deleted (the
 parked pool is untouched) and its logs archived, while `node_modules` and Pods
-stay. The next `stim ios` or `stim android` creates a device.
+stay. When it deleted a device, the next `stim ios` or `stim android` creates
+one; with none deleted, `stim revive` resumes the workspace while its dev
+server's idle stop survives.
 
 Try it with an agent:
 
@@ -998,19 +1000,21 @@ and dormant stages, the [pressure ladder](./build-caches.md#disk-pressure), the
 reclaim for a run waiting to boot, and
 [automatic maintenance](#automatic-maintenance). `start`, `ios`, `android`,
 `web`, `macos` and `revive` start one `stim-daemon` process per Stim home,
-scoped homes included. It ticks each minute while anything runs there and every
-5 minutes otherwise, and exits two ticks after nothing runs and every workspace
-is dormant or removed, so the dormant stage fires in a quiet home. Each tick it
-measures the machine once, classifies the pressure level, moves workspaces with
-no activity for `idle.minutes` into the
-[idle stage](./dev-server-and-logs.md#idle-stop) and those idle for
-`idle.dormantDays` into the dormant stage, runs the pressure ladder above
-normal, and runs automatic maintenance. It also wakes the oldest run waiting
-for a build slot as soon as one is released. `report` logs what each pass would
-do and acts on nothing. `off` runs no daemon and no pass: each dev server
-supervisor stops its own dev server and devices after `idle.minutes`, and
-nothing times a device with no dev server. It is `off` in CI unless
-`STIM_DAEMON` is set.
+scoped homes included. It ticks each minute while anything runs there or the
+pressure level is above normal, and every 5 minutes otherwise. It exits two
+ticks after nothing runs and no workspace waits for its dormant stage, so the
+stage fires in a quiet home; a workspace waits until its `idle.dormantDays`
+have passed, unless `maintenance.keep`, `idle.minutes` 0, a hosted placement or
+an unreadable state keeps it out. Each tick it measures the machine once,
+classifies the pressure level, moves workspaces with no activity for
+`idle.minutes` into the [idle stage](./dev-server-and-logs.md#idle-stop) and
+those idle for `idle.dormantDays` into the dormant stage, runs the pressure
+ladder above normal, and runs automatic maintenance. It also wakes the oldest
+run waiting for a build slot as soon as one is released. `report` logs what
+each pass would do and acts on nothing. `off` runs no daemon and no pass: each
+dev server supervisor stops its own dev server and devices after
+`idle.minutes`, and nothing times a device with no dev server. It is `off` in
+CI unless `STIM_DAEMON` is set.
 
 While no daemon runs (on Windows, which has none, or when one could not start),
 `stim doctor`, `stim start`, `stim ios` and `stim android` run automatic
