@@ -1309,11 +1309,12 @@ test('status lists worktrees with no environment for every registered repository
     });
 
     await runStatusJson();
-    checkoutReads.length = 0;
-    const payload = await runStatusJson();
     expect(checkoutReads.toSorted()).toEqual(
       [first, second, inner, separate, nested, nestedRepo, loose, idleWorktree, bogusGit].toSorted(),
     );
+    checkoutReads.length = 0;
+    const payload = await runStatusJson();
+    expect(checkoutReads).toEqual([bogusGit]);
     const checkout = (path: string) => payload.environments.find((e: { path: string }) => e.path === path);
     for (const path of [
       first,
@@ -1331,6 +1332,7 @@ test('status lists worktrees with no environment for every registered repository
     expect(checkout(standalone)?.checkout).toBeNull();
     expect(checkout(bogusGit)?.checkout).toBeNull();
     expect(checkout(join(base, 'gone'))?.checkout).toBeNull();
+    writeFileSync(join(nestedRepo, '.git', 'touched'), '');
     refusedCheckout = nestedRepo;
     const refused = await runStatusJson();
     expect(

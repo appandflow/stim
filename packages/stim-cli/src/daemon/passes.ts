@@ -6,6 +6,7 @@ import {
   type DaemonPressure,
   type DaemonWorkspaceDecision,
 } from '@stim-cli/core/state';
+import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../maintenance/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
@@ -65,6 +66,7 @@ export async function runHomePasses({
   };
   const config = loadConfig();
   const now = Date.now();
+  const operation = processContext(process.cwd(), new AbortController().signal);
   const measured = await measureTick(config, now);
   const measureMs = lap();
   const { thresholds, error } = diskThresholds(config);
@@ -89,6 +91,7 @@ export async function runHomePasses({
     devices: measured.devices,
     act,
     log,
+    operation,
     ...(pressure.level === 'normal' ? {} : { pressure: { level: pressure.level, reasons: pressure.reasons } }),
   });
   const actions: DaemonLadderAction[] =
@@ -111,7 +114,7 @@ export async function runHomePasses({
             : [],
         );
   const idleMs = lap();
-  const reading = { devices: measured.devices, simsFailed: measured.sims === null };
+  const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
   const dormantMs = lap();
   actions.push(...(await runDormantDependencies({ config, act, log, ...reading })));
@@ -134,7 +137,7 @@ export async function runHomePasses({
     pressure = ladder.pressure;
   }
   const ladderMs = lap();
-  await runMaintenance(trigger, { report: !act });
+  await runMaintenance(trigger, { report: !act, tick: { operation, measured } });
   const maintenanceMs = lap();
   return {
     config,

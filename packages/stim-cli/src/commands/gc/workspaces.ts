@@ -345,12 +345,13 @@ export function workspaceBuildReasons(root: string, { nativeRun = true }: { nati
   return workspaceBuildInProgress(root) ? [...reasons, BUILD_IN_PROGRESS] : reasons;
 }
 
-async function workspaceBuildReasonsAsync(
+export async function workspaceBuildReasonsAsync(
   root: string,
   signal: AbortSignal,
   operation?: StimContext,
+  { nativeRun = true }: { nativeRun?: boolean } = {},
 ): Promise<string[]> {
-  const reasons = await workspaceInUseAsync(root, BUILD_CHECKS, signal, operation);
+  const reasons = await workspaceInUseAsync(root, { ...BUILD_CHECKS, nativeRun }, signal, operation);
   return workspaceBuildInProgress(root) ? [...reasons, BUILD_IN_PROGRESS] : reasons;
 }
 

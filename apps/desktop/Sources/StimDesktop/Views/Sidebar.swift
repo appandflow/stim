@@ -425,14 +425,9 @@ struct WorkspaceRowContent: View {
       StatusDot(color: Color(status.tone), filled: live)
         .padding(.top, Space.sm - 1)
       VStack(alignment: .leading, spacing: Space.xs) {
-        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-          Text(env.names.title).foregroundStyle(live ? Palette.text : Palette.secondary)
-            .lineLimit(1).truncationMode(.middle).layoutPriority(1)
-          Spacer(minLength: 0)
-          if isHidden { HiddenIndicator() }
-          Text(status.text).font(.stim(.caption, weight: .medium)).foregroundStyle(Color(status.tone))
-            .lineLimit(1).fixedSize()
-        }
+        RowTitleLine(
+          title: env.names.title, titleColor: live ? Palette.text : Palette.secondary, status: status.text,
+          statusColor: Color(status.tone), isHidden: isHidden)
         if let archive {
           RowDetailLine(
             context: RowDetailLine.joined(
@@ -504,12 +499,9 @@ struct NoEnvironmentRow: View {
       StatusDot(color: Palette.tertiary, filled: false)
         .padding(.top, Space.sm - 1)
       VStack(alignment: .leading, spacing: Space.xs) {
-        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-          Text(names.title).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle).layoutPriority(1)
-          Spacer(minLength: 0)
-          if isHidden { HiddenIndicator() }
-          Text("Not set up").font(.stim(.caption, weight: .medium)).foregroundStyle(Palette.tertiary).fixedSize()
-        }
+        RowTitleLine(
+          title: names.title, titleColor: Palette.secondary, status: "Not set up", statusColor: Palette.tertiary,
+          isHidden: isHidden)
         RowDetailLine(
           context: RowDetailLine.joined(place.map { Text($0).foregroundStyle(Palette.tertiary) }), git: git)
       }
@@ -547,7 +539,7 @@ struct NoEnvironmentRow: View {
 
 /// AppKit draws the selected source-list row as emphasized, which turns its disclosure chevron white on the
 /// light `Palette.selection` background. The row background already marks the selection.
-private struct PlainSelectionHighlight: NSViewRepresentable {
+struct PlainSelectionHighlight: NSViewRepresentable {
   func makeNSView(context: Context) -> NSView { NSView() }
 
   func updateNSView(_ view: NSView, context: Context) {
