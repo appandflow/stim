@@ -32,6 +32,7 @@ import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
 import type { Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { scheduleDependencyMeasures } from './dependencies.ts';
 import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from './mode.ts';
 import { ownedHere } from './idle.ts';
 import type { TickMeasurement } from './measure.ts';
@@ -335,6 +336,7 @@ export async function runDaemon({
         log,
         memoryWarningSince: lastSnapshot?.pressure?.memoryWarningSince ?? null,
       });
+      scheduleDependencyMeasures();
       const reclaimed = await reclaimForBootWaiters({
         devices: measured.devices,
         sims: measured.sims,

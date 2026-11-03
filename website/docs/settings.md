@@ -786,8 +786,10 @@ together with its dev server, once the workspace has had no activity for
 [idle shutdown](./owned-devices.md#idle-shutdown). `0` keeps them running.
 After `idle.dormantDays` (3 by default; fractions of a day allowed; `0` never)
 without activity a workspace goes dormant: its owned devices are deleted (the
-parked pool is untouched) and its logs archived, while `node_modules` and Pods
-stay. When it deleted a device, the next `stim ios` or `stim android` creates
+parked pool is untouched) and its logs archived. In a linked worktree, its
+`node_modules` and Pods are deleted when they hold 256 MB or more of their own
+bytes, recorded so `stim worktree warm` restores them; copy-on-write clones
+under that, and trees Stim could not size, stay. When it deleted a device, the next `stim ios` or `stim android` creates
 one; with none deleted, `stim revive` resumes the workspace while its dev
 server's idle stop survives.
 
