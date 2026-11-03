@@ -1,7 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { connect as tcpConnect, Socket } from 'node:net';
 import { WebSocket } from 'ws';
-import { colors, media } from '../../../apps/mobile/src/design/tokens.ts';
 import type { FrameHint } from '../src/frame-helper.ts';
 import type { Device, FrameListener } from '../src/frames.ts';
 import type { ShareSource } from '../src/share-hosted.ts';
@@ -545,14 +545,19 @@ describe('a web share', () => {
       wait: 'warning',
       danger: 'error',
     } as const;
+    const source = readFileSync(new URL('../../../apps/mobile/src/design/tokens.ts', import.meta.url), 'utf8');
+    const tokens = (opening: string): Record<string, string> => {
+      const block = source.slice(source.indexOf(opening)).split('\n}')[0] ?? '';
+      return Object.fromEntries([...block.matchAll(/^\s+(\w+): '([^']+)'/gm)].map((m) => [m[1] ?? '', m[2] ?? '']));
+    };
     const pick = (values: Record<string, string>) =>
       Object.fromEntries(Object.keys(names).map((key) => [key, values[key]]));
     const expected = (palette: Record<string, string>) =>
       Object.fromEntries(Object.entries(names).map(([key, token]) => [key, (palette[token] ?? '').toLowerCase()]));
-    expect(pick(light)).toEqual(expected(colors.light));
-    expect(pick(night)).toEqual(expected(colors.dark));
-    expect(light.screen).toBe(media.screen.toLowerCase());
-    expect(light.note).toBe(media.note);
+    expect(pick(light)).toEqual(expected(tokens('const light = {')));
+    expect(pick(night)).toEqual(expected(tokens('const dark: Record<ColorToken, string> = {')));
+    expect(light.screen).toBe((tokens('export const media = {').screen ?? '').toLowerCase());
+    expect(light.note).toBe(tokens('export const media = {').note);
   });
 
   it('serves its stylesheet and script without a token, and nothing else under that path', async () => {
