@@ -34,6 +34,8 @@ import {
   listRecordedDevices,
   loadConfig,
   readMacosRecord,
+  readAgentSnapshot,
+  type AgentSnapshotTree,
   readWorkspaceState,
   hostedIosPlacements,
   hostedAndroidPlacements,
@@ -215,6 +217,7 @@ import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from '.
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
+import { parsePresencePublish, PresenceHub, presenceKey } from './presence.ts';
 import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
 import { ShareRoute, tailscaleFunnel } from './share-route.ts';
 
@@ -1750,6 +1753,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     recordingChanged: () => recorder?.refresh(),
     ...(options.shareServer ? { idle: options.shareServer.idle } : {}),
   });
+  const presence = new PresenceHub();
   const ownStimBuild = stimBuildDigest(dirname(options.stimCli));
   const machineUpdates = new MachineUpdates({
     version: options.serverVersion,
@@ -2646,6 +2650,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
       const cleanup = () => {
         ended = true;
+        stopPresence?.();
         player?.stop();
         replays.delete(subscription);
         stopViewing?.();
@@ -2773,6 +2778,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (replayAt && replay().seek(replayAt.at, replayAt.rate) === null) {
         send(socket, { event: 'replay-ended', subscription, at: replayAt.at });
       }
+      const stopPresence =
+        target.presence === true && archive === undefined && !hosted && resolvedDir
+          ? presence.subscribe(
+              presenceKey(resolvedDir, frameTarget.platform, slot ?? 'default', physical === true),
+              (participants) => {
+                if (!ended) send(socket, { event: 'presence', subscription, participants });
+              },
+            )
+          : undefined;
       const stopViewing = archive !== undefined || physical || hosted ? undefined : recorder?.viewing(frameTarget);
       let unsubscribeStatus: (() => void) | null = null;
       if (hosted) attach(hosted.view.device);
@@ -3898,7 +3912,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const failed = [actions, errors].find((result) => typeof result === 'string');
         if (typeof failed === 'string') return error(id, 'stim-failed', failed);
         const records = [...(actions as NdjsonRecord[]), ...(errors as NdjsonRecord[])];
-        const markers = timelineMarkers(records, platform as RecordingPlatform, slotName, spans[0]!.start);
+        const viewports = new Map<string, AgentSnapshotTree['viewport']>();
+        const markers = timelineMarkers(
+          records,
+          platform as RecordingPlatform,
+          slotName,
+          spans[0]!.start,
+          (session) => {
+            if (!viewports.has(session)) viewports.set(session, readAgentSnapshot(cwd, session)?.viewport ?? null);
+            return viewports.get(session)!;
+          },
+        );
         return send(socket, { id, result: { ...state, markers } });
       });
     }
@@ -4793,6 +4817,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return send(socket, 'code' in started ? { id, error: started } : { id, result: started });
     }
 
+    function publishPresence(id: RequestId, params: unknown): void {
+      if (!local) return error(id, 'forbidden', "presence.publish works only on this machine's local Unix socket.");
+      const parsed = parsePresencePublish(params);
+      if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
+      const resolved = registeredWorkspace(parsed.workspace);
+      if ('code' in resolved) return error(id, resolved.code, resolved.message);
+      presence.agent(
+        presenceKey(resolved.dir, parsed.platform, parsed.slot ?? 'default', parsed.physical === true),
+        parsed.command,
+        parsed.phase,
+        parsed.gesture,
+      );
+      send(socket, { id, result: {} });
+    }
+
     /**
      * Admits this local-socket connection to the Desktop-only methods when it proves the bundled Desktop's private key
      * against this connection's challenge. The challenge answers one attempt, so a replayed or late proof cannot win.
@@ -4822,6 +4861,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, failure ? { id, error: failure } : { id, result: {} });
     }
 
+    const localMethods: Partial<Record<string, (id: RequestId, params: unknown) => void | Promise<void>>> = {
+      'share.start': (id, params) => shareMethod(id, 'share.start', params),
+      'share.stop': (id, params) => shareMethod(id, 'share.stop', params),
+      'share.list': (id, params) => shareMethod(id, 'share.list', params),
+      'presence.publish': publishPresence,
+    };
+
     async function handle(raw: string): Promise<void> {
       if (socket.readyState !== socket.OPEN) return;
       let message: unknown;
@@ -4848,9 +4894,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const approvedMachine = machineMethod(id, message.method, message.params, device);
       if (approvedMachine) return approvedMachine;
-      if (message.method === 'share.start' || message.method === 'share.stop' || message.method === 'share.list') {
-        return shareMethod(id, message.method, message.params);
-      }
+      const localMethod = localMethods[message.method];
+      if (localMethod) return localMethod(id, message.params);
       const desktop = desktopMethod(id, message.method, message.params, device);
       if (desktop) return desktop;
       if (!device.capabilities.includes('read')) {
@@ -5230,6 +5275,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       helperAbort.abort();
       sampler.stop();
       await settle(shares.close());
+      presence.close();
       await settle(control.close());
       await settle(agentDrivers.close());
       await settle(hostedDevices.close());

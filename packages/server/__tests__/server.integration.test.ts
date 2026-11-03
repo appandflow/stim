@@ -8568,6 +8568,44 @@ describe('frames.subscribe', () => {
     10_000,
   );
 
+  test.skipIf(!fakeTailscale)(
+    'sends the agent presence a local stim agent-device publishes to subscribers that asked for it',
+    async () => {
+      const port = await startWithTools({
+        FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
+        FAKE_FRAMES: JSON.stringify([jpeg(390, 844, 'A').toString('base64')]),
+      });
+      const viewer = await authed(port);
+      await viewer.request('frames.subscribe', { workspace, platform: 'ios', presence: true });
+      const presence = async () => {
+        for (;;) {
+          const message = (await viewer.next()) as { event?: string };
+          if (message.event === 'presence') return message;
+        }
+      };
+      expect(await presence()).toEqual({ event: 'presence', subscription: 's1', participants: [] });
+      const gesture = {
+        kind: 'tap',
+        from: { x: 0.5, y: 0.3 },
+        durationMs: 0,
+        target: { x: 0.25, y: 0.25, width: 0.5, height: 0.1 },
+      };
+      const publish = { workspace, platform: 'ios', command: 'press', phase: 'end', gesture };
+      const remote = await authed(port, true);
+      expect(await remote.request('presence.publish', publish)).toMatchObject({ error: { code: 'forbidden' } });
+      const local = await desktop();
+      expect(await local.request('presence.publish', { ...publish, gesture: { kind: 'drag' } })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      expect(await local.request('presence.publish', publish)).toMatchObject({ result: {} });
+      expect(await presence()).toEqual({
+        event: 'presence',
+        subscription: 's1',
+        participants: [{ id: 'a1', kind: 'agent', name: 'Agent \u00b7 press', color: 1, gesture }],
+      });
+    },
+  );
+
   test.skipIf(!fakeTailscale)('refuses devices Stim does not own or that are not running', async () => {
     const port = await startWithTools({
       FAKE_STIM_PAYLOADS: statusWith({

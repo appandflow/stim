@@ -1,4 +1,5 @@
 export * from './agent-actions.ts';
+export * from './agent-presence.ts';
 export * from './agent-device-usage.ts';
 export * from './swiftpm-cache-usage.ts';
 export * from './machine-cache-usage.ts';
