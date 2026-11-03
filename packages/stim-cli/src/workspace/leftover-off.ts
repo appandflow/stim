@@ -57,7 +57,7 @@ export function leftoverOffSettings(layers: readonly SettingsLayer[], machine: u
  */
 export function leftoverOffRefusal(
   command: string,
-  cwd: string = process.cwd(),
+  cwd: string,
 ): { code: 'STIM_BAD_ARG'; message: string; remedy: string } | null {
   if (!GOVERNED_COMMANDS.has(command)) return null;
   let found: LeftoverOff[];
