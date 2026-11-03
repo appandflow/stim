@@ -99,6 +99,8 @@ async function call(
   session: string,
   token: string | null,
   from: AgentPeer = { node: null },
+  method = 'GET',
+  path = '/x',
 ): Promise<{ status: number; body: string }> {
   const server = createServer((request, response) => {
     agents.forward(session, token, request, response, from);
@@ -107,7 +109,7 @@ async function call(
   try {
     return await new Promise((resolve, reject) => {
       const outgoing = httpRequest(
-        { host: '127.0.0.1', port: (server.address() as AddressInfo).port, path: '/x' },
+        { host: '127.0.0.1', port: (server.address() as AddressInfo).port, path, method },
         (answer) => {
           let body = '';
           answer.on('data', (chunk: Buffer) => (body += chunk.toString()));
@@ -219,6 +221,9 @@ describe('hosted agent grants', () => {
 
     await agents.appStopped(A);
     expect((await call(agents, A, first)).status).toBe(404);
+    const rejected = await call(agents, A, first, { node: null }, 'POST', `${agentRoute(A)}rpc`);
+    expect(rejected.status).toBe(404);
+    expect(JSON.parse(rejected.body).error.data).toMatchObject({ code: 'SESSION_NOT_FOUND', retriable: false });
     expect(await call(agents, B, second)).toEqual({ status: 200, body: 'forwarded' });
     await agents.close();
   });
