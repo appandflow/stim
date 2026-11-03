@@ -7,12 +7,14 @@ import {
   type CreatedDevicePlatform,
 } from '@stim-cli/core/state';
 import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
+import { noteStimHome } from '../engine/stim-home-registry.ts';
 import { getConfigDir } from '../workspace/config.ts';
 
 export { readCreatedDevices, type CreatedDevicePlatform } from '@stim-cli/core/state';
 
 function update(platform: CreatedDevicePlatform | 'systemImages', change: (entries: Set<string>) => boolean): void {
   const dir = getConfigDir();
+  let devices: { ios: string[]; android: string[] } | undefined;
   withDirLock(
     createdDevicesLock(),
     () => {
@@ -36,9 +38,11 @@ function update(platform: CreatedDevicePlatform | 'systemImages', change: (entri
         rmSync(tmp, { force: true });
         throw error;
       }
+      devices = { ios: next.ios, android: next.android };
     },
     { ensureParent: () => ensurePrivateDir(dir) },
   );
+  if (devices) noteStimHome(devices);
 }
 
 export function recordCreatedDevice(platform: CreatedDevicePlatform, id: string): void {

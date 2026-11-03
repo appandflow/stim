@@ -27,7 +27,8 @@ type GcResultKind =
   | 'devServer'
   | 'workspaceLogs'
   | 'ledgerEntry'
-  | 'easLedgerEntry';
+  | 'easLedgerEntry'
+  | 'homeEntry';
 
 type GcResultStatus = 'done' | 'kept' | 'failed';
 

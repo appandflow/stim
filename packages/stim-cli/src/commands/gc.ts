@@ -1,7 +1,7 @@
 import { throwIfCancelled } from '../cancellation.ts';
 import { runProcessOperation } from '../cli-operation.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
-import type { StimContext } from '@stim-cli/core';
+import { configDir, type StimContext } from '@stim-cli/core';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
 import { maintenanceRunClaims } from '@stim-cli/core/state';
@@ -81,6 +81,12 @@ import {
   type UnverifiedDevice,
 } from './gc/devices.ts';
 import { findStaleEasLedgerEntries, forgetStaleEasLedgerEntries } from './gc/eas-ledger.ts';
+import {
+  collectOtherHomes,
+  forgetGoneHomes,
+  type OtherHomesDependencies,
+  type OtherHomesReport,
+} from './gc/other-homes.ts';
 import {
   collectEasSessionSweep,
   deleteEasSessions,
@@ -184,7 +190,7 @@ export type GcPayload =
     }
   | GcRefusal;
 
-type GcDependencies = EasGcDependencies & GcDeviceDependencies;
+type GcDependencies = EasGcDependencies & GcDeviceDependencies & OtherHomesDependencies;
 
 interface GcExecution {
   output: GcOutput;
@@ -368,6 +374,7 @@ export async function collectGcReport(
   let staleDeviceRecords: StaleDeviceRecord[] = [];
   let staleLedgerEntries: StaleLedgerEntry[] = staleBrowserProfiles(readCreatedDevices());
   let listed: { sims: IosSimRecord[]; avds: string[] } | null = null;
+  let otherHomes: OtherHomesReport | null = null;
   let deviceDisk: GcReport['ownedDeviceDisk'] = [];
   const avdSizes = new Map<string, Promise<number>>();
   const avdSize: typeof directorySizeAsync = (dir, options) => {
@@ -419,6 +426,7 @@ export async function collectGcReport(
   } else {
     let sims: IosSimRecord[] = [];
     let simsChecked = true;
+    let everySim: IosSimRecord[] | null = null;
     const ledger = readCreatedDevices();
     try {
       const allSims = await listAllIosSimsAsync({
@@ -427,6 +435,7 @@ export async function collectGcReport(
         operation,
         signal: operation?.signal,
       });
+      everySim = allSims;
       staleLedgerEntries = [...staleLedgerEntries, ...findStaleLedgerEntries(ledger, allSims)];
       sims = allSims.filter((sim) => sim.available);
     } catch (error) {
@@ -495,6 +504,14 @@ export async function collectGcReport(
         operation,
       },
     );
+    otherHomes = await collectOtherHomes(
+      configDir(),
+      { sims: everySim, avds: avdsChecked ? avds : null },
+      mountedVolumes,
+      deps,
+      operation,
+    );
+    if (otherHomes.notice) deviceSweepNotices.push(otherHomes.notice);
     if (simsChecked || avdsChecked) {
       const lists = { sims, avds: [...registeredAvds] };
       listed = lists;
@@ -562,6 +579,7 @@ export async function collectGcReport(
     parkedAvds,
     parkedHostedDevices: hosted.devices,
     hostedAppStorage: hostedApps.areas,
+    otherHomes: otherHomes?.homes ?? [],
     orphanedDevices,
     unverifiedDevices,
     staleDevices,
@@ -988,6 +1006,7 @@ function reportActionable(report: GcReport): boolean {
       staleDevices.length + report.finishedDevices.length > 0 ||
       staleDeviceRecords.length > 0 ||
       report.staleLedgerEntries.length + report.staleEasLedgerEntries.length > 0 ||
+      Boolean(report.otherHomes?.some((home) => home.forgettable)) ||
       report.staleStatusCaches.length > 0 ||
       buildLocks.stale.length > 0 ||
       buildSlots.stale.length > 0 ||
@@ -1156,6 +1175,8 @@ async function runGcCore(
     output,
     signal,
   );
+  throwIfCancelled(signal, 'GC');
+  deleteFailures += forgetGoneHomes(report.otherHomes ?? [], listMountedVolumes(), deps, output);
   throwIfCancelled(signal, 'GC');
   deleteFailures += await pruneStatusCaches(report, output, signal);
 
