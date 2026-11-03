@@ -2244,6 +2244,7 @@
         "disk": {
           "worktreeBytes": 1900000000,
           "nodeModulesBytes": 900000000,
+          "nodeModulesPrivateBytes": 12000000,
           "buildBytes": 1200000000,
           "measuredAt": "2026-09-25T04:20:09.012Z"
         },

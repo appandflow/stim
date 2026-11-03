@@ -3786,7 +3786,7 @@
   ],
   "diskParts": [
     {
-      "name": "node_modules is split out of the worktree",
+      "name": "node_modules is split out of the worktree; an absent private size counts it in full",
       "workspace": {
         "path": "/w",
         "live": true,
@@ -3817,6 +3817,222 @@
           "bytes": 19200000
         }
       ]
+    },
+    {
+      "name": "a private size counts only what removing node_modules frees",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "worktree": {
+          "path": "/w"
+        },
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": 1720000000,
+          "nodeModulesBytes": 1530000000,
+          "nodeModulesPrivateBytes": 12000000,
+          "buildBytes": 19200000
+        }
+      },
+      "parts": [
+        {
+          "kind": "nodeModules",
+          "label": "node_modules",
+          "bytes": 12000000
+        },
+        {
+          "kind": "worktree",
+          "label": "Rest of worktree",
+          "bytes": 190000000
+        },
+        {
+          "kind": "build",
+          "label": "Build output",
+          "bytes": 19200000
+        }
+      ],
+      "shared": 1518000000
+    },
+    {
+      "name": "a primary checkout counts all of its node_modules and shows no shared part",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "checkout": "/w",
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": 1720000000,
+          "nodeModulesBytes": 1530000000,
+          "nodeModulesPrivateBytes": 12000000,
+          "buildBytes": 19200000
+        }
+      },
+      "parts": [
+        {
+          "kind": "nodeModules",
+          "label": "node_modules",
+          "bytes": 1530000000
+        },
+        {
+          "kind": "worktree",
+          "label": "Rest of worktree",
+          "bytes": 190000000
+        },
+        {
+          "kind": "build",
+          "label": "Build output",
+          "bytes": 19200000
+        }
+      ],
+      "shared": null
+    },
+    {
+      "name": "a null private size counts node_modules in full",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "worktree": {
+          "path": "/w"
+        },
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": 1720000000,
+          "nodeModulesBytes": 1530000000,
+          "nodeModulesPrivateBytes": null,
+          "buildBytes": 19200000
+        }
+      },
+      "parts": [
+        {
+          "kind": "nodeModules",
+          "label": "node_modules",
+          "bytes": 1530000000
+        },
+        {
+          "kind": "worktree",
+          "label": "Rest of worktree",
+          "bytes": 190000000
+        },
+        {
+          "kind": "build",
+          "label": "Build output",
+          "bytes": 19200000
+        }
+      ],
+      "shared": null
+    },
+    {
+      "name": "a zero private size keeps the node_modules row and its shared part",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "worktree": {
+          "path": "/w"
+        },
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": 1720000000,
+          "nodeModulesBytes": 1530000000,
+          "nodeModulesPrivateBytes": 0,
+          "buildBytes": 19200000
+        }
+      },
+      "parts": [
+        {
+          "kind": "nodeModules",
+          "label": "node_modules",
+          "bytes": 0
+        },
+        {
+          "kind": "worktree",
+          "label": "Rest of worktree",
+          "bytes": 190000000
+        },
+        {
+          "kind": "build",
+          "label": "Build output",
+          "bytes": 19200000
+        }
+      ],
+      "shared": 1530000000
+    },
+    {
+      "name": "a private size above node_modules is ignored",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "worktree": {
+          "path": "/w"
+        },
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": 1720000000,
+          "nodeModulesBytes": 1530000000,
+          "nodeModulesPrivateBytes": 1600000000,
+          "buildBytes": 19200000
+        }
+      },
+      "parts": [
+        {
+          "kind": "nodeModules",
+          "label": "node_modules",
+          "bytes": 1530000000
+        },
+        {
+          "kind": "worktree",
+          "label": "Rest of worktree",
+          "bytes": 190000000
+        },
+        {
+          "kind": "build",
+          "label": "Build output",
+          "bytes": 19200000
+        }
+      ],
+      "shared": null
+    },
+    {
+      "name": "node_modules that fills the worktree with a private size leaves no rest",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "worktree": {
+          "path": "/w"
+        },
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": 900,
+          "nodeModulesBytes": 900,
+          "nodeModulesPrivateBytes": 100,
+          "buildBytes": 0
+        }
+      },
+      "parts": [
+        {
+          "kind": "nodeModules",
+          "label": "node_modules",
+          "bytes": 100
+        }
+      ],
+      "shared": 800
     },
     {
       "name": "an unmeasured node_modules leaves the whole worktree",
