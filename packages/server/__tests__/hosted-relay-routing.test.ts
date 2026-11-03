@@ -136,10 +136,8 @@ it.each([
     expect.objectContaining({ platform, slot, action: 'control.begin' }),
     expect.objectContaining({ platform, slot, action: 'control.end' }),
   ]);
-  vi.useFakeTimers();
   frames.closed(new Error('host offline'));
   await vi.advanceTimersByTimeAsync(1000);
-  vi.useRealTimers();
   expect(messages.at(-1)).toMatchObject({
     event: 'error',
     subscription: 'local',
@@ -274,17 +272,23 @@ describe('presence of a hosted device on the relay', () => {
     const presence = vi.fn<(subscription: string) => () => void>(() => stop);
     await f.relay.subscribe(1, host, { platform: 'ios', slot: 'default' }, () => {}, presence);
     expect(presence).toHaveBeenCalledWith('local');
-    vi.useFakeTimers();
     f.routes.get('s:upstream')!.closed(new Error('host offline'));
     await vi.advanceTimersByTimeAsync(1000);
-    vi.useRealTimers();
     expect(stop).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('a hosted frame subscription whose host connection drops', () => {
   type Route = Parameters<Upstream['route']>[1];
+  const isError = (message: ServerMessage | Buffer) =>
+    !Buffer.isBuffer(message) && 'event' in message && message.event === 'error';
   const host = { machine: 'mini', session: 'host-session' };
+
+  function routeOf(routes: Map<string, Route>[], generation: number, name: string): Route {
+    const found = routes[generation]?.get(name);
+    if (!found) throw new Error(`no route ${name} on connection ${generation}`);
+    return found;
+  }
 
   function setup(attach: () => { state: string } | Promise<never>) {
     const messages: (ServerMessage | Buffer)[] = [];
@@ -292,7 +296,7 @@ describe('a hosted frame subscription whose host connection drops', () => {
     const subscribes: unknown[] = [];
     const routes: Map<string, Route>[] = [];
     let generation = 0;
-    const acquire = vi.fn(async () => {
+    const acquire = vi.fn<HostConnections['acquire']>(async () => {
       const mine = generation++;
       const own = new Map<string, Route>();
       routes[mine] = own;
@@ -324,25 +328,18 @@ describe('a hosted frame subscription whose host connection drops', () => {
     return { relay, messages, dropped, subscribes, routes, acquire };
   }
 
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it('subscribes again with the same parameters and keeps the local subscription and its viewer', async () => {
     const f = setup(() => ({ state: 'ready' }));
     await f.relay.subscribe(1, host, { platform: 'ios', slot: 'default', fps: 5 }, () => {});
-    f.routes[0]!.get('s:upstream-0')!.closed(new Error('the host connection closed'));
+    routeOf(f.routes, 0, 's:upstream-0').closed(new Error('the host connection closed'));
     await vi.advanceTimersByTimeAsync(1000);
 
     expect(f.subscribes).toHaveLength(2);
     expect(f.subscribes[1]).toEqual(f.subscribes[0]);
-    f.routes[1]!.get('s:upstream-1')!.event({ event: 'frame', subscription: 'upstream-1', data: 'jpeg' });
+    routeOf(f.routes, 1, 's:upstream-1').event({ event: 'frame', subscription: 'upstream-1', data: 'jpeg' });
     await vi.advanceTimersByTimeAsync(1000);
     expect(f.messages).toContainEqual(expect.objectContaining({ event: 'frame', subscription: 'local' }));
-    expect(f.messages.some((message) => !Buffer.isBuffer(message) && message.event === 'error')).toBe(false);
+    expect(f.messages.some(isError)).toBe(false);
     expect(f.dropped).toEqual([]);
     expect(f.relay.keyframe(2, 'local')).toBe(true);
   });
@@ -351,7 +348,7 @@ describe('a hosted frame subscription whose host connection drops', () => {
     const states = ['unknown', 'unknown', 'stopped'];
     const f = setup(() => ({ state: states.shift() ?? 'stopped' }));
     await f.relay.subscribe(1, host, { platform: 'ios', slot: 'default' }, () => {});
-    f.routes[0]!.get('s:upstream-0')!.closed(new Error('the host connection closed'));
+    routeOf(f.routes, 0, 's:upstream-0').closed(new Error('the host connection closed'));
     await vi.advanceTimersByTimeAsync(1000 + 2000 + 4000);
 
     expect(f.subscribes).toHaveLength(1);
@@ -366,7 +363,7 @@ describe('a hosted frame subscription whose host connection drops', () => {
   it('fails the subscription once the host has not come back for three minutes', async () => {
     const f = setup(() => Promise.reject(new Error('the host did not connect in time')));
     await f.relay.subscribe(1, host, { platform: 'ios', slot: 'default' }, () => {});
-    f.routes[0]!.get('s:upstream-0')!.closed(new Error('the host connection closed'));
+    routeOf(f.routes, 0, 's:upstream-0').closed(new Error('the host connection closed'));
     await vi.advanceTimersByTimeAsync(3 * 60_000);
 
     expect(f.messages.at(-1)).toMatchObject({
@@ -379,13 +376,13 @@ describe('a hosted frame subscription whose host connection drops', () => {
 
   it('does not subscribe again once the viewer stopped while it waited', async () => {
     const f = setup(() => ({ state: 'ready' }));
-    let stop!: () => void;
-    await f.relay.subscribe(1, host, { platform: 'ios', slot: 'default' }, (_id, stopper) => (stop = stopper));
-    f.routes[0]!.get('s:upstream-0')!.closed(new Error('the host connection closed'));
-    stop();
+    const stops: (() => void)[] = [];
+    await f.relay.subscribe(1, host, { platform: 'ios', slot: 'default' }, (_id, stopper) => stops.push(stopper));
+    routeOf(f.routes, 0, 's:upstream-0').closed(new Error('the host connection closed'));
+    stops.forEach((stop) => stop());
     await vi.advanceTimersByTimeAsync(60_000);
 
     expect(f.subscribes).toHaveLength(1);
-    expect(f.messages.some((message) => !Buffer.isBuffer(message) && message.event === 'error')).toBe(false);
+    expect(f.messages.some(isError)).toBe(false);
   });
 });
