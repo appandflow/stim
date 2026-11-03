@@ -572,6 +572,12 @@ SWEEPING FINISHED WORKTREES
   Each worktree line also shows its in-tree build state: the size of the
   build and dependency directories the pressure ladder clears (DISK PRESSURE
   above) and a root .pnpm-store, largest first (APFS clones count in full).
+  A directory laid out as Xcode DerivedData under another name than .dd, such
+  as a rn-tester build-device, is listed too, marked "xcodebuild output,
+  never deleted" (JSON reportOnly: true); gc and the idle stage never delete
+  it, and a .dd or android/.cxx of a worktree that is no registered
+  workspace is listed and never deleted either. DerivedData, CMake output,
+  node_modules and Pods also show what deleting them frees as "its own".
   A size comes from the disk-usage cache while it is under an hour old and
   no entry was added to or removed from its directory since (a build that
   only grows files deeper inside shows within the hour); otherwise gc runs
@@ -1210,8 +1216,11 @@ WORKSPACE BUILD OUTPUTS
   Each workspace directory holds derived-data/, gradle-build/, android-cas/,
   cache-provider/, js-swap-tmp/, macos/build, the staged macos/<Product>.app and macos/staging-*
   leftovers. The project's own android/app/build, android/build,
-  android/.gradle and .build count with them when git ignores every file in
-  the directory and tracks none; one that fails that check, or is not in a
+  android/.gradle, .build, the CMake directories android/.cxx and
+  android/<module>/.cxx, and a .dd directory laid out as Xcode DerivedData
+  (a Build/ directory beside ModuleCache.noindex or Logs/) count with them
+  when git ignores every file in the directory and tracks none; one that
+  fails that check, or is not in a
   git checkout, stays, and \`gc --delete\` prints why when the check fails
   between the report and the deletion. ios/build stays: React Native's pod
   install writes podspec facades and codegen output there that only pod

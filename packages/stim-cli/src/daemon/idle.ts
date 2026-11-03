@@ -35,7 +35,7 @@ import { MODE_COMMAND } from '../supervisor/state.ts';
 import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { ARTIFACT_DIRS, existingDirsOf, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
+import { existingBuildDirs, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
 import { idleMinutesSetting, maintenanceKeepSetting, resolveProjectSettings } from '../workspace/settings.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 
@@ -184,7 +184,7 @@ async function decide(
 export async function idleOutputs(path: string, config: Config): Promise<{ paths: string[]; kept: string[] }> {
   const paths = workspaceOutputPaths(workspaceDir(path));
   const kept: string[] = [];
-  for (const dir of existingDirsOf(path, ARTIFACT_DIRS.build)) {
+  for (const dir of existingBuildDirs(path)) {
     const problem = await regenerableDirProblem(path, dir);
     if (problem) kept.push(`kept ${dir}: ${problem}`);
     else paths.push(dir);

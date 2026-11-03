@@ -963,17 +963,24 @@ RULES
                               kept. eligibleAt is the ISO time a
                               recent-activity worktree becomes removable,
                               else null. buildState is { bytes, dirs:
-                              { path, bytes, privateBytes } } for the in-tree build and
+                              { path, bytes, privateBytes, reportOnly? } } for the in-tree build and
                               dependency directories automatic maintenance
                               clears (android/app/build, android/build,
-                              android/.gradle, .build, node_modules,
+                              android/.gradle, .build, android/.cxx,
+                              android/<module>/.cxx, a .dd laid out as
+                              DerivedData, node_modules,
                               ios/Pods, at the root, a
                               project root, or apps/* and packages/* for
                               build directories) and a root .pnpm-store,
                               paths relative to the worktree, largest
-                              first; du counts APFS clones in full.
-                              privateBytes is what deleting node_modules
-                              or ios/Pods would free on APFS: blocks no
+                              first; reportOnly is true on xcodebuild
+                              output under another name (a DerivedData
+                              layout directory such as build-device), which
+                              is listed and never deleted; du counts APFS
+                              clones in full.
+                              privateBytes is what deleting node_modules,
+                              ios/Pods, .dd, android/.cxx or xcodebuild
+                              output would free on APFS: blocks no
                               copy-on-write clone or hard link outside it
                               shares; null for other directories and off
                               APFS. A bytes is null when it could not be
@@ -1083,7 +1090,8 @@ RULES
                               macos/staging-* of each workspace; inTreeDirs
                               lists the project's android/app/build,
                               android/build,
-                              android/.gradle and .build that --delete
+                              android/.gradle, .build, android/.cxx,
+                              android/<module>/.cxx and .dd that --delete
                               clears with them, every file in them
                               ignored by git and none tracked, and
                               bytes includes them; willClear marks the ones
