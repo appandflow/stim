@@ -1,6 +1,7 @@
 import { request } from 'node:http';
 import { connect as tcpConnect, Socket } from 'node:net';
 import { WebSocket } from 'ws';
+import { colors, media } from '../../../apps/mobile/src/design/tokens.ts';
 import type { FrameHint } from '../src/frame-helper.ts';
 import type { Device, FrameListener } from '../src/frames.ts';
 import type { ShareSource } from '../src/share-hosted.ts';
@@ -505,6 +506,51 @@ describe('a web share', () => {
       { session: 'c1', command: { input: 'key', key: 'escape', modifiers: [] } },
     ]);
     socket.close();
+  });
+
+  it('gives the viewer a toolbar control for every button and rotation the server accepts', async () => {
+    const share = await started(f, { passwordless: true, control: true });
+    const page = (await http(local(share, f.hub.port!))).body;
+    const accepted = /data-buttons="([^"]*)"/.exec(page)![1]!.split(' ');
+    expect(accepted).toEqual(['home', 'lock']);
+    for (const button of accepted) expect(page).toContain(`data-button="${button}"`);
+    for (const direction of ['left', 'right']) expect(page).toContain(`data-rotate="${direction}"`);
+    expect(page).toContain('data-control="true"');
+    const view = await started(f, { passwordless: true, control: false });
+    expect((await http(local(view, f.hub.port!))).body).toContain('data-control="false"');
+  });
+
+  it("styles the viewer with Stim Desktop's design tokens in light and dark", async () => {
+    const share = await started(f);
+    const base = new URL(local(share, f.hub.port ?? 0)).origin;
+    const css = (await http(`${base}/s/assets/viewer.css`)).body;
+    const dark = css.indexOf('prefers-color-scheme: dark');
+    const variables = (block: string) =>
+      Object.fromEntries([...block.matchAll(/--([a-z-]+): (#[0-9a-f]{6}|rgba?\([^)]*\));/g)].map((m) => [m[1], m[2]]));
+    const light = variables(css.slice(0, dark));
+    const night = variables(css.slice(dark, css.indexOf('}\n}', dark)));
+    const names = {
+      bg: 'background',
+      canvas: 'grouped',
+      card: 'surface',
+      raised: 'raised',
+      line: 'border',
+      fg: 'text',
+      muted: 'secondary',
+      tertiary: 'tertiary',
+      accent: 'primary',
+      control: 'accent',
+      'on-accent': 'onPrimary',
+      live: 'success',
+      wait: 'warning',
+      danger: 'error',
+    } as const;
+    for (const [variable, token] of Object.entries(names)) {
+      expect(light[variable], variable).toBe(colors.light[token].toLowerCase());
+      expect(night[variable], variable).toBe(colors.dark[token].toLowerCase());
+    }
+    expect(light.screen).toBe(media.screen.toLowerCase());
+    expect(light.note).toBe(media.note);
   });
 
   it('serves its stylesheet and script without a token, and nothing else under that path', async () => {
