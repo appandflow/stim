@@ -11,6 +11,7 @@ import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry 
 import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
+import { runProcessOperation } from '../cli-operation.ts';
 import { recordDoctorRun } from '../guide-status.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
@@ -369,6 +370,11 @@ async function repairDoctorProject(
   env: NodeJS.ProcessEnv,
   note: (message: string) => void,
   operation?: StimContext,
+  source: {
+    confirm: ((question: string) => Promise<boolean>) | null;
+    host: NodeJS.Platform;
+    operation?: StimContext;
+  } = { confirm: null, host: process.platform },
 ): Promise<0 | 1> {
   const { settingsContext, settings, doctors } = prepared;
   const signal = operation?.signal;
@@ -445,6 +451,33 @@ async function repairDoctorProject(
             `Watchman watches ${entry.checkout} and reads the file only when it adds a root: run \`watchman watch-del ${entry.checkout}\`, then restart watchman to free its memory`,
           ),
         );
+    }
+  }
+  const sourceOperation = operation ?? source.operation;
+  for (const doctor of doctors) {
+    if (!doctor.repairSource || !sourceOperation) continue;
+    signal?.throwIfAborted();
+    try {
+      const failed = await doctor.repairSource({
+        platform,
+        settings,
+        host: source.host,
+        operation: sourceOperation,
+        confirm: source.confirm,
+        note,
+      });
+      if (failed) exitCode = 1;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        ('reportCleanup' in error || ('code' in error && error.code === 'STIM_CLAIM_UNAVAILABLE'))
+      )
+        throw error;
+      signal?.throwIfAborted();
+      note(
+        phaseLine('source', `Source checkout repair failed: ${error instanceof Error ? error.message : String(error)}`),
+      );
+      exitCode = 1;
     }
   }
   return exitCode;
@@ -658,7 +691,7 @@ export default function doctorCommand(
     )
     .option(
       '--fix',
-      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; install the Android system image stim android would install on its first emulator run; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; ask each remote machine in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
+      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; install the Android system image stim android would install on its first emulator run; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; in a terminal, after asking about each step and its cost, bring the source checkout to a state worktrees can clone (reinstall a stale or missing dependency tree, run pod install --clean-install and, for a conflict with a gitignored Podfile.lock, pod update of only the named pods, and run the prebuild Stim has no current record of, without compiling); ask each remote machine in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
     )
     .action(async (opts: DoctorOptions) => {
       const root = registry.findProjectRoot(process.cwd());
@@ -669,8 +702,20 @@ export default function doctorCommand(
       const prepared = await prepareDoctor(root, opts.platform, registry);
       const { selected, doctors } = prepared;
 
-      if (opts.fix && (await repairDoctorProject(root, opts.platform, prepared, process.env, console.error))) {
-        process.exitCode = 1;
+      if (opts.fix) {
+        const interactive = !opts.json && process.stdin.isTTY === true && process.stderr.isTTY === true;
+        const { value: failed, interrupted } = await runProcessOperation(root, (operation) =>
+          repairDoctorProject(root, opts.platform, prepared, process.env, console.error, undefined, {
+            confirm: interactive ? confirmInTerminal : null,
+            host,
+            operation,
+          }),
+        );
+        if (interrupted !== null) {
+          process.exitCode = interrupted;
+          return;
+        }
+        if (failed) process.exitCode = 1;
       }
 
       const report = await assembleDoctorReport(root, opts, version, prepared, inspectVersions, host);

@@ -164,6 +164,36 @@ is `auto`, doctor reports it as a note, and `--fix` installs the image
 `stim android` would install on its first emulator run (about 2 GB). See
 [installing a missing Android system image](./settings.md#installing-a-missing-android-system-image).
 
+In a terminal, `--fix` also brings the source checkout to a state worktrees can
+clone, one step at a time. Each step prints what it does and what it costs, and
+runs only after you answer `y` to `Run this step? [y/N]`:
+
+- **Stale or missing dependency tree**: runs the lockfile's install command, the
+  one `stim worktree warm --refresh` runs (`npm ci` deletes `node_modules` first).
+- **Broken links under `ios/Pods`, or Pods that do not match `Podfile.lock`**:
+  runs `pod install --clean-install`. When CocoaPods reports that a gitignored
+  `Podfile.lock` pins a version a pod no longer allows ("could not find
+  compatible versions"), it runs `pod update` for only the named pods and retries
+  the clean install once if links are still broken. It never edits a `Podfile.lock`
+  that Git tracks: with `ios/` tracked it stops and prints the manual command.
+- **No current prebuild record** (`source-prebuild-record-ios` and
+  `source-prebuild-record-android`, costs time): in an Expo app whose `ios/` or
+  `android/` Git ignores, Stim has no finished prebuild record for the source
+  checkout's directory, or the record no longer matches the app's current
+  fingerprint, so `worktree warm` leaves the directory out and every worktree
+  generates it again, and on iOS installs its own Pods, about 1.5 to 2 GB each.
+  The step runs the prebuild, and on iOS the pod install after it, the way
+  `stim ios` does, without compiling. It fingerprints again and records the
+  result, except when a config input changed while it ran, which it reports.
+
+A step is skipped when an earlier step it depends on was declined or failed. Without a
+terminal, with `--json`, from Stim Desktop or from the programmatic API, each
+step is printed with its manual command and none runs; progress goes to stderr, so
+`--json --fix` still prints one payload. Every step refuses while a `stim ios`,
+`stim android`, `stim start` or other run holds the source checkout's workspace,
+or while a `stim worktree warm` holds the repository's warm claim. Doctor never
+switches a branch.
+
 In a linked worktree of a React Native app, doctor notes when the source
 checkout's `ios/Pods` holds React Native's prebuilt frameworks
 (`React-Core-prebuilt`, `ReactNativeDependencies`, `hermes-engine`) built as
@@ -171,7 +201,9 @@ Debug or Release and the worktree builds the other, which is Debug unless
 `ios.configuration` says otherwise. React Native re-extracts those frameworks
 on the first build, so each such worktree costs about 1 GB of unshared disk plus
 extraction time. Build the source checkout once in that configuration with
-`stim ios` before warming more worktrees. Doctor changes nothing.
+`stim ios` before warming more worktrees. `--fix` does not build for you: a
+build needs a simulator, a build slot and several minutes, so it prints one
+`flavor` line saying it left this to you.
 
 Doctor reports a checkout that holds linked worktrees inside it, such as
 `.worktrees/<name>`, when the checkout's `.watchmanconfig` does not list them in
@@ -1075,7 +1107,7 @@ check stim logs --source agent.
 ## `share`
 
 ```text
-stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--device] [--slot <name>] [--json]
+stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--view-password [value]] [--device] [--slot <name>] [--json]
 stim share stop [--json]
 stim share list [--json]
 ```
@@ -1085,7 +1117,8 @@ running app, and with `--control` to tap, type and press its buttons. The share
 runs inside this Stim home's stim-server, which `stim share` starts in the
 background when none runs, and is served through Tailscale Funnel. The
 password is generated unless you set one with `--password` or drop it with
-`--no-password`. Every share expires (60 minutes by default, at most 480) and ends with
+`--no-password`. With `--control`, `--view-password` adds a second password that
+only watches. Viewers see each other's touches live. Every share expires (60 minutes by default, at most 480) and ends with
 `stim share stop`, `stim stop` (without `--slot`), `stim worktree remove`, its
 device, or stim-server. It refuses with `STIM_SERVER_NOT_RUNNING` when it cannot start a
 stim-server and `STIM_SHARE_REFUSED` with the reason otherwise. See

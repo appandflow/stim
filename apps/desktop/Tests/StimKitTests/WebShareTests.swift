@@ -30,6 +30,36 @@ struct WebShareTests {
     #expect(chosen.password == nil)
   }
 
+  @Test func readsTheViewPasswordRowsAndLabelsTheAccess() throws {
+    let plain = try decode(WebShare.self, row)
+    #expect(plain.viewAuth == nil)
+    #expect(plain.accessLabel == "View and control")
+    let started = try decode(
+      StartedWebShare.self,
+      String(row.dropLast())
+        + ",\"viewAuth\":\"generated\",\"url\":\"https://mac.ts.net/s/abc/\",\"viewPassword\":\"p2xqd8hs5nw3cvje\"}")
+    #expect(started.share.viewAuth == .generated)
+    #expect(started.share.accessLabel == "View and control, view password")
+    #expect(started.viewPassword == "p2xqd8hs5nw3cvje")
+  }
+
+  @Test func sendsAViewPasswordOnlyForAControlShareWithAPassword() {
+    var options = WebShareOptions()
+    options.viewPassword = .generated
+    #expect(options.params(workspace: "/w", platform: "ios", slot: "default")["view"] == nil)
+    options.control = true
+    #expect(options.params(workspace: "/w", platform: "ios", slot: "default")["view"] == .object([:]))
+    options.viewPassword = .custom("watch only!")
+    #expect(
+      options.params(workspace: "/w", platform: "ios", slot: "default")["view"] == .object(["password": .string("watch only!")]))
+    options.password = .none
+    #expect(options.params(workspace: "/w", platform: "ios", slot: "default")["view"] == nil)
+    options.password = .custom("watch only!")
+    #expect(options.problem == "The view password and the control password must differ.")
+    options.viewPassword = .custom("short")
+    #expect(options.problem != nil)
+  }
+
   @Test func countsTimeLeftFromTheExpiryAndMarksAPassedOneExpired() throws {
     let share = try decode(WebShare.self, row)
     let now = try #require(parseTimestamp("2026-11-02T12:18:00Z"))

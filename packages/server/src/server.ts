@@ -1231,7 +1231,8 @@ function leaseGrace(leaseFor: string): { leaseGraceMs?: number } {
 /** Validates `share.start` params; returns why they are refused. */
 function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { workspace: string }) | string {
   if (!isJsonObject(params)) return 'params must be an object.';
-  const { workspace, platform, slot, physical, control, expiresMinutes, password, passwordless, ...rest } = params;
+  const { workspace, platform, slot, physical, control, expiresMinutes, password, passwordless, view, ...rest } =
+    params;
   if (Object.keys(rest).length) return `share.start does not take ${Object.keys(rest).join(', ')}.`;
   if (typeof workspace !== 'string') return 'params.workspace must be a workspace path.';
   if (platform !== 'ios' && platform !== 'android') return 'params.platform must be ios or android.';
@@ -1244,6 +1245,18 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
   if (passwordless !== undefined && typeof passwordless !== 'boolean')
     return 'params.passwordless must be true or false.';
   if (passwordless && password !== undefined) return 'A share takes a password or passwordless, not both.';
+  if (view !== undefined) {
+    if (!isJsonObject(view) || Object.keys(view).some((key) => key !== 'password'))
+      return 'params.view must be an object that takes only password.';
+    if (
+      view.password !== undefined &&
+      (typeof view.password !== 'string' || view.password.length < 8 || view.password.length > 128)
+    )
+      return 'params.view.password must be 8 to 128 characters.';
+    if (control !== true || passwordless) return 'params.view needs control and a password.';
+    if (view.password !== undefined && view.password === password)
+      return 'The view password and the control password must differ.';
+  }
   const minutes = expiresMinutes ?? SHARE_EXPIRY.default;
   if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > SHARE_EXPIRY.max)
     return `params.expiresMinutes must be a whole number of minutes from 1 to ${SHARE_EXPIRY.max}.`;
@@ -1256,6 +1269,7 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     expiresMinutes: minutes,
     ...(typeof password === 'string' ? { password } : {}),
     ...(passwordless ? { passwordless } : {}),
+    ...(view ? { view: typeof view.password === 'string' ? { password: view.password } : {} } : {}),
   };
 }
 
@@ -1706,6 +1720,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }),
     allowed: (client) => buildAllowed({ id: client }),
   });
+  const presence = new PresenceHub();
   const control = new ControlHub({
     env: options.env,
     stimCli: options.stimCli,
@@ -1722,6 +1737,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     conflict: (deviceId, conflict) => push.control(deviceId, conflict),
     adbEmulators,
     onInput: (device) => viewers.input(device),
+    presence,
   });
   const hostedViews = new HostedViews(hostedDevices, control, helperEnv, frameHelper);
   const funnel = tailscaleFunnel(
@@ -1741,6 +1757,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const shares = new ShareHub({
     frames,
     control,
+    presence,
     subscribeStatus: (listener) =>
       statusFeed.subscribe({
         item: (payload) => listener.item(payload as unknown as StatusPayload),
@@ -1753,7 +1770,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     recordingChanged: () => recorder?.refresh(),
     ...(options.shareServer ? { idle: options.shareServer.idle } : {}),
   });
-  const presence = new PresenceHub();
   const ownStimBuild = stimBuildDigest(dirname(options.stimCli));
   const machineUpdates = new MachineUpdates({
     version: options.serverVersion,

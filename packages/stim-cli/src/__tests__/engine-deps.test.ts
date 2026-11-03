@@ -2,7 +2,14 @@ import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, sep } from 'node:path';
-import { DEPS_ERROR, extractPodDiagnostics, runPodInstall, parseLoginRubyEnv, podEnvForRuby } from '../engine/deps.ts';
+import {
+  DEPS_ERROR,
+  extractPodDiagnostics,
+  podConflictNames,
+  runPodInstall,
+  parseLoginRubyEnv,
+  podEnvForRuby,
+} from '../engine/deps.ts';
 import { makeChildProcess, makeError, makeWriter } from './_factories.ts';
 
 type WriteRecord = { src: string; level: string; msg: string };
@@ -391,5 +398,54 @@ describe('extractPodDiagnostics', () => {
     expect(extracted.lines).toHaveLength(16);
     expect(extracted.lines[0]).toBe('[!] The one line that matters');
     expect(extracted.lines[15]).toBe('(+6 more [!] lines in the build log)');
+  });
+});
+
+describe('podConflictNames', () => {
+  const conflict = (pods: string) =>
+    [
+      '[NitroModules] Found react-native 0.86.3 (86)',
+      `[!] CocoaPods could not find compatible versions for pod${pods.includes(',') ? 's' : ''} ${pods}:`,
+      '  In snapshot (Podfile.lock):',
+      '    FirebaseCoreExtension (= 12.8.0)',
+      '',
+      'You have either:',
+      ' * changed the constraints of dependency `FirebaseCoreExtension` inside your development pod `RNFBMessaging`.',
+      "   You should run `pod update FirebaseCoreExtension` to apply changes you've made.",
+    ].join('\n');
+
+  test.each([
+    ['a conflict names one pod', conflict('"FirebaseCoreExtension"'), ['FirebaseCoreExtension']],
+    ['a subspec is named by its pod', conflict('"Firebase/Core"'), ['Firebase']],
+    [
+      'several pods are listed once each',
+      conflict('"GoogleUtilities", "FirebaseCore", "GoogleUtilities"'),
+      ['GoogleUtilities', 'FirebaseCore'],
+    ],
+    ['a name that could be read as an option is dropped', conflict('"-Dx", "Real"'), ['Real']],
+    ['other resolver failures name none', '[!] Unable to find a specifier for the `Foo` pod', []],
+  ])('%s', (_name, transcript, names) => {
+    expect(podConflictNames(transcript)).toEqual(names);
+  });
+
+  test('a failed pod install reports the conflicting pods, and the requested pod arguments run', async () => {
+    mkdirSync(join(root, 'ios'), { recursive: true });
+    const calls: SpawnCall[] = [];
+    const result = await runPodInstall(root, collectingWriter(), {
+      podArgs: ['install', '--clean-install'],
+      spawnFn: (cmd, args, opts) => {
+        calls.push({ cmd, args, opts });
+        return fakePodChild({
+          lines: ['[!] CocoaPods could not find compatible versions for pod "FirebaseCoreExtension":'],
+          code: 1,
+        });
+      },
+    });
+    expect(calls[0]).toMatchObject({ cmd: 'pod', args: ['install', '--clean-install'] });
+    expect(result).toMatchObject({
+      failed: true,
+      command: 'pod install --clean-install',
+      conflictPods: ['FirebaseCoreExtension'],
+    });
   });
 });

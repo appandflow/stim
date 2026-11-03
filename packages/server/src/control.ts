@@ -9,6 +9,8 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { takeHostedInputClaim } from './hosted-input.ts';
+import { GRAB_IDLE_MS, PointerGrab } from './pointer-grab.ts';
+import { presenceKey, type PresenceHub } from './presence.ts';
 import { isJsonObject, type DeviceActivity, type StatusPayload } from '@stim-cli/core/state';
 import { actionOutcome, type AuditRecord } from './actions.ts';
 import type { FeedListener } from './feed.ts';
@@ -42,6 +44,7 @@ import {
   type SimulatorCommand,
   type SimulatorOptions,
   type Platform,
+  type PresenceParticipant,
   type ProtocolError,
   type RotateDirection,
   type ServerMessage,
@@ -53,6 +56,9 @@ import type { PairedDevice } from './registry.ts';
 import { Pending, runStim, terminate, type CommandLimits } from './stim-command.ts';
 
 type Refusal = { code: ErrorCode; message: string };
+type TouchCommand = Extract<InputCommand, { input: 'touch' }>;
+/** A touch dropped because another participant holds the pointer; `busy` is that participant's name. */
+export type BusyRefusal = Refusal & { busy: string };
 type Parsed<T> = { value: T } | Refusal;
 
 export const SLOT_NAME: RegExp = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -537,6 +543,10 @@ interface Session {
   postures: DevicePosture[];
   simulator: SimulatorOptions | null;
   simulatorAbort: AbortController;
+  grab: PointerGrab<PresenceParticipant, TouchCommand>;
+  grabIdle: NodeJS.Timeout | null;
+  /** Whether the session's own controller, not a participant it forwards, published a touch as the host. */
+  hostShown: boolean;
   startedAt: number;
   idle: NodeJS.Timeout;
   renew: NodeJS.Timeout;
@@ -575,6 +585,8 @@ export interface ControlOptions {
   adbEmulators?: boolean;
   /** Hears each input this hub forwards, so the viewer record dates the device's last use. */
   onInput?: (device: Device) => void;
+  /** Shows each touch to the device's presence subscribers. */
+  presence?: Pick<PresenceHub, 'touch' | 'leave'>;
 }
 
 const STATUS_WAIT_MS = 60_000;
@@ -780,6 +792,9 @@ export class ControlHub {
       postures,
       simulator,
       simulatorAbort: new AbortController(),
+      grab: new PointerGrab(),
+      grabIdle: null,
+      hostShown: false,
       startedAt: Date.now(),
       idle: setTimeout(() => void this.end(session, 'idle', 'No input for 5 minutes.'), this.options.idleMs),
       renew: setInterval(() => this.renew(session, beganAt), this.options.renewMs),
@@ -842,7 +857,16 @@ export class ControlHub {
     );
   }
 
-  input(owner: Controller, id: string, command: InputCommand): Promise<Refusal | SimulatorOptions | null> {
+  /**
+   * `participant` is the viewer a share forwards the input for; it holds the device's pointer from its `down` until
+   * its `up` and is told when another holds it. Input without one is the owner's own, shown as the host.
+   */
+  input(
+    owner: Controller,
+    id: string,
+    command: InputCommand,
+    participant?: PresenceParticipant,
+  ): Promise<Refusal | BusyRefusal | SimulatorOptions | null> {
     const session = this.sessions.get(id);
     if (!session || session.owner !== owner || session.ended) {
       return Promise.resolve({ code: 'unknown-session', message: `No control session ${id} on this connection.` });
@@ -858,6 +882,10 @@ export class ControlHub {
       return Promise.resolve({ code: 'unknown-session', message });
     }
     this.options.onInput?.(session.device);
+    if (command.input === 'touch') {
+      const dropped = this.touch(session, command, participant);
+      if (dropped !== undefined) return Promise.resolve(dropped);
+    }
     if (command.input === 'simulator') return this.simulator(session, command);
     if (command.input === 'posture' && session.device.platform === 'ios') {
       const udid = session.device.udid;
@@ -903,6 +931,71 @@ export class ControlHub {
     })();
     session.adb = run.then(() => undefined);
     return this.pending.track(run);
+  }
+
+  /** Admits a touch through the pointer grab and shows it; undefined when it goes on to the device. */
+  private touch(
+    session: Session,
+    command: TouchCommand,
+    participant?: PresenceParticipant,
+  ): BusyRefusal | null | undefined {
+    if (participant) {
+      const verdict = session.grab.admit(participant, command);
+      if (!verdict.admit) {
+        return verdict.busy === undefined
+          ? null
+          : { code: 'device-busy', message: `${verdict.busy} is using the screen.`, busy: verdict.busy };
+      }
+      if (session.grabIdle) clearTimeout(session.grabIdle);
+      session.grabIdle = command.phase === 'up' ? null : setTimeout(() => this.expireGrab(session), GRAB_IDLE_MS);
+    }
+    this.show(session, participant ?? this.host(session), command);
+    return undefined;
+  }
+
+  private host(session: Session): PresenceParticipant {
+    session.hostShown = true;
+    return { id: session.id, kind: 'host', name: 'Host', color: 0 };
+  }
+
+  private show(session: Session, who: PresenceParticipant, command: TouchCommand): void {
+    const { platform, slot, physical, workspace } = session.target;
+    if (!this.options.presence || (platform !== 'ios' && platform !== 'android')) return;
+    this.options.presence.touch(presenceKey(workspace, platform, slot ?? 'default', physical === true), who, {
+      phase: command.phase,
+      x: command.x,
+      y: command.y,
+      ...(command.x2 !== undefined && command.y2 !== undefined ? { second: { x: command.x2, y: command.y2 } } : {}),
+      ...(command.display !== undefined ? { display: command.display } : {}),
+      at: Date.now(),
+    });
+  }
+
+  private lift(session: Session, lifted: { holder: { id: string }; up: TouchCommand } | null): void {
+    if (session.grabIdle) clearTimeout(session.grabIdle);
+    session.grabIdle = null;
+    if (!lifted || session.ended) return;
+    session.input.send(
+      lifted.up.display === undefined && lifted.up.duoRevision === undefined
+        ? { ...lifted.up, display: session.frames.litDisplay(session.device) }
+        : lifted.up,
+    );
+  }
+
+  private expireGrab(session: Session): void {
+    const lifted = session.grab.expire();
+    session.grabIdle = null;
+    this.lift(session, lifted);
+    if (lifted) this.show(session, lifted.holder, lifted.up);
+  }
+
+  /** A participant that held the pointer left (its socket closed): lifts the pointer for it. */
+  release(owner: Controller, id: string, participant: PresenceParticipant): void {
+    const session = this.sessions.get(id);
+    if (!session || session.owner !== owner) return;
+    const lifted = session.grab.release(participant.id);
+    this.lift(session, lifted);
+    if (lifted) this.show(session, participant, lifted.up);
   }
 
   private async simulator(
@@ -1000,6 +1093,8 @@ export class ControlHub {
     session.simulatorAbort.abort();
     clearTimeout(session.idle);
     clearInterval(session.renew);
+    if (session.grabIdle) clearTimeout(session.grabIdle);
+    if (session.hostShown) this.hideHost(session);
     session.unwatch();
     session.input.detach();
     this.sessions.delete(session.id);
@@ -1012,6 +1107,13 @@ export class ControlHub {
     });
     if (!release || !session.lease?.mine) return Promise.resolve();
     return this.pending.track(session.renewing.then(() => this.unlock(session.target, session.cwd)));
+  }
+
+  private hideHost(session: Session): void {
+    const { platform, slot, physical, workspace } = session.target;
+    if (platform === 'ios' || platform === 'android') {
+      this.options.presence?.leave(presenceKey(workspace, platform, slot ?? 'default', physical === true), session.id);
+    }
   }
 
   private status(): Promise<StatusPayload | Refusal> {

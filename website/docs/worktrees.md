@@ -100,6 +100,12 @@ keeps an older Expo or React Native template out of every worktree: Stim runs
 template files such as the Podfile. Checking a recorded directory costs one
 native fingerprint per platform, about a second.
 
+`stim doctor` reports a source checkout with no current record, and
+`stim doctor --fix` in a terminal runs the prebuild and, on iOS, the pod install
+in the source checkout, without compiling, and records it, after asking. The same
+`--fix` reinstalls a stale dependency tree and repairs broken `ios/Pods` links or a
+conflict with a gitignored `Podfile.lock`; see [`doctor`](./commands.md#doctor).
+
 Wait for warm to exit successfully before editing, installing dependencies,
 starting Metro/builds in that worktree. Concurrent warms into the same target
 wait on its exclusive copy claim. **Other concurrent writes to the destination
