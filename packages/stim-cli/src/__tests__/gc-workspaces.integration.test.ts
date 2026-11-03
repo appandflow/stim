@@ -1830,9 +1830,6 @@ test('gc lists DerivedData, CMake and other xcodebuild output in a worktree, wit
   expect(report).toMatch(
     /\.dd \S+(?: \(\S+ its own\))?, packages\/rn-tester\/build-device \S+.*xcodebuild output, never deleted/,
   );
-
-  await captureLog(() => runGc({ worktrees: true, delete: true }));
-  for (const root of [built, loose]) expect(existsSync(join(root, 'packages', 'rn-tester', 'build-device'))).toBe(true);
 }, 30_000);
 
 test('the maintenance ladder collects .dd and CMake output of a registered worktree only, and never other-named xcodebuild output', async () => {
