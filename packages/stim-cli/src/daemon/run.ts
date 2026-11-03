@@ -12,6 +12,7 @@ import {
   isJsonObject,
   macosAppState,
   readMacosRecord,
+  readMaintenanceState,
   type DaemonMode,
   type DaemonSnapshot,
 } from '@stim-cli/core/state';
@@ -36,8 +37,10 @@ import type { TickMeasurement } from './measure.ts';
 import { listWaiting } from '../engine/wait-queue.ts';
 import { runHomePasses } from './passes.ts';
 import { reclaimForBootWaiters } from './reclaim.ts';
+import { pendingDormant } from './stages.ts';
 
 const TICK_MS = 60_000;
+const SLOW_TICKS = 5;
 const CLAIM_TRIES = 30;
 const CLAIM_RETRY_MS = 100;
 const EMPTY_TICKS_BEFORE_EXIT = 2;
@@ -145,16 +148,32 @@ function homeAlive(config: Config | null, measured: TickMeasurement): string | n
 }
 
 /**
- * The per-home daemon: holds `$STIM_HOME/daemon/claim`, serves its socket, and ticks every minute and on demand, each
- * tick measuring once, running the activity pass and automatic maintenance, and writing `snapshot.json`. It exits
- * after two ticks in a row with nothing running in the home and no contact, when `daemon.mode` turns off, or when a
- * tick throws, releasing its claim so each supervisor's own idle timer takes over.
+ * Work the daemon still has to do in a quiet home, which keeps it alive at the slow cadence: a workspace the dormant
+ * stage will take, or a finished-worktree removal that automatic maintenance planned and has not done.
+ */
+function pendingWork(config: Config | null): string | null {
+  const dormant = pendingDormant(config);
+  if (dormant) return `${dormant} is not dormant yet`;
+  const removal = readMaintenanceState()?.plan.find((action) => action.kind === 'would-remove-worktree');
+  return removal ? `the removal of ${removal.target} is pending` : null;
+}
+
+/**
+ * The per-home daemon: holds `$STIM_HOME/daemon/claim`, serves its socket, and ticks every minute while something
+ * runs in the home, every 5 minutes otherwise, and on demand, each tick measuring once, running the activity, dormant
+ * and pressure passes and automatic maintenance, and writing `snapshot.json`. A command's contact brings it back to
+ * the minute. It exits after two ticks in a row with nothing running, no work pending (a workspace not yet dormant, a
+ * planned finished-worktree removal) and no contact, when `daemon.mode` turns off, or when a tick throws, releasing its
+ * claim so each supervisor's own idle timer takes over.
  */
 export async function runDaemon({
   tickMs = TICK_MS,
+  slowTickMs = tickMs * SLOW_TICKS,
   mode: startMode = daemonMode({}),
 }: {
   tickMs?: number;
+  /** The tick interval while nothing runs in the home: 5 minutes. */
+  slowTickMs?: number;
   /** The mode the starting command resolved; a later `daemon.mode` change in config can only make it stricter. */
   mode?: DaemonMode;
 } = {}): Promise<void> {
@@ -180,6 +199,7 @@ export async function runDaemon({
   let closing = false;
   let tickRequested = false;
   let interrupt: (() => void) | null = null;
+  let hasten: (() => void) | null = null;
   const requestTick = () => {
     tickRequested = true;
     interrupt?.();
@@ -218,8 +238,10 @@ export async function runDaemon({
           return;
         }
         lastContact = Date.now();
-        if (op === 'hello') socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid })}\n`);
-        else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
+        if (op === 'hello') {
+          hasten?.();
+          socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid })}\n`);
+        } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'tick') {
           if (!tickReplies.includes(socket)) tickReplies.push(socket);
           requestTick();
@@ -270,18 +292,26 @@ export async function runDaemon({
     `pid ${process.pid} listening on ${path} after ${Math.round(performance.now() - started)}ms`,
   );
   let emptyTicks = 0;
+  let interval = tickMs;
   const kept = new Map<string, string>();
   for (;;) {
     if (!tickRequested) {
       await new Promise<void>((done) => {
-        const timer = setTimeout(done, tickMs);
+        let timer = setTimeout(done, interval);
         interrupt = () => {
           clearTimeout(timer);
           done();
         };
+        hasten = () => {
+          if (interval <= tickMs) return;
+          clearTimeout(timer);
+          interval = tickMs;
+          timer = setTimeout(done, tickMs);
+        };
       });
     }
     interrupt = null;
+    hasten = null;
     if (closing) break;
     tickRequested = false;
     const configured = configuredDaemonMode();
@@ -295,6 +325,8 @@ export async function runDaemon({
     const replying = tickReplies;
     tickReplies = [];
     let alive: string | null;
+    let pending: string | null = null;
+    let wentDormant = false;
     try {
       const { config, now, measured, workspaces, pressure, actions } = await runHomePasses({
         act: mode === 'on',
@@ -317,6 +349,9 @@ export async function runDaemon({
         waiters.build.length || waiters.boot.length || waiting.length
           ? 'a run waits for a build slot or a device boot'
           : homeAlive(config, measured);
+      pending = alive ? null : pendingWork(config);
+      wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
+      interval = alive ? tickMs : slowTickMs;
       for (const { path: workspace, outcome, detail } of workspaces) {
         if (outcome !== 'kept') kept.delete(workspace);
         else if (kept.get(workspace) !== detail) {
@@ -331,7 +366,7 @@ export async function runDaemon({
         mode,
         tickAt: new Date(now).toISOString(),
         tickMs: Math.round(performance.now() - tickStarted),
-        intervalMs: tickMs,
+        intervalMs: interval,
         measurement: measured.measurement,
         workspaces,
         pressure,
@@ -349,9 +384,13 @@ export async function runDaemon({
       break;
     }
     if (closing) break;
-    const idle = !alive && Date.now() - contactSince >= tickMs;
+    const idle = !alive && !pending && !wentDormant && Date.now() - contactSince >= tickMs;
     emptyTicks = idle ? emptyTicks + 1 : 0;
-    log('debug', 'daemon_tick', `tick ${Math.round(performance.now() - tickStarted)}ms; ${alive ?? 'nothing running'}`);
+    log(
+      'debug',
+      'daemon_tick',
+      `tick ${Math.round(performance.now() - tickStarted)}ms; ${alive ?? (pending ? `nothing running; ${pending}, next tick in ${Math.round(interval / 60_000)} minutes` : 'nothing running')}`,
+    );
     if (emptyTicks >= EMPTY_TICKS_BEFORE_EXIT) {
       shutdown('nothing runs in this Stim home');
       break;

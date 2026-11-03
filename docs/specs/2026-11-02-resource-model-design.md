@@ -24,7 +24,10 @@ dropping its own autopilot thresholds.
 - One `stim-daemon` per Stim home, scoped homes included. It is the only writer of idle and pressure decisions.
 - Started by every command that creates running state (`start`, `ios`, `android`, `web`, `macos`, `revive`) through
   `ensureDaemon` from #4792. It exits after two consecutive ticks with nothing running in the home and no waiter. Any
-  command restarts it.
+  command restarts it. Amended 2026-11-02 (approved): "nothing running" for this rule also means no workspace has
+  pending future work. While any workspace is idle but not yet dormant, or a finished-worktree removal is pending, the
+  daemon stays alive and ticks every 5 minutes instead of 60 s; it exits two ticks after every registered workspace is
+  dormant or removed and nothing runs.
 - Ownership claim `$STIM_HOME/daemon/claim` through `@stim-cli/core/ownership-claim`; a second daemon finds the claim
   held and exits. A tick that throws logs the error, releases the claim and exits, so the fallbacks resume.
 - Socket `$STIM_HOME/daemon/daemon.sock` (mode 0600, same long-path fallback as stim-server), messages: `hello`,
@@ -80,6 +83,9 @@ never fires. This replaces the #4799 rule that device logs count for those slots
 | idle    | `idle.minutes` (15) without activity and no blocker                      | the idle stop: Metro stopped with the port reservation and launch records kept and `IDLE_STOP_KEY` written; owned devices shut down through teardown with the idle reason; the collector ends with its device; workspace `derived-data/`, the Metro store and the regenerable in-tree dirs (`android/app/build`, `android/build`, `android/.gradle`, `ios/build`, `.build`) deleted | any activity, `stim revive`, `stim ios`, `stim android`, `stim start` |
 | dormant | `idle.dormantDays` (3) without activity                                  | owned devices deleted through ledger teardown (the parked pool untouched); workspace logs archived; node_modules and Pods untouched                                                                                                                                                                                                                                                 | a Stim command                                                        |
 | removed | a finished worktree (merged or closed PR) plus `gc.worktreeGraceMinutes` | today's removal; devices parked when the pool has room                                                                                                                                                                                                                                                                                                                              |                                                                       |
+
+Amended 2026-11-02 (approved): the dormant stage needs a running daemon, so a quiet home keeps it alive at the 5-minute
+cadence of section 1 until every registered workspace is dormant or removed.
 
 The idle stop, device shutdown and output deletion are one pass under the workspace's native-run and metro-start
 locks. Revive reads only state that survives idle: the port reservation, the launch records with their

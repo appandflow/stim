@@ -225,6 +225,26 @@ function alreadyDormant(path: string): boolean {
 }
 
 /**
+ * A workspace the dormant stage will take later, which keeps the daemon alive: registered, not dormant yet, with an
+ * owned device or logs to act on, and not kept out by `maintenance.keep` or `idle.minutes` 0. Null when there is none
+ * or the stage is off.
+ */
+export function pendingDormant(config: Config | null): string | null {
+  if (!config || dormantAfterMs(config) <= 0) return null;
+  for (const [path, project] of Object.entries(config.projects)) {
+    if (alreadyDormant(path) || !(ownsDevice(project) || hasLogs(path))) continue;
+    try {
+      const { settings } = resolveProjectSettings(path);
+      if (maintenanceKeepSetting(settings) || idleMinutesSetting(settings) === 0) continue;
+    } catch {
+      continue;
+    }
+    return path;
+  }
+  return null;
+}
+
+/**
  * Workspaces with nothing running, idle `thresholdMs`, not yet dormant, that own a device or have logs to archive,
  * longest-idle first.
  */

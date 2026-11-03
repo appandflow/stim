@@ -976,11 +976,13 @@ took the time.
 
 `daemon.mode` is a machine setting, `on` by default, with the environment
 override `STIM_DAEMON`. `start`, `ios`, `android`, `web`, `macos` and `revive`
-start one `stim-daemon` process per Stim home, scoped homes included, and it
-exits on its own two minutes after nothing runs there. Each minute it measures
-the machine once, moves workspaces with no activity for `idle.minutes` into
-the [idle stage](./dev-server-and-logs.md#idle-stop), and runs automatic
-maintenance. It also wakes the oldest run waiting for a build slot as soon as
+start one `stim-daemon` process per Stim home, scoped homes included. It ticks
+each minute while anything runs there and every 5 minutes otherwise, and exits
+two ticks after nothing runs and every workspace is dormant or removed, so the
+dormant stage fires in a quiet home. Each tick it measures the machine once,
+moves workspaces with no activity for `idle.minutes` into the
+[idle stage](./dev-server-and-logs.md#idle-stop), runs the pressure ladder above
+normal, and runs automatic maintenance. It also wakes the oldest run waiting for a build slot as soon as
 one is released. `report` logs what it would do and acts on nothing. `off`
 runs no daemon: each dev server supervisor stops its own dev server and
 devices after `idle.minutes`, nothing times a device with no dev server, and

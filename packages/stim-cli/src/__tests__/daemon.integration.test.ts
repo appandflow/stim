@@ -159,7 +159,7 @@ test('exits after two ticks with nothing running in its home, releasing its clai
   expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
   expect(existsSync(daemonSocket())).toBe(false);
   expect(daemonLog().match(/"event":"daemon_tick"/g)).toHaveLength(2);
-  expect(readDaemonSnapshot()).toMatchObject({ mode: 'on', intervalMs: 50, workspaces: [] });
+  expect(readDaemonSnapshot()).toMatchObject({ mode: 'on', intervalMs: 250, workspaces: [] });
 }, 20_000);
 
 test('a tick that fails hands the timers back: the daemon releases its claim and exits instead of holding it idle', async () => {
