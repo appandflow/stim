@@ -117,6 +117,7 @@ footer .credit a:hover {
 }
 
 .topbar {
+  position: relative;
   flex: none;
   display: flex;
   align-items: center;
@@ -505,7 +506,6 @@ button.primary.small {
   border-radius: 7px;
 }
 .people {
-  position: relative;
   flex: none;
 }
 .people[hidden],
@@ -549,8 +549,8 @@ button.primary.small {
 }
 .people-panel {
   position: absolute;
-  top: calc(100% + 10px);
-  right: 0;
+  top: calc(100% + 8px);
+  right: max(12px, env(safe-area-inset-right));
   width: min(300px, calc(100vw - 24px));
   padding: 12px;
   border: 1px solid var(--line);

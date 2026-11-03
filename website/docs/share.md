@@ -106,7 +106,7 @@ actions and the host's touches. Names are kept only
 in stim-server's memory while the share lives. A row of colored initials in the
 top bar lists who is here; an eye marks the view-only ones. Click it to open a
 People list with each person's role (controlling, can control or view only), the
-host and the agent while they act, and a Change name action on your own row.
+host and the agent when they are on the device, and a Change name action on your own row.
 Presence shows where
 people tap, a PIN pad included. The screen is already shared, so this adds
 little, but keep it in mind when the device shows secrets.

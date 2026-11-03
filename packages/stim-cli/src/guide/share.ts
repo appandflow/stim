@@ -50,7 +50,7 @@ sees the agent's actions and the host's touches, shown as Host, when the device
 is controlled from Stim Desktop or the phone. The names live in stim-server's
 memory for the share and are never logged or written to disk. Clicking the row of colored initials in
 the top bar opens a People list: each person with a role (controlling, can control or view only), the
-host and the agent while they act, and a Change name action on the viewer's own row. Presence shows where people tap, a PIN pad
+host and the agent when they are on the device, and a Change name action on the viewer's own row. Presence shows where people tap, a PIN pad
 included; the screen is already shared, so it adds little, but say so when you
 share a device that shows secrets. One viewer at a time holds the touch
 pointer, from finger down to finger up or ten seconds without input: another
