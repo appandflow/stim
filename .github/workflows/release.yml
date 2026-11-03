@@ -362,7 +362,10 @@ jobs:
       - name: Wait until NEXT_THROTTLE_MINUTES after the last next publish
         if: github.event_name != 'workflow_dispatch'
         run: |
-          current=$(npm view stim dist-tags.next)
+          if ! current=$(npm view stim dist-tags.next); then
+            echo "::warning::could not read stim's next dist-tag; publishing without waiting"
+            exit 0
+          fi
           if [ -z "$current" ]; then
             echo "stim has no next dist-tag yet"
             exit 0
@@ -423,6 +426,10 @@ jobs:
           SHA: ${{ steps.head.outputs.sha }}
         run: |
           base=$(node -p "require('./packages/core/package.json').version")
+          if [[ "$base" == *-* ]]; then
+            echo "::notice::main carries the release candidate $base, which owns the next dist-tag; not publishing"
+            exit 0
+          fi
           IFS=. read -r major minor _ <<<"${base%%-*}"
           stamp=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S "$SHA")
           version="$major.$((minor + 1)).0-next.$stamp.g${SHA:0:7}"
@@ -528,10 +535,11 @@ jobs:
             name=$(node -p "require('$RUNNER_TEMP/tarballs/$1.package.json').name")
             if npm view "$name@$VERSION" version >/dev/null 2>&1; then
               echo "$name@$VERSION is already published"
-            elif npm publish "$RUNNER_TEMP/tarballs/$1.tgz" --provenance --access public --tag next; then
+            elif npm publish "$RUNNER_TEMP/tarballs/$1.tgz" --provenance --access public --tag next > "$RUNNER_TEMP/npm-$1.log" 2>&1; then
+              cat "$RUNNER_TEMP/npm-$1.log"
               echo "$name@$VERSION published"
-            elif npm view "$name@$VERSION" version >/dev/null 2>&1; then
-              echo "$name@$VERSION is published"
+            elif cat "$RUNNER_TEMP/npm-$1.log" && grep -q 'cannot publish over the previously published' "$RUNNER_TEMP/npm-$1.log"; then
+              echo "$name@$VERSION is already published"
             else
               echo "$name@$VERSION failed to publish"
               return 1

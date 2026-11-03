@@ -43,8 +43,8 @@ The source of truth for "what was last released" is the npm registry, not
 local git tags — a publish can fail after the tag is pushed, leaving the tag
 ahead of what's actually on npm. Post-stable, the highest published version
 can sit on either the `latest` or the `next` dist-tag, so check both and take
-the semver-higher one, ignoring the untagged `-next.` builds of the
-[prerelease channel](#prerelease-channel). Pull it and list commits since the matching tag:
+the semver-higher one, ignoring the `-next.` builds of the
+[prerelease channel](#prerelease-channel), which have no git tag. Pull it and list commits since the matching tag:
 
 ```bash
 git fetch --tags
@@ -571,12 +571,17 @@ npm install --global stim@next
 - **Gate.** The job publishes a head that passed the merge queue's
   `merge gate`, or, for a push that bypassed the queue, the CI jobs
   `test (node 22)`, `test (node 24)` and `published runtime (node 22.12.0)`.
-  It runs no tests of its own.
+  It runs no tests of its own. Those CI jobs are still running when the push
+  starts the job, so a bypassing push usually waits for the hourly schedule
+  or a dispatch.
 - **Guards.** The job runs only on `main` of this repository, refuses a
   version without the `-next.` suffix and publishes only with `--tag next`.
   It never touches `latest`, so the stable dist-tag logic in section 1 is
-  unaffected. A release candidate also lands on `next`, until the next
-  channel publish replaces it.
+  unaffected.
+- **Release candidates.** A candidate also publishes to `next`. While the
+  packages on `main` carry a prerelease version (from the candidate's version
+  commit until the stable one), the job publishes nothing, so `next` stays on
+  the candidate and its `smoke` check of `dist-tags.next` is not raced.
 - **What `next` points to:** `npm view stim dist-tags.next`. Each run's
   summary names the version, its commit and which packages published.
 - **Pause:** `gh variable set NEXT_PAUSED --body true` skips the job until
