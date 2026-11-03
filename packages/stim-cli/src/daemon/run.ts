@@ -30,6 +30,7 @@ import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
+import { waitForProcessExit, type ProcessRecord } from '../process-identity.ts';
 import { stimBuild } from '../spawn-entry.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
@@ -81,36 +82,44 @@ async function takeClaim(mode: DaemonMode, build: string | null): Promise<ClaimH
   }
 }
 
-function holdsClaim(pid: number): boolean {
+function daemonHolder(pid: number): ProcessRecord | null {
   try {
-    return readClaimSet(daemonClaimRoot()).live.some((holder) => holder.owner.pid === pid);
+    return readClaimSet(daemonClaimRoot()).live.find((holder) => holder.owner.pid === pid)?.owner ?? null;
   } catch {
-    return false;
+    return null;
   }
 }
 
 /**
  * Asks the running daemon `pid` to exit after its current tick and waits, up to ten minutes, for it to release its
- * claim. A daemon from before handovers closes on the `handover` op; it is stopped right after it answers a tick.
+ * claim. A daemon from before handovers closes on the `handover` op; it gets SIGTERM right after it answers a tick,
+ * and its process is returned for the caller to outwait before its first tick.
  */
-async function takeOverFrom(pid: number, log: (level: Level, event: string, msg: string) => void): Promise<void> {
-  if (!holdsClaim(pid)) return;
+async function takeOverFrom(
+  pid: number,
+  log: (level: Level, event: string, msg: string) => void,
+): Promise<ProcessRecord | null> {
+  const holder = daemonHolder(pid);
+  if (!holder) return null;
+  let stopped: ProcessRecord | null = null;
   const reply = await askDaemon('handover', HANDOVER_REPLY_MS);
   if (reply?.op === 'handover') log('info', 'daemon_handover', `asked stim-daemon pid ${pid} to exit after its tick`);
   else {
-    // A tick another run requests between the `ticked` reply and the signal starts first, and the signal then
-    // interrupts that pass. Only a daemon from before handovers is stopped this way, once.
+    // On SIGTERM a daemon from before handovers releases its claim at once, also when a tick another run requested
+    // has started its next pass, and that pass runs on until the process exits.
     const ticked = await askDaemon('tick', HANDOVER_WAIT_MS);
-    if (ticked?.op !== 'ticked' || !holdsClaim(pid)) return;
+    if (ticked?.op !== 'ticked' || !daemonHolder(pid)) return null;
     try {
       process.kill(pid, 'SIGTERM');
     } catch {
-      return;
+      return null;
     }
+    stopped = holder;
     log('info', 'daemon_handover', `stopped stim-daemon pid ${pid}, which predates handovers, after its tick`);
   }
   const deadline = Date.now() + HANDOVER_WAIT_MS;
-  while (holdsClaim(pid) && Date.now() < deadline) await new Promise((done) => setTimeout(done, HANDOVER_POLL_MS));
+  while (daemonHolder(pid) && Date.now() < deadline) await new Promise((done) => setTimeout(done, HANDOVER_POLL_MS));
+  return stopped;
 }
 
 function answers(path: string): Promise<boolean> {
@@ -229,7 +238,7 @@ export async function runDaemon({
   const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
   const log = (level: Level, event: string, msg: string, fields: Record<string, unknown> = {}) =>
     writer.write({ src: 'daemon', level, event, msg, ...fields });
-  if (replace !== undefined) await takeOverFrom(replace, log);
+  const predecessor = replace === undefined ? null : await takeOverFrom(replace, log);
   const claim = await takeClaim(startMode, build);
   if (!claim) {
     log('debug', 'daemon_claim_held', 'another stim-daemon holds the claim; exiting');
@@ -347,6 +356,8 @@ export async function runDaemon({
     `pid ${process.pid} listening on ${path} after ${Math.round(performance.now() - started)}ms`,
     { build },
   );
+  if (predecessor && !(await waitForProcessExit(predecessor, HANDOVER_WAIT_MS)))
+    log('warn', 'daemon_handover', `stim-daemon pid ${predecessor.pid} still runs; ticking anyway`);
   let emptyTicks = 0;
   let interval = tickMs;
   const kept = new Map<string, string>();
