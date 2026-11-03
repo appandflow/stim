@@ -558,7 +558,8 @@ async function execute(
   root: string | null,
   version: string,
 ): Promise<void> {
-  const env = { ...process.env, ...(root ? { AGENT_DEVICE_STATE_DIR: workspaceAgentDeviceDir(root) } : {}) };
+  const local = root !== null && run !== null && run.plan.device.kind !== 'hosted';
+  const env = { ...process.env, ...(local ? { AGENT_DEVICE_STATE_DIR: workspaceAgentDeviceDir(root) } : {}) };
   const sessionsDir = root ? join(workspaceAgentDeviceDir(root), 'sessions') : null;
   const command = run?.plan.command ?? null;
   const tracked =

@@ -1030,7 +1030,8 @@ Stim adds what agent-device needs to reach the device:
   or [hosted Android](./remote-machines.md) session.
 - `--session stim-<slot>-<platform>` unless you pass `--session`.
 - `AGENT_DEVICE_STATE_DIR`, the workspace's
-  [agent-device state directory](./dev-server-and-logs.md#agent-device-actions).
+  [agent-device state directory](./dev-server-and-logs.md#agent-device-actions),
+  except for a hosted session, which keeps agent-device's own.
 
 `--slot` picks a [device slot](#named-device-slots), and `--platform ios|android`
 picks the platform when the slot has both. Before the command, an
