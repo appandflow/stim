@@ -256,7 +256,7 @@ Points must be normalized by the box agent-device measures in. A JSON snapshot r
 space and orientation as its rects (callstack/agent-device#3182; that tap points share it is to verify); without one, use the device's logical size: on
 iOS the frame's pixel size divided by the device type's screen scale, on Android the display size in the unit
 agent-device records (to verify: pixels or dp). The same
-normalized start point (`x`/`y`, from `x1`/`y1` for scrolls and swipes) and end point (`x2`/`y2`) go onto `ReplayMarker` as optional fields, so Desktop's replay can show where each
+normalized start point (`x`/`y`, from `x1`/`y1` for scrolls and swipes) and end point (`x2`/`y2`) go onto `ReplayMarker` as optional fields, added in phase 1 for the wrapper's markers, so Desktop's replay can show where each
 action landed.
 
 The honest gap: these show 0.6 to 1 s after an action completes, with no live phases, and only for agents that use
