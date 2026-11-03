@@ -171,9 +171,9 @@ import {
   parseQuietHours,
   pushEvents,
   readBuildClients,
-  readDeviceHostClients,
-  readDevices,
+  readRegistries,
   recordsForKey,
+  RegistryUnavailable,
   secretPsk,
   serverIdentity,
   setDevicePush,
@@ -182,12 +182,14 @@ import {
   touchDevice,
   type KeyRecords,
   type PairedDevice,
+  type Registries,
   validStuckMinutes,
 } from './registry.ts';
 import {
   acceptNoise,
   decodeSecret,
   HandshakeRefusal,
+  HOME_UNAVAILABLE_MESSAGE,
   CLOSE_REFUSED,
   MAX_CLIENT_MESSAGE_BYTES,
   MAX_FIRST_MESSAGE_BYTES,
@@ -1187,14 +1189,6 @@ function send(socket: ServerSocket, message: ServerMessage | string): void {
   if (socket.readyState === socket.OPEN) socket.send(typeof message === 'string' ? message : JSON.stringify(message));
 }
 
-function buildAllowed(session: PairedDevice): boolean {
-  return Boolean(
-    readBuildClients()
-      .find((entry) => entry.id === session.id)
-      ?.capabilities.includes('build'),
-  );
-}
-
 function requestId(value: unknown): RequestId | null {
   return typeof value === 'number' || typeof value === 'string' ? value : null;
 }
@@ -1458,6 +1452,30 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const frames = new FramePool(helperEnv, frameLimits, frameHelper, new DeviceViewers(), undefined, foldHelper);
   let recorder: Recorder | null = null;
   let startup: StartupState = { state: 'pending' };
+  /** The last registries read: approval checks of work under way answer from them while the Stim home does not. */
+  let approvals: Registries | null = null;
+  let homeLost = false;
+  /**
+   * The registries now, or null when the Stim home does not answer. A ready server then stops serving new clients
+   * until it does, and revokes nothing.
+   */
+  const readApprovals = (): Registries | null => {
+    try {
+      approvals = readRegistries();
+      return approvals;
+    } catch (error) {
+      if (!(error instanceof RegistryUnavailable)) throw error;
+      if (startup.state === 'ready') {
+        homeLost = true;
+        startup = { state: 'degraded', reason: error.message, cause: 'home-unreadable' };
+        console.error(`stim-server: listening, but not serving clients until the Stim home answers. ${error.message}`);
+      }
+      return null;
+    }
+  };
+  const approved = (): Registries => readApprovals() ?? approvals ?? { devices: [], build: [], deviceHost: [] };
+  const buildAllowed = (session: Pick<PairedDevice, 'id'>) =>
+    approved().build.some((entry) => entry.id === session.id && entry.capabilities.includes('build'));
   let startupProbe: ReturnType<typeof probeDirectories> | null = null;
   let startupRetry: NodeJS.Timeout | null = null;
   let setupPruneTimer: NodeJS.Timeout | null = null;
@@ -1582,7 +1600,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ),
     approved: (client, from) =>
       ('client' in from ? from.client === client : from.node !== null && agentNodes.get(client) === from.node) &&
-      readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+      approved().deviceHost.some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
     withdrawn: (session) => {
       for (const stream of agentStreams.get(session) ?? []) stream.destroy();
     },
@@ -1593,14 +1611,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     agents: agentDrivers,
     limits: options.deviceHostLimits,
     allowed: (client) =>
-      readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+      approved().deviceHost.some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
     connected: (client) => [...sessions.values()].some((entry) => entry.id === client),
     builtBundle: (client, handoff, sha256) => {
-      const host = readDeviceHostClients().find(
+      const host = approved().deviceHost.find(
         (entry) => entry.id === client && entry.capabilities.includes('device-host'),
       )?.publicKey;
       return builds.takeBundle(handoff, sha256, (builder) => {
-        const build = readBuildClients().find(
+        const build = approved().build.find(
           (entry) => entry.id === builder && entry.capabilities.includes('build'),
         )?.publicKey;
         return host !== undefined && host === build;
@@ -1687,7 +1705,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         ...(error ? { error } : {}),
         durationMs,
       }),
-    allowed: (client) => readBuildClients().some((each) => each.id === client && each.capabilities.includes('build')),
+    allowed: (client) => buildAllowed({ id: client }),
   });
   const control = new ControlHub({
     env: options.env,
@@ -1780,7 +1798,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     readPressure: readMemoryPressure,
     pullRequests: options.pullRequests ?? ((worktrees) => worktreePullRequests()(worktrees)),
     ownLeases: () => control.ownLeaseTimes(),
-    devices: readDevices,
+    devices: () => approved().devices,
     dropToken: dropPushToken,
     log: notificationLog,
     whilePaired: options.history ?? true,
@@ -1809,7 +1827,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let revocationCheck: NodeJS.Timeout | null = null;
   let checkedRegistry: string | null = null;
   const checkRevocations = () => {
-    const devices = [...readDevices(), ...readBuildClients(), ...readDeviceHostClients()];
+    const registries = readApprovals();
+    if (!registries) {
+      if (homeLost) {
+        watcher?.close();
+        watcher = null;
+      }
+      return;
+    }
+    if (homeLost && startup.state === 'degraded') {
+      homeLost = false;
+      startup = { state: 'ready' };
+      watchServerDir();
+      console.error('stim-server: the Stim home answers again; serving clients.');
+    }
+    const devices = [...registries.devices, ...registries.build, ...registries.deviceHost];
     const registry = JSON.stringify(devices);
     if (registry === checkedRegistry) return;
     checkedRegistry = registry;
@@ -1838,14 +1870,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let revocationPoll: NodeJS.Timeout | null = null;
   let hostedIdleSweep: NodeJS.Timeout | null = null;
   let retireOnce: Promise<void> | undefined;
-  const becomeReady = () => {
-    mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
-    watcher ??= watch(serverDir(), () => {
+  const watchServerDir = () => {
+    if (watcher) return;
+    const created = watch(serverDir(), () => {
       revocationCheck ??= setTimeout(() => {
         revocationCheck = null;
         checkRevocations();
       }, 50);
     });
+    created.once('error', () => {
+      created.close();
+      if (watcher === created) watcher = null;
+    });
+    watcher = created;
+  };
+  const becomeReady = () => {
+    mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
+    watchServerDir();
     // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
     revocationPoll ??= setInterval(checkRevocations, 1000).unref();
     hostedIdleSweep ??= setInterval(
@@ -1934,7 +1975,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     relays.set(socket, relay);
 
     const refuse = (id: RequestId | null, code: ErrorCode, message: string, closeCode: number) => {
-      if (!device) limiter.record(limitKey);
+      if (!device && code !== 'home-unavailable') limiter.record(limitKey);
       send(socket, { id, error: { code, message } });
       socket.close(closeCode, code);
     };
@@ -1966,7 +2007,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       tracker.identify({ id: null, runId });
       const probing = hostHealth();
       const name = typeof params.client.name === 'string' ? params.client.name.slice(0, 64) : 'Stim Desktop';
-      const keyRecords = clientKey === null ? {} : recordsForKey(clientKey);
+      const registries = local ? null : readApprovals();
+      if (!local && (!registries || startup.state !== 'ready'))
+        return refuse(id, 'home-unavailable', HOME_UNAVAILABLE_MESSAGE, CLOSE_REFUSED);
+      const keyRecords = clientKey === null || !registries ? {} : recordsForKey(clientKey, registries);
       const chosen = local ? { ...LOCAL_DEVICE, name } : access === undefined ? keyRecords.device : keyRecords[access];
       if (!chosen) {
         return refuse(
@@ -2072,7 +2116,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     /** Control is re-read from the record each time, so a revoked grant stops at once; the local socket always has it. */
     const canControl = (session: Pick<PairedDevice, 'id'>) =>
-      local || readDevices().some((entry) => entry.id === session.id && entry.capabilities.includes('control'));
+      local || approved().devices.some((entry) => entry.id === session.id && entry.capabilities.includes('control'));
 
     const inputs = { tokens: controlLimits.inputPerSecond, at: Date.now() };
     const characters = { tokens: MAX_INPUT_TEXT, at: Date.now() };
@@ -4490,13 +4534,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     async function updateMethod(id: RequestId, method: string, params: unknown, session: PairedDevice): Promise<void> {
-      const approved =
+      const registries = approved();
+      const machine =
         !local &&
-        (readBuildClients().some((entry) => entry.id === session.id && entry.capabilities.includes('build')) ||
-          readDeviceHostClients().some(
-            (entry) => entry.id === session.id && entry.capabilities.includes('device-host'),
-          ));
-      if (!approved) {
+        (registries.build.some((entry) => entry.id === session.id && entry.capabilities.includes('build')) ||
+          registries.deviceHost.some((entry) => entry.id === session.id && entry.capabilities.includes('device-host')));
+      if (!machine) {
         return error(
           id,
           'forbidden',
@@ -5039,7 +5082,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
      * and a 16-byte lookup reveals nothing without the PSK. It has its own, far higher, limit per address.
      */
     const refuse = (code: string) => {
-      (code === 'unknown-secret' ? unknownSecrets : limiter).record(limitKey);
+      if (code !== 'home-unavailable') (code === 'unknown-secret' ? unknownSecrets : limiter).record(limitKey);
       if (ws.readyState === ws.OPEN) ws.close(CLOSE_REFUSED, code);
     };
     try {
@@ -5052,10 +5095,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     try {
       accepted = await acceptNoise(ws, data, isBinary, {
         keyPair: serverKey,
-        psk: (lookup) => secretPsk(lookup),
+        psk: (lookup) => {
+          try {
+            return secretPsk(lookup);
+          } catch (error) {
+            if (!(error instanceof RegistryUnavailable)) throw error;
+            readApprovals();
+            throw new HandshakeRefusal('home-unavailable', HOME_UNAVAILABLE_MESSAGE);
+          }
+        },
         timeoutMs: authTimeoutMs,
       });
     } catch (error) {
+      if (error instanceof HandshakeRefusal && error.code === 'home-unavailable') return;
       (error instanceof HandshakeRefusal && error.code === 'unknown-secret' ? unknownSecrets : limiter).record(
         limitKey,
       );
@@ -5073,11 +5125,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const from = peer ? await describePeer(request, peer) : 'this machine';
       if (ws.readyState !== ws.OPEN) return;
-      records = spendSecret(accepted.lookup!, publicKey, name, from);
+      try {
+        records = spendSecret(accepted.lookup!, publicKey, name, from);
+      } catch (error) {
+        if (!(error instanceof RegistryUnavailable)) throw error;
+        readApprovals();
+        return refuse('home-unavailable');
+      }
       if (!records) return refuse('unknown-secret');
       if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
     } else {
-      records = recordsForKey(publicKey);
+      const registries = readApprovals();
+      if (!registries) return refuse('home-unavailable');
+      records = recordsForKey(publicKey, registries);
       if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
     }
     if (ws.readyState !== ws.OPEN) return;

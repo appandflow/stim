@@ -134,11 +134,41 @@ export interface UnreachableInput {
   reason: string;
   /** What the connection did; absent when it got past the transport. */
   transport?: Transport;
+  /** The server's refusal code, when it answered the handshake or `hello` with one. */
+  code?: string;
   /** The `startup` of the peer's `/health`, read after a 503. */
   startup?: PeerStartup | null;
   /** Whether `tailscale ping` reached the peer, read after a silent connection; undefined when not asked. */
   pinged?: boolean;
   now?: number;
+}
+
+/**
+ * A stim-server that runs but does not serve clients: it answered 503 (`how`), or refused with `home-unavailable`,
+ * whose cause is a Stim home it cannot read.
+ */
+function serverNotReady(entry: string, startup: PeerStartup | null | undefined, how = ''): RemoteDiagnosis {
+  const why =
+    startup?.cause === 'home-unreadable'
+      ? ' It cannot read its Stim home, usually because the disk holding ~/.stim is disconnected or not responding.'
+      : startup?.cause === 'start-failed'
+        ? ' It failed while starting.'
+        : startup?.state === 'pending'
+          ? ' It is still starting.'
+          : '';
+  const check =
+    startup?.cause === 'home-unreadable'
+      ? `Check the disk that holds the Stim home on ${entry} (reconnect or wake an external drive); stim-server serves again by itself once it answers. \`stim-server service status\` there shows the exact reason.`
+      : startup?.state === 'pending'
+        ? `Wait a few seconds and run \`stim doctor\` again.`
+        : `On ${entry}, run \`stim-server service status\` for the reason; the log file it prints has the rest.`;
+  return {
+    layer: 'server',
+    code: 'server-not-ready',
+    title: 'Server not ready',
+    message: `stim-server on ${entry} is running but is not serving clients${how}.${why}`,
+    remedy: check,
+  };
 }
 
 /**
@@ -148,6 +178,7 @@ export interface UnreachableInput {
 export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
   const { entry, peer, port, transport, now = Date.now() } = input;
   const route = `https port ${port}`;
+  if (input.code === 'home-unavailable') return serverNotReady(entry, { state: 'degraded', cause: 'home-unreadable' });
   if (transport?.kind === 'silent' && input.pinged === true) {
     return {
       layer: 'server',
@@ -205,30 +236,7 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
         remedy: `On ${entry}, run \`stim-server service status\`; \`stim-server service install --serve\` starts it and keeps it running.`,
       };
     }
-    if (status === 503) {
-      const startup = input.startup;
-      const why =
-        startup?.cause === 'home-unreadable'
-          ? ' It cannot read its Stim home, usually because the disk holding ~/.stim is disconnected or not responding.'
-          : startup?.cause === 'start-failed'
-            ? ' It failed while starting.'
-            : startup?.state === 'pending'
-              ? ' It is still starting.'
-              : '';
-      const check =
-        startup?.cause === 'home-unreadable'
-          ? `Check the disk that holds the Stim home on ${entry} (reconnect or wake an external drive); stim-server serves again by itself once it answers. \`stim-server service status\` there shows the exact reason.`
-          : startup?.state === 'pending'
-            ? `Wait a few seconds and run \`stim doctor\` again.`
-            : `On ${entry}, run \`stim-server service status\` for the reason; the log file it prints has the rest.`;
-      return {
-        layer: 'server',
-        code: 'server-not-ready',
-        title: 'Server not ready',
-        message: `stim-server on ${entry} is running but is not serving clients (HTTP 503).${why}`,
-        remedy: check,
-      };
-    }
+    if (status === 503) return serverNotReady(entry, input.startup, ' (HTTP 503)');
     return {
       layer: 'route',
       code: 'route-http-error',
@@ -251,9 +259,10 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
  * network, the machine's firewall, or a server that does not listen on that address.
  */
 export function diagnoseLocalUnreachable(
-  input: Pick<UnreachableInput, 'entry' | 'port' | 'reason' | 'transport' | 'startup'>,
+  input: Pick<UnreachableInput, 'entry' | 'port' | 'reason' | 'transport' | 'code' | 'startup'>,
 ): RemoteDiagnosis {
   const { entry, port, transport } = input;
+  if (input.code === 'home-unavailable') return serverNotReady(entry, { state: 'degraded', cause: 'home-unreadable' });
   if (transport?.kind === 'refused') {
     return {
       layer: 'server',
