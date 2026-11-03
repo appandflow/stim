@@ -9,7 +9,6 @@ import { STIM_HOMES_TEST_GUARD_ROOT_ENV } from './eas-machine-root-guard-env.ts'
 
 export { stimHomesRoot } from '@stim-cli/core/state';
 
-/** A home's last-seen time moves forward at most this often, so a busy home does not rewrite the list on every command. */
 const LAST_SEEN_REFRESH_MS = 10 * 60_000;
 
 type HomeDevices = StimHomeEntry['devices'];
@@ -35,11 +34,6 @@ function inside(parent: string, path: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
-/**
- * Whether the machine list tracks `home`: a home other than the default `~/.stim` and not one inside it. The default
- * home is the one that reports the others; the private homes stim-server and the build worker keep under it are
- * covered by the hosted sections of `gc`.
- */
 export function isTrackedStimHome(home: string): boolean {
   const defaultHome = canonical(join(homedir(), '.stim'));
   return home !== defaultHome && !inside(defaultHome, home);
@@ -61,11 +55,6 @@ function writeHomes(root: string, homes: Map<string, StimHomeEntry>): void {
   }
 }
 
-/**
- * Lists `home` in the machine list, or refreshes its entry: the first call creates it, a later call moves its
- * last-seen time forward when that is older than ten minutes and, when `devices` is given, replaces its recorded
- * devices. Throws when the list is unreadable or `root` is the guarded real root.
- */
 export function recordStimHome(
   home: string,
   { devices, now = Date.now(), root = stimHomesRoot() }: { devices?: HomeDevices; now?: number; root?: string } = {},
@@ -90,7 +79,6 @@ export function recordStimHome(
   );
 }
 
-/** Removes each listed home for which `when` still holds under the lock; returns the paths removed. */
 export function forgetStimHomes(
   paths: readonly string[],
   when: (entry: StimHomeEntry) => boolean,
@@ -109,22 +97,20 @@ export function forgetStimHomes(
   });
 }
 
-const noted = new Map<string, number>();
+const quietUntil = new Map<string, number>();
+const FAILURE_BACKOFF_MS = 60_000;
 
-/**
- * Lists the current Stim home when it creates a workspace or a device. Bookkeeping only: a list that cannot be read or
- * written leaves the command's own work untouched and is recorded in the debug log. Without `devices` it does
- * nothing more than a refresh of the last-seen time, at most once per refresh interval in this process.
- */
 export function noteStimHome(devices?: HomeDevices, now: number = Date.now()): void {
+  let key: string | null = null;
   try {
     const home = canonical(configDir());
     if (!isTrackedStimHome(home)) return;
-    const key = `${stimHomesRoot()}\0${home}`;
-    if (!devices && now - (noted.get(key) ?? -Infinity) < LAST_SEEN_REFRESH_MS) return;
+    key = `${stimHomesRoot()}\0${home}`;
+    if (!devices && now < (quietUntil.get(key) ?? 0)) return;
     recordStimHome(home, { devices, now });
-    noted.set(key, now);
+    quietUntil.set(key, now + LAST_SEEN_REFRESH_MS);
   } catch (error) {
+    if (key && !devices) quietUntil.set(key, now + FAILURE_BACKOFF_MS);
     debugLog.log('home-registry.note-failed', { message: error instanceof Error ? error.message : String(error) });
   }
 }

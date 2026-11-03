@@ -134,6 +134,22 @@ describe('the other Stim homes of gc', () => {
     expect(homes[0]).toMatchObject({ path: home, state: 'unverified', forgettable: false });
   });
 
+  test('an unmounted volume gets no orphan claim and no delete command for its mirrored devices', async () => {
+    const home = scratchHome('scratch', { ios: ['UDID-1'] });
+    rmSync(home, { recursive: true });
+
+    const { homes } = await collectOtherHomes(
+      own,
+      { sims: [sim('UDID-1', 'stim-scratch (iPhone 17 iOS 27)')], avds: [] },
+      [],
+      {
+        homesRoot,
+      },
+    );
+    expect(homes[0]).toMatchObject({ state: 'unverified', devices: [expect.objectContaining({ command: null })] });
+    expect(otherHomeLines(homes, NOW).join('\n')).not.toContain('orphaned from');
+  });
+
   test('an unreadable list is a notice and no homes', async () => {
     mkdirSync(homesRoot, { recursive: true });
     writeFileSync(join(homesRoot, 'homes.json'), '[');

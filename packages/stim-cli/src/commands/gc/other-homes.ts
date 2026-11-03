@@ -19,19 +19,11 @@ const SIZE_TIMEOUT_MS = 30_000;
 interface OtherHomeDevice {
   kind: 'ios' | 'android';
   id: string;
-  /** The simulator's name; null for an AVD, whose id is its name, and for a simulator that is not listed. */
   name: string | null;
-  /** Whether the device is on this machine; null when the listing was unavailable. */
   present: boolean | null;
-  /** The command that deletes it by hand, for a present device of a gone home; null while its home still exists. */
   command: string | null;
 }
 
-/**
- * Another Stim home that created a workspace or a device. `present` homes still exist on disk; `gone` ones were
- * removed from a mounted volume; `unverified` ones are absent on a volume that is not mounted, so nothing is claimed
- * about them.
- */
 export interface OtherHome {
   path: string;
   state: 'present' | 'gone' | 'unverified';
@@ -41,9 +33,7 @@ export interface OtherHome {
   privateBytes: number | null;
   workspaces: number;
   devices: OtherHomeDevice[];
-  /** The exact commands that tear the home down, in order; empty for a home that is gone. */
   teardown: string[];
-  /** A gone home with no device left on this machine: `gc --delete` drops its entry from the list. */
   forgettable: boolean;
 }
 
@@ -53,14 +43,11 @@ export interface OtherHomesReport {
 }
 
 export interface OtherHomesDependencies {
-  /** The root of the machine list of Stim homes; tests pass a temporary one. */
   homesRoot?: string;
 }
 
 interface DeviceListing {
-  /** Every simulator on this machine, unavailable ones included; null when the listing was unavailable. */
   sims: IosSimRecord[] | null;
-  /** Every AVD name on this machine; null when the listing was unavailable. */
   avds: string[] | null;
 }
 
@@ -128,7 +115,7 @@ async function describeHome(
   const base = { path: entry.path, createdAt: entry.createdAt, lastSeenAt: entry.lastSeenAt };
   if (isAbsentPath(entry.path)) {
     const gone = isOnMountedVolume(entry.path, mountedVolumes);
-    const devices = homeDevices(entry.devices, listing, true);
+    const devices = homeDevices(entry.devices, listing, gone);
     return {
       ...base,
       state: gone ? 'gone' : 'unverified',
@@ -159,10 +146,6 @@ async function describeHome(
   };
 }
 
-/**
- * The other Stim homes of the machine list that this home reports: every listed home except this one and the ones
- * inside it. Reads only; it never changes a listed home or the list.
- */
 export async function collectOtherHomes(
   home: string,
   listing: DeviceListing,
@@ -190,6 +173,8 @@ function deviceLine(device: OtherHomeDevice, home: OtherHome): string[] {
   if (device.present === false) return [`    ${label}: not on this machine`];
   if (device.present === null) return [`    ${label}: listing unavailable`];
   if (home.state === 'present') return [`    ${label}: on this machine, owned by that home`];
+  if (home.state === 'unverified')
+    return [`    ${label}: on this machine; its home is on a volume that is not mounted`];
   return [`    orphaned from ${home.path}: ${label} is still on this machine`, `      ${device.command}`];
 }
 
@@ -220,7 +205,6 @@ export function otherHomeLines(homes: readonly OtherHome[] = [], now: number = D
   return lines;
 }
 
-/** Drops the entries of gone homes with nothing left on this machine from the machine list, re-checking each under the lock. */
 export function forgetGoneHomes(
   homes: readonly OtherHome[],
   mountedVolumes: string[],
