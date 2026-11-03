@@ -48,23 +48,23 @@ watch, or control with `--control`. `stim share` warns about it on stderr and
 
 ## The viewer
 
-The viewer draws the device inside its frame when Stim has artwork for it (an
-iOS simulator today) and as a rounded screen otherwise, scaled to fit any
-window, in light or dark to match the browser. A toolbar under the device
-holds:
+The viewer follows the layout of the device viewer in Stim Desktop and uses the
+same colors, in light or dark to match the browser. A bar across the top shows
+a status dot with the platform and Live or Waiting, the time left before the
+share expires, whether the share is Control or View only, and a Fullscreen
+button. The device sits below it inside its frame when Stim has artwork for it
+(an iOS simulator today) and as a rounded screen otherwise, scaled to fit any
+window. With `--control`, button groups under the device hold:
 
-- **Hardware buttons** (Home and Lock on iOS; Back, Home and Apps on Android),
-  with `--control`.
-- **Rotate left and right**, with `--control`, for an owned simulator or
+- **Hardware buttons** (Home and Lock on iOS; Home, Back and Apps on Android).
+- **Rotate left and right**, for an owned simulator or
   emulator. A physical device rotates only in hand. On an iOS simulator the
   device turns as in Simulator.app, so a portrait-only app shows sideways in a
   turned frame. On an emulator the picture turns only when the app in front
   supports the new orientation and auto-rotate is on.
-- **Fullscreen.**
 
-The page fits the window without scrolling. The line under the toolbar shows
-Live or Waiting and the time left before the share expires. With `--control`,
-click the screen to tap and type with the keyboard. While the screen has focus,
+A watch-only share has no button groups. The page fits the window without
+scrolling. With `--control`, click the screen to tap and type with the keyboard. While the screen has focus,
 the arrow keys and Escape go to the device as well (the D-pad keys and Escape
 on Android, the hardware arrow and Escape keys on iOS).
 
