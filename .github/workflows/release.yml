@@ -348,8 +348,6 @@ jobs:
       contents: read
       checks: read
       id-token: write
-    outputs:
-      version: ${{ steps.version.outputs.version }}
     env:
       PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
     steps:
