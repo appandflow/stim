@@ -343,6 +343,8 @@ if (document.fullscreenEnabled) {
 } else fullscreen.remove();
 
 if (control) {
+  const { createMirroredGesture, createTouchTracker } = globalThis.stimGestures;
+  const TOUCH_SETTLE_MS = 40;
   let down = false;
   const at = (event) => {
     const box = screen.getBoundingClientRect();
@@ -351,24 +353,114 @@ if (control) {
       y: Math.min(1, Math.max(0, (event.clientY - box.top) / box.height)),
     };
   };
+  const mirror = createMirroredGesture();
+  const touches = createTouchTracker();
+  const markers = [0, 1].map(() => {
+    const marker = document.createElement('div');
+    const style = marker.style;
+    style.position = 'absolute';
+    style.width = style.height = '24px';
+    style.marginLeft = style.marginTop = '-12px';
+    style.boxSizing = 'border-box';
+    style.border = '2px solid #fff';
+    style.borderRadius = '50%';
+    style.background = 'rgba(255, 255, 255, 0.35)';
+    style.pointerEvents = 'none';
+    style.display = 'none';
+    aperture.appendChild(marker);
+    return marker;
+  });
+  const drawMarkers = () => {
+    const pair = mirror.pair;
+    markers.forEach((marker, index) => {
+      marker.style.display = pair ? 'block' : 'none';
+      if (!pair) return;
+      marker.style.left = 100 * pair[index].x + '%';
+      marker.style.top = 100 * pair[index].y + '%';
+    });
+  };
+  let queuedMove = null;
+  let frame = 0;
+  const flushMove = () => {
+    frame = 0;
+    if (queuedMove) send(queuedMove);
+    queuedMove = null;
+  };
+  const emit = (messages) => {
+    for (const message of messages) {
+      if (message.phase === 'move' && message.x2 !== undefined) {
+        queuedMove = message;
+        frame ||= requestAnimationFrame(flushMove);
+      } else {
+        queuedMove = null;
+        send(message);
+      }
+    }
+  };
+  let settle = 0;
+  const touched = () => {
+    clearTimeout(settle);
+    if (touches.pending) settle = setTimeout(() => emit(touches.settle()), TOUCH_SETTLE_MS);
+  };
   screen.tabIndex = 0;
   screen.addEventListener('pointerdown', (event) => {
-    down = true;
     screen.focus();
     screen.setPointerCapture(event.pointerId);
-    send({ type: 'touch', phase: 'down', ...at(event) });
     event.preventDefault();
+    if (event.pointerType === 'touch') {
+      emit(touches.down(event.pointerId, at(event)));
+      touched();
+    } else if (event.altKey) {
+      emit(mirror.down(at(event), event.shiftKey));
+      drawMarkers();
+    } else {
+      down = true;
+      send({ type: 'touch', phase: 'down', ...at(event) });
+    }
   });
   screen.addEventListener('pointermove', (event) => {
-    if (down) send({ type: 'touch', phase: 'move', ...at(event) });
+    if (event.pointerType === 'touch') {
+      emit(touches.move(event.pointerId, at(event)));
+      touched();
+      return;
+    }
+    if (mirror.active) {
+      emit(mirror.move(at(event), event.shiftKey, event.altKey));
+      if (!event.altKey) emit(mirror.release());
+    } else if (down) send({ type: 'touch', phase: 'move', ...at(event) });
+    else if (event.altKey) mirror.hover(at(event), event.shiftKey);
+    else emit(mirror.release());
+    drawMarkers();
   });
   const up = (event) => {
-    if (!down) return;
-    down = false;
-    send({ type: 'touch', phase: 'up', ...at(event) });
+    if (event.pointerType === 'touch') {
+      emit(touches.up(event.pointerId));
+      touched();
+    } else if (mirror.active) {
+      emit(mirror.up(at(event), event.shiftKey));
+      drawMarkers();
+    } else if (down) {
+      down = false;
+      send({ type: 'touch', phase: 'up', ...at(event) });
+    }
   };
   screen.addEventListener('pointerup', up);
   screen.addEventListener('pointercancel', up);
+  screen.addEventListener('pointerleave', (event) => {
+    if (event.pointerType !== 'touch' && !mirror.active) {
+      mirror.release();
+      drawMarkers();
+    }
+  });
+  window.addEventListener('keyup', (event) => {
+    if (event.key !== 'Alt') return;
+    emit(mirror.release());
+    drawMarkers();
+  });
+  window.addEventListener('blur', () => {
+    emit(mirror.release());
+    drawMarkers();
+  });
   const keys = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Escape: 'escape' };
   const typed = { Enter: '\n', Tab: '\t', Backspace: '\b' };
   screen.addEventListener('keydown', (event) => {

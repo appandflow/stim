@@ -26,7 +26,8 @@ import ImageIO
 // "record", present only while stim-server records the device, runs a second encoder for it
 // at no more than its own fps; {"recordKeyframe": true} makes that encoder's next frame a keyframe; {"keyframe": true} to make the next video frame a keyframe; or an input:
 // {"input": "touch", "phase": "down|move|up", "x": 0-1, "y": 0-1, "display": n} with x
-// and y on the upright screen; {"input": "text", "text": s}, printable ASCII where "\n"
+// and y on the upright screen, and on an iOS simulator or an Android device optionally
+// "x2" and "y2" for a second finger, sent with every phase of its gesture; {"input": "text", "text": s}, printable ASCII where "\n"
 // is Return, "\t" is Tab and "\u{8}" is Delete; {"input": "key", "key": "left|right|up|down|escape",
 // "modifiers": []} on an iOS simulator or an Android device; and {"input": "button", "button":
 // "home|lock"}, or on an emulator also "back|app-switch"; {"input": "rotate", "direction":
@@ -601,6 +602,9 @@ final class EmulatorSource {
   }
 }
 
+/// `POINTER_ID_VIRTUAL_FINGER` in scrcpy's Controller: the second finger of a pinch, next to the generic finger.
+let virtualFingerPointer: Int64 = -3
+
 final class AndroidDeviceSource {
   let queue = DispatchQueue(label: "stim.frames.android-device")
   let stream: AndroidDeviceStream
@@ -656,15 +660,19 @@ final class AndroidDeviceSource {
 extension AndroidDeviceSource: Source {
   func input(_ command: Command) {
     switch command {
-    case .touch(let phase, let point, let display):
+    case .touch(let phase, let point, let second, let display):
       guard display == 0 else { return Output.notice(["inputError": "Input goes to the device's main display only."]) }
       guard let size = stream.size else { return Output.notice(["inputError": "The device has sent no frame yet."]) }
       let action: Scrcpy.TouchAction = phase == .down ? .down : phase == .up ? .up : .move
-      stream.send(
-        Scrcpy.touch(
-          action, x: Int32((point.x * Double(size.width - 1)).rounded()),
-          y: Int32((point.y * Double(size.height - 1)).rounded()), width: UInt16(size.width),
-          height: UInt16(size.height)))
+      var fingers = [(pointer: Scrcpy.fingerPointer, point: point)]
+      if let second { fingers.append((pointer: virtualFingerPointer, point: second)) }
+      for finger in phase == .up ? fingers.reversed() : fingers {
+        stream.send(
+          Scrcpy.touch(
+            action, pointer: finger.pointer, x: Int32((finger.point.x * Double(size.width - 1)).rounded()),
+            y: Int32((finger.point.y * Double(size.height - 1)).rounded()), width: UInt16(size.width),
+            height: UInt16(size.height)))
+      }
     case .text(let text):
       var run = ""
       let flush = {
@@ -847,7 +855,7 @@ extension WebSource: Source {
 
   private func apply(_ command: Command, on page: WebPage) {
     switch command {
-    case .touch(let phase, let point, _):
+    case .touch(let phase, let point, _, _):
       switch phase {
       case .down: page.touch(.down, x: point.x, y: point.y)
       case .move: page.touch(.move, x: point.x, y: point.y)
@@ -875,7 +883,7 @@ indirect enum Command {
   case config(Config)
   case keyframe
   case recordKeyframe
-  case touch(TouchPhase, CGPoint, display: Int)
+  case touch(TouchPhase, CGPoint, second: CGPoint?, display: Int)
   case duoTouch(TouchPhase, CGPoint, revision: String)
   case duoRelease
   case text(String)
@@ -909,7 +917,13 @@ func parseCommand(_ line: String, base: Config) -> Command? {
     if let revision = object["duoRevision"] as? String, UUID(uuidString: revision) != nil {
       return .duoTouch(phase, CGPoint(x: x, y: y), revision: revision)
     }
-    return .touch(phase, CGPoint(x: x, y: y), display: object["display"] as? Int ?? 0)
+    var second: CGPoint?
+    if object["x2"] != nil || object["y2"] != nil {
+      guard let x2 = object["x2"] as? Double, let y2 = object["y2"] as? Double, (0...1).contains(x2), (0...1).contains(y2)
+      else { return nil }
+      second = CGPoint(x: x2, y: y2)
+    }
+    return .touch(phase, CGPoint(x: x, y: y), second: second, display: object["display"] as? Int ?? 0)
   case "scroll":
     guard let x = object["x"] as? Double, let y = object["y"] as? Double,
       let dx = object["deltaX"] as? Double, let dy = object["deltaY"] as? Double,
@@ -1070,12 +1084,15 @@ extension SimulatorSource: Source {
     if hid?.isConnected != true { hid = SimulatorHID(udid: udid) }
     guard let hid else { return Output.notice(["inputError": "\(udid) could not be opened for input."]) }
     switch command {
-    case .touch(let phase, let point, let index):
+    case .touch(let phase, let point, let second, let index):
       let displays = CoreSimulator.displays(udid: udid)
       guard displays.indices.contains(index), let properties = displays[index].screenProperties else {
         return Output.notice(["inputError": "\(udid) has no display \(index)."])
       }
-      hid.touch(phase, at: nativeScreenPoint(point, orientation: displayedOrientation(of: displays[index], in: displays)), screenID: properties.screenID)
+      let orientation = displayedOrientation(of: displays[index], in: displays)
+      hid.touch(
+        phase, at: nativeScreenPoint(point, orientation: orientation),
+        second: second.map { nativeScreenPoint($0, orientation: orientation) }, screenID: properties.screenID)
     case .text(let text):
       for character in text {
         guard let key = keyCodes[character] else { continue }
@@ -1115,14 +1132,14 @@ extension EmulatorSource: Source {
   private func apply(_ command: Command) {
     guard let input = inputClient() else { return Output.notice(["inputError": "\(serial) has no gRPC endpoint for input."]) }
     switch command {
-    case .touch(let phase, let point, let index):
+    case .touch(let phase, let point, let second, let index):
       guard index == 0 else { return Output.notice(["inputError": "Input goes to the emulator's main display only."]) }
       guard let size = readStatus(input)?.size else {
         return Output.notice(["inputError": "\(serial) did not report its display size."])
       }
       let rotation = queue.sync { latest?.rotation ?? 0 }
-      let pixel = displayPixel(point, rotation: rotation, displaySize: size)
-      input.call("sendTouch", InputMessages.touch(x: pixel.x, y: pixel.y, pressed: phase != .up))
+      let pixels = ([point] + (second.map { [$0] } ?? [])).map { displayPixel($0, rotation: rotation, displaySize: size) }
+      input.call("sendTouch", InputMessages.touches(pixels, pressed: phase != .up))
     case .text(let text):
       guard readStatus(input)?.keyboard == true else { return noKeyboard() }
       for character in text {
