@@ -4,7 +4,8 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { isJsonObject, type StatusPayload } from '@stim-cli/core/state';
 import type { ControlHub, Controller, InputCommand } from './control.ts';
-import { parseInput } from './control.ts';
+import { CLIPBOARD_INPUT_COST, parseInput } from './control.ts';
+import { MAX_CLIENT_MESSAGE_BYTES } from '@stim-cli/core/noise-session';
 import { FRAME_RETRY_MS, LatestFrames } from './frame-delivery.ts';
 import type { FrameHint } from './frame-helper.ts';
 import { deviceKey, ownedDevice, type Device, type Frame, type FramePool, type LeaseLookup } from './frames.ts';
@@ -122,7 +123,7 @@ const COOKIE = 'stim_share';
 const PASSWORD_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const PASSWORD_LENGTH = 16;
 const MAX_LOGIN_BYTES = 1024;
-const MAX_MESSAGE_BYTES = 4096;
+const MAX_MESSAGE_BYTES = MAX_CLIENT_MESSAGE_BYTES;
 const MAX_SESSIONS = 32;
 const RENAME_MS = 5000;
 /** Presence a viewer's socket is sent while it is backed up: no moves, only the touches that change who is down. */
@@ -139,6 +140,7 @@ const VIEWER_TEXT = {
   ended: 'This share has ended.',
   controlRefused: 'Control is not available right now. Try again in a moment.',
   inputRefused: 'That input was not accepted.',
+  clipboardRefused: 'The device did not take or return its clipboard.',
   controlEnded: 'Control ended.',
 };
 const CSP =
@@ -150,6 +152,8 @@ const INPUT_METHODS = new Map<string, Parameters<typeof parseInput>[0]>([
   ['key', 'input.key'],
   ['button', 'input.button'],
   ['rotate', 'input.rotate'],
+  ['clipboard-set', 'input.clipboard.set'],
+  ['clipboard-get', 'input.clipboard.get'],
 ]);
 const VIEW_HINT: FrameHint = { fps: 10, maxEdge: 1280 };
 const VIDEO_HINT: FrameHint = { fps: FRAME_FPS.video, maxEdge: VIEW_HINT.maxEdge };
@@ -1041,7 +1045,8 @@ export class ShareHub {
     const { type, ...fields } = message;
     const method = INPUT_METHODS.get(String(type));
     if (!method) return;
-    const cost = method === 'input.rotate' ? ROTATE_COST : 1;
+    const clipboard = method === 'input.clipboard.set' || method === 'input.clipboard.get';
+    const cost = method === 'input.rotate' ? ROTATE_COST : clipboard ? CLIPBOARD_INPUT_COST : 1;
     if (!take(viewer.inputs, cost, this.limits.inputPerSecond, this.limits.inputPerSecond)) return;
     const params =
       method === 'input.touch'
@@ -1057,12 +1062,21 @@ export class ShareHub {
             ? { key: fields.key }
             : method === 'input.rotate'
               ? { direction: fields.direction }
-              : { button: fields.button };
+              : method === 'input.clipboard.set'
+                ? { text: fields.text, ...(fields.paste === undefined ? {} : { paste: fields.paste }) }
+                : method === 'input.clipboard.get'
+                  ? {}
+                  : { button: fields.button };
     if (method === 'input.button' && !BUTTONS[share.request.platform].includes(String(fields.button))) return;
+    const failRead = () => {
+      if (method === 'input.clipboard.get' && viewer.socket.readyState === viewer.socket.OPEN) {
+        viewer.socket.send(JSON.stringify({ type: 'clipboard', id: fields.id, error: VIEWER_TEXT.clipboardRefused }));
+      }
+    };
     const session = await this.controlSession(share, viewer);
-    if (!session || share.ended || !share.viewers.has(viewer)) return;
+    if (!session || share.ended || !share.viewers.has(viewer)) return failRead();
     const parsed = parseInput(method, { ...params, session }, (name) => share.source.targetOf(share.owner, name));
-    if ('code' in parsed) return;
+    if ('code' in parsed) return failRead();
     const command: InputCommand = parsed.value.command;
     if (
       command.input === 'text' &&
@@ -1071,16 +1085,25 @@ export class ShareHub {
       return;
     }
     const refused = await share.source.input(share.owner, session, method, { ...params }, command, viewer.who);
-    if (!refused || !('code' in refused)) return;
-    if ('busy' in refused && typeof refused.busy === 'string') {
-      if (viewer.socket.readyState === viewer.socket.OPEN) {
-        viewer.socket.send(JSON.stringify({ type: 'busy', name: refused.busy }));
+    const open = viewer.socket.readyState === viewer.socket.OPEN;
+    if (refused && 'code' in refused) {
+      if ('busy' in refused && typeof refused.busy === 'string') {
+        if (open) viewer.socket.send(JSON.stringify({ type: 'busy', name: refused.busy }));
+        return;
       }
-      return;
-    }
-    console.error(`stim-server: web share ${share.id} input refused: ${String(refused.message)}`);
-    if (viewer.socket.readyState === viewer.socket.OPEN) {
-      viewer.socket.send(JSON.stringify({ type: 'control', message: VIEWER_TEXT.inputRefused }));
+      console.error(`stim-server: web share ${share.id} input refused: ${String(refused.message)}`);
+      if (!open) return;
+      if (method === 'input.clipboard.get') {
+        viewer.socket.send(JSON.stringify({ type: 'clipboard', id: fields.id, error: VIEWER_TEXT.clipboardRefused }));
+      } else {
+        const notice = clipboard ? VIEWER_TEXT.clipboardRefused : VIEWER_TEXT.inputRefused;
+        viewer.socket.send(JSON.stringify({ type: 'control', message: notice }));
+      }
+    } else if (method === 'input.clipboard.get' && open) {
+      const text = isJsonObject(refused) ? refused.text : undefined;
+      viewer.socket.send(
+        JSON.stringify({ type: 'clipboard', id: fields.id, text: typeof text === 'string' ? text : '' }),
+      );
     }
   }
 

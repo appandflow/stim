@@ -30,6 +30,31 @@ import Testing
   }
 }
 
+@Suite struct ScrcpyClipboardTests {
+  @Test func encodesSetClipboardWithScrcpysLayout() {
+    #expect(
+      Scrcpy.setClipboard("h\u{e9}", sequence: 0x0102_0304_0506_0708, paste: true)
+        == Data([9, 1, 2, 3, 4, 5, 6, 7, 8, 1, 0, 0, 0, 3, 0x68, 0xc3, 0xa9]))
+    #expect(Scrcpy.setClipboard("", sequence: 1, paste: false) == Data([9, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]))
+    #expect(Scrcpy.getClipboard == Data([8, 0]))
+  }
+
+  @Test func splitsTheControlSocketIntoDeviceMessagesWhateverTheReadBoundaries() throws {
+    let stream = Data([0, 0, 0, 0, 3, 0x61, 0xc3, 0xa9]) + Data([1, 0, 0, 0, 0, 0, 0, 0, 9]) + Data([0, 0, 0, 0, 0])
+    var whole = ScrcpyDeviceMessageDemuxer()
+    #expect(try whole.push(stream) == [.clipboard("a\u{e9}"), .clipboardAck(sequence: 9), .clipboard("")])
+    var split = ScrcpyDeviceMessageDemuxer()
+    var messages: [ScrcpyDeviceMessage] = []
+    for byte in stream { messages += try split.push(Data([byte])) }
+    #expect(messages == [.clipboard("a\u{e9}"), .clipboardAck(sequence: 9), .clipboard("")])
+  }
+
+  @Test func refusesAMessageKindItDoesNotKnow() {
+    var demuxer = ScrcpyDeviceMessageDemuxer()
+    #expect(throws: ScrcpyError.self) { try demuxer.push(Data([2, 0, 1])) }
+  }
+}
+
 @Suite struct ScrcpyVideoTests {
   private func packet(config: Bool, keyframe: Bool, _ payload: [UInt8]) -> Data {
     var header = Data([(config ? 0x40 : 0) | (keyframe ? 0x20 : 0), 0, 0, 0, 0, 0, 0, 7])

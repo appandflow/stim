@@ -520,7 +520,8 @@ outside it moves to its own issue and pull request.
   lives only in that server's memory and always expires. The server serves
   shares on a separate loopback listener, not the Noise protocol: per share
   the viewer page, the frames of its one device and, with control, input to
-  that device through `ControlHub`, behind a 256-bit URL token, a generated
+  that device through `ControlHub` (on a simulator, emulator or Android phone that includes
+  its clipboard: a viewer's paste and a copy of the device's text, never logged), behind a 256-bit URL token, a generated
   password and an HttpOnly Secure SameSite=Strict session cookie. A control
   share can also have a second, view-only password (`--view-password`): login
   compares both digests, always both, with `timingSafeEqual`; the cookie stays an
@@ -535,7 +536,7 @@ outside it moves to its own issue and pull request.
   with the last share, and after a crash on the next start, only while the
   serve config still holds exactly that route. A share never starts the
   recorder or capture before a signed-in viewer connects. The viewer's
-  stylesheet and its three scripts are fixed bundled files served without a token
+  stylesheet and its scripts are fixed bundled files served without a token
   under `/s/assets/`; they carry no share data. A workspace whose
   device is a hosted session is shared through this client's own device-host
   connection (one host frame subscription per codec for all viewers, control through

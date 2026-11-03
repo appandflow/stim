@@ -31,6 +31,7 @@ final class AndroidDeviceStream {
   private var frameSize: (width: Int, height: Int)?
   var onFrame: (CVPixelBuffer) -> Void = { _ in }
   var onEnd: (String) -> Void = { _ in }
+  var onDeviceMessage: (ScrcpyDeviceMessage) -> Void = { _ in }
 
   /// The size of the video frames the server sends now; touches are in these pixels.
   var size: (width: Int, height: Int)? { lock.withLock { frameSize } }
@@ -220,11 +221,23 @@ final class AndroidDeviceStream {
     end("\(serial) ended its screen stream\(output.isEmpty ? "." : ": \(output)")")
   }
 
-  /// Device messages (clipboard, acknowledgements) are not used, but must be read so the server never blocks.
+  /// Reads the device messages (clipboard and its acknowledgement), so the server never blocks. Bytes that are not
+  /// a message it knows are discarded.
   private func drainControl(_ socket: Int32) {
     defer { writes.async { close(socket) } }
-    var chunk = [UInt8](repeating: 0, count: 4096)
-    while read(socket, &chunk, chunk.count) > 0 {}
+    var demuxer: ScrcpyDeviceMessageDemuxer? = ScrcpyDeviceMessageDemuxer()
+    var chunk = [UInt8](repeating: 0, count: 1 << 16)
+    while true {
+      let count = read(socket, &chunk, chunk.count)
+      guard count > 0 else { break }
+      guard var parser = demuxer else { continue }
+      do {
+        for message in try parser.push(Data(chunk[0..<count])) { onDeviceMessage(message) }
+        demuxer = parser
+      } catch {
+        demuxer = nil
+      }
+    }
   }
 
   private func adbProcess(_ arguments: [String]) -> Process {

@@ -110,6 +110,14 @@ scrolling. With `--control`, click the screen to tap and type with the keyboard.
 the arrow keys and Escape go to the device as well (the D-pad keys and Escape
 on Android, the hardware arrow and Escape keys on iOS).
 
+With `--control` on an iOS simulator, an Android emulator or an Android phone,
+Command-V (Control-V on Windows and Linux) while the screen has focus pastes the
+text on your computer's clipboard into the focused field on the device. The
+"Copy device clipboard" button in the toolbar copies the device's clipboard to
+your computer. Nothing syncs on its own, text only, up to 8 KiB for a paste. A
+web page and a native macOS app have no clipboard action, and a share without
+`--control` never reads the device clipboard.
+
 Two-finger gestures work on iOS simulators and on Android emulators and
 phones, with `--control`. On a phone or tablet, use two fingers on the screen
 (pinch to zoom, two-finger drag). With a mouse, hold Option and drag: the
@@ -293,7 +301,7 @@ the next listener, after the last share ends.
   costs only its listener and route. A share never records anything to disk.
 - **Control is the existing control path.** Input goes through the same
   control session and device lease Stim Desktop and the phone app use, limited
-  to taps, two-finger gestures, text, the arrow keys and Escape, rotation and the hardware buttons of the shared device. A device an
+  to taps, two-finger gestures, text, the arrow keys and Escape, pasting your clipboard into the device and copying the device's clipboard to your computer, rotation and the hardware buttons of the shared device. A device an
   agent or another client is driving answers busy; a share never takes it over.
 - **Ephemeral.** Shares live only in stim-server's memory. A share ends at its
   expiry, on `stim share stop`, `stim stop` (without `--slot`),

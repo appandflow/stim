@@ -32,6 +32,8 @@ import {
   type KeyModifier,
   PLATFORMS,
   MAX_INPUT_TEXT,
+  MAX_CLIPBOARD_BYTES,
+  MAX_CLIPBOARD_READ_BYTES,
   ROTATE_DIRECTIONS,
   TOUCH_PHASES,
   type ControlBeginParams,
@@ -41,6 +43,7 @@ import {
   type DevicePosture,
   type ErrorCode,
   type InputButton,
+  type InputClipboardGetResult,
   type SimulatorCommand,
   type SimulatorOptions,
   type Platform,
@@ -114,6 +117,8 @@ export type InputCommand =
       duoRevision?: string;
     }
   | { input: 'text'; text: string }
+  | { input: 'clipboard'; text: string; paste: boolean }
+  | { input: 'clipboard-get' }
   | { input: 'scroll'; x: number; y: number; deltaX: number; deltaY: number }
   | { input: 'key'; key: InputKey; modifiers: KeyModifier[] }
   | { input: 'window'; window: number | null }
@@ -131,7 +136,9 @@ type InputMethod =
   | 'input.simulator'
   | 'input.scroll'
   | 'input.key'
-  | 'input.window';
+  | 'input.window'
+  | 'input.clipboard.set'
+  | 'input.clipboard.get';
 
 /**
  * What a control session accepts: its device's platform, the postures `input.posture` takes, and whether it is a
@@ -229,6 +236,39 @@ function parseScrollOrKey(
   };
 }
 
+function parseClipboard(
+  method: 'input.clipboard.set' | 'input.clipboard.get',
+  session: string,
+  platform: ControlPlatform,
+  physical: boolean,
+  params: Record<string, unknown>,
+): Parsed<{ session: string; command: InputCommand }> {
+  if (platform === 'web' || platform === 'macos' || (platform === 'ios' && physical)) {
+    return {
+      code: 'bad-request',
+      message: 'Only an iOS simulator, an Android emulator and an Android phone have a clipboard to set or read.',
+    };
+  }
+  const { text, paste } = params;
+  if (method === 'input.clipboard.get') {
+    if (text !== undefined || paste !== undefined) {
+      return { code: 'bad-request', message: 'input.clipboard.get takes only session.' };
+    }
+    return { value: { session, command: { input: 'clipboard-get' } } };
+  }
+  if (
+    typeof text !== 'string' ||
+    Buffer.byteLength(text, 'utf8') > MAX_CLIPBOARD_BYTES ||
+    (paste !== undefined && typeof paste !== 'boolean')
+  ) {
+    return {
+      code: 'bad-request',
+      message: `input.clipboard.set takes text of at most ${MAX_CLIPBOARD_BYTES} UTF-8 bytes and an optional paste flag.`,
+    };
+  }
+  return { value: { session, command: { input: 'clipboard', text, paste: paste === true } } };
+}
+
 /** Validates an `input.*` request for one of the connection's sessions; returns its session id and command. */
 export function parseInput(
   method: InputMethod,
@@ -263,6 +303,9 @@ export function parseInput(
     return { value: { session, command: { input: 'window', window } } };
   }
   if (method === 'input.scroll' || method === 'input.key') return parseScrollOrKey(method, session, platform, params);
+  if (method === 'input.clipboard.set' || method === 'input.clipboard.get') {
+    return parseClipboard(method, session, platform, target.physical === true, params);
+  }
   if (platform === 'web' && (method === 'input.rotate' || method === 'input.posture')) {
     return { code: 'bad-request', message: 'A web page does not rotate or fold.' };
   }
@@ -419,6 +462,20 @@ const ADB_TIMEOUT_MS = 10_000;
 
 const POSTURE_TIMEOUT_MS = 5_000;
 
+const CLIPBOARD_TIMEOUT_MS = 10_000;
+
+export const CLIPBOARD_INPUT_COST = 10;
+
+/** `simctl pbcopy` reads its stdin as bytes in the process's locale, so a non-ASCII clipboard needs UTF-8. */
+function simctlEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...env, LC_ALL: 'en_US.UTF-8' };
+}
+
+interface ChildText {
+  input?: string;
+  maxOutput?: number;
+}
+
 function runQuietly(
   env: NodeJS.ProcessEnv,
   file: string,
@@ -426,22 +483,38 @@ function runQuietly(
   label: string,
   timeoutMs: number,
   claim?: ClaimHandle,
-): Promise<void> {
+  text: ChildText = {},
+): Promise<string> {
   let childPid: number | undefined;
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     if (claim) markClaimChildPending(claim);
-    const child = spawn(file, args, { env, detached: !!claim, stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(file, args, { env, detached: !!claim, stdio: ['pipe', 'pipe', 'pipe'] });
     childPid = child.pid;
     let stderr = '';
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let oversized = false;
     let timedOut = false;
     const finish = (code: number | null) => {
       clearTimeout(timer);
       if (timedOut) return;
       if (claim && child.pid && processGroupAlive(child.pid))
         return reject(new Error(`${label} left an unresolved process group; its input claim was retained.`));
-      if (code === 0) resolve();
+      if (oversized) return reject(new Error(`${label} wrote more than ${text.maxOutput} bytes.`));
+      if (code === 0) resolve(Buffer.concat(chunks).toString('utf8'));
       else reject(new Error(`${label} failed (code ${code}): ${stderr.trim()}`));
     };
+    child.stdin.on('error', () => {});
+    child.stdin.end(text.input);
+    const limit = text.maxOutput;
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (limit === undefined) return;
+      size += chunk.length;
+      if (size > limit) {
+        oversized = true;
+        child.kill();
+      } else chunks.push(chunk);
+    });
     const timer = setTimeout(() => {
       child.stderr.destroy();
       if (child.exitCode !== null || child.signalCode !== null) return finish(child.exitCode);
@@ -474,7 +547,13 @@ function runQuietly(
 }
 
 function runAdb(env: NodeJS.ProcessEnv, serial: string, args: string[]): Promise<void> {
-  return runQuietly(env, adbPath(env), ['-s', serial, ...args], `adb ${args.slice(0, 3).join(' ')}`, ADB_TIMEOUT_MS);
+  return runQuietly(
+    env,
+    adbPath(env),
+    ['-s', serial, ...args],
+    `adb ${args.slice(0, 3).join(' ')}`,
+    ADB_TIMEOUT_MS,
+  ).then(() => undefined);
 }
 
 function activityOf(payload: StatusPayload, target: ControlBeginParams): DeviceActivity | undefined {
@@ -866,7 +945,7 @@ export class ControlHub {
     id: string,
     command: InputCommand,
     participant?: PresenceParticipant,
-  ): Promise<Refusal | BusyRefusal | SimulatorOptions | null> {
+  ): Promise<Refusal | BusyRefusal | SimulatorOptions | InputClipboardGetResult | null> {
     const session = this.sessions.get(id);
     if (!session || session.owner !== owner || session.ended) {
       return Promise.resolve({ code: 'unknown-session', message: `No control session ${id} on this connection.` });
@@ -887,6 +966,7 @@ export class ControlHub {
       if (dropped !== undefined) return Promise.resolve(dropped);
     }
     if (command.input === 'simulator') return this.simulator(session, command);
+    if (command.input === 'clipboard' || command.input === 'clipboard-get') return this.clipboard(session, command);
     if (command.input === 'posture' && session.device.platform === 'ios') {
       const udid = session.device.udid;
       if (this.folding.has(udid))
@@ -931,6 +1011,75 @@ export class ControlHub {
     })();
     session.adb = run.then(() => undefined);
     return this.pending.track(run);
+  }
+
+  private clipboard(
+    session: Session,
+    command: Extract<InputCommand, { input: 'clipboard' | 'clipboard-get' }>,
+  ): Promise<Refusal | InputClipboardGetResult | null> {
+    const { device } = session;
+    const set = command.input === 'clipboard' ? command : null;
+    const read = async (): Promise<string> => {
+      const text = await this.readClipboard(session, device);
+      if (Buffer.byteLength(text, 'utf8') > MAX_CLIPBOARD_READ_BYTES) {
+        throw new Error(`The device clipboard is larger than ${MAX_CLIPBOARD_READ_BYTES} bytes.`);
+      }
+      return text;
+    };
+    const run = async (): Promise<Refusal | InputClipboardGetResult | null> => {
+      try {
+        if (!set) return { text: await read() };
+        if (device.platform === 'ios') {
+          const claim = session.claim ? takeHostedInputClaim(session.claim) : undefined;
+          await runQuietly(
+            simctlEnv(this.options.env),
+            'xcrun',
+            ['simctl', 'pbcopy', device.udid],
+            'simctl pbcopy',
+            CLIPBOARD_TIMEOUT_MS,
+            claim,
+            {
+              input: set.text,
+            },
+          );
+          if (set.paste && !session.ended) session.input.send({ clipboard: 'paste' });
+        } else if (device.platform === 'android') {
+          await session.input.clipboard({
+            text: set.text,
+            paste: set.paste && device.physical === true,
+          });
+          if (set.paste && !device.physical && !session.ended) {
+            await runAdb(this.options.env, device.serial, ['shell', 'input', 'keyevent', 'KEYCODE_PASTE']);
+          }
+        }
+        return null;
+      } catch (cause) {
+        return { code: 'action-failed', message: cause instanceof Error ? cause.message : String(cause) };
+      }
+    };
+    if (device.platform !== 'android' || device.physical) return this.pending.track(run());
+    const previous = session.adb;
+    const queued = previous.then(run);
+    session.adb = queued.then(() => undefined);
+    return this.pending.track(queued);
+  }
+
+  private async readClipboard(session: Session, device: Device): Promise<string> {
+    if (device.platform === 'ios') {
+      const claim = session.claim ? takeHostedInputClaim(session.claim) : undefined;
+      return runQuietly(
+        simctlEnv(this.options.env),
+        'xcrun',
+        ['simctl', 'pbpaste', device.udid],
+        'simctl pbpaste',
+        CLIPBOARD_TIMEOUT_MS,
+        claim,
+        {
+          maxOutput: MAX_CLIPBOARD_READ_BYTES,
+        },
+      );
+    }
+    return (await session.input.clipboard(null)) ?? '';
   }
 
   /** Admits a touch through the pointer grab and shows it; undefined when it goes on to the device. */
