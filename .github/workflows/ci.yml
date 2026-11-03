@@ -210,6 +210,7 @@ jobs:
           packages/stim-cli/src/__tests__/gc-outputs-lock.test.ts
           packages/stim-cli/src/__tests__/device-capacity.test.ts
           packages/stim-cli/src/__tests__/engine-build-slots.test.ts
+          packages/stim-cli/src/__tests__/supervisor-run.test.ts
 
       - name: Windows startup cancellation
         run: |
