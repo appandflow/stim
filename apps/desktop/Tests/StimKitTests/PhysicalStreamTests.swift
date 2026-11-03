@@ -134,6 +134,76 @@ import Testing
     #expect(button.params == ["session": .string("c1"), "button": .string("back")])
   }
 
+  @Test func setsAndReadsTheDeviceClipboardInTheControlSessionOnly() async throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    await #expect(throws: ServerError.self) { try await stream.setClipboard("hi", paste: false) }
+    await #expect(throws: ServerError.self) { _ = try await stream.clipboard() }
+    #expect(server.requests.isEmpty)
+    stream.begin()
+    await settle()
+    try #require(server.take("control.begin")).reply.resume(returning: .object(["session": .string("c1")]))
+    await settle()
+
+    let set = Task { try await stream.setClipboard("h\u{e9}llo\n\u{1F600}", paste: false) }
+    await settle()
+    let plain = try #require(server.take("input.clipboard.set"))
+    #expect(plain.params == ["session": .string("c1"), "text": .string("h\u{e9}llo\n\u{1F600}")])
+    plain.reply.resume(returning: .object([:]))
+    try await set.value
+
+    let paste = Task { try await stream.setClipboard("x", paste: true) }
+    await settle()
+    let pasted = try #require(server.take("input.clipboard.set"))
+    #expect(pasted.params["paste"] == .bool(true))
+    pasted.reply.resume(returning: .object([:]))
+    try await paste.value
+
+    let read = Task { try await stream.clipboard() }
+    await settle()
+    let get = try #require(server.take("input.clipboard.get"))
+    #expect(get.params == ["session": .string("c1")])
+    get.reply.resume(returning: .object(["text": .string("from the device")]))
+    #expect(try await read.value == "from the device")
+  }
+
+  @Test func refusesClipboardTextOverTheSetLimitWithoutSendingIt() async throws {
+    let (stream, server, _) = try await started()
+    let atLimit = String(repeating: "a", count: 8192)
+    let accepted = Task { try await stream.setClipboard(atLimit, paste: false) }
+    await settle()
+    try #require(server.take("input.clipboard.set")).reply.resume(returning: .object([:]))
+    try await accepted.value
+
+    let wide = String(repeating: "\u{e9}", count: 4097)
+    await #expect(throws: ClipboardTooLarge(bytes: wide.utf8.count)) { try await stream.setClipboard(wide, paste: false) }
+    #expect(server.requests.isEmpty)
+  }
+
+  @Test func offersTheClipboardOnlyForADeviceTheServerCanMoveTextTo() {
+    let on = PhysicalStream.Control.on(session: "c1")
+    func access(
+      _ platform: String, physical: Bool = false, features: [String]? = ["device-clipboard"], control: PhysicalStream.Control = on
+    )
+      -> ServerClipboard.Access
+    {
+      ServerClipboard.Access(
+        platform: platform, physical: physical, link: .open(features: features, capabilities: ["read", "control"]),
+        control: control, server: "Mini")
+    }
+    #expect(access("ios") == .ready(session: "c1"))
+    #expect(access("android", physical: true) == .ready(session: "c1"))
+    #expect(access("ios", physical: true) == .none)
+    #expect(access("macos") == .none)
+    #expect(access("ios", control: .starting) == .none)
+    #expect(
+      access("ios", features: ["ios-hosted"]) == .unsupported("Update stim-server on Mini to copy text to and from this device."))
+    #expect(access("android", features: nil) != .none)
+    #expect(
+      ServerClipboard.Access(platform: "ios", physical: false, link: .connecting, control: on, server: nil) == .none)
+  }
+
   @Test func endsASessionTheServerGrantsAfterTheUserReleased() async throws {
     let server = FakeServer()
     let stream = PhysicalStream(target: target)
