@@ -276,7 +276,7 @@ test('an unused Gradle version lists its transforms with their own size and a ma
         dir: transforms,
         bytes: 4_194_304,
         privateBytes: 1_048_576,
-        remedy: expect.stringContaining(`rm -rf '${transforms}'`),
+        remedy: `rm -rf '${transforms}'`,
       },
     },
   ]);
@@ -317,10 +317,10 @@ test('DerivedData is reported only when its recorded workspace is gone from a mo
       [binary, join(home, 'gone', 'Binary.xcworkspace')],
     ].toSorted(),
   );
-  expect(report.orphanedDerivedData[0]).toMatchObject({
+  expect(report.orphanedDerivedData.find((entry) => entry.dir === orphan)).toMatchObject({
     bytes: 4_194_304,
     privateBytes: 1_048_576,
-    remedy: expect.stringContaining('rm -rf '),
+    remedy: `rm -rf '${orphan}'`,
   });
   const lines = machineCacheLines(report).join('\n');
   expect(lines).toContain('Xcode DerivedData of workspaces that no longer exist');

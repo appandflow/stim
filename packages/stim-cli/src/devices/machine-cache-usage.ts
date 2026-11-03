@@ -404,7 +404,7 @@ function assembleMachineCacheReport(
           transforms: transforms
             ? {
                 ...owned(transforms),
-                remedy: `rm -rf ${quote(transforms)}; Gradle extracts the transforms again on the next build with ${version}`,
+                remedy: `rm -rf ${quote(transforms)}`,
               }
             : null,
           remedy: scopedOutside(discovery.gradleHome, env) ? null : 'stim gc --delete --cache gradle-versions',
@@ -469,7 +469,7 @@ function assembleMachineCacheReport(
       orphans.map(({ dir, workspacePath }) => ({
         ...owned(dir),
         workspacePath,
-        remedy: `rm -rf ${quote(dir)}; Xcode builds the project again if it returns`,
+        remedy: `rm -rf ${quote(dir)}`,
       })),
     ),
     runnerBuilds: {
