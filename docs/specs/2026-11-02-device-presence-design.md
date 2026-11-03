@@ -1,6 +1,6 @@
 # Device presence: who is touching the device, and where
 
-Status: proposed design, 2026-11-02 (#4871). Sections 3.4, 6.3 and 9 hold decisions for the maintainer; the rest is
+Status: proposed design, 2026-11-02 (#4871). Section 12 lists the decisions for the maintainer; the rest is
 ready to implement once those are answered.
 
 ## Goals
@@ -56,11 +56,12 @@ Recommendation: keep one control session per share and add a per-device pointer 
 - All control viewers of a share keep acting through the share's single session. The share hub passes each input's
   participant to the source (`source.input(owner, session, method, params, command, participant)`), and from there
   to `ControlHub.input`.
-- **Pointer grab.** `ControlHub` tracks the participant holding the pointer per device. A `down` takes it; the
-  matching `up` releases it. A grab with no `move` for 2 s is released by sending an `up` at its last point. While a
-  grab is held, touches from other participants are dropped; the share tells that viewer
-  `{type: 'busy', name}` and the viewer page draws its own attempt as a faded dot. Text, buttons and rotation are not
-  grabbed; they serialize as today.
+- **Pointer grab.** `ControlHub` tracks the participant holding the pointer per device. A participant is one viewer
+  socket, so two tabs on one cookie are two participants. A `down` takes the grab; the matching `up` releases it. A
+  socket close, the control session ending, or 10 s with no input (long enough for a long-press) releases it by
+  sending an `up` at its last point; the former holder's later `move` and `up` are dropped. While a grab is held,
+  touches from other participants are dropped; the share tells that viewer `{type: 'busy', name}` and the viewer page
+  draws its own attempt as a faded dot. Text, buttons and rotation are not grabbed; they serialize as today.
 - **Take-over mid-share.** Unchanged. When Desktop, the phone or another client takes the device over, the share's
   session ends with `taken-over`, viewers see "Control ended", and their next input retries `begin`, which is refused
   with `device-busy` while the other client drives. Frames and presence keep flowing, so share viewers watch the
@@ -104,7 +105,9 @@ Ids are opaque per device (`v3`, `c12`, `a1`) and never reveal cookies, session 
   the one that matches. The two passwords must differ. Wrong passwords keep counting against the one per-share
   window: a guess is not aimed at a particular password.
 - A passwordless share now sets a cookie on its first page load, with no login, so a viewer keeps its name and color
-  across reconnects.
+  across reconnects. Today's table keeps 32 sessions and evicts the oldest, so anyone with the link could evict real
+  viewers by reloading. Passwordless sessions therefore evict only sessions with no open socket, and a new one is
+  refused while all 32 have one; password sessions keep today's rule.
 - **Upgrade.** A view-only viewer of a control share sees "Have the control password?" in the bar. Entering it posts
   the same login with the existing cookie; on a match the server raises that session to `control`, keeping its name
   and color, and the page reloads. Sessions are never downgraded.
@@ -239,8 +242,9 @@ their own touches.
 
 ### 6.1 Without a proxy (cheap, post-hoc)
 
-While a device has presence subscribers, stim-server follows that workspace's agent records (the same reader as the
-`agent` log source) and publishes each `action.recorded` with coordinates as an `agent` participant `gesture`. `press`
+While a device has presence subscribers, stim-server follows that workspace's agent records with the same in-process
+`followLogs` call it runs for `logs.subscribe` (the CLI's `agent-actions-follow.ts` watcher, not the supervisor), and
+publishes each `action.recorded` with coordinates as an `agent` participant `gesture`. `press`
 and `click` become taps; `scroll` and `swipe` become swipes over `durationMs`. `@ref` targets have coordinates in the
 record because the daemon resolved them.
 
@@ -266,11 +270,14 @@ listens on a loopback port and carries each connection over an authenticated `de
 
 - **Route.** A per-workspace loopback relay port carries each connection over stim-server's Unix socket on a new
   local-only `agent.link` method. stim-server applies the device policy and forwards to the agent-device daemon it
-  runs for that workspace, in that workspace's agent-device state directory. stim-server's TCP listeners stay
-  Noise-only, as AGENTS.md requires; the relay checks the route token on every request.
+  runs for that workspace, in that workspace's agent-device state directory. `agent.link` is refused on every network
+  connection. The relay is not a stim-server listener, so the Noise rule for stim-server connections is untouched;
+  it is a bearer-token loopback port, the same trust model as the hosted agent relay today. Every request must carry
+  the route token, which lives only in the 0600 config file and is never put in arguments, environment or logs;
+  another local user who cannot read the file cannot use the port.
 - **Who listens.** The relay must outlive an idle stop, or revive on first action cannot work. The supervisor stops
   with Metro, and the stim-daemon exits once nothing runs. Recommended: the stim-daemon hosts the relays and stays up
-  while any workspace has an open agent route; `stim stop` and `worktree remove` close it (open question 4).
+  while any workspace has an open agent route; `stim stop` and `worktree remove` close it (open question 5).
 - **Interface.** `stim ios|android --json` and `status --json` report `agentDevice.remoteConfig` (a file path) next to
   `agentDevice.stateDir`. The guide tells agents to use `--remote-config` exactly as for hosted devices. No new
   command or flag. The config holds a per-workspace token; the file is mode 0600 in the workspace's agent-device
@@ -298,7 +305,7 @@ listens on a loopback port and carries each connection over an authenticated `de
   that ignores the config bypasses Stim as today and gets only 6.1 presence.
 - **Arbitration.** Unchanged in the first version: agent activity counts as a driver in status, so share and Desktop
   `begin` refuse with `device-busy` unless they take over. Holding agent requests while a human holds the pointer
-  grab is open question 5.
+  grab is open question 7.
 - **Cost.** One loopback HTTP hop per request, well under a millisecond, and one agent-device daemon per active
   workspace, as today.
 
@@ -362,9 +369,11 @@ listens on a loopback port and carries each connection over an authenticated `de
 2. Should `--no-password --view-password` mean "anyone with the link can watch, control needs a password"? Recommended
    no for the first version.
 3. Passwordless shares: force `Guest N` names (recommended), or allow chosen names?
-4. Proxy: build it (phase 3), and host the loopback relays in the stim-daemon kept up while a workspace has an open
-   agent route (recommended), with stim-server running the agent-device daemon and policy behind them?
-5. Should the proxy hold agent requests while a human holds the pointer grab, or keep today's arbitration (agent
+4. Build the agent-device proxy as phase 3? Recommended yes.
+5. If yes: host the loopback relays in the stim-daemon, kept up while a workspace has an open agent route
+   (recommended), or elsewhere?
+6. If yes: run the agent-device daemon and its policy in stim-server, as hosted sessions do (recommended)?
+7. Should the proxy hold agent requests while a human holds the pointer grab, or keep today's arbitration (agent
    counts as a driver)?
-6. Once the proxy ships, should the guide drop the `AGENT_DEVICE_STATE_DIR` path, and Stim stop pursuing
+8. If the proxy ships, should the guide drop the `AGENT_DEVICE_STATE_DIR` path, and Stim stop pursuing
    callstack/agent-device#4153?
