@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
 import {
   DEVICE_IDLE_SHUTDOWN_KEY,
   DEVICE_METRO_IDLE_STOP_REASON,
@@ -36,7 +36,12 @@ import { getProject, type Config, type ProjectRecord } from '../workspace/config
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { existingBuildDirs, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
-import { idleMinutesSetting, maintenanceKeepSetting, resolveProjectSettings } from '../workspace/settings.ts';
+import {
+  idleMinutesSetting,
+  maintenanceKeepSetting,
+  resolveProjectSettings,
+  resolveProjectSettingsAsync,
+} from '../workspace/settings.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 
 const MINUTE_MS = 60_000;
@@ -59,6 +64,8 @@ export interface IdlePassInput {
   unsupervised?: boolean;
   /** A workspace the pass never takes: the one the running command belongs to. */
   protectedRoot?: string;
+  /** The daemon tick's context, whose reads run without blocking its event loop. */
+  operation?: StimContext;
   log: (level: 'info' | 'warn' | 'error', event: string, msg: string, fields?: Record<string, unknown>) => void;
 }
 
@@ -119,7 +126,10 @@ async function candidate(path: string, project: ProjectRecord, input: IdlePassIn
   }
   let minutes: number;
   try {
-    const { settings } = resolveProjectSettings(path);
+    const { operation } = input;
+    const { settings } = operation
+      ? await resolveProjectSettingsAsync(path, { env: operation.env, signal: operation.signal, declareFor: operation })
+      : resolveProjectSettings(path);
     if (maintenanceKeepSetting(settings)) return { runs: true, kept: 'pinned by maintenance.keep' };
     minutes = idleMinutesSetting(settings);
   } catch (error) {
@@ -152,7 +162,7 @@ async function candidate(path: string, project: ProjectRecord, input: IdlePassIn
       ? [platforms.android.avdName]
       : [],
   );
-  const emulators = unseen.length ? await unseenEmulatorError(unseen) : null;
+  const emulators = unseen.length ? await unseenEmulatorError(unseen, input.operation) : null;
   if (emulators) return { runs: true, kept: emulators };
   const idleMs = input.pressure ? Math.min(minutes * MINUTE_MS, PRESSURE_IDLE_MS) : minutes * MINUTE_MS;
   return {
@@ -179,6 +189,7 @@ async function decide(
     locked,
     serving: found.serving,
     driversBlock: true,
+    operation: input.operation,
   });
   return {
     candidate: found,
@@ -283,7 +294,12 @@ async function enterIdleStage(
             const minutes = again.candidate.minutes;
             const booted = new Set(again.candidate.booted.map((device) => `${device.kind}:${device.slot}`));
             const lines: string[] = [];
-            const stopped = await runIdleStop({ root: path, idleMinutes: minutes, report: (line) => lines.push(line) });
+            const stopped = await runIdleStop({
+              root: path,
+              idleMinutes: minutes,
+              report: (line) => lines.push(line),
+              operation: input.operation,
+            });
             if (!stopped.ok) return { outcome: 'failed' as const, detail: stopped.summary };
             const shutDown = Object.entries(stopped.outcomes.device).flatMap(([key, outcome]) => {
               const [kind, slot = 'default'] = key.split(':');
@@ -298,7 +314,13 @@ async function enterIdleStage(
             writeWorkspaceEvent(path, 'info', 'workspace_idle', msg, { freedBytes: freed, restore });
             return { outcome: 'idle' as const, detail: msg, freedBytes: freed };
           },
-          { external: true, waitMs: 0, ownerPurpose: 'idle stage' },
+          {
+            external: true,
+            waitMs: 0,
+            ownerPurpose: 'idle stage',
+            signal: input.operation?.signal,
+            declareSpawnsFor: input.operation,
+          },
         );
       } catch (error) {
         if (workspaceProcessLockError(error))
@@ -306,7 +328,7 @@ async function enterIdleStage(
         throw error;
       }
     },
-    { purpose: 'idle stage', devServer: false, hosted: false, hostedMacos: false },
+    { purpose: 'idle stage', devServer: false, hosted: false, hostedMacos: false, operation: input.operation },
   );
   return run.ran ? run.value : { outcome: 'kept', detail: `in use: ${run.reasons.join('; ')}` };
 }

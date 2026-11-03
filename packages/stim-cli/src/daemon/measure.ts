@@ -56,6 +56,11 @@ export async function measureMemory(): Promise<DaemonMeasurement['memory']> {
   return { level, availableBytes, totalBytes: totalmem() };
 }
 
+/** Whether `measureTick` lists simulators: on macOS, when a registered workspace owns one. */
+export function tickListsSims(config: Config | null): boolean {
+  return process.platform === 'darwin' && ownsDevice(config, 'ios');
+}
+
 function ownsDevice(config: Config | null, platform: 'ios' | 'android'): boolean {
   return Object.values(config?.projects ?? {}).some((project) =>
     projectDeviceSlots(project).some(({ platforms }) => platforms[platform]?.owned === true),
@@ -108,7 +113,7 @@ export async function measureTick(
   const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
   let sims: IosSimRecord[] | null = [];
   let simsError: string | null = null;
-  if (process.platform === 'darwin' && ownsDevice(config, 'ios')) {
+  if (tickListsSims(config)) {
     try {
       sims = await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS });
     } catch (error) {

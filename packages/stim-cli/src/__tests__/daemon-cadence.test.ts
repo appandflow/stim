@@ -36,7 +36,14 @@ beforeEach(() => {
   process.env.STIM_HOME = home;
   freeMb = 500_000;
   const real = getExecutor();
-  setExecutor({ ...real, runFileQuiet: (file) => (file === 'ps' ? '' : null) });
+  setExecutor({
+    ...real,
+    runFileQuiet: (file) => (file === 'ps' ? '' : null),
+    runFileQuietAsync: async (file) => (file === 'ps' ? '' : null),
+    runFileAsync: async (file) => {
+      throw new Error(`${file} does not run in this test`);
+    },
+  });
   vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue(undefined as never);
   vi.spyOn(measure, 'measureTick').mockImplementation(async () => ({
     measurement: {
@@ -337,11 +344,11 @@ describe.skipIf(process.platform === 'win32')(
   },
 );
 
-test('an owned simulator is not pending dormancy while the simulator listing fails, since the dormant pass keeps it', () => {
+test('an owned simulator is not pending dormancy while the simulator listing fails, since the dormant pass keeps it', async () => {
   const root = quietWorkspace();
   const config = loadConfig();
-  expect(pendingDormant(config, { simsFailed: true }, { graceMs: 0 })).toBe(root);
+  expect(await pendingDormant(config, { simsFailed: true }, { graceMs: 0 })).toBe(root);
   upsertProject(root, { platforms: { ios: { deviceUdid: 'U1', owned: true } } });
-  expect(pendingDormant(loadConfig(), { simsFailed: false }, { graceMs: 0 })).toBe(root);
-  expect(pendingDormant(loadConfig(), { simsFailed: true }, { graceMs: 0 })).toBeNull();
+  expect(await pendingDormant(loadConfig(), { simsFailed: false }, { graceMs: 0 })).toBe(root);
+  expect(await pendingDormant(loadConfig(), { simsFailed: true }, { graceMs: 0 })).toBeNull();
 });

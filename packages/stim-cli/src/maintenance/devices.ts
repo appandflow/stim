@@ -7,6 +7,7 @@ import { listAvds, ownedAvdDirectory } from '../devices/android.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
+import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
@@ -25,8 +26,8 @@ import type { MaintenancePlan } from './plan.ts';
 const AVD_SIZE_TIMEOUT_MS = 30_000;
 
 export interface OwnedDeviceReads {
-  sims?: () => IosSimRecord[];
-  avds?: () => string[];
+  sims?: () => IosSimRecord[] | Promise<IosSimRecord[]>;
+  avds?: () => string[] | Promise<string[]>;
   avdDirectory?: (name: string) => string | null;
   size?: (dir: string) => number | null | Promise<number | null>;
 }
@@ -60,17 +61,17 @@ export async function ownedDeviceUsage(
     }
   for (const record of readParked('ios', { config })) owned.push({ kind: 'ios', id: record.udid });
   for (const record of readParked('android', { config })) owned.push({ kind: 'android', id: record.name });
-  const listed = <T>(read: () => T[], label: string): T[] | null => {
+  const listed = async <T>(read: () => T[] | Promise<T[]>, label: string): Promise<T[] | null> => {
     if (!owned.length) return [];
     try {
-      return read();
+      return await read();
     } catch {
       failure(label);
       return null;
     }
   };
-  const iosRecords = owned.some((device) => device.kind === 'ios') ? listed(sims, 'the simulator list') : [];
-  const avdNames = owned.some((device) => device.kind === 'android') ? listed(avds, 'the emulator list') : [];
+  const iosRecords = owned.some((device) => device.kind === 'ios') ? await listed(sims, 'the simulator list') : [];
+  const avdNames = owned.some((device) => device.kind === 'android') ? await listed(avds, 'the emulator list') : [];
   const usage: OwnedDeviceUsage[] = [];
   for (const device of owned) {
     const workspace = device.workspace ? { workspace: device.workspace } : {};
@@ -98,8 +99,9 @@ export async function ownedDeviceUsage(
 export async function measureOwnedDevices(
   now: number,
   failure: (target: string, workspace?: string) => void,
+  reads?: OwnedDeviceReads,
 ): Promise<MaintenanceSize[]> {
-  return (await ownedDeviceUsage(failure)).map(({ kind, name, dir, bytes, workspace }) => {
+  return (await ownedDeviceUsage(failure, reads)).map(({ kind, name, dir, bytes, workspace }) => {
     const size: MaintenanceSize = {
       name: `${workspace ? 'owned' : 'parked'} ${kind === 'ios' ? 'simulator' : 'emulator'} ${name}`,
       category: 'owned-devices',
@@ -179,8 +181,13 @@ export async function planDeviceDeletionAsync(
   options: DeviceDeletionOptions,
   signal: AbortSignal,
   operation?: StimContext,
+  activity: (withSims: boolean) => Promise<OwnedDeviceActivity[]> = cachedDeviceActivityAsync(
+    options.now,
+    options.env ?? process.env,
+    signal,
+    operation,
+  ),
 ): Promise<MaintenancePlan> {
-  const activity = cachedDeviceActivityAsync(options.now, options.env ?? process.env, signal, operation);
   const checks = deviceDeletionChecks(options);
   let step = checks.next();
   while (!step.done) {

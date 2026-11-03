@@ -84,6 +84,13 @@ export async function maintenancePinnedAsync(root: string, operation: StimContex
   }
 }
 
+/** `maintenancePinned`, read without blocking when an operation is given. */
+export function maintenancePinnedReader(
+  operation: StimContext | undefined,
+): (root: string) => boolean | Promise<boolean> {
+  return operation ? (root) => maintenancePinnedAsync(root, operation) : maintenancePinned;
+}
+
 export function recentUse(
   workspace: string,
   settings: Pick<MaintenanceSettings, 'protectRecentHours'>,
