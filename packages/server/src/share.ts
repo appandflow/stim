@@ -48,6 +48,8 @@ export interface ShareRow {
 export interface StartedShare extends ShareRow {
   url: string;
   password?: string;
+  /** How the link will not work as printed, such as a proxy mode without a public address. */
+  warning?: string;
 }
 
 export interface ShareLimits {
@@ -79,6 +81,8 @@ export interface ShareDeps {
   control: Pick<ControlHub, 'begin' | 'input' | 'targetOf' | 'endFor'>;
   subscribeStatus: (listener: StatusListener) => () => void;
   route: {
+    /** Chooses how the listener about to open is exposed; returns the loopback port to bind, 0 for any free one. */
+    prepare?: () => Promise<number>;
     open: (target: number) => Promise<OpenedRoute>;
     close: () => Promise<void>;
     /** The loopback port a route that could not be removed still points at, or null. */
@@ -223,6 +227,8 @@ export class ShareHub {
   private readonly wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
   private listener: Server | null = null;
   private base: string | null = null;
+  private exposed: URL | null = null;
+  private warning: string | null = null;
   private readonly stranded = new Map<number, Server>();
   private opening: Promise<string> | null = null;
   private closingRoute: Promise<void> = Promise.resolve();
@@ -376,7 +382,12 @@ export class ShareHub {
       },
       failed: () => {},
     });
-    return { ...this.row(share), url: `${base}/s/${secret}/`, ...(shown ? { password: shown } : {}) };
+    return {
+      ...this.row(share),
+      url: `${base}/s/${secret}/`,
+      ...(shown ? { password: shown } : {}),
+      ...(this.warning ? { warning: this.warning } : {}),
+    };
   }
 
   private localSource(device: Device): ShareSource {
@@ -464,6 +475,7 @@ export class ShareHub {
     if (this.base && this.listener) return Promise.resolve(this.base);
     this.opening ??= this.closingRoute
       .then(async () => {
+        const bindPort = (await this.deps.route.prepare?.()) ?? 0;
         const server = createServer(
           { headersTimeout: HEADERS_TIMEOUT_MS, requestTimeout: REQUEST_TIMEOUT_MS },
           (request, response) => this.serve(request, response),
@@ -472,9 +484,17 @@ export class ShareHub {
         server.on('connection', (socket) => socket.setTimeout(IDLE_SOCKET_MS, () => socket.destroy()));
         server.on('upgrade', (request, socket, head) => this.upgrade(request, socket, head));
         await new Promise<void>((resolve, reject) => {
-          server.once('error', reject);
-          server.listen(0, '127.0.0.1', () => {
-            server.off('error', reject);
+          const refused = (error: NodeJS.ErrnoException) =>
+            reject(
+              error.code === 'EADDRINUSE' && bindPort !== 0
+                ? new Error(
+                    `Port ${bindPort} on 127.0.0.1 is already in use, so the share listener cannot bind it. Stop what holds it, or choose another port with: stim settings set share.port <port>`,
+                  )
+                : error,
+            );
+          server.once('error', refused);
+          server.listen(bindPort, '127.0.0.1', () => {
+            server.off('error', refused);
             server.on('error', (error) => console.error(`stim-server: web share listener: ${error.message}`));
             resolve();
           });
@@ -487,6 +507,8 @@ export class ShareHub {
           const opened = await this.deps.route.open(port);
           this.listener = server;
           this.base = opened.url;
+          this.exposed = opened.proxied ? new URL(opened.url) : null;
+          this.warning = opened.warning ?? null;
           this.pruneStranded();
           return opened.url;
         } catch (cause) {
@@ -537,6 +559,8 @@ export class ShareHub {
     const listener = this.listener;
     this.listener = null;
     this.base = null;
+    this.exposed = null;
+    this.warning = null;
     this.closingRoute = this.closingRoute
       .then(() => this.deps.route.close())
       .then(
@@ -598,7 +622,12 @@ export class ShareHub {
   }
 
   private find(request: IncomingMessage): { share: Share; rest: string } | null {
-    const url = request.url ?? '';
+    let url = request.url ?? '';
+    const prefix = this.exposed?.pathname.replace(/\/$/, '') ?? '';
+    if (prefix) {
+      if (!url.startsWith(`${prefix}/`)) return null;
+      url = url.slice(prefix.length);
+    }
     const [, secret, rest] = /^\/s\/([^/?#]+)\/([^?#]*)(?:\?.*)?$/.exec(url) ?? [];
     if (secret === undefined || rest === undefined || !TOKEN.test(secret)) return null;
     const share = this.shares.get(digest(secret).toString('hex'));
@@ -701,7 +730,10 @@ export class ShareHub {
     const { share } = found;
     const host = request.headers.host;
     const origin = request.headers.origin;
-    if (!host || (origin !== `https://${host}` && origin !== `http://${host}`)) return refuse(403, 'Forbidden');
+    const sameOrigin = this.exposed
+      ? origin === this.exposed.origin
+      : host !== undefined && (origin === `https://${host}` || origin === `http://${host}`);
+    if (!sameOrigin) return refuse(403, 'Forbidden');
     if (!this.signedIn(share, request)) return refuse(401, 'Unauthorized');
     if (share.viewers.size >= this.limits.maxViewers) return refuse(503, 'Service Unavailable');
     this.wss.handleUpgrade(request, socket, head, (ws) => this.watch(share, ws));

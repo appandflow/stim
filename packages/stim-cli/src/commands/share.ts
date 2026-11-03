@@ -253,6 +253,7 @@ export async function runShare(
   );
   if ('code' in answer) return { ok: false, error: answer };
   const started = answer.result;
+  if (started.warning) deps.note(`Warning: ${started.warning}`);
   const secret =
     started.auth === 'none'
       ? ['Password: none; anyone with the link can open it from the internet until it expires.']

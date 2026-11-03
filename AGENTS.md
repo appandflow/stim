@@ -506,14 +506,20 @@ outside it moves to its own issue and pull request.
   takeover, including termination of timed-out children. Revocation and server close end known transports even when
   the journal cannot be read or written; retain unresolved native claims.
   Hosting approval never widens ordinary workspace read or phone control.
-- **Web shares.** `stim share` is the one path that enables Tailscale Funnel.
-  The CLI asks this Stim home's stim-server over its Unix socket
+- **Web shares.** `stim share` is the one path that enables Tailscale Funnel,
+  and only in tailscale exposure. `share.exposure` is `auto` (the default:
+  Funnel when the `tailscale` command is installed and logged in, else proxy),
+  `tailscale` or `proxy`. Proxy mode never runs `tailscale serve` or
+  `tailscale funnel`: the share listener binds `127.0.0.1` on the machine
+  setting `share.port` for the user's own reverse proxy, links print under
+  `share.publicUrl`, and the frame socket accepts exactly that URL's origin,
+  never Host or `X-Forwarded-*`. The CLI asks this Stim home's stim-server over its Unix socket
   (`share.start|stop|list`, refused on every network connection); a share
   lives only in that server's memory and always expires. The server serves
   shares on a separate loopback listener, not the Noise protocol: per share
   the viewer page, the frames of its one device and, with control, input to
   that device through `ControlHub`, behind a 256-bit URL token, a generated
-  password and an HttpOnly Secure SameSite=Strict session cookie. It adds one
+  password and an HttpOnly Secure SameSite=Strict session cookie. In tailscale mode it adds one
   Funnel route, a whole Funnel port that nothing else uses, proxied to that
   listener, under an ownership claim at `server/share-route`, and removes it
   with the last share, and after a crash on the next start, only while the
