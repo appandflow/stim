@@ -210,11 +210,16 @@ test.each([
 test('a removed setting left in the project config names its replacement with the layer it lives in', async () => {
   writeFileSync(
     join(app, '.stim.json'),
-    JSON.stringify({ metro: { idleStopMinutes: 30 }, maintenance: { capTargetPercent: 50 } }),
+    JSON.stringify({
+      metro: { idleStopMinutes: 30 },
+      maintenance: { capTargetPercent: 50 },
+      budget: { hardFloorDiskGb: 4 },
+    }),
   );
   const { note, exitCode } = await settings([]);
   expect(exitCode).toBe(0);
   expect(note.join('\n')).toContain('Run `stim settings set idle.minutes 30 --scope committed` instead.');
+  expect(note.join('\n')).toContain('Run `stim settings set disk.hardFloorGb 4` instead.');
   expect(note.join('\n')).toContain('maintenance.capTargetPercent in');
   expect(note.join('\n')).toContain('Nothing replaced it; the pressure ladder has fixed rules.');
 });

@@ -347,6 +347,8 @@ export async function clearArtifact(
     /** Keep dependencies that worktree warm could not restore, instead of deleting them without a restore record. */
     requireRestorable?: boolean;
     restoreCache?: Parameters<typeof restoreProblem>[1];
+    /** Why the workspace is no longer idle, asked again under its native-run claim; null when it still is. */
+    recheck?: (workspace: string) => Promise<string | null>;
   },
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
   const worktree = options.worktrees
@@ -380,6 +382,8 @@ export async function clearArtifact(
       ...(key ? { locked: key } : {}),
     });
     if (reason) return reason;
+    const late = key && options.recheck ? await options.recheck(key) : null;
+    if (late) return late;
     const record = kind === 'dependencies' && !unrestorable;
     if (record) recordLightened(candidate.keys, candidate.path);
     rmSync(candidate.path, { recursive: true, force: true });

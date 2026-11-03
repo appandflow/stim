@@ -17,7 +17,7 @@ import { ownedAvdDirectory } from '../devices/android.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
-import { workspaceKeys } from '../workspace/lightened.ts';
+import { restoreProblem, workspaceKeys } from '../workspace/lightened.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { executeAction, type ActContext } from '../maintenance/act.ts';
 import { artifactWorktrees, clearArtifact, collectArtifactsAsync } from '../maintenance/artifacts.ts';
@@ -33,6 +33,7 @@ import {
   dormantCandidates,
   enterDormantStage,
   idleStageCandidates,
+  stillIdle,
   stoppedOutputCandidates,
 } from './stages.ts';
 
@@ -391,6 +392,7 @@ async function dormantRung(context: RungContext): Promise<void> {
           bytes: context.measure ? await workspaceDeviceBytes(context, candidate.project) : 0,
           detail: wouldDetail(context),
           deleted: [],
+          restore: '',
         };
     recordAction(
       context,
@@ -402,7 +404,7 @@ async function dormantRung(context: RungContext): Promise<void> {
         outcome: result.outcome,
         bytes: result.bytes,
         detail: result.detail,
-        ...(result.outcome === 'done' ? { restore: 'stim ios or stim android' } : {}),
+        ...(result.outcome === 'done' ? { restore: result.restore } : {}),
       },
       `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes`,
     );
@@ -450,6 +452,7 @@ async function dependenciesRung(context: RungContext): Promise<void> {
       return workspace ? [{ candidate, workspace, order: rank.get(canonicalOrNull(workspace) ?? '') ?? 0 }] : [];
     })
     .toSorted((a, b) => a.order - b.order);
+  const restoreCache: Parameters<typeof restoreProblem>[1] = new Map();
   for (const { candidate, workspace } of ranked) {
     if (!(await context.stillShort())) return;
     const plan: MaintenanceAction = {
@@ -460,12 +463,32 @@ async function dependenciesRung(context: RungContext): Promise<void> {
       workspace,
     };
     if (!context.act) {
-      await run(context, plan, { restore: 'stim worktree warm', bytes: () => pathsBytes([candidate.path]) });
+      const unrestorable = await restoreProblem(candidate, restoreCache, context.operation);
+      if (unrestorable)
+        recordAction(
+          context,
+          {
+            rung: 5,
+            kind: 'delete-dependencies',
+            target: candidate.path,
+            workspace,
+            outcome: 'kept',
+            bytes: 0,
+            detail: unrestorable,
+          },
+          context.why,
+        );
+      else await run(context, plan, { restore: 'stim worktree warm', bytes: () => pathsBytes([candidate.path]) });
       continue;
     }
     let result;
     try {
-      result = await clearArtifact(plan, 'dependencies', { ...options, worktrees, requireRestorable: true });
+      result = await clearArtifact(plan, 'dependencies', {
+        ...options,
+        worktrees,
+        requireRestorable: true,
+        recheck: async (key) => ((await stillIdle(key, PRESSURE_IDLE_MS)) ? null : 'it is no longer idle'),
+      });
     } catch (error) {
       result = { status: 'failed' as const, bytes: 0, detail: error instanceof Error ? error.message : String(error) };
     }

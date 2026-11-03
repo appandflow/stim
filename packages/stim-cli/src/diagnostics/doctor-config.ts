@@ -16,6 +16,7 @@ import {
   type SettingsLayer,
 } from '../workspace/settings.ts';
 import { removedEnvironment, replacementAdvice, settingDefinition, type SettingsObject } from '@stim-cli/core/state';
+import { leftoverOffSettings } from '../workspace/leftover-off.ts';
 
 export interface MachineSettings {
   settings: SettingsObject;
@@ -72,6 +73,7 @@ export function checkMachineSettings({
   exists = existsSync,
   env = process.env,
   remoteBuild,
+  machineConfig = null,
 }: {
   settings: SettingsObject;
   layers: SettingsLayer[];
@@ -82,6 +84,8 @@ export function checkMachineSettings({
   exists?: (path: string) => boolean;
   env?: NodeJS.ProcessEnv;
   remoteBuild?: unknown;
+  /** The machine config, for the machine-only settings no layer carries. */
+  machineConfig?: unknown;
 }): Finding[] {
   const findings: Finding[] = [];
 
@@ -124,6 +128,15 @@ export function checkMachineSettings({
     findings.push(compilerCacheFinding({ fallback: reported, optimizations, file: fallbackEntry?.file ?? null }));
   }
 
+  const leftovers = leftoverOffSettings(layers, machineConfig);
+  for (const leftover of leftovers)
+    findings.push({
+      level: 'cost',
+      title: `${leftover.key} in the config turned off what Stim now does by default`,
+      detail: `${leftover.message} start, ios, android, web, macos, revive and gc refuse to run while it is there.`,
+      fix: leftover.remedy,
+    });
+
   const holders = repositoryLayer ? [...layers, repositoryLayer] : layers;
   const unknownKeys = new Set([
     ...unknownSettingKeys(settings),
@@ -132,6 +145,7 @@ export function checkMachineSettings({
   for (const key of unknownKeys) {
     for (const holder of holders.filter((layer) => settingValueAt(layer.settings, key) !== undefined)) {
       const file = holder.file;
+      if (leftovers.some((leftover) => leftover.key === key && leftover.file === file)) continue;
       const advice = replacementAdvice(key, settingValueAt(holder.settings, key), holder.scope);
       if (advice) {
         findings.push({

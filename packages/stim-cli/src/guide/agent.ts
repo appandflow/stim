@@ -340,8 +340,11 @@ Ask the user before these actions:
   was closed), and runs the pressure ladder to its end at high: every
   workspace idle 2 minutes or more goes idle (stim revive resumes it),
   parked devices are deleted, shared caches are trimmed, and workspaces idle
-  10 minutes or more go dormant, losing their owned devices. It never touches
-  a workspace that is building, driven, leased, hosted or pinned. Run stim gc
+  10 minutes or more go dormant, losing their owned devices. That includes
+  the workspace you run it from: an app you are not driving right now stops.
+  It never touches a workspace that is building, driven, leased, hosted or
+  pinned by maintenance.keep, and keeps node_modules and Pods unless --cache
+  all. Run stim gc
   --json first and show the user its sections and its ladder (guide facts
   gc). gc --delete --cache all also empties the shared build caches and the
   build outputs, and runs the ladder at critical, which deletes node_modules

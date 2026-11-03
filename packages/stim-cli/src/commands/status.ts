@@ -161,7 +161,10 @@ function timeIn(at: string, now: number): string {
 function stageLine(state: EnvironmentState, snapshot: DaemonSnapshot | null, now: number): string {
   if (state.dormantStage) {
     const { at, deletedDevices, archived } = state.dormantStage;
-    return `  stage: dormant${timeIn(at, now)}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${archived ? '; logs archived' : ''}; the next \`stim ios\` or \`stim android\` creates a device`;
+    const back = deletedDevices.length
+      ? 'the next `stim ios` or `stim android` creates a device'
+      : `${state.metro?.idleStop ? '`stim revive`' : '`stim ios` or `stim android`'} resumes it`;
+    return `  stage: dormant${timeIn(at, now)}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${archived ? '; logs archived' : ''}; ${back}`;
   }
   if (state.idleStage) {
     const { at, idleMinutes, freedBytes } = state.idleStage;
@@ -209,10 +212,7 @@ function renderStatus(
   };
   const pools = (['ios', 'android'] as const).map((platform) => {
     const { max, error } = parkedMaxSetting(platform);
-    return {
-      error,
-      line: poolLine({ platform, parked: readParked(platform).length, max }),
-    };
+    return { error, line: poolLine({ platform, parked: readParked(platform).length, max }) };
   });
 
   const maintenance = maintenanceStatus();
@@ -439,9 +439,7 @@ export function runStatusWatch({
   let sources: StatusSources | null = null;
   let tablesAt = 0;
   let machineDue = false;
-  const measurer: StatusMeasurer = createStatusMeasurer({
-    updated: () => scheduler.trigger('light'),
-  });
+  const measurer: StatusMeasurer = createStatusMeasurer({ updated: () => scheduler.trigger('light') });
   const scheduler = createRefreshScheduler({
     debounceMs: WATCH_DEBOUNCE_MS,
     lightIntervalMs: WATCH_LIGHT_INTERVAL_MS,

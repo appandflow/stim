@@ -231,6 +231,40 @@ const EVERY: readonly SettingScope[] = ['machine', 'workspace', 'repo', 'committ
 const MACHINE: readonly SettingScope[] = ['machine'];
 const RECORDING: readonly SettingScope[] = ['machine', 'workspace', 'repo'];
 
+/** An old setting value that turned a mechanism off, and what turns it off now. */
+export interface LeftoverOffRule {
+  /** The setting that turns it off now. */
+  key: string;
+  /** The layers the old setting was read from. */
+  scopes: readonly SettingScope[];
+  /** The new setting's value for an old value that turned it off; null for any other old value. */
+  off: (old: unknown) => string | null;
+  /** Set when the old setting is still read for something else, which this says; setting `key` anywhere settles it. */
+  kept?: string;
+}
+
+const offAtZero = (old: unknown): string | null => (sameNumber(old) === '0' ? '0' : null);
+
+/**
+ * The old values that turned a mechanism off. While a loaded config layer still holds one, start, ios, android, web,
+ * macos, revive and gc refuse, so the old off never silently becomes a default that acts.
+ */
+export const LEFTOVER_OFF: Readonly<Record<string, LeftoverOffRule>> = {
+  'maintenance.mode': {
+    key: 'daemon.mode',
+    scopes: MACHINE,
+    off: (old) => (old === 'off' || old === 'report' ? old : null),
+  },
+  'metro.idleStopMinutes': { key: 'idle.minutes', scopes: PROJECT, off: offAtZero },
+  'devices.idleShutdownMinutes': { key: 'idle.minutes', scopes: EVERY, off: offAtZero },
+  'maintenance.idleStopHours': {
+    key: 'idle.dormantDays',
+    scopes: EVERY,
+    off: offAtZero,
+    kept: 'now applies to hosted device sessions only',
+  },
+};
+
 const STRING = { kind: 'string' } as const;
 const PATH = { kind: 'path' } as const;
 const ABSOLUTE_PATH = { kind: 'path', absolute: true } as const;

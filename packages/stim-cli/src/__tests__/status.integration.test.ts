@@ -121,9 +121,7 @@ test('status tags owned devices and leaves unowned devices untagged', async () =
         '/proj/b': {
           label: 'agent-2',
           metroPort: 8084,
-          platforms: {
-            android: { avdName: 'Pixel_6_API_34', consolePort: 5556 },
-          },
+          platforms: { android: { avdName: 'Pixel_6_API_34', consolePort: 5556 } },
         },
       },
     }),
@@ -197,10 +195,7 @@ test('each workspace says its stage and how long it has been in it, and the idle
   expect(text).toContain('stage: stopped');
   expect(text).not.toContain('[idle]');
 
-  writeWorkspaceState(project, {
-    idleStage,
-    devServerStop: { reason: 'idle', at: idleStage.at, idleMinutes: 15 },
-  });
+  writeWorkspaceState(project, { idleStage, devServerStop: { reason: 'idle', at: idleStage.at, idleMinutes: 15 } });
   expect((await runStatus()).join('\n')).toContain('`stim revive` resumes it');
 });
 
@@ -209,14 +204,7 @@ test('status detects the framework of an app registered only through a named por
   mkdirSync(app);
   writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '*' } }));
   writeFileSync(join(app, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
-  saveConfig(
-    makeConfig({
-      version: 2,
-      projects: {
-        [app]: { metroPort: null, platforms: {}, ports: { web: 8900 } },
-      },
-    }),
-  );
+  saveConfig(makeConfig({ version: 2, projects: { [app]: { metroPort: null, platforms: {}, ports: { web: 8900 } } } }));
 
   const logs = await runStatus();
 
@@ -246,14 +234,8 @@ test('status reports simctl as unreadable instead of warning that every sim is g
     makeConfig({
       version: 2,
       projects: {
-        '/proj/a': {
-          label: 'agent-1',
-          platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
-        },
-        '/proj/b': {
-          label: 'agent-2',
-          platforms: { ios: { deviceUdid: 'UDID-DEF', owned: true } },
-        },
+        '/proj/a': { label: 'agent-1', platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } },
+        '/proj/b': { label: 'agent-2', platforms: { ios: { deviceUdid: 'UDID-DEF', owned: true } } },
       },
     }),
   );
@@ -291,12 +273,7 @@ test('status off macOS never runs simctl and reports no simctl problem', async (
       throw new Error('spawn should not be called from status');
     },
   });
-  saveConfig(
-    makeConfig({
-      version: 2,
-      projects: { '/proj/a': { label: 'agent-1', platforms: {} } },
-    }),
-  );
+  saveConfig(makeConfig({ version: 2, projects: { '/proj/a': { label: 'agent-1', platforms: {} } } }));
 
   const logs = await runStatus('linux');
   const json = await runStatusJson('linux');
@@ -352,10 +329,7 @@ test('status still warns about a recorded sim missing from a readable listing', 
     makeConfig({
       version: 2,
       projects: {
-        '/proj/a': {
-          label: 'agent-1',
-          platforms: { ios: { deviceUdid: 'UDID-GONE', owned: true } },
-        },
+        '/proj/a': { label: 'agent-1', platforms: { ios: { deviceUdid: 'UDID-GONE', owned: true } } },
       },
     }),
   );
@@ -474,14 +448,8 @@ function saveTwoSimProjects() {
     makeConfig({
       version: 2,
       projects: {
-        '/proj/a': {
-          label: 'agent-1',
-          platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
-        },
-        '/proj/b': {
-          label: 'agent-2',
-          platforms: { ios: { deviceUdid: 'UDID-DEF', owned: true } },
-        },
+        '/proj/a': { label: 'agent-1', platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } },
+        '/proj/b': { label: 'agent-2', platforms: { ios: { deviceUdid: 'UDID-DEF', owned: true } } },
       },
     }),
   );
@@ -509,12 +477,7 @@ test('status --json sets memoryMb from the footprint helper, compiling it once i
 });
 
 test('status --json reports the machine load against server.maxLoadPerCore, and slot usage under set and derived caps', async () => {
-  saveConfig(
-    makeConfig({
-      concurrency: { maxBuilds: 2 },
-      server: { maxLoadPerCore: 1.5 },
-    }),
-  );
+  saveConfig(makeConfig({ concurrency: { maxBuilds: 2 }, server: { maxLoadPerCore: 1.5 } }));
   const cpus = availableParallelism();
   const before = (loadavg()[1] ?? 0) / cpus;
   const { capacity } = await runStatusJson();
@@ -525,11 +488,7 @@ test('status --json reports the machine load against server.maxLoadPerCore, and 
   expect(capacity.load.loadPerCore).toBeLessThanOrEqual(Math.ceil(Math.max(before, after) * 10) / 10);
   expect(capacity.load.state).toBe(capacity.load.loadPerCore >= 1.5 ? 'busy' : 'free');
   expect(capacity.builds).toEqual({ max: 2, inUse: 0, holders: [] });
-  expect(capacity.devices).toEqual({
-    max: admissionLimits().maxDevices,
-    inUse: 0,
-    holders: [],
-  });
+  expect(capacity.devices).toEqual({ max: admissionLimits().maxDevices, inUse: 0, holders: [] });
 });
 
 test('without the helper, owners carry RSS and environments keep the estimate', async () => {
@@ -562,12 +521,7 @@ test('an unreadable process table leaves machine null, and an idle machine reads
   saveConfig(
     makeConfig({
       version: 2,
-      projects: {
-        '/proj/a': {
-          label: 'agent-1',
-          platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
-        },
-      },
+      projects: { '/proj/a': { label: 'agent-1', platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } } },
     }),
   );
   expect((await runStatusJson()).machine).toBeNull();
@@ -587,13 +541,7 @@ function writeLogs(root: string, records: NdjsonRecord[]) {
 
 function writeState(
   root: string,
-  supervisor: {
-    pid: number;
-    processToken?: string | null;
-    port: number;
-    mode: string;
-    startedAt: number;
-  },
+  supervisor: { pid: number; processToken?: string | null; port: number; mode: string; startedAt: number },
 ) {
   ensureWorkspaceStorage(root);
   writeFileSync(workspaceStateFile(root), JSON.stringify({ supervisor }));
@@ -686,9 +634,7 @@ test('status counts a device-only noise storm as zero errors', async () => {
     saveConfig(
       makeConfig({
         version: 2,
-        projects: {
-          [root]: { label: 'agent-1', metroPort: 8099, platforms: {} },
-        },
+        projects: { [root]: { label: 'agent-1', metroPort: 8099, platforms: {} } },
       }),
     );
 
@@ -703,13 +649,7 @@ test('status reports the recorded tailscale Metro URL as tailnet-only', async ()
   const root = join(tmpHome, 'tailnet-project');
   mkdirSync(root);
   writeFileSync(join(root, 'package.json'), '{}');
-  saveConfig(
-    makeConfig({
-      projects: {
-        [root]: { label: 'tailnet', metroPort: 8083, platforms: {} },
-      },
-    }),
-  );
+  saveConfig(makeConfig({ projects: { [root]: { label: 'tailnet', metroPort: 8083, platforms: {} } } }));
   writeWorkspaceState(root, {
     metroTunnel: {
       kind: 'managed',
@@ -732,22 +672,12 @@ test('status reports the recorded tailscale Metro URL as tailnet-only', async ()
 test('status drops a supervisor record whose process is gone and reports it vanished', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   try {
-    writeState(root, {
-      pid: 999999,
-      port: 8083,
-      mode: 'expo-child',
-      startedAt: 5,
-    });
+    writeState(root, { pid: 999999, port: 8083, mode: 'expo-child', startedAt: 5 });
     saveConfig(
       makeConfig({
         version: 2,
         projects: {
-          [root]: {
-            label: 'agent-1',
-            metroPort: 8083,
-            supervisor: { pid: 999999, port: 8083 },
-            platforms: {},
-          },
+          [root]: { label: 'agent-1', metroPort: 8083, supervisor: { pid: 999999, port: 8083 }, platforms: {} },
         },
       }),
     );
@@ -759,10 +689,7 @@ test('status drops a supervisor record whose process is gone and reports it vani
     const payload = await runStatusJson();
     expect(payload.environments[0]).toMatchObject({
       supervisor: null,
-      metro: {
-        running: false,
-        lastStop: { reason: 'vanished', pid: 999999, startedAt: null },
-      },
+      metro: { running: false, lastStop: { reason: 'vanished', pid: 999999, startedAt: null } },
       warnings: [],
       issues: [],
     });
@@ -774,12 +701,7 @@ test('status drops a supervisor record whose process is gone and reports it vani
 test('a workspace with no supervisor and no logs reports both as null', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   try {
-    saveConfig(
-      makeConfig({
-        version: 2,
-        projects: { [root]: { label: 'agent-1', platforms: {} } },
-      }),
-    );
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', platforms: {} } } }));
     const payload = await runStatusJson();
     expect(payload.environments[0].supervisor).toBe(null);
     expect(payload.environments[0].logs).toBe(null);
@@ -794,12 +716,7 @@ test('agentDevice.installed follows the executable on PATH and is cached for a s
   const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   vi.useFakeTimers({ toFake: ['Date'] });
   try {
-    saveConfig(
-      makeConfig({
-        version: 2,
-        projects: { [root]: { label: 'agent-1', platforms: {} } },
-      }),
-    );
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', platforms: {} } } }));
     const lookup = vi.fn<(name: string) => string | null>();
     setExecutor({ ...getExecutor(), findExecutable: lookup });
     vi.setSystemTime(new Date('2031-01-01T00:00:00Z'));
@@ -829,14 +746,7 @@ test('the printed lines name the supervisor and the error count', async () => {
       startedAt: 5,
     });
     writeLogs(root, [{ ts: 3, src: 'metro', level: 'error', msg: 'boom' }]);
-    saveConfig(
-      makeConfig({
-        version: 2,
-        projects: {
-          [root]: { label: 'agent-1', metroPort: 8083, platforms: {} },
-        },
-      }),
-    );
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
 
     const logs = await runStatus(process.platform);
     expect(logs.some((l) => new RegExp(`supervisor: pid ${process.pid}`).test(l))).toBeTruthy();
@@ -872,12 +782,7 @@ test('status reports a recorded EAS session with its preview URL', async () => {
       workspaceHome: tmpHome,
       stateFile: workspaceStateFile(root),
     });
-    saveConfig(
-      makeConfig({
-        version: 2,
-        projects: { [root]: { label: 'agent-1', platforms: {} } },
-      }),
-    );
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', platforms: {} } } }));
 
     const payload = await runStatusJson();
     expect(payload.environments[0].live).toBe(true);
@@ -938,23 +843,13 @@ test('status reports detected platforms before a run, including resolved project
   writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '54' } }));
   writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { platforms: ['ios'] } }));
   writeFileSync(join(root, '.stim.json'), JSON.stringify({ web: { url: 'http://localhost:5173' } }));
-  saveConfig(
-    makeConfig({
-      version: 2,
-      projects: { [root]: { label: 'fresh', platforms: {} } },
-    }),
-  );
+  saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'fresh', platforms: {} } } }));
   expect((await runStatusJson()).environments[0].platforms).toEqual(['ios', 'web']);
 });
 
 test('status reports when doctor last ran per platform, and nothing before it has', async () => {
   const root = process.cwd();
-  saveConfig(
-    makeConfig({
-      version: 2,
-      projects: { [root]: { label: 'fresh', platforms: {} } },
-    }),
-  );
+  saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'fresh', platforms: {} } } }));
   expect((await runStatusJson()).environments[0].doctorRuns).toBeUndefined();
   saveConfig(
     makeConfig({
@@ -968,9 +863,7 @@ test('status reports when doctor last ran per platform, and nothing before it ha
       },
     }),
   );
-  expect((await runStatusJson()).environments[0].doctorRuns).toEqual({
-    ios: { at: '2026-10-09T12:00:00.000Z' },
-  });
+  expect((await runStatusJson()).environments[0].doctorRuns).toEqual({ ios: { at: '2026-10-09T12:00:00.000Z' } });
 });
 
 test('a running build reports what its build tool is doing only while it compiles', async () => {
@@ -981,24 +874,10 @@ test('a running build reports what its build tool is doing only while it compile
     label: 'native-run lock',
   }).acquired!;
   try {
-    saveConfig(
-      makeConfig({
-        version: 2,
-        projects: { [root]: { label: 'agent-1', platforms: {} } },
-      }),
-    );
-    const progress = startBuildProgress({
-      root,
-      platform: 'ios',
-      slot: 'default',
-      claim,
-    });
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', platforms: {} } } }));
+    const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim });
     progress.step('compile');
-    progress.output({
-      src: 'build',
-      level: 'debug',
-      msg: 'note: Target dependency graph (3 targets)',
-    });
+    progress.output({ src: 'build', level: 'debug', msg: 'note: Target dependency graph (3 targets)' });
     expect((await runStatusJson(process.platform)).environments[0].build).toMatchObject({
       state: 'running',
       phase: 'compile',
@@ -1023,15 +902,10 @@ test('a workspace a warm just prepared reports phase ready in --json and [ready]
   const warmed = join(tmpHome, 'warmed');
   mkdirSync(warmed);
   saveConfig(makeConfig({ version: 2, projects: { [warmed]: { platforms: {} } } }));
-  writeWorkspaceState(warmed, {
-    warm: { phase: 'ready', at: new Date().toISOString() },
-  });
+  writeWorkspaceState(warmed, { warm: { phase: 'ready', at: new Date().toISOString() } });
 
   const payload = await runStatusJson();
-  expect(payload.environments[0]).toMatchObject({
-    live: false,
-    phase: 'ready',
-  });
+  expect(payload.environments[0]).toMatchObject({ live: false, phase: 'ready' });
   expect(payload.environments[0]).not.toHaveProperty('pathMissing');
   expect((await runStatus()).some((line) => line.includes('warmed [ready]'))).toBe(true);
 });
@@ -1040,9 +914,7 @@ test('a workspace whose folder was deleted reports pathMissing and no ready phas
   const gone = join(tmpHome, 'gone');
   mkdirSync(gone);
   saveConfig(makeConfig({ version: 2, projects: { [gone]: { platforms: {} } } }));
-  writeWorkspaceState(gone, {
-    warm: { phase: 'ready', at: new Date().toISOString() },
-  });
+  writeWorkspaceState(gone, { warm: { phase: 'ready', at: new Date().toISOString() } });
   rmSync(gone, { recursive: true });
 
   const payload = await runStatusJson();
@@ -1142,12 +1014,7 @@ test.skipIf(process.platform === 'win32')(
   'a project and STIM_HOME on the boot volume report one volume (macOS df and /Volumes; skipped on win32)',
   () => {
     process.env.STIM_HOME = '/Users/someone/.stim';
-    const asked = dfExecutor({
-      '/': dfOutput({
-        totalKb: 926 * 1024 * 1024,
-        availableKb: 38 * 1024 * 1024,
-      }),
-    });
+    const asked = dfExecutor({ '/': dfOutput({ totalKb: 926 * 1024 * 1024, availableKb: 38 * 1024 * 1024 }) });
     const volumes = readVolumes('/Users/someone/code/app');
     expect(asked).toEqual(['/']);
     expect(volumes.map((v) => v.volume)).toEqual(['/']);
@@ -1190,12 +1057,7 @@ describe('the device lease section', () => {
     const mine = findProjectRoot(process.cwd());
     assert(mine);
     writeLease({ id: 'UDID-MINE', holder: mine, expiresInMs: 60_000 });
-    writeLease({
-      platform: 'android',
-      id: 'R5CT',
-      holder: '/gone/workspace',
-      expiresInMs: -5000,
-    });
+    writeLease({ platform: 'android', id: 'R5CT', holder: '/gone/workspace', expiresInMs: -5000 });
 
     const logs = await runStatus();
     const text = logs.join('\n');
@@ -1206,13 +1068,7 @@ describe('the device lease section', () => {
     const payload = await runStatusJson();
     expect(payload.deviceLeases).toHaveLength(2);
     const [android, ios] = payload.deviceLeases;
-    expect(ios).toMatchObject({
-      platform: 'ios',
-      id: 'UDID-MINE',
-      holder: mine,
-      mine: true,
-      expired: false,
-    });
+    expect(ios).toMatchObject({ platform: 'ios', id: 'UDID-MINE', holder: mine, mine: true, expired: false });
     expect(android).toMatchObject({
       platform: 'android',
       id: 'R5CT',
@@ -1230,12 +1086,7 @@ describe('the device lease section', () => {
     const logs = await runStatus();
     expect(logs.join('\n')).toMatch(/unreadable lease file/);
     const payload = await runStatusJson();
-    expect(payload.deviceLeases[0]).toMatchObject({
-      parsed: false,
-      holder: null,
-      mine: false,
-      expired: false,
-    });
+    expect(payload.deviceLeases[0]).toMatchObject({ parsed: false, holder: null, mine: false, expired: false });
   });
 });
 
@@ -1247,28 +1098,17 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
         projects: {
           '/proj/android': {
             label: 'android',
-            platforms: {
-              android: { avdName: 'stim-app', consolePort: 5554, owned: true },
-            },
+            platforms: { android: { avdName: 'stim-app', consolePort: 5554, owned: true } },
           },
         },
       }),
     );
     if (scenario === 'launched') {
       ensureWorkspaceStorage('/proj/android');
-      const launch = {
-        appId: 'com.app',
-        deviceId: 'emulator-5554',
-        metroPort: null,
-        release: true,
-      };
+      const launch = { appId: 'com.app', deviceId: 'emulator-5554', metroPort: null, release: true };
       writeFileSync(
         workspaceStateFile('/proj/android'),
-        JSON.stringify({
-          launches: {
-            android: { ...launch, launchedAt: new Date().toISOString() },
-          },
-        }),
+        JSON.stringify({ launches: { android: { ...launch, launchedAt: new Date().toISOString() } } }),
       );
     }
     const before = loadConfig();
@@ -1307,29 +1147,13 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
     const payload = await runStatusJson();
     const state = payload.environments[0];
     const expected = {
-      moved: {
-        serial: 'emulator-5556',
-        state: 'detected',
-        warning: /emulator-5554 -> emulator-5556.*stim android/,
-      },
+      moved: { serial: 'emulator-5556', state: 'detected', warning: /emulator-5554 -> emulator-5556.*stim android/ },
       absent: { serial: null, state: 'not-detected', warning: /^$/ },
-      launched: {
-        serial: null,
-        state: 'not-detected',
-        warning: /not detected by adb; run `stim android`/,
-      },
+      launched: { serial: null, state: 'not-detected', warning: /not detected by adb; run `stim android`/ },
       missing: { serial: null, state: 'missing', warning: /^$/ },
-      unavailable: {
-        serial: null,
-        state: 'unknown',
-        warning: /could not check.*listing unavailable/,
-      },
+      unavailable: { serial: null, state: 'unknown', warning: /could not check.*listing unavailable/ },
     }[scenario];
-    expect(state.android).toMatchObject({
-      serial: expected.serial,
-      state: expected.state,
-      owned: true,
-    });
+    expect(state.android).toMatchObject({ serial: expected.serial, state: expected.state, owned: true });
     expect(state.warnings.join(' ')).toMatch(expected.warning);
     expect(
       state.issues
@@ -1418,18 +1242,9 @@ test('status lists worktrees with no environment for every registered repository
           [join(first, 'apps', 'desktop')]: { label: 'desktop', platforms: {} },
           [join(alias, 'apps', 'mobile')]: { label: 'alias', platforms: {} },
           [join(inner, 'apps', 'mobile')]: { label: 'inner', platforms: {} },
-          [join(nestedRepo, 'apps', 'mobile')]: {
-            label: 'nested-repo',
-            platforms: {},
-          },
-          [join(separate, 'apps', 'mobile')]: {
-            label: 'separate-mobile',
-            platforms: {},
-          },
-          [join(separate, 'apps', 'desktop')]: {
-            label: 'separate-desktop',
-            platforms: {},
-          },
+          [join(nestedRepo, 'apps', 'mobile')]: { label: 'nested-repo', platforms: {} },
+          [join(separate, 'apps', 'mobile')]: { label: 'separate-mobile', platforms: {} },
+          [join(separate, 'apps', 'desktop')]: { label: 'separate-desktop', platforms: {} },
           [standalone]: { label: 'standalone', platforms: {} },
           [bogusGit]: { label: 'bogus', platforms: {} },
           [join(nested, 'apps', 'mobile')]: {
@@ -1442,10 +1257,7 @@ test('status lists worktrees with no environment for every registered repository
           },
           [join(base, 'gone')]: { label: 'gone', platforms: {} },
           [join(second, 'apps', 'mobile')]: { label: 'second', platforms: {} },
-          [join(idleWorktree, 'apps', 'mobile')]: {
-            label: 'idle',
-            platforms: {},
-          },
+          [join(idleWorktree, 'apps', 'mobile')]: { label: 'idle', platforms: {} },
         },
       }),
     );
@@ -1498,31 +1310,13 @@ test('status lists worktrees with no environment for every registered repository
       join(first, 'apps', 'desktop'),
       join(alias, 'apps', 'mobile'),
     ])
-      expect(checkout(path)).toMatchObject({
-        path,
-        checkout: first,
-        worktree: null,
-      });
-    expect(checkout(join(inner, 'apps', 'mobile'))).toMatchObject({
-      checkout: inner,
-      worktree: null,
-    });
-    expect(checkout(join(nestedRepo, 'apps', 'mobile'))).toMatchObject({
-      checkout: nestedRepo,
-      worktree: null,
-    });
-    expect(checkout(join(second, 'apps', 'mobile'))).toMatchObject({
-      checkout: second,
-      worktree: null,
-    });
-    expect(checkout(join(nested, 'apps', 'mobile'))).toMatchObject({
-      checkout: nested,
-    });
+      expect(checkout(path)).toMatchObject({ path, checkout: first, worktree: null });
+    expect(checkout(join(inner, 'apps', 'mobile'))).toMatchObject({ checkout: inner, worktree: null });
+    expect(checkout(join(nestedRepo, 'apps', 'mobile'))).toMatchObject({ checkout: nestedRepo, worktree: null });
+    expect(checkout(join(second, 'apps', 'mobile'))).toMatchObject({ checkout: second, worktree: null });
+    expect(checkout(join(nested, 'apps', 'mobile'))).toMatchObject({ checkout: nested });
     for (const name of ['mobile', 'desktop'])
-      expect(checkout(join(separate, 'apps', name))).toMatchObject({
-        checkout: separate,
-        worktree: null,
-      });
+      expect(checkout(join(separate, 'apps', name))).toMatchObject({ checkout: separate, worktree: null });
     expect(checkout(standalone)?.checkout).toBeNull();
     expect(checkout(bogusGit)?.checkout).toBeNull();
     expect(checkout(join(base, 'gone'))?.checkout).toBeNull();
@@ -1540,14 +1334,7 @@ test('status lists worktrees with no environment for every registered repository
       path: loose,
       branch: 'loose',
       repository: first,
-      git: {
-        changed: 2,
-        untracked: 2,
-        upstream: 'origin/loose',
-        ahead: 1,
-        behind: 0,
-        mergedInto: null,
-      },
+      git: { changed: 2, untracked: 2, upstream: 'origin/loose', ahead: 1, behind: 0, mergedInto: null },
       gitChip: {
         parts: [
           { kind: 'arrows', ahead: 1, behind: 0 },
@@ -1561,23 +1348,13 @@ test('status lists worktrees with no environment for every registered repository
     expect(plain).toContain(`${other} [other]`);
     expect(plain).not.toContain(`${other} [other] --`);
     const idle = payload.environments.find((e: { path: string }) => e.path === join(idleWorktree, 'apps', 'mobile'));
-    expect(idle).toMatchObject({
-      live: false,
-      worktree: { path: idleWorktree, branch: 'idle', git: null },
-    });
+    expect(idle).toMatchObject({ live: false, worktree: { path: idleWorktree, branch: 'idle', git: null } });
     const env = payload.environments.find((e: { path: string }) => e.path === join(nested, 'apps', 'mobile'));
     expect(env.worktree).toEqual({
       path: nested,
       branch: 'nested',
       repository: first,
-      git: {
-        changed: 0,
-        untracked: 0,
-        upstream: null,
-        ahead: null,
-        behind: null,
-        mergedInto: 'origin/main',
-      },
+      git: { changed: 0, untracked: 0, upstream: null, ahead: null, behind: null, mergedInto: 'origin/main' },
       gitChip: { parts: [{ kind: 'merged', into: 'origin/main' }], ci: null },
     });
   } finally {
@@ -1596,12 +1373,7 @@ test.each([
     const root = join(tmpHome, 'placement-app');
     mkdirSync(root);
     writeFileSync(join(root, 'package.json'), '{}');
-    saveConfig(
-      makeConfig({
-        version: 2,
-        projects: { [root]: { metroPort: null, platforms: {} } },
-      }),
-    );
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { metroPort: null, platforms: {} } } }));
     writeWorkspaceState(root, {
       lastIosBuild: {
         platform: 'ios',
@@ -1645,17 +1417,10 @@ test.each([false, true])(
     }
     saveConfig(
       makeConfig({
-        projects: {
-          [a]: { platforms: {} },
-          [b]: { platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } },
-        },
+        projects: { [a]: { platforms: {} }, [b]: { platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } } },
       }),
     );
-    writeWorkspaceState(a, {
-      deviceSlots: {
-        tablet: { ios: { host: { machine: 'mini', session: '' } } },
-      },
-    });
+    writeWorkspaceState(a, { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } });
     const output = json ? JSON.stringify(await runStatusJson()) : (await runStatus()).join('\n');
     expect(output).toContain('deviceSlots.tablet.ios.host.session');
     expect(output).toContain(json ? 'UDID-ABC' : 'stim-projA');
@@ -1667,9 +1432,7 @@ test('plain status explains how to enable a hosted agent when no driver is avail
   mkdirSync(root);
   writeFileSync(join(root, 'package.json'), '{}');
   saveConfig(makeConfig({ projects: { [root]: { platforms: {} } } }));
-  vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({
-    state: 'ready',
-  });
+  vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
   writeHostedIos(root, 'default', {
     machine: 'mini',
     selected: 'mini',
@@ -1711,9 +1474,7 @@ test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknow
         },
       }),
     );
-    vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({
-      state: 'ready',
-    });
+    vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
     writeHostedIos(root, slot, {
       machine: 'mini',
       selected: 'auto',
@@ -1737,14 +1498,7 @@ test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknow
     });
     const payload = await runStatusJson();
     const environment = payload.environments[0];
-    expect(
-      isRpcEvent({
-        event: 'workspace',
-        subscription: 'fixture',
-        seq: 0,
-        environment,
-      }),
-    ).toBe(true);
+    expect(isRpcEvent({ event: 'workspace', subscription: 'fixture', seq: 0, environment })).toBe(true);
     expect(environment.slots ?? []).not.toEqual(expect.arrayContaining([expect.objectContaining({ slot: 'default' })]));
     const ios =
       slot === 'default'
@@ -1767,10 +1521,7 @@ test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknow
     );
     const plain = (await runStatus()).join('\n');
     expect(plain).toContain('iOS 27.0) on mini (auto: load 3.1/core here)');
-    expect(ios.host).toMatchObject({
-      selected: 'auto',
-      reason: 'load 3.1/core here',
-    });
+    expect(ios.host).toMatchObject({ selected: 'auto', reason: 'load 3.1/core here' });
     expect(plain).toContain('agent: agent-device <command> --remote-config /tmp/hosted-ios.json');
     expect(plain.includes(state === 'unknown' ? 'UDID-ABC' : 'stim-projA')).toBe(state !== 'Shutdown');
   },
@@ -1783,9 +1534,7 @@ test.each(['default', 'tablet'].flatMap((slot) => ['mini', 'auto'].map((selected
     mkdirSync(root);
     writeFileSync(join(root, 'package.json'), '{}');
     saveConfig(makeConfig({ projects: { [root]: { platforms: {} } } }));
-    vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({
-      state: 'ready',
-    });
+    vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
     writeHostedAndroid(root, slot, {
       machine: 'mini',
       selected,
@@ -1819,10 +1568,7 @@ test.each(['default', 'tablet'].flatMap((slot) => ['mini', 'auto'].map((selected
         machine: 'mini',
         state: 'ready',
         device: { name: 'pixel_7 (API 30)', api: 30 },
-        agent: {
-          driver: 'agent-device',
-          remoteConfig: '/tmp/hosted-android.json',
-        },
+        agent: { driver: 'agent-device', remoteConfig: '/tmp/hosted-android.json' },
       },
     });
     expect(environment.slots ?? []).not.toEqual(expect.arrayContaining([expect.objectContaining({ slot: 'default' })]));
@@ -1849,11 +1595,7 @@ test('status emits one archive payload and links earlier runs to a live environm
     await archiveWorkspace(root, 'worktree-remove');
     const payload = await runStatusJson();
     expect(payload.archived).toHaveLength(1);
-    expect(payload.archived[0]).toMatchObject({
-      projectRoot: root,
-      replacedBy: root,
-      removedBy: 'worktree-remove',
-    });
+    expect(payload.archived[0]).toMatchObject({ projectRoot: root, replacedBy: root, removedBy: 'worktree-remove' });
     expect(payload.archivedUsage.count).toBe(1);
     expect(payload.archivedUsage.bytes).toBeGreaterThan(0);
     expect((await runStatus()).filter((line) => line.startsWith('Archived:'))).toEqual([
@@ -1871,19 +1613,10 @@ test.each([undefined, 'idle' as const, 'reclaimed for a waiting run' as const, "
     mkdirSync(root);
     saveConfig(
       makeConfig({
-        projects: {
-          [root]: {
-            label: 'idle-project',
-            platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
-          },
-        },
+        projects: { [root]: { label: 'idle-project', platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } } },
       }),
     );
-    const record = {
-      at: '2026-10-07T12:00:00.000Z',
-      idleMinutes: 14,
-      ...(reason ? { reason } : {}),
-    };
+    const record = { at: '2026-10-07T12:00:00.000Z', idleMinutes: 14, ...(reason ? { reason } : {}) };
     writeWorkspaceState(root, { deviceIdleShutdowns: { ios: record } });
     const lines = await runStatus();
     const line = lines.find((entry) => entry.includes('shut down after 14m idle'));

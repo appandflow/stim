@@ -669,14 +669,20 @@ run waiting to boot, and automatic maintenance.
 
   on      start, ios, android, web, macos and revive start one stim-daemon per
           Stim home, scoped homes included. It ticks each minute while
-          anything runs there and every 5 minutes otherwise, and exits two
-          ticks after nothing runs and every workspace is dormant or removed,
-          so the dormant stage fires in a quiet home. Each tick it measures
-          the machine once, classifies the pressure level, moves idle
-          workspaces into the idle stage (idle.minutes) and dormant ones into
-          the dormant stage (idle.dormantDays), runs the pressure ladder above
-          normal, reclaims a device for a run waiting to boot, and runs
-          automatic maintenance.
+          anything runs there or the pressure level is above normal, and
+          every 5 minutes otherwise. It exits two ticks after nothing runs and
+          no workspace waits for its dormant stage, so the stage fires in a
+          quiet home. A workspace waits until its idle.dormantDays have passed
+          plus one slow tick, and never while maintenance.keep, idle.minutes
+          0, idle.dormantDays 0, a hosted placement, an unreadable state or a
+          failing device listing keeps it out, nor with no activity recorded
+          in its state. A finished-worktree removal does not keep the daemon.
+          Each tick it measures the
+          machine once, classifies the pressure level, moves idle workspaces
+          into the idle stage (idle.minutes) and dormant ones into the dormant
+          stage (idle.dormantDays), runs the pressure ladder above normal,
+          reclaims a device for a run waiting to boot, and runs automatic
+          maintenance.
   report  the same passes log what they would do and act on nothing.
   off     no daemon and no pass: each dev server supervisor stops its own dev
           server and devices after idle.minutes, and nothing times a device
@@ -1660,9 +1666,14 @@ each with STIM_BAD_ARG naming what replaced it, and the command that sets the
 replacement to the old value when there is one. \`stim doctor\` and \`stim
 settings\` report any left in a config file or the environment. start, ios,
 android, web, macos, revive and gc refuse with STIM_BAD_ARG while a variable
-marked "refused" is set; unset it, or set its replacement. \`stim settings
-unset <key>\` removes a leftover key from every layer that has it (--scope
-limits it to one).
+marked "refused" is set; unset it, or set its replacement. They also refuse
+while a config layer they read holds an old value that turned something off:
+maintenance.mode off or report, metro.idleStopMinutes or
+devices.idleShutdownMinutes 0, and maintenance.idleStopHours 0 until
+idle.dormantDays is set. The refusal names the set and unset commands that
+keep the old behavior, and doctor rates it a cost. \`stim settings unset
+<key>\` removes a leftover key from every layer that has it (--scope limits it
+to one).
 
 ${Object.entries(REPLACED_SETTINGS)
   .map(

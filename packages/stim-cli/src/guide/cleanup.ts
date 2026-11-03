@@ -54,8 +54,8 @@ status's maintenance block and the maintenance log.
 IDLE STOP: the idle check, while daemon.mode is on, stops a workspace whose
 device is hosted on a remote Mac once it has had no real activity for
 maintenance.idleStopHours (default 6; 0 never; machine or project
-layers; STIM_MAINTENANCE_IDLE_STOP_HOURS overrides; fractions work); gc's dry
-run lists these stops in its maintenance plan. Every other workspace follows
+layers; STIM_MAINTENANCE_IDLE_STOP_HOURS overrides; fractions work); gc neither
+runs nor lists these stops. Every other workspace follows
 the daemon's idle stage at idle.minutes (guide metro) instead. Six hours
 outlasts a lunch break, a meeting or an agent's pause between tasks, and still
 frees the memory overnight. Real activity is the newest of: a Stim command in
@@ -102,8 +102,9 @@ The count is per client, not per session. A dev server that may still run after 
 exited is kept until stim stop ends it. So is a dev server whose requests Stim
 does not record: an Expo project before SDK 54, which cannot load Stim's Metro config
 adapter, or a dev server an older Stim started, until stim stop and stim start
-restart it. A pass the stim-daemon runs can stop any workspace; a pass a
-command runs never stops the command's own workspace.
+restart it. A pass the stim-daemon runs can stop any workspace; a pass that
+start, ios or android runs never stops the command's own workspace, while
+\`gc --delete\`'s ladder can (THE PRESSURE LADDER).
 A dev server run through metro.command is kept: Stim sees none of its
 bundle or HMR requests. A Metro log that cannot be read, or that rotated
 within the window, and agent-device sessions, a state.json or a stim-server
@@ -744,20 +745,24 @@ THE PRESSURE LADDER
   budget\`) as it would run now at high and at critical, whatever the machine
   measures, rung by rung with what each action would free, and each
   registered workspace's stage: running with its last activity, idle or
-  dormant with the time in it, or stopped. \`gc --delete\` runs the ladder to
-  its end at high after its own sweep: the idle stage for every workspace
+  dormant with the time in it, or stopped. Its sizes are apparent sizes, while
+  a run reports how much free disk actually rose, so files APFS shares with a
+  clone, such as node_modules a warm copied, can free 0K. \`gc --delete\`
+  runs the ladder to its end at high after its own sweep: the idle stage for every workspace
   idle 2 minutes or more, parked devices, the shared caches trimmed to half
   their caps, the dormant stage for workspaces idle 10 minutes or more, and
   idle Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the
   worktree trash. \`gc --delete --cache all\` runs it at critical, which also
   empties the Metro and compilation caches, takes every idle workspace
   dormant and deletes the node_modules and Pods of idle linked worktrees. It
-  runs whatever daemon.mode says, never touches a workspace with a blocker
-  (a build, a driver, a lease or lock, a live web share, a hosted placement,
-  unreadable evidence, maintenance.keep), and logs each action to
-  $STIM_HOME/daemon/daemon.ndjson with trigger gc. A workspace this run made
-  dormant keeps its node_modules and Pods until a later run, because its
-  stage record counts as use for 2 minutes. \`stim revive\` resumes an idle
+  runs whatever daemon.mode says and covers every registered workspace,
+  the one gc runs in included: its dev server stops and its devices shut
+  down after 2 idle minutes, and its owned devices are deleted after 10,
+  while its node_modules and Pods stay unless --cache all. It never touches
+  a workspace with a blocker (a build, a driver, a lease or lock, a live web
+  share, a hosted placement, unreadable evidence), and maintenance.keep
+  protects a workspace. It logs each action to
+  $STIM_HOME/daemon/daemon.ndjson with trigger gc. \`stim revive\` resumes an idle
   workspace; the next \`stim ios\` or \`stim android\` creates the devices
   of a dormant one.
     stim gc                           # the ladder's preview and the stages

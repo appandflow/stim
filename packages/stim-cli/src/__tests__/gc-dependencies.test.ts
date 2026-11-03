@@ -154,7 +154,7 @@ async function quietly(fn: () => Promise<unknown>): Promise<string> {
 }
 
 type LadderPayload = {
-  ladder: { levels: { level: string; actions: { rung: number; kind: string; target: string }[] }[] };
+  ladder: { levels: { level: string; actions: { rung: number; kind: string; target: string; outcome: string }[] }[] };
 };
 
 function criticalDependencies(payload: LadderPayload): string[] {
@@ -202,6 +202,10 @@ test.skipIf(process.platform === 'win32')(
     writeFileSync(join(at('drifted'), 'pnpm-lock.yaml'), 'lockfileVersion: 9\npackages: {}\n');
     const child = spawn('sleep', ['60'], { cwd: roots.busy, stdio: 'ignore' });
     try {
+      const { payload }: { payload: LadderPayload } = await gcJson();
+      const critical = payload.ladder.levels.find((level) => level.level === 'critical')?.actions;
+      expect(critical?.find((action) => action.target === join(at('feature'), 'node_modules'))?.outcome).toBe('would');
+      expect(critical?.find((action) => action.target === join(at('drifted'), 'node_modules'))?.outcome).toBe('kept');
       await quietly(() => runGc({ delete: true }));
       expect(existsSync(join(at('feature'), 'node_modules', 'pkg', 'index.js'))).toBe(true);
       await quietly(() => runGc({ delete: true, cache: 'all' }));

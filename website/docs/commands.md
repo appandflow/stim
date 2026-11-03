@@ -242,12 +242,7 @@ its reported load:
   "state": "approved",
   "offloadable": false,
   "reasons": ["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"],
-  "problems": [
-    {
-      "code": "stim-build",
-      "reason": "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"
-    }
-  ],
+  "problems": [{ "code": "stim-build", "reason": "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here" }],
   "capacity": {
     "running": 0,
     "max": 1,
@@ -1339,12 +1334,7 @@ atomically. A committed write keeps the file's other keys and indentation.
 ```json
 {
   "project": "/path/to/app",
-  "files": {
-    "machine": "...",
-    "workspace": "...",
-    "repo": "...",
-    "committed": "..."
-  },
+  "files": { "machine": "...", "workspace": "...", "repo": "...", "committed": "..." },
   "settings": [
     {
       "key": "ios.runtime",
@@ -1790,16 +1780,8 @@ one) carries `missReason`: why the cache had no app for it.
   "kind": "changed",
   "summary": "native dependency added: expo-clipboard",
   "changes": [
-    {
-      "source": "node_modules/expo-clipboard/ios",
-      "change": "added",
-      "category": "native-dependency"
-    },
-    {
-      "source": "expoAutolinkingConfig:ios",
-      "change": "changed",
-      "category": "autolinking"
-    }
+    { "source": "node_modules/expo-clipboard/ios", "change": "added", "category": "native-dependency" },
+    { "source": "expoAutolinkingConfig:ios", "change": "changed", "category": "autolinking" }
   ],
   "changeCount": 2,
   "baseline": { "fingerprint": "5f9c79...", "from": "workspace" },
@@ -2086,12 +2068,17 @@ Gradle versions, TMPDIR leftovers and the worktree trash. `--delete --cache all`
 runs it at critical instead, which also empties the Metro and compilation
 caches, makes every idle workspace dormant and deletes the `node_modules` and
 `ios/Pods` of idle linked worktrees. The ladder runs whatever `daemon.mode`
-says, never touches a workspace that is building, driven, leased, hosted or
-pinned by `maintenance.keep`, leaves a workspace whose `idle.minutes` is `0`
-out of the idle and dormant stages, and logs each action to
-`$STIM_HOME/daemon/daemon.ndjson`. The dry run lists what it would do at each
+says and covers every registered workspace, including the one you run `gc`
+from: its dev server stops and its devices shut down after 2 idle minutes, and
+its owned devices are deleted after 10, while its `node_modules` and Pods stay
+unless `--cache all`. It never touches a workspace that is building, driven,
+leased, hosted or pinned by `maintenance.keep`, leaves a workspace whose
+`idle.minutes` is `0` out of the idle and dormant stages, and logs each action
+to `$STIM_HOME/daemon/daemon.ndjson`. The dry run lists what it would do at each
 level, with sizes, and each registered workspace's stage: running with its last
-activity, idle or dormant with the time in it, or stopped. `stim revive`
+activity, idle or dormant with the time in it, or stopped. Those sizes are
+apparent sizes, while a run reports how much free disk actually rose, so files
+APFS shares with a clone, such as `node_modules` a warm copied, can free 0K. `stim revive`
 resumes an idle workspace; the next `stim ios` or `stim android` creates the
 devices of a dormant one.
 
@@ -2337,13 +2324,7 @@ prints, for example:
   "results": [],
   "sections": {
     "deadProjects": [{ "path": "/path/to/removed-app" }],
-    "orphanedWorkspaces": [
-      {
-        "dir": "~/.stim/workspaces/old--1a2b",
-        "projectRoot": "/path/to/old",
-        "bytes": 52428800
-      }
-    ],
+    "orphanedWorkspaces": [{ "dir": "~/.stim/workspaces/old--1a2b", "projectRoot": "/path/to/old", "bytes": 52428800 }],
     "linkedWorktrees": [
       {
         "path": "/path/to/feature",
@@ -2445,11 +2426,7 @@ prints, for example:
         "dir": "/Users/example/.agent-device",
         "present": true,
         "bytes": 8192,
-        "sessions": {
-          "dir": "/Users/example/.agent-device/sessions",
-          "bytes": 4096,
-          "count": 1
-        },
+        "sessions": { "dir": "/Users/example/.agent-device/sessions", "bytes": 4096, "count": 1 },
         "logs": { "dir": "/Users/example/.agent-device/logs", "bytes": 4096 },
         "other": { "bytes": 0, "largest": [] }
       },
