@@ -2,6 +2,7 @@ import { realpathSync } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stimBuildDigest } from '@stim-cli/core/state';
+import { STIM_VERSION } from './stim-version.ts';
 
 export type SpawnEntryName =
   | 'cli'
@@ -30,22 +31,23 @@ export function spawnEntry(name: SpawnEntryName): string {
   return join(dirname(here), `${name}.mjs`);
 }
 
-/** The digest of the built Stim these entries belong to; null when Stim runs from source. */
-export function stimBuild(): string | null {
-  return stimBuildDigest(dirname(fileURLToPath(import.meta.url)));
+export interface StimBuild {
+  /**
+   * Whether this Stim runs from an installed package: its code, symlinks resolved, sits under a `node_modules`
+   * directory. A checkout's own `dist`, `npm link`, `pnpm link --global` and a run from source are development builds.
+   */
+  installed: boolean;
+  /** The digest of an installed build's code; null for a development build. */
+  digest: string | null;
+  version: string;
 }
 
-/**
- * Whether this Stim runs from an installed package: its code, symlinks resolved, sits under a `node_modules`
- * directory, as in an npm or pnpm global install or a project dependency. A checkout's own `dist` and a run from
- * source are development builds.
- */
-export function installedBuild(): boolean {
+/** The Stim these entries belong to. */
+export function stimBuild(): StimBuild {
+  const dir = dirname(fileURLToPath(import.meta.url));
+  let installed = false;
   try {
-    return realpathSync(dirname(fileURLToPath(import.meta.url)))
-      .split(sep)
-      .includes('node_modules');
-  } catch {
-    return false;
-  }
+    installed = realpathSync(dir).split(sep).includes('node_modules');
+  } catch {}
+  return { installed, digest: installed ? stimBuildDigest(dir) : null, version: STIM_VERSION };
 }

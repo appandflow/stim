@@ -3,6 +3,7 @@ import { connect, type Socket } from 'node:net';
 import {
   daemonClaimRoot,
   daemonDir,
+  daemonHandoverClaimRoot,
   daemonSocket,
   isJsonObject,
   SETTINGS,
@@ -12,7 +13,8 @@ import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim
 import { cancellableSleep } from '../cancellation.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { getExecutor } from '../exec.ts';
-import { installedBuild, spawnEntry, stimBuild } from '../spawn-entry.ts';
+import { compareStimVersions } from '../diagnostics/stim-installations.ts';
+import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, platformHasDaemon, spawnsDaemon } from './mode.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
@@ -39,11 +41,24 @@ function daemonLive(): boolean {
   }
 }
 
+/** Whether a starting daemon is taking over this home from a running daemon of another build. */
+function handoverInProgress(): boolean {
+  try {
+    return readClaimSet(daemonHandoverClaimRoot()).live.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Sends one op to this home's daemon and resolves with its first reply line, `{}` when that line is not a JSON
  * object, or null when the daemon closes, fails or stays silent for `timeoutMs`.
  */
-export function askDaemon(op: string, timeoutMs: number): Promise<Record<string, unknown> | null> {
+export function askDaemon(
+  op: string,
+  timeoutMs: number,
+  fields: Record<string, unknown> = {},
+): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
     const socket = connect(daemonSocket());
     let done = false;
@@ -58,7 +73,7 @@ export function askDaemon(op: string, timeoutMs: number): Promise<Record<string,
     const timer = setTimeout(() => finish(null), timeoutMs);
     socket.setEncoding('utf8');
     socket.once('error', () => finish(null));
-    socket.once('connect', () => socket.write(`${JSON.stringify({ op })}\n`));
+    socket.once('connect', () => socket.write(`${JSON.stringify({ ...fields, op })}\n`));
     socket.on('data', (chunk: string) => {
       buffer += chunk;
       const end = buffer.indexOf('\n');
@@ -161,10 +176,11 @@ async function claimTaken({ settled, exited }: ReturnType<typeof spawnDaemon>): 
 /**
  * Makes sure this home's daemon runs before a command creates running state: tells a live one about the contact so
  * it does not exit under the command, or starts one in the mode this command resolves, `STIM_DAEMON` included, and
- * waits up to five seconds for it to take the claim. When this command runs from an installed build, a live daemon
- * started from another build keeps serving the command while a new daemon from this build waits to take over after
- * its current tick; a development build never replaces a daemon. Returns whether a daemon holds the home; a claim
- * Stim cannot resolve is reported and counts as held.
+ * waits up to five seconds for it to take the claim. An installed build replaces a live daemon that reports no installed
+ * build or an older Stim version: the daemon keeps serving the command while a new one from this build waits to take
+ * over after its current tick. A development build never replaces a daemon, and no command starts a second
+ * replacement while one takes over. Returns whether a daemon holds the home; a claim Stim cannot resolve is reported
+ * and counts as held.
  */
 export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
   if (!spawnsDaemon(env)) return false;
@@ -180,8 +196,12 @@ export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promis
     }
     const running = survey.live.length ? await askDaemon('hello', CONTACT_TIMEOUT_MS) : null;
     if (running) {
-      const own = installedBuild() ? stimBuild() : null;
-      if (own !== null && running.build !== own && typeof running.pid === 'number') spawnDaemon(env, mode, running.pid);
+      const own = stimBuild();
+      const older =
+        typeof running.build !== 'string' ||
+        (typeof running.version === 'string' && (compareStimVersions(own.version, running.version) ?? 0) > 0);
+      if (own.installed && older && typeof running.pid === 'number' && !handoverInProgress())
+        spawnDaemon(env, mode, running.pid);
       return true;
     }
     return await claimTaken(spawnDaemon(env, mode));
@@ -311,16 +331,8 @@ export function daemonWaiter(resource: DaemonResource): DaemonWaiter {
 const TICK_REPLY_TIMEOUT_MS = 10 * 60_000;
 const START_WAIT_MS = 3000;
 
-/**
- * Asks this home's daemon for a tick now and waits for it to finish, waiting briefly for a daemon this command just
- * started. False when no daemon runs, so the caller runs the passes itself.
- */
-export async function requestDaemonTick(env: NodeJS.ProcessEnv = process.env, signal?: AbortSignal): Promise<boolean> {
-  if (!spawnsDaemon(env)) return false;
-  for (let waited = 0; !daemonLive(); waited += 100) {
-    if (waited >= START_WAIT_MS) return false;
-    await cancellableSleep(100, { signal, what: 'stim-daemon' });
-  }
+/** Asks the daemon for one tick; false when it closes or fails without answering. */
+function tickOnce(timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = connect(daemonSocket());
     let answered = false;
@@ -333,7 +345,7 @@ export async function requestDaemonTick(env: NodeJS.ProcessEnv = process.env, si
       resolve(ticked);
     };
     const abort = () => finish(true);
-    const timer = setTimeout(() => finish(true), TICK_REPLY_TIMEOUT_MS);
+    const timer = setTimeout(() => finish(true), timeoutMs);
     signal?.addEventListener('abort', abort, { once: true });
     socket.setEncoding('utf8');
     socket.once('error', () => finish(false));
@@ -343,4 +355,28 @@ export async function requestDaemonTick(env: NodeJS.ProcessEnv = process.env, si
       if (chunk.includes('"ticked"')) finish(true);
     });
   });
+}
+
+/**
+ * Asks this home's daemon for a tick now and waits for it to finish, waiting briefly for a daemon this command just
+ * started. A daemon that exits without answering, as one handing over to another build does, passes the request to
+ * the daemon that holds or takes the claim next. False when no daemon runs, so the caller runs the passes itself.
+ */
+export async function requestDaemonTick(env: NodeJS.ProcessEnv = process.env, signal?: AbortSignal): Promise<boolean> {
+  if (!spawnsDaemon(env)) return false;
+  const coming = () => daemonLive() || handoverInProgress();
+  for (let waited = 0; !coming(); waited += 100) {
+    if (waited >= START_WAIT_MS) return false;
+    await cancellableSleep(100, { signal, what: 'stim-daemon' });
+  }
+  const deadline = Date.now() + TICK_REPLY_TIMEOUT_MS;
+  for (;;) {
+    if (await tickOnce(deadline - Date.now(), signal)) return true;
+    if (!coming()) return false;
+    try {
+      await cancellableSleep(100, { signal, what: 'stim-daemon' });
+    } catch {
+      return true;
+    }
+  }
 }
