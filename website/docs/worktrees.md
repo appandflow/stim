@@ -1,7 +1,7 @@
 ---
-title: "Worktree isolation"
+title: 'Worktree isolation'
 sidebar_position: 2
-description: "Parallel worktrees that share expensive build caches"
+description: 'Parallel worktrees that share expensive build caches'
 ---
 
 import StimTabs from '@site/src/components/StimTabs';

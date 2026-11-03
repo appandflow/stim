@@ -1,7 +1,7 @@
 ---
-title: "Command reference"
+title: 'Command reference'
 sidebar_position: 1
-description: "Every Stim command and option"
+description: 'Every Stim command and option'
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
@@ -1353,9 +1353,7 @@ atomically. A committed write keeps the file's other keys and indentation.
       "layers": { "repo": "26.2", "committed": "26.0" }
     }
   ],
-  "unknown": [
-    { "key": "bogus", "scope": "committed", "file": "...", "value": true }
-  ]
+  "unknown": [{ "key": "bogus", "scope": "committed", "file": "...", "value": true }]
 }
 ```
 
