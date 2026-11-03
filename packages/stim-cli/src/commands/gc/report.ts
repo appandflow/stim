@@ -515,9 +515,12 @@ function leaseGarbageLines({ expired, kept }: DeviceLeaseGarbage): string[] {
 
 function launchdFolderLines(folders: readonly SimulatorLaunchdFolder[] = []): string[] {
   if (folders.length === 0) return [];
-  const total = folders.reduce((sum, folder) => sum + (folder.bytes ?? 0), 0);
+  const sizes = folders.map((folder) => folder.bytes);
+  const total = sizes.every((bytes) => bytes !== null)
+    ? `, ${formatBytes(sizes.reduce((sum, bytes) => sum + bytes, 0))}`
+    : '';
   return [
-    `Simulator launchd folders with no simulator (${folders.length}, ${formatBytes(total)}) - NOT deleted; simctl delete leaves /private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid> behind:`,
+    `Simulator launchd folders with no simulator (${folders.length}${total}) - NOT deleted; simctl delete leaves /private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid> behind:`,
     ...folders.map((folder) => `  ${folder.udid}${folder.bytes === null ? '' : ` - ${formatBytes(folder.bytes)}`}`),
     '              rm -rf <path> once its simulator is gone for good; a simulator in another simctl device set is not in this list',
   ];

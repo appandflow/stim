@@ -86,7 +86,10 @@ test('the gc report lists leftover launchd folders as not deleted, with sizes an
   const listed = { udid: LISTED, path: `/private/var/tmp/com.apple.CoreSimulator.SimDevice.${LISTED}`, bytes: null };
   const simulatorLaunchdFolders = [gone, listed];
   const text = formatGcReport({ simulatorLaunchdFolders }).join('\n');
-  expect(text).toMatch(/Simulator launchd folders with no simulator \(2, 2M\)/);
+  expect(text).toMatch(/Simulator launchd folders with no simulator \(2\) - NOT deleted/);
+  expect(formatGcReport({ simulatorLaunchdFolders: [gone, { ...listed, bytes: 1024 * 1024 }] }).join('\n')).toMatch(
+    /Simulator launchd folders with no simulator \(2, 3M\)/,
+  );
   expect(text).toMatch(/NOT deleted/);
   expect(text).toContain(`  ${GONE} - `);
   expect(text).toContain(`  ${LISTED}\n`);
@@ -95,4 +98,18 @@ test('the gc report lists leftover launchd folders as not deleted, with sizes an
     { ...listed, command: `rm -rf "${listed.path}"` },
   ]);
   expect(formatGcReport({}).join('\n')).not.toMatch(/launchd folders/);
+});
+
+test('when du exits non-zero because a folder vanished, the sizes it did print are kept', async () => {
+  const gone = { udid: GONE, path: `/tmp/com.apple.CoreSimulator.SimDevice.${GONE}` };
+  const vanished = { udid: LISTED, path: `/tmp/com.apple.CoreSimulator.SimDevice.${LISTED}` };
+  setExecutor({
+    runFile: () => {
+      throw Object.assign(new Error('Command failed: du'), { stdout: `2072\t${gone.path}\n` });
+    },
+  });
+  expect(await sizeSimulatorLaunchdFolders([gone, vanished])).toEqual([
+    { ...gone, bytes: 2072 * 1024 },
+    { ...vanished, bytes: null },
+  ]);
 });

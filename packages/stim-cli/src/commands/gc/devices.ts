@@ -223,6 +223,7 @@ export async function sizeSimulatorLaunchdFolders(
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError) throw error;
     operation?.signal.throwIfAborted();
+    if (error instanceof Error && 'stdout' in error && typeof error.stdout === 'string') out = error.stdout;
   }
   const sizes = new Map<string, number>();
   for (const line of out.split('\n')) {
