@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runShare, type ShareDeps } from '../commands/share.ts';
+import { Command } from 'commander';
+import { registerShare, runShare, type ShareDeps } from '../commands/share.ts';
 import { LocalServerUnavailable, requestLocalServer, stopIdleShareServer } from '../local-server.ts';
 
 const ROW = {
@@ -40,6 +41,7 @@ function fake(answers: (() => unknown)[], start: Awaited<ReturnType<ShareDeps['s
     },
     stopServer: async () => null,
     note: (line) => deps.notes.push(line),
+    platform: 'darwin',
   };
   return deps;
 }
@@ -68,6 +70,45 @@ describe('stim share', () => {
       ok: false,
       error: { code: 'STIM_SERVER_NOT_RUNNING', remedy: expect.stringContaining('@stim-cli/server@9.9.9') },
     });
+  });
+
+  it.each(['ios', 'android', 'list', 'stop'])(
+    'refuses stim share %s on Windows before it asks for or starts a stim-server',
+    async (action) => {
+      const deps = fake([]);
+      deps.platform = 'win32';
+      expect(await runShare(action, {}, deps, '1.0.0')).toMatchObject({
+        ok: false,
+        error: {
+          code: 'STIM_SHARE_REFUSED',
+          message: expect.stringContaining('not available on Windows'),
+          remedy: expect.stringContaining('macOS'),
+        },
+      });
+      expect(deps.sent).toEqual([]);
+      expect(deps.starts).toBe(0);
+    },
+  );
+
+  it('refuses on the host platform without starting or asking a server, as one JSON payload', async () => {
+    const startServer = vi.fn<ShareDeps['startServer']>(async () => null);
+    const request = vi.fn<ShareDeps['request']>();
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const program = new Command();
+      registerShare(program, '1.0.0', { findWorkspace: async () => '/work/app', startServer, request });
+      await program.parseAsync(['node', 'stim', 'share', 'ios', '--json']);
+      expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ code: 'STIM_SHARE_REFUSED' });
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(process.exitCode).toBe(1);
+      expect(startServer).not.toHaveBeenCalled();
+      expect(request).not.toHaveBeenCalled();
+    } finally {
+      process.exitCode = undefined;
+      platform.mockRestore();
+      log.mockRestore();
+    }
   });
 
   it('starts a stim-server when none runs, says how to stop it, then shares through it', async () => {

@@ -50,6 +50,8 @@ export interface ShareDeps {
   stopServer: () => Promise<number | null>;
   /** Writes a line to stderr. */
   note: (line: string) => void;
+  /** The host platform: stim-server serves its local socket everywhere but win32. */
+  platform: NodeJS.Platform;
 }
 
 const MIN_PASSWORD = 8;
@@ -154,6 +156,16 @@ export async function runShare(
   deps: ShareDeps,
   version: string,
 ): Promise<{ ok: true; output: object; text: string } | { ok: false; error: ShareFailure }> {
+  if (deps.platform === 'win32') {
+    return {
+      ok: false,
+      error: failure(
+        'STIM_SHARE_REFUSED',
+        'Web shares need the local stim-server socket, which is not available on Windows.',
+        'Run stim share from the macOS or Linux host that runs the device.',
+      ),
+    };
+  }
   if (action === 'list') {
     const answer = await ask(deps, 'share.list', {}, version);
     if ('code' in answer) return { ok: false, error: answer };
@@ -337,6 +349,7 @@ const DEFAULT_DEPS = (version: string): ShareDeps => ({
   },
   stopServer: () => stopIdleShareServer(version),
   note: (line) => console.error(line),
+  platform: process.platform,
 });
 
 export function registerShare(program: Command, version: string, deps: Partial<ShareDeps> = {}): void {
