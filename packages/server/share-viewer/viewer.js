@@ -127,33 +127,202 @@ async function setArtwork(next) {
   if (hasFrame) layout(screen.width, screen.height);
 }
 
-const socket = new WebSocket(location.href.replace(/^http/, 'ws').replace(/\/[^/]*$/, '/ws'));
-socket.binaryType = 'blob';
-let pending = Promise.resolve();
-socket.addEventListener('message', (event) => {
-  if (typeof event.data !== 'string') {
-    pending = pending.then(() => showJpeg(event.data)).catch(() => {});
-    return;
+/** The keyframe bit of a video packet's flags; see VIDEO_KEYFRAME in packages/core/protocol.ts. */
+const VIDEO_KEYFRAME = 1;
+/** The Main profile the capture helper's encoder uses, at the level a 1280 px stream needs. */
+const PROBE_CODEC = 'avc1.4d0028';
+const MAX_DECODE_QUEUE = 3;
+const KEYFRAME_ASK_MS = 500;
+
+let decoder = null;
+let decoderKey = '';
+let decoded = false;
+let waitingForKeyframe = true;
+let keyframeAskedAt = 0;
+
+function canDecodeVideo() {
+  if (location.hash === '#jpeg' || typeof VideoDecoder !== 'function' || typeof EncodedVideoChunk !== 'function')
+    return Promise.resolve(false);
+  return VideoDecoder.isConfigSupported({ codec: PROBE_CODEC, optimizeForLatency: true }).then(
+    (result) => result.supported === true,
+    () => false,
+  );
+}
+
+function askForKeyframe() {
+  waitingForKeyframe = true;
+  if (Date.now() - keyframeAskedAt < KEYFRAME_ASK_MS) return;
+  keyframeAskedAt = Date.now();
+  send({ type: 'keyframe' });
+}
+
+function closeDecoder() {
+  if (decoder && decoder.state !== 'closed') decoder.close();
+  decoder = null;
+  decoderKey = '';
+}
+
+/** A decoder that never produced a frame means this browser cannot play the stream; a later failure gets a keyframe. */
+function decoderFailed() {
+  closeDecoder();
+  if (decoded) askForKeyframe();
+  else useJpeg();
+}
+
+/** The NAL units of an Annex-B access unit. */
+function nalUnits(bytes) {
+  const units = [];
+  let start = -1;
+  let i = 0;
+  while (i + 2 < bytes.length) {
+    if (bytes[i] === 0 && bytes[i + 1] === 0 && bytes[i + 2] === 1) {
+      if (start >= 0) units.push(bytes.subarray(start, bytes[i - 1] === 0 ? i - 1 : i));
+      i += 3;
+      start = i;
+    } else i++;
   }
-  const message = JSON.parse(event.data);
-  if (message.type === 'hello') {
-    expiresAt = Date.parse(message.expiresAt);
-    refreshStatus();
-  } else if (message.type === 'artwork') void setArtwork(message.artwork);
-  else if (message.type === 'delayed') {
-    live = !message.delayed && hasFrame;
-    refreshStatus();
-  } else if (message.type === 'control') showNote(message.message || '');
-  else if (message.type === 'ended') finish(message.message);
-});
-socket.addEventListener('close', () => {
-  if (finished) return;
-  finish('Disconnected');
-  showNote('Disconnected. Reload to reconnect.');
-});
+  if (start >= 0) units.push(bytes.subarray(start));
+  return units;
+}
+
+const nalType = (unit) => unit[0] & 31;
+
+/** The access unit in the length-prefixed form an avcC description implies, without the parameter sets it carries. */
+function lengthPrefixed(units) {
+  const kept = units.filter((unit) => nalType(unit) !== 7 && nalType(unit) !== 8 && nalType(unit) !== 9);
+  const out = new Uint8Array(kept.reduce((total, unit) => total + 4 + unit.length, 0));
+  const view = new DataView(out.buffer);
+  let at = 0;
+  for (const unit of kept) {
+    view.setUint32(at, unit.length);
+    out.set(unit, at + 4);
+    at += 4 + unit.length;
+  }
+  return out;
+}
+
+/** An AVCDecoderConfigurationRecord (ISO/IEC 14496-15) for one SPS and one PPS, with 4-byte NAL lengths. */
+function avcC(sps, pps) {
+  const out = new Uint8Array(11 + sps.length + pps.length);
+  const view = new DataView(out.buffer);
+  out.set([1, sps[1], sps[2], sps[3], 0xff, 0xe1]);
+  view.setUint16(6, sps.length);
+  out.set(sps, 8);
+  out[8 + sps.length] = 1;
+  view.setUint16(9 + sps.length, pps.length);
+  out.set(pps, 11 + sps.length);
+  return out;
+}
+
+const hex = (value) => value.toString(16).padStart(2, '0');
+
+function configure(sps, pps) {
+  const description = avcC(sps, pps);
+  const key = description.join(',');
+  if (decoder && key === decoderKey) return;
+  closeDecoder();
+  decoder = new VideoDecoder({
+    output: (frame) => {
+      decoded = true;
+      renderFrame(frame, frame.displayWidth, frame.displayHeight);
+      frame.close();
+      if (!live && !finished) {
+        live = true;
+        refreshStatus();
+      }
+    },
+    error: decoderFailed,
+  });
+  decoder.configure({
+    codec: 'avc1.' + hex(sps[1]) + hex(sps[2]) + hex(sps[3]),
+    description,
+    optimizeForLatency: true,
+  });
+  decoderKey = key;
+}
+
+/** Decodes one video packet: the header the server's videoPacket writes, then an Annex-B access unit. */
+function showVideo(buffer) {
+  const view = new DataView(buffer);
+  if (buffer.byteLength < 21 || view.getUint8(0) !== 1) return;
+  const keyframe = (view.getUint8(1) & VIDEO_KEYFRAME) !== 0;
+  const units = nalUnits(new Uint8Array(buffer, view.getUint16(2)));
+  if (keyframe) {
+    const sps = units.find((unit) => nalType(unit) === 7);
+    const pps = units.find((unit) => nalType(unit) === 8);
+    if (!sps || !pps) return askForKeyframe();
+    configure(sps, pps);
+    waitingForKeyframe = false;
+  } else if (waitingForKeyframe || !decoder) return;
+  if (decoder.decodeQueueSize > MAX_DECODE_QUEUE) return askForKeyframe();
+  try {
+    decoder.decode(
+      new EncodedVideoChunk({
+        type: keyframe ? 'key' : 'delta',
+        timestamp: Math.round(view.getFloat64(8) * 1000),
+        data: lengthPrefixed(units),
+      }),
+    );
+  } catch {
+    decoderFailed();
+  }
+}
+
+const socketUrl = location.href
+  .replace(/#.*$/, '')
+  .replace(/^http/, 'ws')
+  .replace(/\/[^/]*$/, '/ws');
+let socket = null;
+let pending = Promise.resolve();
+
+function connect(codec) {
+  const current = new WebSocket(socketUrl + (codec === 'h264' ? '?codec=h264' : ''));
+  socket = current;
+  body.dataset.codec = codec;
+  current.binaryType = 'arraybuffer';
+  current.addEventListener('message', (event) => {
+    if (current !== socket) return;
+    if (typeof event.data !== 'string') {
+      if (new Uint8Array(event.data, 0, 1)[0] === 0xff) {
+        const blob = new Blob([event.data], { type: 'image/jpeg' });
+        pending = pending.then(() => showJpeg(blob)).catch(() => {});
+      } else if (codec === 'h264') showVideo(event.data);
+      return;
+    }
+    const message = JSON.parse(event.data);
+    if (message.type === 'hello') {
+      expiresAt = Date.parse(message.expiresAt);
+      refreshStatus();
+    } else if (message.type === 'artwork') void setArtwork(message.artwork);
+    else if (message.type === 'delayed') {
+      live = !message.delayed && hasFrame;
+      refreshStatus();
+    } else if (message.type === 'control') showNote(message.message || '');
+    else if (message.type === 'ended') finish(message.message);
+  });
+  current.addEventListener('close', () => {
+    if (finished || current !== socket) return;
+    finish('Disconnected');
+    showNote('Disconnected. Reload to reconnect.');
+  });
+}
+
+/** Moves this viewer to JPEG once its own socket has closed, so the replacement never counts twice against the cap. */
+function useJpeg() {
+  closeDecoder();
+  if (body.dataset.codec === 'jpeg') return;
+  const previous = socket;
+  socket = null;
+  if (!previous || previous.readyState === 3) return connect('jpeg');
+  previous.addEventListener('close', () => connect('jpeg'));
+  previous.close();
+}
+
 const send = (message) => {
-  if (socket.readyState === 1) socket.send(JSON.stringify(message));
+  if (socket && socket.readyState === 1) socket.send(JSON.stringify(message));
 };
+
+void canDecodeVideo().then((supported) => connect(supported ? 'h264' : 'jpeg'));
 
 for (const button of document.querySelectorAll('[data-button]')) {
   if (!control || !allowedButtons.includes(button.dataset.button)) button.remove();
