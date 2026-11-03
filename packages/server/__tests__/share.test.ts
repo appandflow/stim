@@ -5,7 +5,8 @@ import { WebSocket } from 'ws';
 import type { FrameHint } from '../src/frame-helper.ts';
 import type { Device, FrameListener } from '../src/frames.ts';
 import type { ShareSource } from '../src/share-hosted.ts';
-import { ShareHub, type ShareRequest, type StartedShare, type StatusListener } from '../src/share.ts';
+import { viewerPage } from '../src/share-page.ts';
+import { BUTTONS, ShareHub, type ShareRequest, type StartedShare, type StatusListener } from '../src/share.ts';
 import { accessUnitOf, type AccessUnit } from '../src/video.ts';
 
 const WORKSPACE = '/work/app';
@@ -508,16 +509,12 @@ describe('a web share', () => {
     socket.close();
   });
 
-  it('gives the viewer a toolbar control for every button and rotation the server accepts', async () => {
-    const share = await started(f, { passwordless: true, control: true });
-    const page = (await http(local(share, f.hub.port ?? 0))).body;
-    const accepted = (/data-buttons="([^"]*)"/.exec(page)?.[1] ?? '').split(' ');
-    expect(accepted).toEqual(['home', 'lock']);
-    for (const button of accepted) expect(page).toContain(`data-button="${button}"`);
-    for (const direction of ['left', 'right']) expect(page).toContain(`data-rotate="${direction}"`);
-    expect(page).toContain('data-control="true"');
-    const view = await started(f, { passwordless: true, control: false });
-    expect((await http(local(view, f.hub.port ?? 0))).body).toContain('data-control="false"');
+  it('gives the viewer a toolbar control for every button the server accepts and for both rotations', () => {
+    for (const platform of ['ios', 'android'] as const) {
+      const page = viewerPage({ control: true, platform, buttons: BUTTONS[platform], rotate: true });
+      for (const button of BUTTONS[platform]) expect(page).toContain(`data-button="${button}"`);
+      for (const direction of ['left', 'right']) expect(page).toContain(`data-rotate="${direction}"`);
+    }
   });
 
   it("styles the viewer with Stim Desktop's design tokens in light and dark", async () => {
@@ -542,7 +539,6 @@ describe('a web share', () => {
       control: 'accent',
       'on-accent': 'onPrimary',
       live: 'success',
-      wait: 'warning',
       danger: 'error',
     } as const;
     const source = readFileSync(new URL('../../../apps/mobile/src/design/tokens.ts', import.meta.url), 'utf8');

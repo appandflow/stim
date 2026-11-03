@@ -1,5 +1,4 @@
-/* Colors are the values of apps/mobile/src/design/tokens.ts (colors.light and colors.dark, media), the file Stim
-   Desktop's generated tokens come from. A share test keeps them equal. */
+/* Values of apps/mobile/src/design/tokens.ts (colors.light, colors.dark, media), where Stim Desktop's tokens come from. */
 :root {
   color-scheme: light dark;
   --bg: #ffffff;
@@ -14,7 +13,6 @@
   --control: #7045ff;
   --on-accent: #ffffff;
   --live: #0f6c31;
-  --wait: #815516;
   --danger: #b31d1d;
   --screen: #0c0a11;
   --note: rgba(0, 0, 0, 0.85);
@@ -34,7 +32,6 @@
     --control: #aa90ff;
     --on-accent: #15121d;
     --live: #4ade80;
-    --wait: #f5b454;
     --danger: #ff6b6b;
     --shadow: 0 24px 60px -20px rgb(0 0 0 / 0.8), 0 2px 8px rgb(0 0 0 / 0.4);
   }
@@ -124,7 +121,8 @@ footer .credit a:hover {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+  padding: max(8px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px
+    max(16px, env(safe-area-inset-left));
   border-bottom: 1px solid var(--line);
   background: var(--bg);
   font-size: 12.5px;
@@ -140,6 +138,7 @@ footer .credit a:hover {
   display: flex;
   align-items: center;
   gap: 8px;
+  overflow: hidden;
   color: var(--fg);
   font-size: 13px;
   line-height: 16px;
@@ -156,6 +155,11 @@ footer .credit a:hover {
 .status[data-state='live'] .dot {
   border-color: var(--live);
   background: var(--live);
+}
+.status #status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .status .source {
   font-weight: 600;
@@ -435,6 +439,11 @@ button.primary:hover {
   background: var(--canvas);
 }
 
+@media (max-width: 360px) {
+  .pill.mode {
+    display: none;
+  }
+}
 @media (max-width: 480px) {
   .topbar {
     gap: 6px;
