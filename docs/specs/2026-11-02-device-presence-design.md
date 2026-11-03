@@ -252,7 +252,7 @@ record because the daemon resolved them.
 
 Points must be normalized by the device's logical size: on iOS the frame's pixel size divided by the device type's
 screen scale, on Android the display size in the unit agent-device records (to verify: pixels or dp). The same
-normalized `x`/`y` (and `x2`/`y2`) go onto `ReplayMarker` as optional fields, so Desktop's replay can show where each
+normalized start point (`x`/`y`, from `x1`/`y1` for scrolls and swipes) and end point (`x2`/`y2`) go onto `ReplayMarker` as optional fields, so Desktop's replay can show where each
 action landed.
 
 The honest gap: these show 0.6 to 1 s after an action completes, with no live phases, and only for agents that use
@@ -290,8 +290,9 @@ stop` and `worktree remove` close the route (open question 5). With `daemon.mode
   device the workspace leases, and refuses device selection flags and host paths as the hosted policy does. It never
   reaches another workspace's device.
 - **What Stim sees.** Each request's command and positionals before it runs, and its JSON-RPC result after. In
-  agent-device 0.21.35, `action.recorded` details are built from the command result's `x`, `y`, `x2`, `y2` and
-  `durationMs`, so the result carries the resolved point even for `@ref` and selector targets; no snapshot lookup and
+  agent-device 0.21.35, `action.recorded` details for `press`, `click`, `longpress`, `fill`, `hover` and `focus` are
+  built from the command result's `x`, `y` and `durationMs`, and `scroll` and `swipe` record `x1,y1,x2,y2`, so the
+  result carries the resolved point even for `@ref` and selector targets; no snapshot lookup and
   no upstream change is needed for them. Presence shows `Agent · press` at request start and the point when the
   result arrives, with no file-follow delay. Per command:
 
@@ -311,7 +312,8 @@ stop` and `worktree remove` close the route (open question 5). With `daemon.mode
 - **Revive on first action.** A request for an idle-stopped workspace runs the `stim revive` path first (Metro, the
   owned device through admission, the app relaunched), then forwards the request. Revive takes seconds: Metro 2 to
   5 s, a cold simulator boot 10 to 30 s. The proxy holds the request open, single-flight, so concurrent requests wait
-  for the same revive. The HTTP request stays open with no response bytes until revive finishes, then the proxy
+  for the same revive; held requests count against the relay's 8-connection cap (`agent-relay.ts`). The HTTP
+  request stays open with no response bytes until revive finishes, then the proxy
   forwards it and streams the daemon's answer. It holds up to a bound below agent-device's client request timeout
   (not documented in 0.21.35; measure it before phase 3), and past that bound or
   on a revive refusal answers a JSON-RPC error carrying revive's code and remedy (`STIM_NO_METRO`,
