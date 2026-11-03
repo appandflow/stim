@@ -412,19 +412,20 @@ final class SimulatorSource {
     pacer.changed()
   }
 
-  // The framebuffer stays in the display's native portrait orientation, so the image
-  // is turned to the orientation the screen is drawn in. A device with two panels
-  // follows the foreground app, as its panels turn with posture.
-  private func screenOrientation(of display: SimDisplay, among count: Int) -> UInt32 {
+  // CoreSimulator reports only the foreground app's orientation, so the device's is the
+  // one this process last sent; a rotation made by another process, or before this
+  // helper started, is not seen. A device with two panels follows the foreground app.
+  private func displayedOrientation(of display: SimDisplay, in displays: [SimDisplay]) -> UInt32 {
     let app = display.screenProperties?.uiOrientation ?? 1
-    return screenOrientation(app: app, device: count > 1 ? nil : SimulatorRotation.orientation(udid: udid))
+    let panels = displays.filter { $0.screenProperties?.screenType == 0 }.count
+    return screenOrientation(app: app, device: panels > 1 ? nil : SimulatorRotation.orientation(udid: udid))
   }
 
   private func render(_ config: Config) {
     guard let display = litDisplay(), let surface = display.framebufferSurface else { return }
     let orientation: CGImagePropertyOrientation
     let quarterTurns: Int
-    switch screenOrientation(of: display, among: displays.count) {
+    switch displayedOrientation(of: display, in: displays) {
     case 2: (orientation, quarterTurns) = (.down, 2)
     case 3: (orientation, quarterTurns) = (.right, 3)
     case 4: (orientation, quarterTurns) = (.left, 1)
@@ -1062,7 +1063,7 @@ extension SimulatorSource: Source {
       guard displays.indices.contains(index), let properties = displays[index].screenProperties else {
         return Output.notice(["inputError": "\(udid) has no display \(index)."])
       }
-      hid.touch(phase, at: nativeScreenPoint(point, orientation: screenOrientation(of: displays[index], among: displays.count)), screenID: properties.screenID)
+      hid.touch(phase, at: nativeScreenPoint(point, orientation: displayedOrientation(of: displays[index], in: displays)), screenID: properties.screenID)
     case .text(let text):
       for character in text {
         guard let key = keyCodes[character] else { continue }
