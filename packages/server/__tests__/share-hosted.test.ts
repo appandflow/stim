@@ -2,10 +2,11 @@ import type { AuditRecord } from '../src/actions.ts';
 import type { Controller } from '../src/control.ts';
 import type { HostConnections, Upstream } from '../src/hosted-relay.ts';
 import { HostedShareSource } from '../src/share-hosted.ts';
+import { videoPacket } from '../src/video.ts';
 
 type Route = Parameters<Upstream['route']>[1];
 
-function fixture(replies: Record<string, unknown> = {}) {
+function fixture(replies: Record<string, unknown> = {}, features: string[] = []) {
   const routes = new Map<string, Route>();
   const requests: { method: string; params: unknown }[] = [];
   const released = vi.fn<() => void>();
@@ -13,7 +14,8 @@ function fixture(replies: Record<string, unknown> = {}) {
   const connection = {
     request: async (method: string, params: unknown) => {
       requests.push({ method, params });
-      const reply = replies[method];
+      const answer = replies[method];
+      const reply = typeof answer === 'function' ? answer() : answer;
       if (reply && typeof reply === 'object' && 'error' in reply) return reply;
       return { result: reply ?? {} };
     },
@@ -21,6 +23,7 @@ function fixture(replies: Record<string, unknown> = {}) {
       routes.set(name, route);
       return () => routes.delete(name);
     },
+    supports: (feature: string) => features.includes(feature),
   } as unknown as Upstream;
   const hosts = {
     acquire: async () => {
@@ -94,6 +97,49 @@ describe('a share of a hosted device', () => {
     const late = vi.fn<(artwork: unknown) => void>();
     f.source.subscribe({ ...listener(), artwork: late }, hint);
     expect(late).toHaveBeenCalledWith(artwork);
+  });
+
+  it('opens an H.264 host subscription for video viewers beside the JPEG one, and asks it for keyframes and lower bitrate', async () => {
+    let next = 0;
+    const f = fixture({ 'device-host.frames.subscribe': () => ({ subscription: `up${++next}` }) }, [
+      'hosted-congestion',
+    ]);
+    const jpeg = listener();
+    f.source.subscribe(jpeg, hint);
+    await vi.waitFor(() => expect(f.routes.has('s:up1')).toBe(true));
+    const video = { ...listener(), video: vi.fn<(unit: unknown) => void>() };
+    f.source.subscribe(video, { fps: 60, maxEdge: 1280 });
+    await vi.waitFor(() => expect(f.routes.has('s:up2')).toBe(true));
+    expect(f.requests).toEqual([
+      { method: 'device-host.frames.subscribe', params: { session: 'host-session', fps: 10, maxEdge: 1280 } },
+      {
+        method: 'device-host.frames.subscribe',
+        params: { session: 'host-session', fps: 60, maxEdge: 1280, video: ['h264'] },
+      },
+    ]);
+
+    const unit = { keyframe: true, capturedAt: 5, width: 590, height: 1280, data: Buffer.from([0, 0, 0, 1, 0x65]) };
+    f.routes.get('s:up2')!.event(videoPacket('up2', 0, unit));
+    expect(video.video).toHaveBeenCalledWith(unit);
+    f.routes.get('s:up1')!.event(frame);
+    expect(jpeg.frame).toHaveBeenCalledWith(delivered);
+    expect(video.frame).not.toHaveBeenCalled();
+
+    f.source.keyframe();
+    f.source.congested();
+    f.source.congested();
+    expect(f.requests.slice(2)).toEqual([
+      { method: 'device-host.frames.keyframe', params: { subscription: 'up2' } },
+      { method: 'device-host.frames.congested', params: { subscription: 'up2' } },
+    ]);
+  });
+
+  it('never sends a congestion notice to a host that does not support it', async () => {
+    const f = fixture({ 'device-host.frames.subscribe': { subscription: 'up' } });
+    f.source.subscribe({ ...listener(), video: vi.fn<(unit: unknown) => void>() }, hint);
+    await vi.waitFor(() => expect(f.routes.has('s:up')).toBe(true));
+    f.source.congested();
+    expect(f.requests.map((entry) => entry.method)).toEqual(['device-host.frames.subscribe']);
   });
 
   it('fails every viewer, naming the host, when the host refuses or ends the stream', async () => {

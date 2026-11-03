@@ -68,6 +68,28 @@ click the screen to tap and type with the keyboard. While the screen has focus,
 the arrow keys and Escape go to the device as well (the D-pad keys and Escape
 on Android, the hardware arrow and Escape keys on iOS).
 
+### Video and JPEG
+
+A browser that can decode H.264 with WebCodecs (Chrome and Edge, Safari 16.4
+and later on macOS and iOS, Firefox 130 and later on desktop) gets the screen
+as H.264 video at up to 60 frames per second, 1280 pixels on the long edge, at
+3 to 8 Mbit/s: the bitrate drops while a viewer falls behind and climbs back
+once it catches up. Other browsers, and a browser whose decoder fails on the
+stream, get JPEG at 10 frames per second. A viewer that falls behind skips to
+the next keyframe instead of building up delay, and a viewer that joins gets a
+keyframe right away. Add `#jpeg` to the link to force JPEG.
+
+Measured on a local iOS simulator share of a full-screen animation, in Chrome
+through Funnel on the same Mac:
+
+|       | Frames per second | Bandwidth  | Capture to screen      |
+| ----- | ----------------- | ---------- | ---------------------- |
+| H.264 | 54                | 4.8 Mbit/s | 7 ms median, 12 ms p95 |
+| JPEG  | 9                 | 4.0 Mbit/s | not measured           |
+
+A video viewer that joins while capture already runs sees its first frame in
+about 50 ms; when it starts capture, the first frame takes several seconds.
+
 ## Requirements
 
 - **stim-server** for this Stim home. When none runs (no Stim Desktop or
@@ -101,7 +123,8 @@ on Android, the hardware arrow and Escape keys on iOS).
   stim-server serves the share and relays frames and input through its
   existing connection to that Mac's device-host; the Mac sees only the view
   and control traffic this machine's own viewers would send, and needs no new
-  approval. The session must be ready. The share ends when the session stops
+  approval. Video viewers and JPEG viewers each share one host stream; a host
+  that sends no H.264 gives video viewers JPEG at 10 frames per second. The session must be ready. The share ends when the session stops
   or is replaced, and `stim share list` does not show the Mac.
 
 ## A live share keeps its workspace up

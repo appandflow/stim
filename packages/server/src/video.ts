@@ -33,6 +33,22 @@ export function videoPacket(subscription: string, sequence: number, unit: Access
   return Buffer.concat([header, unit.data]);
 }
 
+/** The access unit a {@link videoPacket} carries, or null for a malformed packet. */
+export function accessUnitOf(packet: Buffer): AccessUnit | null {
+  if (videoSubscription(packet) === null) return null;
+  const flags = packet.readUInt8(1);
+  const posture = flags & VIDEO_FOLDED ? 'folded' : flags & VIDEO_UNFOLDED ? 'unfolded' : undefined;
+  return {
+    keyframe: (flags & VIDEO_KEYFRAME) !== 0,
+    capturedAt: packet.readDoubleBE(8),
+    width: packet.readUInt16BE(16),
+    height: packet.readUInt16BE(18),
+    ...(posture ? { posture } : {}),
+    ...(flags & VIDEO_ARTWORK ? { artworkTurns: (flags >> 3) & 3 } : {}),
+    data: packet.subarray(packet.readUInt16BE(2)),
+  };
+}
+
 export function videoSubscription(packet: Buffer): string | null {
   if (packet.length < FIXED_HEADER_BYTES || packet[0] !== VIDEO_HEADER_VERSION) return null;
   const headerBytes = FIXED_HEADER_BYTES + packet[20]!;

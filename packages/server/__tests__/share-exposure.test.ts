@@ -99,6 +99,8 @@ describe('web shares in proxy mode', () => {
     );
     hub = new ShareHub({
       frames: {
+        keyframe: () => {},
+        congested: () => {},
         subscribe: () => {
           subscribed++;
           return () => {};
