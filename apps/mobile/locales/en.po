@@ -1468,6 +1468,10 @@ msgstr "Compiling"
 msgid "Configuring"
 msgstr "Configuring"
 
+#: src/lib/build-machines.ts
+msgid "confirm its fingerprint with stim remote list in a terminal"
+msgstr "confirm its fingerprint with stim remote list in a terminal"
+
 #: src/screens/pair.tsx
 msgid "Connect"
 msgstr "Connect"
@@ -2174,6 +2178,10 @@ msgstr "just now"
 #: src/screens/workspace-resources.tsx
 msgid "Kept until {until}"
 msgstr "Kept until {until}"
+
+#: src/lib/build-machines.ts
+msgid "Key not confirmed"
+msgstr "Key not confirmed"
 
 #: src/screens/device-view.tsx
 msgid "Keyboard"
@@ -3490,6 +3498,10 @@ msgstr "run Stim from a git checkout"
 msgid "run stim remote remove, then stim remote add"
 msgstr "run stim remote remove, then stim remote add"
 
+#: src/lib/build-machines.ts
+msgid "run stim-server service update there"
+msgstr "run stim-server service update there"
+
 #: src/lib/workspaces.ts
 #: src/screens/logs.tsx
 msgid "running"
@@ -3589,6 +3601,10 @@ msgstr "select the same Xcode on both"
 #: src/screens/build-details.tsx
 msgid "Selected: {selectedName}"
 msgstr "Selected: {selectedName}"
+
+#: src/lib/build-machines.ts
+msgid "Server is outdated"
+msgstr "Server is outdated"
 
 #: src/screens/settings.tsx
 msgid "Set by STIM_RECORDING on the Mac"

@@ -58,13 +58,28 @@ describe('machineReadiness', () => {
     ).toMatchObject({ title: 'CPU x86_64 there, arm64 here', remedy: null, tone: 'error' });
   });
 
-  it('shows a machine whose server key changed as a different machine, with the commands that re-pair it', () => {
-    expect(machineReadiness({ machine: 'mini', state: 'key-changed' })).toEqual({
-      id: 'mini',
-      name: 'mini',
-      title: 'Different machine',
-      remedy: 'run stim remote remove, then stim remote add',
-      tone: 'error',
+  it.each([
+    ['approved', 'Approved', 'success', null],
+    ['pending', 'Waiting for approval', 'warning', null],
+    ['not-asked', 'Not asked', 'tertiary', null],
+    ['revoked', 'Revoked', 'error', null],
+    ['lapsed', 'Request lapsed', 'error', null],
+    ['key-changed', 'Different machine', 'error', 'run stim remote remove, then stim remote add'],
+    ['key-unconfirmed', 'Key not confirmed', 'warning', 'confirm its fingerprint with stim remote list in a terminal'],
+    ['outdated', 'Server is outdated', 'warning', 'run stim-server service update there'],
+    ['not-on-tailnet', 'Not on the tailnet', 'warning', null],
+    ['tailscale-off', 'Tailscale is off', 'warning', null],
+    ['unreachable', 'Unreachable', 'warning', null],
+    ['invalid', 'Not a tailnet name', 'error', null],
+  ])('shows state %s as %s', (state, title, tone, remedy) => {
+    expect(machineReadiness({ machine: 'mini', state })).toEqual({ id: 'mini', name: 'mini', title, tone, remedy });
+  });
+
+  it('shows a state from a newer stim as Unknown', () => {
+    expect(machineReadiness({ machine: 'mini', state: 'from-the-future' })).toMatchObject({
+      title: 'Unknown',
+      tone: 'tertiary',
+      remedy: null,
     });
   });
 });

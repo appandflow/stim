@@ -27,6 +27,14 @@ function pairingState(state: string): State {
       return { title: t`Request lapsed`, tone: 'error' };
     case 'key-changed':
       return { title: t`Different machine`, tone: 'error', remedy: t`run stim remote remove, then stim remote add` };
+    case 'key-unconfirmed':
+      return {
+        title: t`Key not confirmed`,
+        tone: 'warning',
+        remedy: t`confirm its fingerprint with stim remote list in a terminal`,
+      };
+    case 'outdated':
+      return { title: t`Server is outdated`, tone: 'warning', remedy: t`run stim-server service update there` };
     case 'not-on-tailnet':
       return { title: t`Not on the tailnet`, tone: 'warning' };
     case 'tailscale-off':
