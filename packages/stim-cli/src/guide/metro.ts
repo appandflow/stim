@@ -262,8 +262,8 @@ the workflow, stop the workspace and the specific unit you created:
   or its activity is unknown (\`guide facts status\`; on Windows, which has
   no ps, the host driver-process probe is skipped), while simctl or adb cannot
   list its devices, while its owned Chrome or a hosted device runs, while a
-  web share of it is live (\`guide share\`; stim share stop or its expiry
-  ends that), while maintenance.keep pins it, and while a \`stim start\`
+  web share of it is live or waiting (\`guide share\`; stim share stop or its
+  expiry ends that), while maintenance.keep pins it, and while a \`stim start\`
   holds its metro-start lock. A dev server whose requests Stim cannot see
   (metro.command, or an Expo SDK before 54) never stops for being idle. The
   pass records workspace_idle and supervisor_stopped lines in metro.ndjson,

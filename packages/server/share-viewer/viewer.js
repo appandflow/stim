@@ -26,6 +26,7 @@ let live = false;
 let finished = false;
 let hasFrame = false;
 let away = false;
+let resuming = false;
 let noteTimer = null;
 
 function setStatus(state, text) {
@@ -61,6 +62,9 @@ setInterval(() => {
 function finish(text) {
   finished = true;
   live = false;
+  away = false;
+  resuming = false;
+  delete body.dataset.away;
   setStatus('ended', text);
   leftText.textContent = '';
 }
@@ -103,6 +107,11 @@ function renderFrame(source, width, height) {
   }
   context.drawImage(source, 0, 0, width, height);
   hasFrame = true;
+  if (resuming) {
+    resuming = false;
+    away = false;
+    delete body.dataset.away;
+  }
 }
 
 async function showJpeg(blob) {
@@ -365,9 +374,8 @@ function connect(codec) {
       body.dataset.away = 'true';
       refreshStatus();
     } else if (message.type === 'resumed') {
-      away = false;
+      resuming = true;
       live = false;
-      delete body.dataset.away;
       waitingForKeyframe = true;
       refreshStatus();
       if (codec === 'h264') askForKeyframe();

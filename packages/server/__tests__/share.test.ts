@@ -47,6 +47,8 @@ interface Fixture {
   busy: string | null;
   /** Holds the fake control hub's `begin` until it resolves. */
   beginGate: Promise<void> | null;
+  /** How many times the fake control hub's `begin` was called, including calls still held by `beginGate`. */
+  beginCalls: number;
   presence: PresenceHub;
   routeOpens: number[];
   routeCloses: number;
@@ -81,6 +83,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
     endFors: [],
     busy: null,
     beginGate: null,
+    beginCalls: 0,
     presence: new PresenceHub(),
     routeOpens: [],
     routeCloses: 0,
@@ -111,8 +114,10 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
       },
     },
     control: {
-      begin: async (_owner, target) => {
+      begin: async (_owner, target, _workspace, allowed) => {
+        f.beginCalls++;
         await f.beginGate;
+        if (!allowed()) return { code: 'forbidden', message: 'This device can no longer control devices.' };
         f.begins.push(target);
         f.exemptAtBegin.push([...f.hub.unrecordedTargets()]);
         if (f.refuseControl) return { code: 'device-busy', message: 'This device is driven by Stim Desktop.' };
@@ -1270,6 +1275,26 @@ describe('a web share', () => {
       expect((await http(url, { cookie })).body).toContain('data-control="true"');
       socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
       await vi.waitFor(() => expect(f.begins).toHaveLength(2));
+      socket.close();
+    });
+
+    it('does not lock control or tell the viewer it is refused when the device changed while control was starting', async () => {
+      const { socket, messages } = await signedIn({ control: true });
+      let release = () => {};
+      f.beginGate = new Promise<void>((resolve) => (release = resolve));
+      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      await vi.waitFor(() => expect(f.beginCalls).toBe(1));
+      const other = payload('Booted');
+      other.environments[0]!.ios.udid = 'SIM-2';
+      f.status(other);
+      await vi.waitFor(() => expect(f.subscribed).toHaveLength(2));
+      f.beginGate = null;
+      release();
+      await vi.advanceTimersByTimeAsync(20);
+
+      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+      expect(messages.map((message) => message.type)).not.toContain('control');
       socket.close();
     });
 
