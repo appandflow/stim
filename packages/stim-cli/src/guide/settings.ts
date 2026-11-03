@@ -1297,7 +1297,9 @@ While a machine builds, Stim pings it every 15 seconds and treats a minute of
 silence as a dropped connection while it waits for the build. When the
 connection drops without a close, Stim reconnects to the same pinned machine
 for up to 3 minutes and takes the running build back; the machine keeps it
-running for 5 minutes without a connection, then cancels it. With auto, a drop while the
+running for 5 minutes without a connection, then cancels it. When that machine's
+stim-server restarted in between and no longer holds the build, or the connection drops before the build started,
+Stim starts the same build again on that machine, up to twice, before the run falls back or refuses. With auto, a drop while the
 app is fetched still builds here. Interrupting the run with Ctrl-C closes the
 connection, which cancels the build there; a run killed another way, or
 interrupted while it reconnects, leaves it until those 5 minutes pass. With auto, a failure after a machine took the build prints \`offload failed: <reason>
