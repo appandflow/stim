@@ -29,7 +29,6 @@ export class LocalServerUnavailable extends Error {}
 const TIMEOUT_MS = 120_000;
 const SHARE_LIST_TIMEOUT_MS = 5000;
 const START_WAIT_MS = 60_000;
-/** How long `stop` waits for the stim-server it stopped to exit, so a share started next never meets a stopping one. */
 const SERVER_EXIT_WAIT_MS = 15_000;
 const START_POLL_MS = 250;
 

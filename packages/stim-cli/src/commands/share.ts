@@ -130,6 +130,13 @@ async function ask<M extends ShareMethod>(
       'Update stim-server to the version of this stim (`stim-server service update`), then run stim share again.',
     );
   }
+  if (method === 'share.start' && /does not take (token|expiresAt)/.test(answer.error.message)) {
+    return failure(
+      'STIM_SHARE_REFUSED',
+      'The running stim-server cannot start a saved share again.',
+      'Update stim-server to the version of this stim (`stim-server service update`), then run stim share --reuse again.',
+    );
+  }
   return failure(
     'STIM_SHARE_REFUSED',
     answer.error.message,
@@ -519,7 +526,7 @@ export async function runShare(
       `Shared ${describeRow(started)}.`,
       `URL:${started.viewAuth ? '              ' : '      '}${started.url}`,
       ...secret,
-      'Stop it with: stim share stop',
+      'Stop it with: stim share stop (add --forget to make the link unusable)',
     ].join('\n'),
   };
 }

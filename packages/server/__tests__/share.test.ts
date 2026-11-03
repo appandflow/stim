@@ -1423,7 +1423,7 @@ describe('a web share', () => {
       const restarted = local(second, f.hub.port ?? 0);
       expect((await http(`${restarted}login`, { method: 'POST', body: 'password=wrong-password' })).status).toBe(401);
       expect(await login(restarted, 'saved-password')).toContain('stim_share=');
-      expect(f.hub.list()[0]!.expiresAt).toBe(new Date(expiresAt).toISOString());
+      expect(f.hub.list()[0]?.expiresAt).toBe(new Date(expiresAt).toISOString());
 
       vi.advanceTimersByTime(25 * 60_000);
       await vi.waitFor(() => expect(f.hub.list()).toEqual([]));

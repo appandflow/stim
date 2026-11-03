@@ -40,7 +40,7 @@ Shared ios of /Users/me/app: view only, 0 viewers, expires 2026-11-02T19:12:00.0
 URL:      https://my-mac.tail1234.ts.net:10000/s/q3V...Yw/
 Password: k7mfx2rbq9tnh4ze
 Anyone with both can open it from the internet until it expires. The password is shown now and saved for --reuse.
-Stop it with: stim share stop
+Stop it with: stim share stop (add --forget to make the link unusable)
 ```
 
 Send the link and the password over different channels. Stim saves the link and
@@ -65,7 +65,7 @@ URL:              https://my-mac.tail1234.ts.net:10000/s/q3V...Yw/
 Control password: k7mfx2rbq9tnh4ze
 View password:    p2xqd8hs5nw3cvje
 Anyone with the link and a password can open it from the internet until it expires. Generated passwords are shown now and saved for --reuse.
-Stop it with: stim share stop
+Stop it with: stim share stop (add --forget to make the link unusable)
 ```
 
 Give `--view-password` a value (8 to 128 characters) to choose it, or leave the

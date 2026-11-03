@@ -398,11 +398,15 @@ describe('stim share', () => {
       expect(deps.sent).toEqual([]);
     });
 
-    it('reports a link that is live now as a refused share', async () => {
-      const deps = fake([started(), () => ({ error: { code: 'bad-request', message: 'That link is live now.' } })]);
+    it('tells the person to update an older stim-server that does not take a saved link', async () => {
+      const deps = fake([
+        started(),
+        () => ({ error: { code: 'bad-request', message: 'share.start does not take token, expiresAt.' } }),
+      ]);
       await runShare('android', {}, deps, '1.0.0');
       expect(await runShare('android', { reuse: true }, deps, '1.0.0')).toMatchObject({
-        error: { code: 'STIM_SHARE_REFUSED', message: 'That link is live now.' },
+        ok: false,
+        error: { code: 'STIM_SHARE_REFUSED', remedy: expect.stringContaining('stim-server service update') },
       });
     });
 

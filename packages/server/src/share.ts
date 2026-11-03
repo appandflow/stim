@@ -419,7 +419,6 @@ export class ShareHub {
     this.retrying.unref?.();
   }
 
-  /** Whether the request asks for a URL token a live or waiting share already has. */
   private reusedLive(request: ShareRequest): boolean {
     return request.token !== undefined && this.shares.has(digest(request.token).toString('hex'));
   }
