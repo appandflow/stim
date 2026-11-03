@@ -1121,6 +1121,11 @@ import Testing
     #expect(UsageThresholds.cpuFraction(percentOfOneCore: 1040, cores: 10) == 1)
   }
 
+  @Test func combinedStatShowsTheWorseTone() {
+    #expect(UsageThresholds.worse(.normal, .caution) == .caution)
+    #expect(UsageThresholds.worse(.error, .caution) == .error)
+    #expect(UsageThresholds.worse(.normal, .normal) == .normal)
+  }
 }
 
 @Suite struct MachineCpuTicksTests {
