@@ -217,7 +217,7 @@ import Foundation
   }
 
   /// The most text `input.clipboard.set` takes, in UTF-8 bytes: `MAX_CLIPBOARD_BYTES` in `packages/core/protocol.ts`.
-  public static let maxClipboardBytes = 8192
+  public nonisolated static let maxClipboardBytes = 8192
 
   /// Replaces the device clipboard's text, then pastes it into the focused field when `paste` is true.
   public func setClipboard(_ text: String, paste: Bool) async throws {

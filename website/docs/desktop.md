@@ -614,9 +614,18 @@ Turn it off with **Sync clipboard** in the options popover (the sliders button),
 which also has **Paste Mac Clipboard** and **Copy Device Clipboard** for one-off
 transfers. Syncing only sets the device clipboard; to insert text, paste in the
 guest. An iOS simulator shows its own "Allow Paste" prompt for text that came from
-another source; click **Allow Paste** in the viewer. Unicode and line breaks are
-preserved. Physical devices, hosted and remote sessions and replay never sync, so
-no clipboard text crosses the network or reaches another machine.
+another source; click **Allow Paste** in the viewer. After a paste on an iOS simulator
+Desktop shows a notice that says to tap the paste suggestion on the device if nothing
+appears. Unicode and line breaks are preserved.
+
+A device Desktop shows through stim-server has the same options while **Control** is on:
+a hosted iOS or Android session, a device of a paired machine, or a leased Android phone.
+Sync, **Paste Mac Clipboard** and **Copy Device Clipboard** work the same way, with one limit: the device takes at most 8 KiB
+of text from the Mac. A larger item is not synced and a notice says so, and **Paste Mac Clipboard**
+tells you the size. The server that owns the device must be recent enough; otherwise the section is
+disabled and names the server to update. The text crosses the network to the Mac that runs the device,
+over the tailnet for a hosted session. A leased iPhone, macOS apps, web pages, remote
+previews and replay never sync.
 
 Overview opens first. The **Active** section comes first, with the same grid of live workspace
 cards as the Active workspaces page (see below). With nothing running, it says where active projects will appear. **Idle projects** follow as compact
