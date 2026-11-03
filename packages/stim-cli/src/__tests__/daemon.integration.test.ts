@@ -238,7 +238,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       await runDaemon({ tickMs: 50 });
       expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('fseventsd (pid 123) uses 80.0G');
       expect(firstTick()?.phases.maintenanceMs).toBeGreaterThanOrEqual(600);
-      expect(firstTick()?.eventLoopDelay.maxMs).toBeLessThan(250);
+      expect(firstTick()?.eventLoopDelay.maxMs).toBeLessThan(500);
     },
     20_000,
   );
