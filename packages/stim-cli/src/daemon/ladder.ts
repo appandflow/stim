@@ -11,6 +11,7 @@ import {
 } from '@stim-cli/core/state';
 import { pruneCache, type CacheDescriptor } from '../cache/caches.ts';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
+import { canonicalPath } from '../commands/gc/paths.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
@@ -28,6 +29,7 @@ import {
   dormantAfterMs,
   dormantCandidates,
   enterDormantStage,
+  idleStageCandidates,
   stoppedOutputCandidates,
 } from './stages.ts';
 
@@ -51,6 +53,8 @@ export interface LadderInput {
   remeasure: () => Promise<DaemonPressure>;
   /** The first rung to run; a command with no daemon starts at 2, since rung 1 belongs to the activity pass. */
   fromRung?: number;
+  /** The workspace of the command that runs the ladder, which no rung takes. */
+  protectedRoot?: string;
 }
 
 interface RungContext extends LadderInput {
@@ -315,20 +319,43 @@ async function dormantRung(context: RungContext): Promise<void> {
   }
 }
 
+function canonicalOrNull(path: string): string | null {
+  try {
+    return canonicalPath(path);
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Rung 5, at critical only: node_modules and Pods of idle linked worktrees with a workspace in this Stim home, each
- * recorded for `stim worktree warm`.
+ * Rung 5, at critical only: node_modules and Pods of linked worktrees whose workspace in this Stim home is idle 2
+ * minutes by the activity definition with nothing running, longest-idle first, each recorded for `stim worktree warm`.
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
   if (context.level !== 'critical') return;
-  const options = { now: Date.now(), windowMs: PRESSURE_IDLE_MS, protectedRoot: '', pinned: maintenancePinned };
+  const idle = await idleStageCandidates(context.config, context, PRESSURE_IDLE_MS);
+  const rank = new Map(
+    idle.flatMap((candidate, index) => {
+      const key = canonicalOrNull(candidate.path);
+      return key ? [[key, index] as const] : [];
+    }),
+  );
+  if (!rank.size) return;
+  const options = {
+    now: Date.now(),
+    windowMs: 0,
+    protectedRoot: context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '',
+    pinned: maintenancePinned,
+  };
   const found = await collectArtifactsAsync('dependencies', options, new AbortController().signal);
   const worktrees = artifactWorktrees();
-  // Clearing one directory writes the worktree's restore record, which counts as use within the window, so a second
-  // directory of the same worktree waits for a tick 2 minutes later.
-  for (const candidate of found.candidates) {
-    const [workspace] = workspaceKeys(candidate.keys);
-    if (!workspace) continue;
+  const ranked = found.candidates
+    .flatMap((candidate) => {
+      const workspace = workspaceKeys(candidate.keys).find((key) => rank.has(canonicalOrNull(key) ?? ''));
+      return workspace ? [{ candidate, workspace, order: rank.get(canonicalOrNull(workspace) ?? '') ?? 0 }] : [];
+    })
+    .toSorted((a, b) => a.order - b.order);
+  for (const { candidate, workspace } of ranked) {
     if (!(await context.stillShort())) return;
     const plan: MaintenanceAction = {
       kind: 'would-delete-dependencies',

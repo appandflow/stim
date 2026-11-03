@@ -10,6 +10,7 @@ import { runMaintenance } from '../maintenance/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { daemonClaimHeld, daemonMode, requestDaemonTick } from './client.ts';
+import { commandWorkspace } from './command-workspace.ts';
 import { runIdlePass, type IdlePassInput } from './idle.ts';
 import { runLadder } from './ladder.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from './passes-guard-env.ts';
@@ -117,7 +118,7 @@ export async function runHomePasses({
  * stage of rung 1 is the activity pass, which only the daemon runs. Measures and lists devices only when the level is
  * above normal. Logs to `daemon.ndjson` under `trigger`.
  */
-async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv): Promise<void> {
+async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protectedRoot?: string): Promise<void> {
   const config = loadConfig();
   if (!config) return;
   const { thresholds } = diskThresholds(config, env);
@@ -148,6 +149,7 @@ async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv): Promis
         simsFailed: measured.sims === null,
         remeasure: classify,
         fromRung: 2,
+        ...(protectedRoot ? { protectedRoot } : {}),
       },
       pressure,
     );
@@ -156,25 +158,36 @@ async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv): Promis
   }
 }
 
-/** Runs the pressure ladder now: one daemon tick when a daemon runs, else the ladder in this process. */
-export async function runLadderNow(env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<void> {
+/**
+ * Runs the pressure ladder now: one daemon tick when a daemon runs, else the ladder in this process, which never takes
+ * `protectedRoot`.
+ */
+export async function runLadderNow(
+  env: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+  protectedRoot?: string,
+): Promise<void> {
   if (await requestDaemonTick(env, signal)) return;
   signal?.throwIfAborted();
   try {
-    await runCommandLadder('command', env);
+    await runCommandLadder('command', env, protectedRoot);
   } catch {}
 }
 
 /**
  * Automatic maintenance and the pressure ladder at command time, for a command that found no daemon holding the
  * home: Windows, `daemon.mode off`, or a daemon that could not start. The activity pass, idle stage included, is the
- * daemon's alone; without one, each dev server supervisor times its own idle stop. The pass never stops the command's
- * own workspace.
+ * daemon's alone; without one, each dev server supervisor times its own idle stop. Neither pass takes
+ * `protectedRoot`, the command's own workspace.
  */
-export async function runPassesInProcess(trigger: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+export async function runPassesInProcess(
+  trigger: string,
+  env: NodeJS.ProcessEnv = process.env,
+  protectedRoot: string | null = commandWorkspace(false, env),
+): Promise<void> {
   try {
     if (env[HOME_PASSES_TEST_GUARD_ENV] || daemonClaimHeld()) return;
     await runMaintenance(trigger, { report: daemonMode(env) === 'report' });
-    await runCommandLadder(trigger, env);
+    await runCommandLadder(trigger, env, protectedRoot ?? undefined);
   } catch {}
 }

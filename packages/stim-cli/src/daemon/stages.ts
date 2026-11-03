@@ -6,6 +6,7 @@ import {
   type DormantStageRecord,
 } from '@stim-cli/core/state';
 import { archiveWorkspace } from '../archive.ts';
+import { canonicalPath } from '../commands/gc/paths.ts';
 import { deleteProjectDevices, findStaleProjectDevices } from '../commands/gc/devices.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
@@ -54,6 +55,17 @@ export function dormantAfterMs(config: Config | null, env: NodeJS.ProcessEnv = p
 export interface DeviceReading {
   devices: readonly OwnedDeviceActivity[];
   simsFailed: boolean;
+  /** The workspace of the command that runs this pass, which no stage takes. */
+  protectedRoot?: string;
+}
+
+function sameRoot(path: string, root: string | undefined): boolean {
+  if (!root) return false;
+  try {
+    return canonicalPath(path) === canonicalPath(root);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -112,7 +124,7 @@ async function idleWorkspaces(
 ): Promise<StageCandidate[]> {
   const found: StageCandidate[] = [];
   for (const [path, project] of Object.entries(config.projects)) {
-    if (!worthIt(path, project)) continue;
+    if (sameRoot(path, reading.protectedRoot) || !worthIt(path, project)) continue;
     const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
     if (Number.isFinite(used) && Date.now() - used < thresholdMs) continue;
     try {
@@ -130,6 +142,15 @@ function hasOutputs(path: string): boolean {
     existingDirsOf(path, ARTIFACT_DIRS.build).length > 0 ||
     existsSync(metroStoreRoot(path))
   );
+}
+
+/** Workspaces with nothing running, idle `thresholdMs` by the activity definition, longest-idle first. */
+export function idleStageCandidates(
+  config: Config,
+  reading: DeviceReading,
+  thresholdMs: number,
+): Promise<StageCandidate[]> {
+  return idleWorkspaces(config, reading, thresholdMs, 'the pressure idle threshold', () => true);
 }
 
 /** Workspaces with nothing running and regenerable build outputs on disk, idle `thresholdMs`, longest-idle first. */

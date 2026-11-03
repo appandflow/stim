@@ -1,8 +1,10 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonPressure } from '@stim-cli/core/state';
 import { readDormantStage, readIdleStage } from '@stim-cli/core/state';
+import * as gcDevices from '../commands/gc/devices.ts';
 import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
@@ -12,6 +14,7 @@ import * as ios from '../devices/ios.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import * as fsUtil from '../fs-util.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -154,6 +157,17 @@ describe('the dormant stage', () => {
       true,
     );
   });
+
+  test('idle.dormantDays 0 turns the dormant stage off, and idle.minutes 0 keeps a workspace out of it', async () => {
+    const { root } = workspace('off', 4 * DAY_MS, 'Shutdown');
+    saveConfig({ ...loadConfig()!, idle: { dormantDays: 0 } });
+    expect(await dormant()).toEqual([]);
+    saveConfig({ ...loadConfig()!, idle: { dormantDays: 3 } });
+    writeFileSync(join(root, '.stim.json'), JSON.stringify({ idle: { minutes: 0 } }));
+    expect(await dormant()).toEqual([]);
+    expect(deleted).toEqual([]);
+    expect(readDormantStage(readWorkspaceState(root))).toBeNull();
+  });
 });
 
 describe('the pressure ladder', () => {
@@ -246,6 +260,50 @@ describe('the pressure ladder', () => {
     expect(actions.filter((action) => action.rung === 1)).toEqual([]);
   });
 
+  test.each([
+    { level: 'high' as const, kept: ['NEWER'] },
+    { level: 'critical' as const, kept: [] },
+  ])(
+    'rung 2 at $level takes the oldest parked devices: until the level clears at high, all at critical',
+    async ({ level, kept }) => {
+      const sim = { deviceTypeIdentifier: 'iPhone', runtimeIdentifier: 'iOS-26-0', simslimManaged: false };
+      vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+      const parked = [
+        { ...sim, udid: 'NEWER', name: 'stim-newer', parkedAt: new Date(Date.now() - DAY_MS).toISOString() },
+        { ...sim, udid: 'OLDER', name: 'stim-older', parkedAt: new Date(Date.now() - 2 * DAY_MS).toISOString() },
+      ];
+      saveConfig({ ...loadConfig()!, parked: { ios: parked } });
+      const rung2 = () =>
+        log.mock.calls.filter(([, event, , fields]) => event === 'pressure_action' && fields?.rung === 2);
+      const remeasure = async () => (level === 'high' && rung2().length >= 1 ? pressure('normal') : pressure(level));
+      const { actions } = await runLadder(input(false, remeasure), pressure(level));
+      const taken = actions.filter((action) => action.rung === 2).map((action) => action.target);
+      expect(taken[0]).toBe('OLDER');
+      expect(parked.map((device) => device.udid).filter((udid) => !taken.includes(udid))).toEqual(kept);
+    },
+  );
+
+  test('rung 3 at high trims a cache over half its cap down to half, keeping protected entries', async () => {
+    const { root } = workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
+    writeWorkspaceState(root, { lastBuild: { cacheKey: 'kept-key' } });
+    for (const key of ['kept-key', 'unused']) {
+      const entry = join(buildCache(), 'ios', key);
+      mkdirSync(entry, { recursive: true });
+      writeFileSync(join(entry, 'App.app'), 'x');
+      const at = (Date.now() - 3 * 60 * MINUTE_MS) / 1000;
+      utimesSync(entry, at, at);
+    }
+    vi.stubEnv('STIM_CACHES_BUILD_CACHE_MAX_GB', '12');
+    vi.spyOn(fsUtil, 'measuredDirectorySizeAsync').mockResolvedValue(10 * 1024 ** 3);
+    const { actions } = await runLadder(
+      input(true, async () => pressure('high')),
+      pressure('high'),
+    );
+    expect(actions).toContainEqual(expect.objectContaining({ rung: 3, kind: 'trim-cache', target: buildCache() }));
+    expect(existsSync(join(buildCache(), 'ios', 'unused'))).toBe(false);
+    expect(existsSync(join(buildCache(), 'ios', 'kept-key'))).toBe(true);
+  });
+
   test('a memory-only level never trims a cache or deletes a device', async () => {
     workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
     caches('kept-key');
@@ -274,5 +332,94 @@ describe('the pressure ladder', () => {
     const rungs = actions.map((action) => action.rung);
     expect(rungs).toEqual(rungs.toSorted((a, b) => a - b));
     expect(actions.some((action) => action.rung === 4 && action.kind === 'dormant-stage')).toBe(true);
+  });
+});
+
+describe('rung 5', () => {
+  const HOUR_MS = 60 * MINUTE_MS;
+
+  beforeEach(() => {
+    resetExecutor();
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileQuiet: (file, args, opts) =>
+        file === 'git' ? real.runFileQuiet(file, args, opts) : file === 'ps' ? '' : null,
+    });
+  });
+
+  function linkedWorktrees(names: string[]): Record<string, string> {
+    const repo = join(projects, 'repo');
+    mkdirSync(repo, { recursive: true });
+    const git = (args: string, cwd = repo) =>
+      execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 }).trim();
+    git('init -q -b main');
+    git('config user.email test@example.com');
+    git('config user.name test');
+    writeFileSync(join(repo, '.gitignore'), 'node_modules/\nios/Pods/\n');
+    writeFileSync(join(repo, 'package.json'), '{}');
+    writeFileSync(join(repo, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+    mkdirSync(join(repo, 'ios'));
+    writeFileSync(join(repo, 'ios', 'Podfile.lock'), 'PODFILE CHECKSUM: 1\n');
+    git('add -A');
+    git('commit -q -m init');
+    for (const root of [repo]) {
+      mkdirSync(join(root, 'node_modules', 'pkg'), { recursive: true });
+      writeFileSync(join(root, 'node_modules', 'pkg', 'file'), 'x');
+      mkdirSync(join(root, 'ios', 'Pods'), { recursive: true });
+      writeFileSync(join(root, 'ios', 'Pods', 'Manifest.lock'), 'PODFILE CHECKSUM: 1\n');
+    }
+    const roots: Record<string, string> = {};
+    for (const name of names) {
+      git(`worktree add -q "${join(projects, name)}" -b ${name}`);
+      const root = realpathSync(join(projects, name));
+      mkdirSync(join(root, 'node_modules', 'pkg'), { recursive: true });
+      writeFileSync(join(root, 'node_modules', 'pkg', 'file'), 'x');
+      mkdirSync(join(root, 'ios', 'Pods'), { recursive: true });
+      writeFileSync(join(root, 'ios', 'Pods', 'Manifest.lock'), 'PODFILE CHECKSUM: 1\n');
+      roots[name] = root;
+    }
+    return roots;
+  }
+
+  function register(root: string, record: Parameters<typeof upsertProject>[1] = { metroPort: null }) {
+    upsertProject(root, record);
+    ensureWorkspaceStorage(root);
+    recordWorkspaceUse(root, new Date(Date.now() - HOUR_MS));
+  }
+
+  const ladder = (level: 'high' | 'critical', protectedRoot?: string) =>
+    runLadder(
+      {
+        config: loadConfig()!,
+        act: true,
+        log,
+        devices: [],
+        simsFailed: false,
+        remeasure: async () => pressure(level),
+        ...(protectedRoot ? { protectedRoot } : {}),
+      },
+      pressure(level),
+    );
+
+  test('at critical it deletes node_modules and Pods of an idle linked worktree in one tick, and nothing at high', async () => {
+    const { idle } = linkedWorktrees(['idle']);
+    register(idle!);
+    await ladder('high');
+    expect(existsSync(join(idle!, 'node_modules'))).toBe(true);
+    const { actions } = await ladder('critical');
+    expect(existsSync(join(idle!, 'node_modules'))).toBe(false);
+    expect(existsSync(join(idle!, 'ios', 'Pods'))).toBe(false);
+    expect(actions.filter((action) => action.rung === 5).map((action) => action.outcome)).toEqual(['done', 'done']);
+  });
+
+  test("it skips a worktree with no workspace in this home, the command's own workspace and one whose dev server runs", async () => {
+    const { stranger, own, serving } = linkedWorktrees(['stranger', 'own', 'serving']);
+    register(realpathSync(join(projects, 'repo')));
+    register(own!);
+    register(serving!, { metroPort: 59125, supervisor: { pid: process.pid, port: 59999 } });
+    const { actions } = await ladder('critical', own);
+    for (const root of [stranger!, own!, serving!]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
+    expect(actions.filter((action) => action.rung === 5)).toEqual([]);
   });
 });

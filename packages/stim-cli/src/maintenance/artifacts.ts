@@ -193,7 +193,7 @@ function keptReason(
   const written = reads ? reads.written : newestWrite(path, SCAN_DEPTH[kind]);
   if (!activity || written === null) return 'its last activity cannot be read';
   const last = Math.max(activity.at, written);
-  if (now - last < windowMs) return `used within the last ${Math.round(windowMs / 60_000)} minutes`;
+  if (windowMs > 0 && now - last < windowMs) return `used within the last ${Math.round(windowMs / 60_000)} minutes`;
   return null;
 }
 

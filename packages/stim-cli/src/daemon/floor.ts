@@ -94,7 +94,7 @@ export async function diskFloorGate({
   onReclaim?.('start');
   let completed = false;
   try {
-    await runLadderNow(env, signal);
+    await runLadderNow(env, signal, root);
     signal?.throwIfAborted();
     low = await under();
     completed = true;
