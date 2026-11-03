@@ -5,6 +5,7 @@ import type {
   PresencePoint,
   PresencePublishParams,
   PresenceRect,
+  PresenceTouch,
 } from './protocol.ts';
 
 /** How long an agent stays on a device's roster after its last command ended. */
@@ -12,6 +13,8 @@ export const AGENT_LINGER_MS = 5000;
 /** How long a started command keeps the agent on the roster when its end never arrives. */
 const AGENT_START_MS = 10 * 60_000;
 const AGENT_COLOR = 1;
+/** Moves reach subscribers at most 30 times a second per device; `down` and `up` go at once. */
+export const MOVE_FLUSH_MS = 33;
 
 type Listener = (participants: PresenceParticipant[]) => void;
 
@@ -19,6 +22,16 @@ interface Device {
   listeners: Set<Listener>;
   agent: PresenceParticipant | null;
   leave: NodeJS.Timeout | null;
+  /** The humans on the device, by participant id, without their touches. */
+  people: Map<string, PresenceParticipant>;
+  /** The latest `move` of each participant, waiting for the next flush. */
+  moves: Map<string, PresenceParticipant>;
+  flush: NodeJS.Timeout | null;
+}
+
+function personOf(who: PresenceParticipant): PresenceParticipant {
+  const { id, kind, name, color, viewOnly } = who;
+  return { id, kind, name, color, ...(viewOnly ? { viewOnly } : {}) };
 }
 
 /** The device key presence is published under: a workspace slot's owned or physical device. */
@@ -27,8 +40,9 @@ export function presenceKey(workspace: string, platform: string, slot: string, p
 }
 
 /**
- * Who acts on each device. Subscribers get the whole roster at once, then each change. Only agent participants
- * exist so far, published by `stim agent-device` around each agent-device command it runs.
+ * Who acts on each device: the agent, published by `stim agent-device` around each agent-device command it runs, and
+ * the humans whose input `ControlHub` forwards, which stay on the roster until they leave. Subscribers get the whole
+ * roster at once, then each change.
  */
 export class PresenceHub {
   private readonly devices = new Map<string, Device>();
@@ -36,20 +50,22 @@ export class PresenceHub {
   private device(key: string): Device {
     let device = this.devices.get(key);
     if (!device) {
-      device = { listeners: new Set(), agent: null, leave: null };
+      device = { listeners: new Set(), agent: null, leave: null, people: new Map(), moves: new Map(), flush: null };
       this.devices.set(key, device);
     }
     return device;
   }
 
   private forget(key: string, device: Device): void {
-    if (!device.listeners.size && !device.agent) this.devices.delete(key);
+    if (device.listeners.size || device.agent || device.people.size) return;
+    if (device.flush) clearTimeout(device.flush);
+    this.devices.delete(key);
   }
 
   subscribe(key: string, listener: Listener): () => void {
     const device = this.device(key);
     device.listeners.add(listener);
-    listener(device.agent ? [device.agent] : []);
+    listener([...(device.agent ? [device.agent] : []), ...device.people.values()]);
     return () => {
       device.listeners.delete(listener);
       this.forget(key, device);
@@ -81,9 +97,55 @@ export class PresenceHub {
     device.leave.unref?.();
   }
 
+  /** A human is on the device, or changed its name or color; they stay on the roster until {@link leave}. */
+  join(key: string, who: PresenceParticipant): void {
+    const device = this.device(key);
+    const person = personOf(who);
+    device.people.set(who.id, person);
+    this.flushMoves(device);
+    this.emit(device, [person]);
+  }
+
+  /** A human's finger moved: `down` and `up` reach subscribers at once, a `move` within {@link MOVE_FLUSH_MS}. */
+  touch(key: string, who: PresenceParticipant, touch: PresenceTouch): void {
+    const device = this.device(key);
+    const person = personOf(who);
+    device.people.set(who.id, person);
+    if (touch.phase === 'move') {
+      device.moves.set(who.id, { ...person, touch });
+      device.flush ??= setTimeout(() => this.flushMoves(device), MOVE_FLUSH_MS);
+      device.flush.unref?.();
+      return;
+    }
+    this.flushMoves(device);
+    this.emit(device, [{ ...person, touch }]);
+  }
+
+  leave(key: string, id: string): void {
+    const device = this.devices.get(key);
+    const person = device?.people.get(id);
+    if (!device || !person) return;
+    this.flushMoves(device);
+    device.people.delete(id);
+    this.emit(device, [{ ...person, touch: null }]);
+    this.forget(key, device);
+  }
+
   close(): void {
-    for (const device of this.devices.values()) if (device.leave) clearTimeout(device.leave);
+    for (const device of this.devices.values()) {
+      if (device.leave) clearTimeout(device.leave);
+      if (device.flush) clearTimeout(device.flush);
+    }
     this.devices.clear();
+  }
+
+  private flushMoves(device: Device): void {
+    if (device.flush) clearTimeout(device.flush);
+    device.flush = null;
+    if (!device.moves.size) return;
+    const moves = [...device.moves.values()];
+    device.moves.clear();
+    this.emit(device, moves);
   }
 
   private emit(device: Device, participants: PresenceParticipant[]): void {

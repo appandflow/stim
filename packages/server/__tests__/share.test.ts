@@ -91,6 +91,7 @@ function fixture(): Fixture {
         f.inputs.push({ session, command });
         return null;
       },
+      release: () => {},
       endFor: () => {},
     },
     subscribeStatus: (listener) => {

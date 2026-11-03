@@ -320,6 +320,8 @@ body[data-control='true'] #screen {
 }
 input.secret {
   -webkit-text-security: disc;
+}
+input.field {
   font: inherit;
   padding: 11px 13px;
   border-radius: 10px;
@@ -327,7 +329,7 @@ input.secret {
   background: var(--bg);
   color: var(--fg);
 }
-input.secret:focus-visible {
+input.field:focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
@@ -370,4 +372,105 @@ button.primary:hover {
     width: 38px;
     height: 38px;
   }
+}
+
+#overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.status.view-only {
+  color: var(--fg);
+  font-weight: 600;
+}
+.link {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+button.primary.small {
+  padding: 6px 12px;
+}
+.upgrade,
+.upgrade-fields,
+.name-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.upgrade[hidden],
+.upgrade-fields[hidden],
+.name-card[hidden],
+.status[hidden] {
+  display: none;
+}
+.upgrade input.field {
+  width: 11em;
+  padding: 5px 9px;
+}
+.name-card {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  z-index: 3;
+}
+.name-card .optional {
+  color: var(--muted);
+}
+.name-card input.field {
+  width: 10em;
+  padding: 5px 9px;
+}
+.roster {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.roster:empty {
+  display: none;
+}
+.roster li {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.roster li.you {
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--fg);
+}
+.roster .eye {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 12px;
+  height: 12px;
+  padding: 1px;
+  border-radius: 50%;
+  background: var(--card);
+  fill: none;
+  stroke: var(--fg);
+  stroke-width: 2.5;
 }

@@ -100,6 +100,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-plan` reads next-build reports for selected folders on the proved local Desktop connection.
  * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
  * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
+ * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
  */
 export const FEATURES = [
@@ -168,6 +169,7 @@ export const FEATURES = [
   'desktop-plan',
   'share-stop-id',
   'presence',
+  'share-view-password',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -1658,6 +1660,8 @@ export interface WebShareRow {
   viewers: number;
   /** How viewers get in: a generated password, one the person set, or the URL alone. */
   auth: 'generated' | 'set' | 'none';
+  /** How a separate view-only password was made; null when the share has none. */
+  viewAuth: 'generated' | 'set' | null;
 }
 
 export interface WebShareStartParams {
@@ -1670,12 +1674,14 @@ export interface WebShareStartParams {
   /** 8 to 128 characters; never sent back. Without it, and without `passwordless`, the server generates one. */
   password?: string;
   passwordless?: boolean;
+  /** A second, view-only password next to the control one; only with `control` and a password. Never sent back. */
+  view?: { password?: string };
 }
 
 export interface Methods {
   'share.start': {
     params: WebShareStartParams;
-    result: WebShareRow & { url: string; password?: string; warning?: string };
+    result: WebShareRow & { url: string; password?: string; viewPassword?: string; warning?: string };
   };
   'share.stop': { params: { workspace: string; id?: string }; result: { stopped: WebShareRow[] } };
   'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
@@ -2021,14 +2027,28 @@ export interface PresenceGesture {
   target?: PresenceRect;
 }
 
+/** A human finger on the device: `x` and `y` are fractions of the upright screen, as `input.touch`'s. */
+export interface PresenceTouch {
+  phase: TouchPhase;
+  x: number;
+  y: number;
+  /** A second finger, when the input carries one. */
+  second?: PresencePoint;
+  display?: number;
+  /** Epoch milliseconds on the device's machine. */
+  at: number;
+}
+
 /** One source of input on a device. `color` is a palette index 0-7: 0 is the host's, 1 the agent's. */
 export interface PresenceParticipant {
   id: string;
   kind: 'viewer' | 'host' | 'agent';
   name: string;
   color: number;
-  /** Null when the participant left; absent when only its name changed. */
-  touch?: null;
+  /** A viewer that cannot send input. */
+  viewOnly?: true;
+  /** Null when the participant left; absent when only its name or color changed. */
+  touch?: PresenceTouch | null;
   gesture?: PresenceGesture;
 }
 

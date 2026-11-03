@@ -1022,6 +1022,19 @@ export function protocolJsonSchema(): JsonSchema {
           presence: { type: 'boolean', default: false, description: 'Also send presence events.' },
         },
       },
+      PresenceTouch: {
+        type: 'object',
+        required: ['phase', 'x', 'y', 'at'],
+        additionalProperties: false,
+        properties: {
+          phase: { enum: [...TOUCH_PHASES] },
+          x: { type: 'number' },
+          y: { type: 'number' },
+          second: presencePoint,
+          display: { type: 'integer', minimum: 0 },
+          at: { type: 'number' },
+        },
+      },
       PresenceGesture: {
         type: 'object',
         required: ['kind', 'from', 'durationMs'],
@@ -2239,6 +2252,11 @@ export function protocolJsonSchema(): JsonSchema {
               expiresMinutes: { type: 'integer', minimum: 1, maximum: 480 },
               password: { type: 'string', minLength: 8, maxLength: 128 },
               passwordless: { type: 'boolean' },
+              view: {
+                type: 'object',
+                additionalProperties: false,
+                properties: { password: { type: 'string', minLength: 8, maxLength: 128 } },
+              },
             },
           }),
           request('share.stop', {
@@ -2684,7 +2702,10 @@ export function protocolJsonSchema(): JsonSchema {
                     kind: { enum: ['viewer', 'host', 'agent'] },
                     name: { type: 'string' },
                     color: { type: 'integer', minimum: 0, maximum: 7 },
-                    touch: { type: 'null' },
+                    viewOnly: { const: true },
+                    touch: {
+                      oneOf: [{ type: 'null' }, { $ref: '#/$defs/PresenceTouch' }],
+                    },
                     gesture: { $ref: '#/$defs/PresenceGesture' },
                   },
                 },

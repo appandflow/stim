@@ -4,6 +4,7 @@ const body = document.body;
 const control = body.dataset.control === 'true';
 const allowedButtons = (body.dataset.buttons || '').split(' ').filter(Boolean);
 const canRotate = control && body.dataset.canRotate === 'true';
+const viewOnly = body.dataset.viewOnly === 'true';
 const device = document.getElementById('device');
 const aperture = document.getElementById('aperture');
 const screen = document.getElementById('screen');
@@ -14,6 +15,10 @@ const statusBox = document.getElementById('status');
 const statusText = document.getElementById('status-text');
 const leftText = document.getElementById('left');
 const context = screen.getContext('2d');
+const overlay = window.createOverlay(
+  document.getElementById('overlay'),
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+);
 
 let artwork = null;
 let expiresAt = null;
@@ -268,6 +273,43 @@ function showVideo(buffer) {
   }
 }
 
+let me = null;
+let busy = false;
+let chosenName = '';
+const roster = new Map();
+const rosterList = document.getElementById('roster');
+const eye = document.getElementById('eye');
+
+function renderRoster() {
+  const items = [...roster.values()]
+    .toSorted((a, b) => Number(Boolean(b.self)) - Number(Boolean(a.self)))
+    .map((entry) => {
+      const item = document.createElement('li');
+      item.style.background = window.PALETTE[entry.color % window.PALETTE.length];
+      item.textContent = [...entry.name][0] ? [...entry.name][0].toUpperCase() : '?';
+      item.title = entry.name + (entry.self ? ' (you)' : '') + (entry.viewOnly ? ', view only' : '');
+      if (entry.self) item.classList.add('you');
+      if (entry.viewOnly) item.append(eye.content.cloneNode(true));
+      return item;
+    });
+  rosterList.replaceChildren(...items);
+}
+
+function showPresence(participants) {
+  for (const participant of participants) {
+    if (participant.touch === null) roster.delete(participant.id);
+    else {
+      roster.set(participant.id, {
+        name: participant.name,
+        color: participant.color,
+        viewOnly: participant.viewOnly === true,
+      });
+    }
+  }
+  renderRoster();
+  overlay.presence(participants);
+}
+
 const socketUrl = location.href
   .replace(/#.*$/, '')
   .replace(/^http/, 'ws')
@@ -280,6 +322,9 @@ function connect(codec) {
   socket = current;
   body.dataset.codec = codec;
   current.binaryType = 'arraybuffer';
+  current.addEventListener('open', () => {
+    if (chosenName) send({ type: 'name', name: chosenName });
+  });
   current.addEventListener('message', (event) => {
     if (current !== socket) return;
     if (typeof event.data !== 'string') {
@@ -297,6 +342,15 @@ function connect(codec) {
     else if (message.type === 'delayed') {
       live = !message.delayed && hasFrame;
       refreshStatus();
+    } else if (message.type === 'you') {
+      me = { id: message.id, name: message.name, color: message.color };
+      roster.set(me.id, { ...me, self: true, viewOnly });
+      renderRoster();
+    } else if (message.type === 'presence') showPresence(message.participants);
+    else if (message.type === 'busy') {
+      busy = true;
+      if (me) overlay.fade(me.id);
+      showNote(message.name + ' is using the screen.');
     } else if (message.type === 'control') showNote(message.message || '');
     else if (message.type === 'ended') finish(message.message);
   });
@@ -333,6 +387,50 @@ for (const button of document.querySelectorAll('[data-rotate]')) {
   else button.addEventListener('click', () => send({ type: 'rotate', direction: button.dataset.rotate }));
 }
 
+document.getElementById('view-only').hidden = !viewOnly;
+const upgrade = document.getElementById('upgrade');
+upgrade.hidden = body.dataset.upgrade !== 'true';
+document.getElementById('upgrade-open').addEventListener('click', () => {
+  document.getElementById('upgrade-fields').hidden = false;
+  upgrade.querySelector('input').focus();
+});
+const upgradeResult = new URLSearchParams(location.search).get('upgrade');
+if (upgradeResult) {
+  showNote(upgradeResult === 'limited' ? 'Too many wrong passwords. Try again later.' : 'Wrong password.');
+  history.replaceState(null, '', location.pathname);
+}
+
+const nameForm = document.getElementById('name-form');
+const nameInput = document.getElementById('name-input');
+const NAME_KEY = 'stim-share-name';
+function rememberedName() {
+  try {
+    return localStorage.getItem(NAME_KEY);
+  } catch {
+    return null;
+  }
+}
+function chooseName(name) {
+  chosenName = name;
+  try {
+    localStorage.setItem(NAME_KEY, name);
+  } catch {
+    /* the name is still used for this page */
+  }
+  nameForm.hidden = true;
+  if (name) send({ type: 'name', name });
+}
+if (body.dataset.askName === 'true') {
+  const remembered = rememberedName();
+  if (remembered === null) nameForm.hidden = false;
+  else chosenName = remembered;
+  nameForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    chooseName(nameInput.value);
+  });
+  document.getElementById('name-skip').addEventListener('click', () => chooseName(''));
+}
+
 const fullscreen = document.getElementById('full');
 if (document.fullscreenEnabled) {
   fullscreen.addEventListener('click', () => {
@@ -351,20 +449,26 @@ if (control) {
     };
   };
   screen.tabIndex = 0;
+  const touch = (phase, point) => {
+    if (!busy || phase === 'down') send({ type: 'touch', phase, ...point });
+    if (me) overlay.own(me, phase, point.x, point.y, busy);
+  };
   screen.addEventListener('pointerdown', (event) => {
     down = true;
+    busy = false;
     screen.focus();
     screen.setPointerCapture(event.pointerId);
-    send({ type: 'touch', phase: 'down', ...at(event) });
+    touch('down', at(event));
     event.preventDefault();
   });
   screen.addEventListener('pointermove', (event) => {
-    if (down) send({ type: 'touch', phase: 'move', ...at(event) });
+    if (down) touch('move', at(event));
   });
   const up = (event) => {
     if (!down) return;
     down = false;
-    send({ type: 'touch', phase: 'up', ...at(event) });
+    touch('up', at(event));
+    busy = false;
   };
   screen.addEventListener('pointerup', up);
   screen.addEventListener('pointercancel', up);
