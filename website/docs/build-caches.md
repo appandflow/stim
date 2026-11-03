@@ -591,14 +591,16 @@ shared caches on a different volume. The same values can live in the machine con
 
 ## Automatic maintenance
 
-CLI commands, `status --watch` and every running dev server supervisor start a
-detached maintenance pass when a check is due, so the disk check runs each
-minute while a dev server or Stim Desktop is running even when no command does. In the default `on` mode a pass removes what `stim gc --delete`
+The per-home [`stim-daemon`](./settings.md#stim-daemon) runs a maintenance
+pass on each of its ticks when a check is due, so the disk check runs each
+minute while anything runs in the Stim home even when no command does. While
+no daemon holds the home (on Windows, with `daemon.mode off`, or when it cannot
+start), `stim doctor` runs the same pass in its own process, and `stim start`,
+`stim ios` and `stim android` run it before they build. In the default `on` mode a pass removes what `stim gc --delete`
 would remove, under the caps and floors in
 [settings](./settings.md#automatic-maintenance). In `report` mode it only
 measures, plans and logs.
-Disk and memory pressure are checked every minute, idle devices every
-`maintenance.idleCheckMinutes` (5), Stim-owned directory sizes every hour,
+Disk and memory pressure are checked every minute, Stim-owned directory sizes every hour,
 finished worktrees every 15 minutes and the age sweep once a day.
 On macOS the memory signal is the sysctl pressure level, with no signal when
 sysctl fails. Only other platforms use `os.freemem()`. Under memory pressure
@@ -613,16 +615,15 @@ warning daemons; this does not prove continuous sampling. A warning without
 eligible recorded history keeps daemons.
 Disk-level-3 version cleanup remains independent of memory pressure and retains
 its existing known-iOS allowance. Below disk pressure level 3 a pass stops a dev
-server only after
-`maintenance.idleStopHours` without real activity and stops no other helper. The idle check shuts down owned simulators and emulators idle for
-their workspace's `devices.idleShutdownMinutes`, also when no dev server runs;
-see [idle shutdown](./owned-devices.md#idle-shutdown).
-The same check stops a whole workspace, dev server and owned devices, after
-`maintenance.idleStopHours` (6) with no real activity; see
-[idle workspace stop](./dev-server-and-logs.md#idle-workspace-stop).
+server only in a workspace whose device is hosted on a remote Mac, after
+`maintenance.idleStopHours` without real activity, and stops no other helper;
+`stim gc --delete` stops any workspace idle that long. Other idle devices and
+dev servers are the daemon's
+[idle stage](./dev-server-and-logs.md#idle-stop), not a maintenance check; see
+[idle shutdown](./owned-devices.md#idle-shutdown).
 Removing a finished worktree or orphaned directory does tear down that
 workspace's own dev server, owned devices and Chrome profile, as `gc --delete` does.
-Size, idle, worktree and sweep checks defer under high host load. The size scan covers
+Size, worktree and sweep checks defer under high host load. The size scan covers
 workspace build outputs, native build and Metro caches, ccache, Swift
 compilation cache, and other registered Stim caches. It also records the disk of
 each owned and parked simulator and emulator, which `stim status` reports as
@@ -664,8 +665,8 @@ stops the disk-driven ones once free space is back above the floor:
    means no dev server, native run, build, lease, managed lock, driven or busy
    device, and no recorded use. The next run recreates them.
 
-The daily sweep runs in the background of Stim commands every `maintenance.sweepHours` (24), never at a
-set hour, and waits while the host load is over `maintenance.maxLoadPerCore`.
+The daily sweep runs every `maintenance.sweepHours` (24) on a [stim-daemon](./settings.md#stim-daemon) tick, or, while no daemon holds the home, in `stim doctor`, `stim start`, `stim ios` or `stim android`; never at a
+set hour. It waits while the host load is over `maintenance.maxLoadPerCore`.
 `maintenance.olderThanDays` (7) is the age for steps 2, 3, 5 and 6; set it to 0
 and the sweep removes nothing in them by age. Step 1, step 7 (which
 `maintenance.deviceIdleDays` controls), finished worktrees, and the cap and

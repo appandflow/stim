@@ -1,5 +1,5 @@
 import { readJsonObject, isJsonObject } from './json-file.ts';
-import { maintenanceStateFile, maintenanceAttemptFile } from './paths.ts';
+import { maintenanceStateFile } from './paths.ts';
 import type { NdjsonRecord } from './ndjson.ts';
 
 export type MaintenanceMode = 'off' | 'report' | 'on';
@@ -254,9 +254,4 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
 
 export function readMaintenanceState(): MaintenanceState | null {
   return parseMaintenanceState(readJsonObject(maintenanceStateFile()));
-}
-
-export function readMaintenanceAttempt(): number | undefined {
-  const value = readJsonObject(maintenanceAttemptFile())?.attemptedAt;
-  return finite(value) ? value : undefined;
 }

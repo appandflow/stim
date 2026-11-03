@@ -48,10 +48,8 @@ import {
   type SupervisorExitTrigger,
 } from './stop-cause.ts';
 import { trackMetroWatchRoots } from './watchman-roots.ts';
-import { triggerMaintenance } from '../maintenance/trigger.ts';
+import { daemonClaimHeld } from '../daemon/client.ts';
 import { runWatchman, type WatchmanCommand } from '../watchman.ts';
-
-const MAINTENANCE_TRIGGER_MS = 60_000;
 
 export {
   MODE_BARE,
@@ -160,6 +158,8 @@ export interface RunSupervisorOptions {
   attachSignals?: boolean;
   stderr?: (line: string) => void;
   watchman?: WatchmanCommand;
+  /** Whether a stim-daemon holds this home's claim; the supervisor's own idle timers act only while none does. */
+  daemonHeld?: () => boolean;
 }
 
 export async function runSupervisor({
@@ -181,6 +181,7 @@ export async function runSupervisor({
   attachSignals = true,
   stderr = (line: string) => console.error(line),
   watchman = runWatchman,
+  daemonHeld = daemonClaimHeld,
 }: RunSupervisorOptions): Promise<{
   mode: string;
   server: ServerHandle | undefined;
@@ -233,11 +234,6 @@ export async function runSupervisor({
   let stopWatchingIdle: (() => void) | null = null;
   let stopWatchingDevices: (() => void) | null = null;
   let closeHostedMetro: (() => Promise<void>) | null = null;
-  const maintenanceTimer = setInterval(
-    () => triggerMaintenance('supervisor', { argv: [], warn: false }),
-    MAINTENANCE_TRIGGER_MS,
-  );
-  maintenanceTimer.unref?.();
   const stopCause = (trigger: SupervisorExitTrigger): DevServerStopRecord => {
     const request = readDevServerStopRequest(readWorkspaceState(root));
     return devServerStopRecord(
@@ -249,7 +245,6 @@ export async function runSupervisor({
   const finish = (code: number, event: string, level: string, msg: string, stop?: DevServerStopRecord) => {
     stopWatchingIdle?.();
     stopWatchingDevices?.();
-    clearInterval(maintenanceTimer);
     writer.write({ src: 'metro', level, event, msg, ...(stop ? { stop } : {}) });
     try {
       withWorkspaceStateLock(root, () => {
@@ -279,7 +274,6 @@ export async function runSupervisor({
   const shutdown = async (code: number, event: string, msg: string, stop?: DevServerStopRecord) => {
     if (stopping || !server) return;
     stopping = true;
-    maintenanceTimer.ref();
     await watchRoots.beforeClose();
     try {
       await server.close();
@@ -291,7 +285,6 @@ export async function runSupervisor({
     await closeHostedMetro?.();
     stopWatchingIdle?.();
     stopWatchingDevices?.();
-    clearInterval(maintenanceTimer);
     await watchRoots.afterClose();
     finish(code, event, stop ? devServerStopLevel(stop) : code === 0 ? 'info' : 'error', msg, stop);
   };
@@ -397,14 +390,16 @@ export async function runSupervisor({
 
   closeHostedMetro = watchHostedMetro(root, port, processToken);
   const deviceIdleMs = deviceIdleMinutes * 60_000;
+  const requestsVisible = mode !== MODE_COMMAND && hmrUpdates;
 
-  if (deviceIdleMinutes > 0) {
+  if (deviceIdleMinutes > 0 && requestsVisible) {
     stopWatchingDevices = watchIdleDevices({
       idleMs: deviceIdleMs,
       now,
       lastUseAt: () => workspaceDeviceLastUseAt(root),
       hasDue: () => deviceIdle.due(root, deviceIdleMs).length > 0,
       onDue: async () => {
+        if (daemonHeld()) return;
         try {
           await withIdleWorkspace(
             root,
@@ -421,13 +416,14 @@ export async function runSupervisor({
     });
   }
 
-  if (idleStopMinutes > 0) {
+  if (idleStopMinutes > 0 && requestsVisible) {
     stopWatchingIdle = watchIdleDevServer({
       idleStopMs: idleStopMinutes * 60_000,
       now,
       serverActivityAt: serverActivity.lastActivityAt,
       probe: idleProbe ?? workspaceIdleProbe(root),
       onIdle: async (idleMinutesNow) => {
+        if (daemonHeld()) return;
         const stopIfStillIdle = async () => {
           const idleMinutes = idleMinutesNow();
           if (stopping || idleMinutes === null) return;
@@ -442,12 +438,12 @@ export async function runSupervisor({
                   devices.push(entry.msg);
                 },
                 now(),
-                { reason: DEVICE_METRO_IDLE_STOP_REASON, metroStopped: () => true, kept: (line) => devices.push(line) },
+                { reason: DEVICE_METRO_IDLE_STOP_REASON, kept: (line) => devices.push(line) },
               );
             } catch (err) {
               stderr(`Stim supervisor: could not shut down idle devices: ${describeError(err)}`);
             }
-          } else devices.push('devices.idleShutdownMinutes is 0, so no device was shut down');
+          } else devices.push('idle.minutes is 0 for devices, so no device was shut down');
           const stop = { reason: 'idle' as const, at: new Date(now()).toISOString(), idleMinutes };
           withWorkspaceStateLock(root, () => {
             if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
@@ -457,7 +453,7 @@ export async function runSupervisor({
           await shutdown(
             0,
             'supervisor_idle_stopped',
-            `no bundle request, client log or Stim command for ${idleMinutes} minutes (metro.idleStopMinutes is ${idleStopMinutes}); stopped the ${mode} dev server${devices.map((line) => `; ${line}`).join('')}`,
+            `no Metro request or Stim command for ${idleMinutes} minutes (idle.minutes is ${idleStopMinutes}) and no stim-daemon running; stopped the ${mode} dev server${devices.map((line) => `; ${line}`).join('')}`,
             stop,
           );
         };

@@ -159,6 +159,31 @@ test('status says nothing extra for a project that has only a Metro port', async
   expect(logs.some((l) => /!/.test(l))).toBe(false);
 });
 
+test('the idle stage line names stim revive only when the dev server recorded an idle stop', async () => {
+  const unrecorded = join(tmpHome, 'proj-idle');
+  const recorded = join(tmpHome, 'proj-revivable');
+  mkdirSync(unrecorded);
+  mkdirSync(recorded);
+  saveConfig(
+    makeConfig({
+      version: 2,
+      projects: {
+        [unrecorded]: { label: 'idle', metroPort: 8083, platforms: {} },
+        [recorded]: { label: 'revivable', metroPort: 8084, platforms: {} },
+      },
+    }),
+  );
+  const idleStage = { at: '2026-11-02T10:00:00.000Z', idleMinutes: 15, freedBytes: 1024 };
+  writeWorkspaceState(unrecorded, { idleStage });
+  writeWorkspaceState(recorded, { idleStage, devServerStop: { reason: 'idle', at: idleStage.at, idleMinutes: 15 } });
+
+  const stages = (await runStatus()).filter((line) => line.includes('stage: idle'));
+
+  expect(stages).toHaveLength(2);
+  expect(stages.filter((line) => line.includes('`stim ios` or `stim android` resumes it'))).toHaveLength(1);
+  expect(stages.filter((line) => line.includes('`stim revive` resumes it'))).toHaveLength(1);
+});
+
 test('status detects the framework of an app registered only through a named port', async () => {
   const app = join(tmpHome, 'expo-app');
   mkdirSync(app);
@@ -1583,8 +1608,8 @@ test.each([undefined, 'idle' as const, 'reclaimed for a waiting run' as const, "
       reason === 'reclaimed for a waiting run'
         ? 'reclaimed for a waiting run'
         : reason === "Metro's idle stop"
-          ? "with Metro's idle stop; metro.idleStopMinutes"
-          : 'devices.idleShutdownMinutes',
+          ? "with Metro's idle stop; idle.minutes"
+          : 'idle.minutes',
     );
     const payload = await runStatusJson();
     expect(

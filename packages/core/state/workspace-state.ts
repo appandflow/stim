@@ -32,7 +32,7 @@ export interface WorkspaceState {
 
 export const IDLE_STOP_KEY = 'devServerStop';
 
-/** Why the supervisor last stopped the dev server on its own: `metro.idleStopMinutes` with no use. */
+/** Why the dev server last stopped for being idle: `idle.minutes` with no activity. `stim revive` resumes it. */
 export interface IdleStopRecord {
   reason: 'idle';
   at: string;
@@ -45,6 +45,38 @@ export function readIdleStop(state: WorkspaceState | null | undefined): IdleStop
     return null;
   }
   return { reason: 'idle', at: record.at, idleMinutes: record.idleMinutes };
+}
+
+export const IDLE_STAGE_KEY = 'idleStage';
+
+/** The idle stage the daemon last moved the workspace into, and the bytes of build outputs it deleted. */
+export interface IdleStageRecord {
+  at: string;
+  idleMinutes: number;
+  freedBytes: number;
+}
+
+export function readIdleStage(state: WorkspaceState | null | undefined): IdleStageRecord | null {
+  const record = state?.[IDLE_STAGE_KEY];
+  if (!isJsonObject(record) || typeof record.at !== 'string' || typeof record.idleMinutes !== 'number') return null;
+  return {
+    at: record.at,
+    idleMinutes: record.idleMinutes,
+    freedBytes: typeof record.freedBytes === 'number' ? record.freedBytes : 0,
+  };
+}
+
+export const INTERACTIONS_KEY = 'interactions';
+
+/** When a person last used each device slot's focused Simulator or emulator window, by device slot key. */
+export function readInteractions(state: WorkspaceState | null | undefined): Record<string, string> {
+  const records = state?.[INTERACTIONS_KEY];
+  if (!isJsonObject(records)) return {};
+  return Object.fromEntries(
+    Object.entries(records).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string' && Number.isFinite(Date.parse(entry[1])),
+    ),
+  );
 }
 
 export const DEVICE_RECLAIM_REASON = 'reclaimed for a waiting run';
@@ -80,13 +112,17 @@ export function readDeviceIdleShutdowns(
 
 export const DEV_SERVER_STOP_REQUEST_KEY = 'devServerStopRequest';
 
-/** A Stim component's intent to stop the supervisor with `processToken`, written before it signals. */
+/**
+ * A Stim component's intent to stop the supervisor with `processToken`, written before it signals. `idleMinutes`
+ * marks the daemon's idle stop, which the supervisor records as an `IdleStopRecord`.
+ */
 export interface DevServerStopRequest {
   processToken: string;
   by: string;
   pid: number;
   at: string;
   workspace?: string;
+  idleMinutes?: number;
 }
 
 export function readDevServerStopRequest(state: WorkspaceState | null | undefined): DevServerStopRequest | null {
@@ -105,6 +141,7 @@ export function readDevServerStopRequest(state: WorkspaceState | null | undefine
     pid: record.pid,
     at: record.at,
     ...(typeof record.workspace === 'string' ? { workspace: record.workspace } : {}),
+    ...(typeof record.idleMinutes === 'number' ? { idleMinutes: record.idleMinutes } : {}),
   };
 }
 

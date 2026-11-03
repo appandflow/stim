@@ -367,6 +367,38 @@ export async function runStop(options: StopArgs & { slot?: string }): Promise<St
   return result;
 }
 
+/**
+ * The daemon's idle stop: stops the dev server, its collectors and the owned devices as `stim stop` does, but keeps
+ * the Metro port reservation, the launch records and every lease, and has the supervisor record an idle stop, so
+ * `stim revive` resumes the workspace. It leaves an owned Chrome and a macOS app alone.
+ */
+export function runIdleStop({
+  root,
+  idleMinutes,
+  report,
+  ...processes
+}: {
+  root: string;
+  idleMinutes: number;
+  report: (line: string) => void;
+} & Pick<
+  StopArgs,
+  'state' | 'isAlive' | 'inspectIdentity' | 'killGroup' | 'waitForDeath' | 'resolveMetro' | 'teardownIos'
+>): Promise<StopResult> {
+  return stopWorkspace({
+    ...processes,
+    root,
+    report,
+    requester: { by: 'stim daemon', idleMinutes },
+    freePort: () => 'stim revive restarts the dev server on it',
+    clearState: (projectRoot, expected) =>
+      withWorkspaceStateLockAsync(projectRoot, () => clearWorkspaceSupervisor(projectRoot, expected)),
+    releaseLeases: () => [],
+    teardownBrowser: null,
+    stopMacos: false,
+  });
+}
+
 async function stopBrowserOnly({
   root,
   project = undefined,
@@ -508,7 +540,8 @@ async function stopWorkspace({
   ) =>
     | { status: 'torn-down' | 'failed'; reason?: string }
     | Promise<{ status: 'torn-down' | 'failed'; reason?: string }>;
-  freePort?: (root: string, port: number) => boolean | void | Promise<boolean | void>;
+  /** Frees the port reservation; false when it changed, or the reason it stays reserved. */
+  freePort?: (root: string, port: number) => boolean | string | void | Promise<boolean | string | void>;
   clearRegistration?: (root: string, expected?: ProcessRecord | null) => Promise<RegistrationCleanup>;
   clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void | Promise<boolean | void>;
   report?: (line: string) => void;
@@ -674,7 +707,13 @@ async function stopWorkspace({
         report(chalk.dim(phaseLine('port', `keeping reservation ${reservedPort} -- ${keepPort}`)));
         return;
       }
-      if ((await freePort(root, reservedPort)) === false) {
+      const freed = await freePort(root, reservedPort);
+      if (typeof freed === 'string') {
+        outcomes.port = { status: 'kept', port: reservedPort, reason: freed };
+        report(chalk.dim(phaseLine('port', `keeping reservation ${reservedPort} -- ${freed}`)));
+        return;
+      }
+      if (freed === false) {
         ok = false;
         outcomes.port = { status: 'kept', port: reservedPort, reason: 'the port reservation changed during cleanup' };
         return;

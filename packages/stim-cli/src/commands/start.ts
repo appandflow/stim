@@ -58,8 +58,7 @@ import { windowsLauncherArgs } from '../detached-entry.ts';
 import {
   publicUrlSetting,
   ngrokUrlSetting,
-  deviceIdleShutdownMinutesSetting,
-  metroIdleStopMinutesSetting,
+  idleMinutesSetting,
   metroPortSetting,
   metroCommandSetting,
   metroCommandSettingError,
@@ -878,9 +877,9 @@ export async function startDevServer(
           ...(tunnel ? ['--tunnel'] : []),
           ...(resetCache ? ['--reset-cache'] : []),
           '--idle-stop-minutes',
-          String(metroIdleStopMinutesSetting(settings)),
+          String(idleMinutesSetting(settings)),
           '--device-idle-minutes',
-          String(deviceIdleShutdownMinutesSetting(settings)),
+          String(idleMinutesSetting(settings)),
         ];
         const childEnv: NodeJS.ProcessEnv = {
           ...ambientEnv(),

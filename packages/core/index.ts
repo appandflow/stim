@@ -47,6 +47,14 @@ export function configDir(): string {
   return ambientContext()?.home ?? (absoluteEnvPath('STIM_HOME') || path.join(os.homedir(), '.stim'));
 }
 
+/**
+ * Whether `STIM_HOME` scopes this Stim home, whatever path it names, `~/.stim` included. A scoped home owns only the
+ * devices its created-devices ledger lists and leaves machine-wide device and memory sweeps alone.
+ */
+export function isScopedHome(env: NodeJS.ProcessEnv = ambientEnv()): boolean {
+  return Boolean(env.STIM_HOME);
+}
+
 /** Creates `dir` and its missing parents owner-only, and narrows an existing `dir` that grants group or other access when the filesystem and owner allow it. */
 export function ensurePrivateDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });

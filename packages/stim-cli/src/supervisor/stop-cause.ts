@@ -17,6 +17,8 @@ import { clearWorkspaceStateKey, writeWorkspaceState } from '../workspace/worksp
 export interface StopRequester {
   by: string;
   workspace?: string;
+  /** Asks the supervisor to record an idle stop after this many minutes without activity. */
+  idleMinutes?: number;
 }
 
 export function requestDevServerStop(root: string, processToken: string | undefined, requester: StopRequester): void {
@@ -29,6 +31,7 @@ export function requestDevServerStop(root: string, processToken: string | undefi
         pid: process.pid,
         at: new Date().toISOString(),
         ...(requester.workspace ? { workspace: requester.workspace } : {}),
+        ...(requester.idleMinutes !== undefined ? { idleMinutes: requester.idleMinutes } : {}),
       } satisfies DevServerStopRequest,
     });
   } catch {}
@@ -52,6 +55,7 @@ export function devServerStopRecord(
   request: DevServerStopRequest | null,
   at: string,
 ): DevServerStopRecord {
+  if (request?.idleMinutes !== undefined) return { reason: 'idle', at, idleMinutes: request.idleMinutes };
   if (request) {
     return {
       reason: 'requested',
@@ -68,7 +72,7 @@ export function devServerStopRecord(
 
 export function describeDevServerStop(record: DevServerStopRecord): string {
   if (record.reason === 'idle') {
-    return `idle for ${record.idleMinutes} minutes (metro.idleStopMinutes); run stim revive to resume it`;
+    return `idle for ${record.idleMinutes} minutes (idle.minutes); run stim revive to resume it`;
   }
   if (record.reason === 'requested') {
     return `stop requested by ${record.by} (pid ${record.byPid}${record.byWorkspace ? ` in ${record.byWorkspace}` : ''})`;

@@ -353,9 +353,10 @@ are included in wait stats.
 
 Any workspace of this Stim home with a device idle for
 `devices.reclaimIdleMinutes` is eligible, even with no supervisor and even
-when its own `devices.idleShutdownMinutes` is `0`. Stim Desktop's simulator
-view and manual input in Simulator.app do not count as activity. Opt out
-machine-wide with the command below; the waiter's effective setting decides.
+when its own `idle.minutes` is `0`. Input sent through stim-server and use of
+the device in the frontmost Simulator, Device Hub or emulator window count as activity; app
+and device logs do not. Opt out machine-wide with the command below; the
+waiter's effective setting decides.
 
 ```bash
 stim settings set devices.reclaimIdleMinutes 0 --scope machine
@@ -779,17 +780,11 @@ and what the next command would reclaim.
 stim settings set budget.minFreeDiskGb 40
 ```
 
-Without waiting for a budget, `devices.idleShutdownMinutes` shuts down a
-workspace's owned simulators and emulators once they have been idle that long,
-through the workspace's dev server supervisor or, with no supervisor, through
-automatic maintenance every `maintenance.idleCheckMinutes` (5).
-It is on by default at 15 minutes; see
-[idle shutdown](./owned-devices.md#idle-shutdown). A device whose app loads
-its JavaScript from Metro goes down with the dev server's
-[idle stop](./dev-server-and-logs.md#idle-stop) even when
-`devices.idleShutdownMinutes` is longer than `metro.idleStopMinutes`, because
-its device logs stop counting as use once Metro is gone. `0` keeps devices
-booted, at the idle stop too.
+Without waiting for a budget, the `stim-daemon` shuts down a workspace's owned
+simulators and emulators, together with its dev server, once the workspace has
+had no activity for `idle.minutes` (15 by default), whether or not a dev server
+runs; see [idle stop](./dev-server-and-logs.md#idle-stop) and
+[idle shutdown](./owned-devices.md#idle-shutdown). `0` keeps them running.
 
 Try it with an agent:
 
@@ -973,7 +968,7 @@ older than `maintenance.pressureCheckMinutes` or outside the last completed,
 unblocked pass. A later unrelated pass can conservatively keep warning daemons.
 Disk-level-3 version
 cleanup remains independent of memory pressure and allows known iOS builds.
-Below disk pressure level 3 a pass stops a dev server only after `maintenance.idleStopHours` without real activity (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
+Below disk pressure level 3 a pass stops a dev server only in a workspace whose device is hosted on a remote Mac, after `maintenance.idleStopHours` without real activity (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
 
 ## Debug logs
@@ -997,6 +992,36 @@ Turn on debug.logs, rerun the command that stalled, then read
 ~/.stim/logs/debug/cli.ndjson and tell me which child process or remote request
 took the time.
 ```
+
+## Stim daemon
+
+`daemon.mode` is a machine setting, `on` by default, with the environment
+override `STIM_DAEMON`. `start`, `ios`, `android`, `web`, `macos` and `revive`
+start one `stim-daemon` process per Stim home, scoped homes included, and it
+exits on its own two minutes after nothing runs there. Each minute it measures
+the machine once, moves workspaces with no activity for `idle.minutes` into
+the [idle stage](./dev-server-and-logs.md#idle-stop), and runs automatic
+maintenance. It also wakes the oldest run waiting for a build slot as soon as
+one is released. `report` logs what it would do and acts on nothing. `off`
+runs no daemon: each dev server supervisor stops its own dev server and
+devices after `idle.minutes`, nothing times a device with no dev server, and
+`stim doctor`, `stim start`, `stim ios` and `stim android` run automatic
+maintenance in their own process. It is `off` in CI unless `STIM_DAEMON` is
+set. Windows has no daemon and works as `off`. A command starts the daemon in
+the mode it resolves, `STIM_DAEMON` included; a later change to the machine
+setting can make a running daemon stricter, never laxer. The daemon also keeps
+the starting command's `CI` and the environment overrides of settings that are
+not sensitive, such as `STIM_MAINTENANCE`, for its whole life: one exported after it started applies
+to the daemon only once it exits and a command starts a new one. Its log is
+`$STIM_HOME/daemon/daemon.ndjson`, rotated like workspace logs, and its last
+tick's measurement and decisions are in `$STIM_HOME/daemon/snapshot.json`.
+`stim status` shows its mode, whether it runs and when it last ticked, and `stim doctor`
+reports a daemon that stopped ticking or a claim it cannot resolve.
+
+`idle.minutes` takes machine and project layers. While it is unset, the
+smaller of `metro.idleStopMinutes` and `devices.idleShutdownMinutes` applies.
+
+<StimTabs code="stim settings set daemon.mode report --scope machine" />
 
 ## Timing traces
 

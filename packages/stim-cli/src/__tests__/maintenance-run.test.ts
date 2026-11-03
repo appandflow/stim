@@ -10,7 +10,6 @@ import {
   maintenanceNdjsonFile,
   maintenanceRunClaims,
   readMaintenanceState,
-  maintenanceAttemptFile,
   workspaceLogsDir,
   sharedCompilationCache,
 } from '@stim-cli/core/state';
@@ -24,9 +23,8 @@ import { maintenanceStatus } from '../maintenance/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { runGc } from '../commands/gc.ts';
 import statusCommand from '../commands/status.ts';
-import macosCommand from '../commands/macos.ts';
-import { triggerMaintenance } from '../maintenance/trigger.ts';
-import { resetExecutor, setExecutor, type Executor } from '../exec.ts';
+import { warnCriticalDisk } from '../maintenance/trigger.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
 
 const disk = vi.hoisted(() => ({ full: false, reserve: '', code: 'ENOSPC', partialReserveWrite: false }));
@@ -192,61 +190,27 @@ test('an unresolved claim produces only one child crash-log line', async () => {
   expect(err).not.toHaveBeenCalled();
 });
 
-test('status JSON stays a single payload while its preAction hook starts a detached child, and gc JSON starts none', async () => {
-  const spawn = vi.fn<Executor['spawn']>(() => makeChildProcess());
-  setExecutor({
-    run: () => '',
-    runQuiet: () => null,
-    runFile: () => '',
-    runFileQuiet: () => null,
-    findExecutable: () => null,
-    spawn,
-  });
+test('status and gc JSON each stay a single payload under the preAction disk warning', async () => {
   const out = vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const program = new Command();
   statusCommand(program);
-  program.hook('preAction', () => triggerMaintenance('status', { argv: ['status', '--json'] }));
+  program.hook('preAction', () => warnCriticalDisk(['status', '--json']));
   await program.parseAsync(['status', '--json'], { from: 'user' });
   expect(out).toHaveBeenCalledTimes(1);
   expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({
     environments: [],
     maintenance: { mode: 'report', running: null },
+    daemon: { mode: 'off', running: null },
   });
   out.mockClear();
-  rmSync(maintenanceAttemptFile());
-  triggerMaintenance('gc', { argv: ['gc', '--json'] });
+  warnCriticalDisk(['gc', '--json']);
   await runGc({ json: true, cache: 'recordings' });
   expect(out).toHaveBeenCalledTimes(1);
   expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({
     mode: 'dry-run',
     maintenance: { note: expect.stringContaining('no pass has run yet') },
   });
-  expect(spawn).toHaveBeenCalledTimes(1);
-  expect(spawn).toHaveBeenCalledWith(
-    expect.anything(),
-    expect.anything(),
-    expect.objectContaining({ detached: true, stdio: ['ignore', expect.any(Number), expect.any(Number)] }),
-  );
-  expect(existsSync(maintenanceAttemptFile())).toBe(false);
-});
-
-test('a macOS plan preAction hook never starts maintenance or writes its attempt and log', async () => {
-  const spawn = vi.fn<Executor['spawn']>(() => makeChildProcess());
-  setExecutor({ spawn });
-  vi.spyOn(process, 'cwd').mockReturnValue(home);
-  const out = vi.spyOn(console, 'log').mockImplementation(() => {});
-  vi.spyOn(console, 'error').mockImplementation(() => {});
-  const argv = ['macos', '--plan', '--json'];
-  const program = new Command();
-  macosCommand(program);
-  program.hook('preAction', (_command, action) => triggerMaintenance(action.name(), { argv }));
-  await program.parseAsync(argv, { from: 'user' });
-  expect(out).toHaveBeenCalledTimes(1);
-  expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({ code: 'STIM_BAD_ARG' });
-  expect(spawn).not.toHaveBeenCalled();
-  expect(existsSync(maintenanceAttemptFile())).toBe(false);
-  expect(existsSync(maintenanceChildLogFile())).toBe(false);
 });
 
 test.each([

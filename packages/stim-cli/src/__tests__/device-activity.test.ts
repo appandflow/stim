@@ -271,21 +271,23 @@ describe('createActivityReader', () => {
     });
   });
 
-  test('a device a stim-server client is viewing is active now; other devices keep their own evidence', () => {
-    writeLogs([{ ts: NOW - 5 * 3_600_000, src: 'device', platform: 'ios', msg: 'old' }]);
+  test('input a stim-server client sent dates a device, frames it only streams count for nothing, and its logs never do', () => {
+    const inputAt = new Date(NOW - 60_000).toISOString();
+    writeLogs([{ ts: NOW - 30_000, src: 'device', platform: 'ios', msg: 'chatty app' }]);
     const reader = createActivityReader({
       now: NOW,
       home,
       startOf: starts({}),
       leaseFiles: () => [],
-      viewers: () => [{ platform: 'ios', id: UDID }],
+      viewers: () => [
+        { platform: 'ios', id: UDID, lastInputAt: inputAt },
+        { platform: 'ios', id: 'WATCHED' },
+      ],
     });
-    expect(reader(target)).toMatchObject({
-      state: 'active',
-      lastActivityAt: new Date(NOW).toISOString(),
-      recent: { viewer: new Date(NOW).toISOString() },
-    });
-    expect(reader({ ...target, id: 'OTHER' }).state).toBe('idle');
+    expect(reader(target)).toMatchObject({ state: 'active', lastActivityAt: inputAt, recent: { viewer: inputAt } });
+    const watched = reader({ ...target, id: 'WATCHED' });
+    expect(watched.recent).toEqual({ 'device-log': new Date(NOW - 30_000).toISOString() });
+    expect(watched.lastActivityAt).toBeUndefined();
     expect(reader({ ...target, platform: 'android', id: UDID }).recent?.viewer).toBeUndefined();
   });
 

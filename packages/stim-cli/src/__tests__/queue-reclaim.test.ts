@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readDeviceIdleShutdowns } from '@stim-cli/core/state';
+import { INTERACTIONS_KEY, readDeviceIdleShutdowns } from '@stim-cli/core/state';
 import { collectOwnedDeviceActivity, workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { resetExecutor } from '../exec.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
@@ -19,7 +19,7 @@ import { tryAcquireClaim, releaseClaim } from '../ownership-claim.ts';
 import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 vi.mock('../commands/gc/idle.ts', () => ({
   collectOwnedDeviceActivity: vi.fn<typeof import('../commands/gc/idle.ts').collectOwnedDeviceActivity>(),
@@ -152,23 +152,31 @@ test('a live native-run lock is skipped, and a later poll tries the next candida
   }
 });
 
-test.each(['selection', 'locked recheck'])('a recent client log prevents reclaim at %s', async (stage) => {
+test.each(['selection', 'locked recheck'])(
+  'recent use of its Simulator window prevents reclaim at %s',
+  async (stage) => {
+    const device = add('window', 40);
+    const used = () =>
+      writeWorkspaceState(device.project, { [INTERACTIONS_KEY]: { ios: new Date(NOW).toISOString() } });
+    if (stage === 'selection') used();
+    else
+      vi.mocked(collectOwnedDeviceActivity).mockImplementationOnce(() => {
+        used();
+        return [device];
+      });
+    await expect(reclaim()).resolves.toBe(0);
+    expect(teardownOwnedIosSim).not.toHaveBeenCalled();
+    expect(readDeviceIdleShutdowns(readWorkspaceState(device.project))).toEqual({});
+  },
+);
+
+test('a recent client log does not prevent reclaim', async () => {
   const device = add('client', 40);
   const log = join(workspaceLogsDir(device.project), 'client.ndjson');
-  const writeClient = () => {
-    mkdirSync(workspaceLogsDir(device.project), { recursive: true });
-    writeFileSync(log, '{}\n');
-    utimesSync(log, NOW / 1000, NOW / 1000);
-  };
-  if (stage === 'selection') writeClient();
-  else
-    vi.mocked(collectOwnedDeviceActivity).mockImplementationOnce(() => {
-      writeClient();
-      return [device];
-    });
-  await expect(reclaim()).resolves.toBe(0);
-  expect(teardownOwnedIosSim).not.toHaveBeenCalled();
-  expect(readDeviceIdleShutdowns(readWorkspaceState(device.project))).toEqual({});
+  mkdirSync(workspaceLogsDir(device.project), { recursive: true });
+  writeFileSync(log, '{}\n');
+  utimesSync(log, NOW / 1000, NOW / 1000);
+  await expect(reclaim()).resolves.toBe(1);
 });
 
 test('activity is rechecked after locking, so a newly opened viewer prevents reclaim', async () => {

@@ -389,19 +389,26 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Bundle URL `stim android` prefetches to warm Metro',
   },
   {
+    key: 'idle.minutes',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: EVERY,
+    default: 15,
+    description:
+      'Minutes without activity before a workspace goes idle: its dev server stops with its port kept, its owned simulators and emulators shut down, and its regenerable build outputs are deleted; stim revive resumes it. Unset, the smaller of metro.idleStopMinutes and devices.idleShutdownMinutes; 0 never',
+  },
+  {
     key: 'metro.idleStopMinutes',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: PROJECT,
     default: 15,
-    description: 'Minutes without a bundle request, client log or Stim command before the dev server stops; 0 never',
+    description: 'Read as idle.minutes while idle.minutes is unset, when it is the smaller of the two; 0 never',
   },
   {
     key: 'devices.idleShutdownMinutes',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: EVERY,
     default: 15,
-    description:
-      'Minutes an owned simulator or emulator stays idle before the workspace supervisor, or automatic maintenance when no supervisor runs, shuts it down; 0 never',
+    description: 'Read as idle.minutes while idle.minutes is unset, when it is the smaller of the two; 0 never',
   },
   {
     key: 'devices.reclaimIdleMinutes',
@@ -790,7 +797,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 5,
     env: 'STIM_MAINTENANCE_IDLE_CHECK_MINUTES',
     description:
-      'Interval in minutes of the check that shuts down owned simulators and emulators idle for devices.idleShutdownMinutes, also with no dev server running, and stops workspaces idle for maintenance.idleStopHours',
+      'Interval in minutes of the automatic maintenance check that stops a workspace with a device hosted on a remote Mac once it is idle for maintenance.idleStopHours; the stim-daemon decides idle for other workspaces every minute (idle.minutes)',
   },
   {
     key: 'maintenance.idleStopHours',
@@ -799,7 +806,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 6,
     env: 'STIM_MAINTENANCE_IDLE_STOP_HOURS',
     description:
-      "Hours with no native run, Metro bundle or HMR request, agent-device command, Stim command or live view of a local device before automatic maintenance and gc --delete stop a workspace's dev server and shut down its owned or hosted simulators and emulators, as stim stop does, and stim-server stops a hosted session whose client has been gone that long; device and app log lines do not count; 0 never",
+      "Hours with no native run, Metro bundle or HMR request, agent-device command, Stim command, input forwarded to a device or use of its frontmost device window before gc --delete stops a workspace's dev server and shuts down its owned or hosted simulators and emulators, as stim stop does, automatic maintenance does the same for a workspace with a hosted device, and stim-server stops a hosted session whose client has been gone that long; device and app log lines do not count; 0 never",
   },
   {
     key: 'maintenance.sweepHours',
@@ -964,6 +971,16 @@ export const SETTINGS: readonly SettingDefinition[] = [
     env: 'STIM_POOL_ANDROID_PARKED_MAX',
     scopedHomeValue: 0,
     description: 'Parked emulators kept for adoption; 0 turns parking off',
+  },
+  {
+    key: 'daemon.mode',
+    type: { kind: 'choice', choices: ['on', 'report', 'off'] },
+    scopes: MACHINE,
+    default: 'on',
+    env: 'STIM_DAEMON',
+    ciValue: 'off',
+    description:
+      'The per-home stim-daemon that start, ios, android, web, macos and revive start and that exits once nothing runs in the home. on: it decides idle, stopping idle workspaces and deleting their regenerable build outputs, and runs automatic maintenance. report: it logs what it would do and acts on nothing. off: no daemon; each dev server supervisor times its own idle stop, and doctor, start, ios and android run automatic maintenance in their own process. The daemon keeps the mode it started with, STIM_DAEMON included, unless the machine setting later turns stricter, and the CI and non-sensitive setting environment overrides of the command that started it for its whole life. Off in CI unless STIM_DAEMON is set. Windows has no daemon and works as off',
   },
   {
     key: 'debug.logs',

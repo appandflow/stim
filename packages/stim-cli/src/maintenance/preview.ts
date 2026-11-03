@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { configDir, type StimContext } from '@stim-cli/core';
+import { configDir, isScopedHome, type StimContext } from '@stim-cli/core';
 import {
   loadConfig,
   readMaintenanceState,
@@ -18,7 +18,6 @@ import { listWorktreesAsync } from '../workspace/worktree.ts';
 import { plan, type MaintenancePlan } from './plan.ts';
 import { maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { planSweep, planWorktrees } from './sweep.ts';
-import { planIdleShutdown } from './devices.ts';
 import { cachedDeviceActivity, cachedDeviceActivityAsync } from './activity.ts';
 import { planIdleStop } from './idle-stop.ts';
 import { planMemoryDaemonStop, planPressureLevels } from './levels.ts';
@@ -46,6 +45,7 @@ export async function plannedMaintenance(
     sweep = false,
     worktrees = false,
     idle = false,
+    idleHostedOnly = true,
     refresh = true,
     background = false,
     operation,
@@ -54,6 +54,7 @@ export async function plannedMaintenance(
     sweep?: boolean;
     worktrees?: boolean;
     idle?: boolean;
+    idleHostedOnly?: boolean;
     refresh?: boolean;
     background?: boolean;
     operation?: StimContext;
@@ -129,7 +130,7 @@ export async function plannedMaintenance(
     diskSteps:
       outcome?.status === 'ok' ? outcome.reclaimed.filter((step) => devices || step.step !== 'idle-devices') : [],
     protectedRoot: root,
-    scoped: Boolean(env.STIM_HOME),
+    scoped: isScopedHome(env),
     projects: Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath),
     pinned,
     recentlyUsed: (workspace) => recentUse(workspace, settings),
@@ -166,7 +167,6 @@ export async function plannedMaintenance(
     result.worktreeSweep = planned.sweep;
   }
   if (idle && devices) {
-    merge(planIdleShutdown({ protectedRoot: root, now: Date.now(), env }));
     const now = Date.now();
     try {
       merge(
@@ -175,6 +175,7 @@ export async function plannedMaintenance(
           now,
           env,
           operation,
+          hostedOnly: idleHostedOnly,
           devices: operation
             ? cachedDeviceActivityAsync(now, env, operation.signal, operation)
             : cachedDeviceActivity(now),
@@ -263,6 +264,7 @@ export async function previewMaintenance({
       devices,
       sweep: true,
       idle: true,
+      idleHostedOnly: false,
       refresh,
       operation,
     });

@@ -1,5 +1,5 @@
 import { maintenanceStatus, maintenanceLines } from '../maintenance/status.ts';
-import { triggerMaintenance } from '../maintenance/trigger.ts';
+import { daemonLine, daemonStatus } from '../daemon/status.ts';
 import {
   createRefreshScheduler,
   WATCH_DEBOUNCE_MS,
@@ -183,6 +183,7 @@ function renderStatus(
   });
 
   const maintenance = maintenanceStatus();
+  const daemon = daemonStatus();
   if (json) {
     const payload = {
       environments: states.map((state, i) =>
@@ -196,11 +197,13 @@ function renderStatus(
       simctlAvailable: simsAvailable,
       machine,
       maintenance,
+      daemon,
     } satisfies StatusPayload;
     out.push(JSON.stringify(settle(payload)));
     return out;
   }
 
+  out.push(chalk.dim(daemonLine(daemon)));
   out.push(...maintenanceLines(maintenance).map((line) => chalk.dim(line)));
   if (usage.count) out.push(`Archived: ${plural(usage.count, 'workspace')}, ${formatBytes(usage.bytes)}`);
 
@@ -233,6 +236,15 @@ function renderStatus(
         : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${(proj.isExpo ?? detectIsExpo(path)) ? 'expo' : 'bare'})`),
     );
 
+    if (state.idleStage) {
+      const { at, idleMinutes, freedBytes } = state.idleStage;
+      const restore = state.metro?.idleStop ? '`stim revive`' : '`stim ios` or `stim android`';
+      out.push(
+        chalk.dim(
+          `  stage: idle since ${at} after ${idleMinutes}m without activity; freed ${formatBytes(freedBytes)}; ${restore} resumes it`,
+        ),
+      );
+    }
     if (state.metro) {
       const label = state.metro.running
         ? chalk.green(`running (pid ${state.metro.pid})`)
@@ -403,7 +415,6 @@ export function runStatusWatch({
     debounceMs: WATCH_DEBOUNCE_MS,
     lightIntervalMs: WATCH_LIGHT_INTERVAL_MS,
     run: async (kind) => {
-      triggerMaintenance('status-watch', { warn: false });
       let text: string;
       let payload = null as StatusPayload | null;
       try {
@@ -526,8 +537,8 @@ function idleShutdownSuffix(record: DeviceIdleShutdownRecord | undefined): strin
     record.reason === DEVICE_RECLAIM_REASON
       ? 'reclaimed for a waiting run; devices.reclaimIdleMinutes'
       : record.reason === DEVICE_METRO_IDLE_STOP_REASON
-        ? "with Metro's idle stop; metro.idleStopMinutes"
-        : 'devices.idleShutdownMinutes';
+        ? "with Metro's idle stop; idle.minutes"
+        : 'idle.minutes';
   return chalk.dim(` -- shut down after ${record.idleMinutes}m idle at ${record.at} (${why})`);
 }
 

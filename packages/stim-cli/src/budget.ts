@@ -1,6 +1,6 @@
 import { existsSync, statfsSync, statSync } from 'node:fs';
 import { stat, statfs } from 'node:fs/promises';
-import type { StimContext } from '@stim-cli/core';
+import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { homedir, platform, totalmem } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 import chalk from 'chalk';
@@ -88,7 +88,7 @@ export function machineNumber(
       ? { value: undefined, error: `Invalid ${setting.env} value ${JSON.stringify(fromEnv)}. Expected ${problem}.` }
       : { value, error: null };
   }
-  if (env.STIM_HOME && typeof setting.scopedHomeValue === 'number')
+  if (isScopedHome(env) && typeof setting.scopedHomeValue === 'number')
     return { value: setting.scopedHomeValue, error: null };
   const raw = valueAt(config, key);
   if (raw === undefined)

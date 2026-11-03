@@ -1198,7 +1198,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       '--idle-stop-minutes',
       '0',
       '--device-idle-minutes',
-      '30',
+      '0',
     ]);
   });
 

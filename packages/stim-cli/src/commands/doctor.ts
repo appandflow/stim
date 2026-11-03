@@ -1,4 +1,5 @@
-import { maintenanceNdjsonFile } from '@stim-cli/core/state';
+import { daemonNdjsonFile, maintenanceNdjsonFile, type DaemonStatus } from '@stim-cli/core/state';
+import { daemonFindings, daemonLine, daemonStatus } from '../daemon/status.ts';
 import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
 import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
 import chalk from 'chalk';
@@ -305,6 +306,7 @@ export interface DoctorReport {
   stim: StimVersionReport;
   budget: BudgetReport | null;
   maintenance: ReturnType<typeof maintenanceStatus> & { logPath: string };
+  daemon: DaemonStatus & { logPath: string };
   remoteMachines: Array<BuildMachinesInspection['machines'][number] & { priority?: number }>;
   deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>['machines'][number] & { priority?: number }>;
   toolchain: ToolchainReport | null;
@@ -571,12 +573,15 @@ async function assembleDoctorReport(
 
   const toolchain = host === 'darwin' ? toolchainReport(root, env) : null;
   const maintenance = maintenanceStatus(env);
+  const daemon = daemonStatus(env);
+  findings.push(...daemonFindings(daemon));
   return {
     project: root,
     platform: opts.platform ?? null,
     stim,
     budget: budget.report,
     maintenance: { ...maintenance, logPath: maintenanceNdjsonFile() },
+    daemon: { ...daemon, logPath: daemonNdjsonFile() },
     remoteMachines: withPriority(remoteMachines.machines),
     deviceHosts: withPriority(deviceHostMachines.machines),
     toolchain,
@@ -620,13 +625,15 @@ export default function doctorCommand(
       }
 
       const report = await assembleDoctorReport(root, opts, version, prepared, inspectVersions, host);
-      const { findings, stim, toolchain, maintenance } = report;
+      const { findings, stim, toolchain, maintenance, daemon } = report;
       const budget = { report: report.budget };
       const order = (configuredMachines() ?? []).map((machine, at) => `${at + 1} ${machine}`);
       const maintenanceLines = [
         ...(order.length
           ? [phaseLine('placement order', `${order.join(', ')} (first with room and load under its limit)`)]
           : []),
+        phaseLine('daemon', daemonLine(daemon)),
+        phaseLine('daemon log', daemonNdjsonFile()),
         phaseLine('maintenance.mode', maintenance.mode),
         phaseLine('maintenance log', maintenanceNdjsonFile()),
         phaseLine('last pass', maintenanceLine(maintenance, false) ?? 'no pass has run yet'),

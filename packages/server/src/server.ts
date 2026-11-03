@@ -1455,7 +1455,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   let nativeViewerOpened = false;
   const helperEnv = options.host ? { ...options.env, STIM_CAPTURE_HOST: options.host.name } : options.env;
-  const frames = new FramePool(helperEnv, frameLimits, frameHelper, new DeviceViewers(), undefined, foldHelper);
+  const viewers = new DeviceViewers();
+  const frames = new FramePool(helperEnv, frameLimits, frameHelper, viewers, undefined, foldHelper);
   let recorder: Recorder | null = null;
   let startup: StartupState = { state: 'pending' };
   let startupProbe: ReturnType<typeof probeDirectories> | null = null;
@@ -1704,6 +1705,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     foldTimeoutMs: controlLimits.foldTimeoutMs,
     conflict: (deviceId, conflict) => push.control(deviceId, conflict),
     adbEmulators,
+    onInput: (device) => viewers.input(device),
   });
   const hostedViews = new HostedViews(hostedDevices, control, helperEnv, frameHelper);
   const funnel = tailscaleFunnel(

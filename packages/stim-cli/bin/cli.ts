@@ -63,9 +63,15 @@ try {
       process.on('exit', (code) => debugLog.log('run_end', { exit: code, ms: Date.now() - started }));
     }
     try {
-      const { triggerMaintenance } = await import('../src/maintenance/trigger.ts');
-      triggerMaintenance(action.name());
+      const { warnCriticalDisk } = await import('../src/maintenance/trigger.ts');
+      warnCriticalDisk();
     } catch {}
+    if (path.length === 1 && !process.argv.includes('--plan')) {
+      try {
+        const { beforeCommand } = await import('../src/daemon/client.ts');
+        await beforeCommand(path[0] ?? '');
+      } catch {}
+    }
   });
   await program.parseAsync();
 } catch (err) {
