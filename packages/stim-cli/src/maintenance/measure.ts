@@ -52,6 +52,15 @@ export async function measurePressureAsync(
   return pressureFromObservations(previous, now, level, disk);
 }
 
+/** Pressure from a measurement already taken, such as the daemon tick's. */
+export function pressureFromMeasurement(
+  previous: MaintenancePressure | null,
+  now: number,
+  { memory, disk }: { memory: { level: HostMemoryPressure | null }; disk: MaintenancePressure['disk'] },
+): MaintenancePressure {
+  return pressureFromObservations(previous, now, memory.level, disk);
+}
+
 /**
  * Disk and memory as status shows them. `pressured` is the stim-daemon's memory level above normal; the warning clock
  * carries over from the last measurement, or from the daemon's last tick.
@@ -111,12 +120,14 @@ export function cacheBlocked(
 export async function measureSizes(
   now: number,
   failure: (target: string, workspace?: string) => void,
+  operation?: StimContext,
 ): Promise<MaintenanceSize[]> {
   const sizes: MaintenanceSize[] = [];
   const outputs = await collectWorkspaceOutputs({
     olderThan: null,
     now,
     sizeTimeoutMs: 120_000,
+    ...(operation ? { signal: operation.signal, operation } : {}),
   });
   for (const entry of outputs.workspaces) {
     if (entry.bytes === null) {
