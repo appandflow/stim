@@ -713,7 +713,7 @@ registry signature of every dependency they bring from npm, and does not look up
 Stim's own packages on the registry, so an unpublished version installs. Either way
 the new server is installed beside the running one and must start before the
 switch. The update waits up to 30 minutes for offloaded builds and hosted
-sessions to finish, restarts the job, and switches back to the previous server
+native steps to finish (a server that resumes its hosted sessions leaves the others running), restarts the job, and switches back to the previous server
 when the new job exits or does not answer within 90 seconds. It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
 serve route.

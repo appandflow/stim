@@ -466,6 +466,23 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     expect(launchd.job).toBe('new');
   });
 
+  it('a rollback still waits for hosted sessions a resuming server would leave running', async () => {
+    const target = join(home, 'previous', 'dist', 'stim-server.mjs');
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, '');
+    writeFileSync(join(dirname(target), '..', 'package.json'), JSON.stringify({ version: '1.0.0' }));
+    execFileSync('plutil', ['-replace', 'StimService.PreviousScript', '-string', target, plist]);
+    Object.assign(launchd, { resumes: true, hostedSessions: 1, hostedWork: 0 });
+    const lines: string[] = [];
+    const rolling = rollbackService(label, (line) => lines.push(line));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(launchd.job).toBe('old');
+    expect(lines.some((line) => line.startsWith('Waiting for'))).toBe(true);
+    Object.assign(launchd, { hostedSessions: 0 });
+    await finish(rolling);
+    expect(launchd.job).toBe('new');
+  });
+
   it('restores the current service when the rollback job exits despite matching stale health', async () => {
     const target = join(home, 'previous', 'dist', 'stim-server.mjs');
     mkdirSync(dirname(target), { recursive: true });

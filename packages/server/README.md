@@ -52,7 +52,8 @@ and [device-host clients](#device-host-approval). The plain listing shows
 `GET http://127.0.0.1:7787/health` answers requests from this machine with the
 server's name, versions, `stimBuild` (the digest of the bundled Stim's build),
 protocol, `stimHome`, `startup`, `busy`
-(the offloaded `builds` and `hostedSessions` running now) and the current
+(the offloaded `builds` and `hostedSessions` running now, `hostedWork`, the sessions a restart
+would stop, and `resumes`, true when the rest are left running for the next server) and the current
 Tailscale state. It answers HTTP 200 once `startup.state` is `ready`; while the
 state is `pending` or `degraded` (see the LaunchAgent notes below) it answers
 HTTP 503 with the same body. While Tailscale runs, it also carries `route`, read from
@@ -1494,9 +1495,9 @@ stim-server service rollback [--label <name>]
 stim-server service uninstall [--label <name>]
 ```
 
-Updates wait for offloaded builds and for hosted sessions with a native step in
-flight (a reservation being prepared, an app install, log collection or a stop),
-by default; a server that resumes its hosted sessions reports `busy.hostedWork` and
+Updates wait for offloaded builds and for the hosted sessions a restart would stop
+(a reservation being prepared, an app install or app transfer, a stop in progress, a
+session that is not ready, a macOS app, or a client that lost approval), by default; a server that resumes its hosted sessions reports `busy.hostedWork` and
 `busy.resumes` in `/health`, and its other ready iOS and Android sessions keep running
 through the restart and are resumed by the new server. An older server, which stops
 every session at shutdown, is still waited for entirely. Use `--no-wait` to restart

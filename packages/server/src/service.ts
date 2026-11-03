@@ -951,11 +951,8 @@ export async function installServer(
   }
 }
 
-/**
- * Waits for the work a restart would cut off. A server that resumes its hosted sessions leaves them running, so only
- * the sessions with a native step in flight count; an older one stops every session at shutdown.
- */
-async function waitForIdle(port: number, log: (line: string) => void): Promise<void> {
+/** `allSessions` waits for every hosted session, which a rollback needs because the previous server may not resume them. */
+async function waitForIdle(port: number, log: (line: string) => void, allSessions = false): Promise<void> {
   const deadline = Date.now() + IDLE_WAIT_MS;
   let said = '';
   for (;;) {
@@ -964,7 +961,7 @@ async function waitForIdle(port: number, log: (line: string) => void): Promise<v
     if (health && !busy) {
       log('This stim-server does not report its running builds, so the restart does not wait for them.');
     }
-    const hosted = busy?.resumes ? (busy.hostedWork ?? 0) : (busy?.hostedSessions ?? 0);
+    const hosted = busy?.resumes && !allSessions ? (busy.hostedWork ?? 0) : (busy?.hostedSessions ?? 0);
     if (!busy || busy.builds + hosted === 0) return;
     const work = `${busy.builds} offloaded build(s) and ${hosted} hosted session(s)`;
     if (Date.now() >= deadline) {
@@ -1193,7 +1190,7 @@ export async function rollbackService(label: string, log: (line: string) => void
     if (!build) throw new ServiceError(`The previous server ${previous} is no longer installed.`);
     const at = new Date().toISOString();
     try {
-      await waitForIdle(installed.port, log);
+      await waitForIdle(installed.port, log, true);
       log(`Switching ${label} back to ${describeBuild(build)}.`);
       await switchTo(installed, previous, build);
     } catch (error) {
