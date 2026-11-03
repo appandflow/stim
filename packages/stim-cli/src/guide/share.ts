@@ -123,7 +123,7 @@ WHAT IT NEEDS
   the share wait and resume (A SHARE WAITS FOR ITS DEVICE); control the host
   refuses reaches the viewer as "Control is not available right now".
 
-A LIVE SHARE KEEPS ITS WORKSPACE UP
+A LIVE OR WAITING SHARE KEEPS ITS WORKSPACE UP
 
 A share that has not ended or expired, waiting ones included, keeps its workspace out of the idle
 stage, the pressure ladder and the dormant stage, whether or not anyone

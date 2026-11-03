@@ -27,7 +27,7 @@ stim share ios --expires 15     # 1 to 480 minutes; every share expires
 stim share ios --password '<value>'  # your own password, 8 to 128 characters
 stim share ios --no-password    # no login: the link alone opens it
 stim share android --control --view-password  # a second, watch-only password
-stim share list                 # live shares
+stim share list                 # shares, live or waiting
 stim share stop                 # end this workspace's shares now`}
 />
 
@@ -233,7 +233,7 @@ Only an explicit stop ends a share before its expiry: `stim share stop`,
   [When the device goes away](#when-the-device-goes-away)) and resumes when a
   ready session of that slot is back. `stim share list` does not show the Mac.
 
-## A live share keeps its workspace up
+## A live or waiting share keeps its workspace up
 
 While a share is live or waiting, the [idle stage](./dev-server-and-logs.md#idle-stop),
 the [pressure ladder](./build-caches.md#disk-pressure) and the
