@@ -17,6 +17,7 @@ import {
   archiveDir,
   serverLocalSocket,
   deviceHostArea,
+  deviceHostAreas,
   readArchive,
   readArchiveState,
   readBuildHistory,
@@ -59,7 +60,12 @@ import type { DesktopBootstrap } from './desktop-bootstrap.ts';
 import { actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
 import { parsePlatformRun } from './platform-run.ts';
 import { parsePlatformBuild } from './platform-build.ts';
-import { agentActionReaders, configuredAgentDriver, stoppingAgentDriver } from './agent-drivers.ts';
+import {
+  agentActionReaders,
+  configuredAgentDriver,
+  recoverAgentDrivers,
+  stoppingAgentDriver,
+} from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
 import { HOSTED_IDLE_SWEEP_MS } from './hosted-idle.ts';
@@ -1937,9 +1943,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS,
     ).unref();
     push.refresh();
-    retireOnce ??= hostedDevices.reconcileStopped().catch((error: unknown) => {
-      process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
-    });
+    retireOnce ??= Promise.resolve()
+      .then(() => recoverAgentDrivers(options.env, deviceHostAreas()))
+      .then(() => hostedDevices.reconcileStopped())
+      .catch((error: unknown) => {
+        process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
+      });
     if (options.frameHelper === undefined && !helperPath && !helperBuilding) buildHelper();
     if (options.statusAtBoot !== false) statusFeed.hold();
     if (options.record !== false) {

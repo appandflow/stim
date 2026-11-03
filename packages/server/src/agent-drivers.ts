@@ -66,6 +66,27 @@ export async function stoppingAgentDriver(
   return configuredAgentDriver(ran ?? name, env, area, device);
 }
 
+/**
+ * Runs each first-party driver's `recover` for every area that holds its state. Never rejects; what a driver could
+ * not resolve goes to stderr.
+ */
+export async function recoverAgentDrivers(env: NodeJS.ProcessEnv, areas: string[]): Promise<void> {
+  for (const name of NAMES) {
+    const loaded = await loadAgentDriverModule(name, DRIVERS[name]);
+    if (!('module' in loaded) || !loaded.module.recover) continue;
+    for (const area of areas) {
+      if (!existsSync(join(area, name))) continue;
+      try {
+        await loaded.module.recover({ env, stateDir: join(area, name), claimRoot: join(area, `${name}.claims`) });
+      } catch (error) {
+        process.stderr.write(
+          `The ${name} agent driver could not recover ${area}: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      }
+    }
+  }
+}
+
 let actionReaders: Promise<AgentDriverActions[]> | undefined;
 
 /**

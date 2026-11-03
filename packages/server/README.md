@@ -1152,7 +1152,16 @@ succeeds or up to 10 times, after which it deletes the files, and answers the
 client's next `record stop` within 15 minutes with that result. A finished
 recording over 512 MiB, whichever stop finished it, is deleted and `record stop`
 fails with `STIM_RECORDING_TOO_LARGE`. A request the relay cannot process
-answers 500 instead of rejecting. Driver stop and daemon start
+answers 500 instead of rejecting. On a hosted simulator, the adapter records the
+`simctl io <udid> recordVideo` process that agent-device starts as the child of an
+ownership claim under `<state dir>/recorder.claims`; when it cannot identify that
+process, it stops the recording and answers 500. Driver stop, which runs before
+the session's simulator is parked or deleted, and the next `record start` stop
+that recorder with SIGINT, so simctl finalizes the video, and with SIGKILL after
+10 seconds. When stim-server starts, it stops each recorder whose stim-server is
+gone after checking its recorded process identity. It never signals a recorder
+whose identity it cannot establish: it keeps that claim, and its log names the
+claim and the command that removes it. Driver stop and daemon start
 delete the session's recordings directory, which must be a directory of the
 server's user with no group or other access. `stim gc --delete` run by that user
 without `STIM_HOME` removes one idle for 24 hours as a Stim temp directory. Hosted macOS refuses `record`, because
