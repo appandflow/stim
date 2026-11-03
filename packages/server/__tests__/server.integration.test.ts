@@ -1325,6 +1325,7 @@ describe('pairing', () => {
           'build-jdk',
           'build-reuse-artifact',
           'share-stop-id',
+          'presence',
         ],
         actions: [],
         device: { name: 'Test phone' },

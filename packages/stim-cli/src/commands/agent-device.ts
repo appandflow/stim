@@ -106,10 +106,10 @@ const SESSIONLESS_COMMANDS = new Set(['device']);
 const AGENT_DEVICE_COMMANDS = new Set(
   (
     'action-button alert app-switcher apps appstate artifacts audio auth back batch boot capabilities cdp click ' +
-    'clipboard close connect connection daemon debug device devices diff doctor events fill find focus fold gesture ' +
+    'clipboard close connect connection daemon debug device devices diff disconnect doctor events fill find focus fold gesture ' +
     'get hardware-button help home hover install install-from-source is keyboard logs longpress mcp metro network ' +
-    'open orientation perf plugins prepare press proxy push react-devtools react-native record reinstall replay ' +
-    'screenshot scroll session settings shutdown snapshot swipe takeover telephony test trace trigger-app-event ' +
+    'long-press open orientation perf plugins prepare press proxy push react-devtools react-native record reinstall replay ' +
+    'screenshot scroll session settings shutdown snapshot swipe takeover tap telephony test trace trigger-app-event ' +
     'tv-remote type uninstall viewport wait web'
   ).split(' '),
 );
@@ -140,11 +140,12 @@ const UNSELECTED_COMMANDS = new Set([
   'proxy',
   'connection',
   'connect',
+  'web',
   'disconnect',
 ]);
 
 /** Commands whose first positional is the element they act on. */
-const TARGETED_COMMANDS = new Set(['press', 'click', 'fill', 'longpress', 'hover', 'focus']);
+const TARGETED_COMMANDS = new Set(['press', 'tap', 'click', 'fill', 'longpress', 'long-press', 'hover', 'focus']);
 
 /** Commands agent-device records with a point. */
 const POINT_COMMANDS = new Set([...TARGETED_COMMANDS, 'scroll', 'swipe']);
@@ -686,11 +687,17 @@ async function execute(
   const tree = records.length ? readAgentSnapshot(tracked.root, tracked.session) : null;
   const ended = records.flatMap(({ command: recorded, details }) => {
     if (!COMMAND_NAME.test(recorded)) return [];
-    const gesture = agentActionGesture(details, tree, recorded === tracked.command ? run.plan.target : undefined);
-    return gesture ? [publish(version, { ...target, command: recorded, phase: 'end', gesture })] : [];
+    const gesture = agentActionGesture(
+      details,
+      tree,
+      recorded === tracked.command || records.length === 1 ? run.plan.target : undefined,
+    );
+    return gesture ? [{ command: recorded, gesture }] : [];
   });
-  if (!ended.length) ended.push(publish(version, { ...target, command: tracked.command, phase: 'end' }));
-  await Promise.all([started, ...ended]);
+  await started;
+  if (!ended.length) await publish(version, { ...target, command: tracked.command, phase: 'end' });
+  for (const { command: recorded, gesture } of ended)
+    await publish(version, { ...target, command: recorded, phase: 'end', gesture });
 }
 
 export default function agentDeviceCommand(program: Command, version: string): void {

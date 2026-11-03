@@ -4897,7 +4897,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const approvedMachine = machineMethod(id, message.method, message.params, device);
       if (approvedMachine) return approvedMachine;
-      const localMethod = localMethods[message.method];
+      const localMethod = Object.hasOwn(localMethods, message.method) ? localMethods[message.method] : undefined;
       if (localMethod) return localMethod(id, message.params);
       const desktop = desktopMethod(id, message.method, message.params, device);
       if (desktop) return desktop;

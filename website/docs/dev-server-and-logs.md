@@ -599,7 +599,8 @@ override is absent from the event metadata. See [native Mac agent actions](./mac
 for the app-scoped command and limits.
 
 [`stim agent-device`](./commands.md#agent-device) runs agent-device in this
-workspace's state directory, on its device, so its actions appear here with no
+workspace's state directory, on its device (a hosted session keeps
+agent-device's own), so its actions appear here with no
 setup. For agent-device you run directly, use the `agentDevice.stateDir` reported by
 `ios`, `android`, `macos`, or each `status --json` environment. Read it once
 from `status`, run from the app root, and prefix each agent-device command:
