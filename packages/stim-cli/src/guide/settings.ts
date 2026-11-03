@@ -682,11 +682,13 @@ run waiting to boot, and automatic maintenance.
           into the idle stage (idle.minutes) and dormant ones into the dormant
           stage (idle.dormantDays), runs the pressure ladder above normal,
           reclaims a device for a run waiting to boot, and runs automatic
-          maintenance. When one of those commands finds a daemon started
-          from another Stim build, the daemon keeps serving the command and
-          a new one from the command's build takes over once its current
-          tick finishes, so an upgrade reaches the daemon with the next
-          such command.
+          maintenance. When one of those commands runs from an installed
+          Stim (a global install or a node_modules dependency) and finds a
+          daemon started from another build, the daemon keeps serving the
+          command and a new one from the installed build takes over once
+          its current tick finishes, so an upgrade reaches the daemon with
+          the next such command. A build run from a checkout's dist never
+          replaces a daemon.
   report  the same passes log what they would do and act on nothing.
   off     no daemon and no pass: each dev server supervisor stops its own dev
           server and devices after idle.minutes, and nothing times a device

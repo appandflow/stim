@@ -308,8 +308,9 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     await vi.waitFor(() => expect(readClaimSet(daemonClaimRoot()).live).toEqual([]), { timeout: 10_000, interval: 50 });
   }, 20_000);
 
-  test('a command leaves a daemon from its own build alone and starts a successor for one from another build', async () => {
+  test('an installed build starts a successor for a daemon from another build; the same build and a dev build leave it alone', async () => {
     const build = vi.spyOn(spawnEntry, 'stimBuild').mockReturnValue('build-a');
+    const installed = vi.spyOn(spawnEntry, 'installedBuild').mockReturnValue(true);
     const spawned: (readonly string[])[] = [];
     setExecutor({
       ...getExecutor(),
@@ -321,15 +322,19 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     onTestFinished(() => {
       resetExecutor();
       build.mockRestore();
+      installed.mockRestore();
     });
     const env = { ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' };
     const run = runDaemon({ tickMs: 60_000 });
     await listening();
 
     expect(await ensureDaemon(env)).toBe(true);
+    build.mockReturnValue('build-b');
+    installed.mockReturnValue(false);
+    expect(await ensureDaemon(env)).toBe(true);
     expect(spawned).toEqual([]);
 
-    build.mockReturnValue('build-b');
+    installed.mockReturnValue(true);
     expect(await ensureDaemon(env)).toBe(true);
     expect(spawned.map((args) => args.slice(1))).toEqual([['--mode', 'on', '--replace', String(process.pid)]]);
 
@@ -339,7 +344,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
   }, 20_000);
 
-  test('a daemon from another build hands over only after the tick in progress, and queued runs keep their places', async () => {
+  test('a dev-build daemon hands over to an installed build only after the tick in progress, and queued runs keep their places', async () => {
     normalMeasurement();
     let entered!: () => void;
     const inPass = new Promise<void>((done) => (entered = done));
@@ -350,9 +355,11 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       await pass;
     });
     const build = vi.spyOn(spawnEntry, 'stimBuild').mockReturnValue(null);
+    const installed = vi.spyOn(spawnEntry, 'installedBuild').mockReturnValue(false);
     onTestFinished(() => {
       blocked.mockRestore();
       build.mockRestore();
+      installed.mockRestore();
     });
     const run = runDaemon({ tickMs: 50 });
     await inPass;
@@ -370,6 +377,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     await vi.waitFor(() => expect(liveWaiters('build')).toHaveLength(2), { timeout: 10_000, interval: 20 });
 
     build.mockReturnValue('newer-build');
+    installed.mockReturnValue(true);
     expect(await ensureDaemon({ ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' })).toBe(true);
     await vi.waitFor(() => expect(daemonLog()).toContain('"event":"daemon_handover"'), {
       timeout: 10_000,

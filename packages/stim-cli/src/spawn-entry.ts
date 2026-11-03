@@ -1,4 +1,5 @@
-import { basename, dirname, join } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stimBuildDigest } from '@stim-cli/core/state';
 
@@ -32,4 +33,19 @@ export function spawnEntry(name: SpawnEntryName): string {
 /** The digest of the built Stim these entries belong to; null when Stim runs from source. */
 export function stimBuild(): string | null {
   return stimBuildDigest(dirname(fileURLToPath(import.meta.url)));
+}
+
+/**
+ * Whether this Stim runs from an installed package: its code, symlinks resolved, sits under a `node_modules`
+ * directory, as in an npm or pnpm global install or a project dependency. A checkout's own `dist` and a run from
+ * source are development builds.
+ */
+export function installedBuild(): boolean {
+  try {
+    return realpathSync(dirname(fileURLToPath(import.meta.url)))
+      .split(sep)
+      .includes('node_modules');
+  } catch {
+    return false;
+  }
 }

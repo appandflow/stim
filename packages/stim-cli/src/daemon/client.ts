@@ -12,7 +12,7 @@ import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim
 import { cancellableSleep } from '../cancellation.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { getExecutor } from '../exec.ts';
-import { spawnEntry, stimBuild } from '../spawn-entry.ts';
+import { installedBuild, spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, platformHasDaemon, spawnsDaemon } from './mode.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
@@ -161,9 +161,10 @@ async function claimTaken({ settled, exited }: ReturnType<typeof spawnDaemon>): 
 /**
  * Makes sure this home's daemon runs before a command creates running state: tells a live one about the contact so
  * it does not exit under the command, or starts one in the mode this command resolves, `STIM_DAEMON` included, and
- * waits up to five seconds for it to take the claim. A live daemon started from another Stim build keeps serving
- * the command while a new daemon from this build waits to take over after its current tick. Returns whether a daemon
- * holds the home; a claim Stim cannot resolve is reported and counts as held.
+ * waits up to five seconds for it to take the claim. When this command runs from an installed build, a live daemon
+ * started from another build keeps serving the command while a new daemon from this build waits to take over after
+ * its current tick; a development build never replaces a daemon. Returns whether a daemon holds the home; a claim
+ * Stim cannot resolve is reported and counts as held.
  */
 export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
   if (!spawnsDaemon(env)) return false;
@@ -179,7 +180,7 @@ export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promis
     }
     const running = survey.live.length ? await askDaemon('hello', CONTACT_TIMEOUT_MS) : null;
     if (running) {
-      const own = stimBuild();
+      const own = installedBuild() ? stimBuild() : null;
       if (own !== null && running.build !== own && typeof running.pid === 'number') spawnDaemon(env, mode, running.pid);
       return true;
     }

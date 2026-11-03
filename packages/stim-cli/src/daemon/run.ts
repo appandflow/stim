@@ -31,7 +31,7 @@ import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { waitForProcessExit, type ProcessRecord } from '../process-identity.ts';
-import { stimBuild } from '../spawn-entry.ts';
+import { installedBuild, stimBuild } from '../spawn-entry.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
 import type { Config } from '../workspace/config.ts';
@@ -67,13 +67,13 @@ const OPS: Record<Resource, { wait: string; waiting: string; released: string; c
   boot: { wait: 'boot.wait', waiting: 'boot.waiting', released: 'boot.released', changed: 'boot.changed' },
 };
 
-async function takeClaim(mode: DaemonMode, build: string | null): Promise<ClaimHandle | null> {
+async function takeClaim(mode: DaemonMode, identity: Record<string, unknown>): Promise<ClaimHandle | null> {
   for (let tries = 0; ; tries++) {
     const attempt = tryAcquireClaim({
       root: daemonClaimRoot(),
       mode: 'exclusive',
       label: 'stim-daemon',
-      details: { socket: daemonSocket(), mode, build },
+      details: { socket: daemonSocket(), mode, ...identity },
     });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) return attempt.acquired;
@@ -213,8 +213,8 @@ function pendingWork(config: Config | null, measured: TickMeasurement, slowTickM
  * once, running the activity, dormant and pressure passes and automatic maintenance, and writing `snapshot.json`. A
  * command's contact brings it back to the minute. It exits after two ticks in a row with nothing running, no work
  * pending (`pendingWork`) and no contact, when `daemon.mode` turns off, or when a tick throws, releasing its claim so
- * each supervisor's own idle timer takes over. Asked to hand over, by a daemon a command from another Stim build
- * started, it exits at once between ticks, or after the tick in progress.
+ * each supervisor's own idle timer takes over. Asked to hand over, by a daemon a command from another installed
+ * Stim build started, it exits at once between ticks, or after the tick in progress.
  */
 export async function runDaemon({
   tickMs = TICK_MS,
@@ -231,6 +231,7 @@ export async function runDaemon({
   replace?: number;
 } = {}): Promise<void> {
   const build = stimBuild();
+  const installed = installedBuild();
   const configAtStart = configuredDaemonMode();
   const started = performance.now();
   const startedAt = new Date().toISOString();
@@ -239,7 +240,7 @@ export async function runDaemon({
   const log = (level: Level, event: string, msg: string, fields: Record<string, unknown> = {}) =>
     writer.write({ src: 'daemon', level, event, msg, ...fields });
   const predecessor = replace === undefined ? null : await takeOverFrom(replace, log);
-  const claim = await takeClaim(startMode, build);
+  const claim = await takeClaim(startMode, { build, installed });
   if (!claim) {
     log('debug', 'daemon_claim_held', 'another stim-daemon holds the claim; exiting');
     writer.close();
@@ -354,7 +355,7 @@ export async function runDaemon({
     'info',
     'daemon_started',
     `pid ${process.pid} listening on ${path} after ${Math.round(performance.now() - started)}ms`,
-    { build },
+    { build, installed },
   );
   if (predecessor && !(await waitForProcessExit(predecessor, HANDOVER_WAIT_MS)))
     log('warn', 'daemon_handover', `stim-daemon pid ${predecessor.pid} still runs; ticking anyway`);
@@ -381,7 +382,7 @@ export async function runDaemon({
     hasten = null;
     if (closing) break;
     if (handover) {
-      shutdown('a stim-daemon from another Stim build takes over');
+      shutdown('a stim-daemon from an installed Stim build takes over');
       break;
     }
     tickRequested = false;
