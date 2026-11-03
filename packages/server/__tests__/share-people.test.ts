@@ -38,7 +38,7 @@ describe('the share viewer People list', () => {
         entry('c', 'Cy', { self: true }),
         entry('d', 'Dee', { touching: true }),
         entry('h', 'Host', { kind: 'host' }),
-        entry('g', 'Agent · tap', { kind: 'agent' }),
+        entry('g', 'Agent - tap', { kind: 'agent' }),
       ],
       true,
     );
@@ -48,7 +48,7 @@ describe('the share viewer People list', () => {
       ['Bea', 'view only', false],
       ['Dee', 'controlling', false],
       ['Host', 'controlling', false],
-      ['Agent · tap', 'controlling', false],
+      ['Agent - tap', 'controlling', false],
     ]);
   });
 
