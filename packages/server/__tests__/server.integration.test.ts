@@ -1444,6 +1444,27 @@ describe('pairing', () => {
       logged.mockRestore();
     }
   });
+
+  it('still closes hosted devices when it stops while the Stim home is away', async () => {
+    const port = await start();
+    const home = join(root, 'home');
+    const hostedClose = vi.spyOn(DeviceHost.prototype, 'close');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      renameSync(home, `${home}.away`);
+      for (let tries = 0; tries < 300; tries++) {
+        if ((await fetch(`http://127.0.0.1:${port}/health`)).status === 503) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBe(503);
+      await server?.close();
+      server = null;
+      expect(hostedClose).toHaveBeenCalledOnce();
+    } finally {
+      hostedClose.mockRestore();
+      logged.mockRestore();
+    }
+  });
 });
 
 describe.skipIf(process.platform === 'win32')('Desktop reports', () => {

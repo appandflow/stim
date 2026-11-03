@@ -1535,16 +1535,17 @@ server until the operating system returns.
 A Stim home that stops answering while the server runs, such as `~/.stim`
 symlinked to an external volume that unmounts, puts the server in the same
 degraded state. The server tells a registry it cannot read (a missing or
-unreadable `server` directory, or a `devices.json`, `build-clients.json`,
-`device-host-clients.json` or `secrets.json` it cannot read or parse) from one
-with no clients; a file missing from a readable `server` directory means no
-clients. While it cannot read them it revokes nothing: open connections,
-hosted sessions, builds and controllers continue under the approvals it last
-read, new connections get 503, and a handshake or `hello` it cannot check is
-refused with `home-unavailable` rather than `unauthorized`. It checks the
-registries every second, and once they read again it logs `the Stim home
-answers again; serving clients.`, serves again and applies any revocation it
-then finds.
+unreadable `server` directory, or a `devices.json`, `build-clients.json` or
+`device-host-clients.json` it cannot read or parse) from one with no clients;
+a file missing from a readable `server` directory means no clients. While it
+cannot read them it revokes nothing: open connections, hosted sessions, builds
+and controllers are left as they are and keep the approvals it last read,
+while new connections, including hosted agent requests, get 503. A handshake or
+`hello` it cannot check, including a first contact whose `secrets.json` it
+cannot read, is refused with `home-unavailable` rather than `unauthorized` or
+`unknown-secret`. It checks the registries every second, and once they read
+again it logs `the Stim home answers again; serving clients.`, serves again and
+applies any revocation it then finds.
 
 The job runs in your GUI login session, so it starts when you log in and not at
 boot. On a Mac with no one at the screen, turn on automatic login. Moving the

@@ -1452,13 +1452,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const frames = new FramePool(helperEnv, frameLimits, frameHelper, new DeviceViewers(), undefined, foldHelper);
   let recorder: Recorder | null = null;
   let startup: StartupState = { state: 'pending' };
-  /** The last registries read: approval checks of work under way answer from them while the Stim home does not. */
   let approvals: Registries | null = null;
   let homeLost = false;
-  /**
-   * The registries now, or null when the Stim home does not answer. A ready server then stops serving new clients
-   * until it does, and revokes nothing.
-   */
   const readApprovals = (): Registries | null => {
     try {
       approvals = readRegistries();
@@ -1872,12 +1867,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let retireOnce: Promise<void> | undefined;
   const watchServerDir = () => {
     if (watcher) return;
-    const created = watch(serverDir(), () => {
-      revocationCheck ??= setTimeout(() => {
-        revocationCheck = null;
-        checkRevocations();
-      }, 50);
-    });
+    let created: FSWatcher;
+    try {
+      created = watch(serverDir(), () => {
+        revocationCheck ??= setTimeout(() => {
+          revocationCheck = null;
+          checkRevocations();
+        }, 50);
+      });
+    } catch {
+      return;
+    }
     created.once('error', () => {
       created.close();
       if (watcher === created) watcher = null;
@@ -5228,7 +5228,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     await settle(builds.close());
     for (const client of [...wss.clients, ...localWss.clients]) client.terminate();
     hostConnections.close();
-    if (startup.state === 'ready') {
+    if (startup.state === 'ready' || homeLost) {
       push.close();
       helperAbort.abort();
       sampler.stop();
