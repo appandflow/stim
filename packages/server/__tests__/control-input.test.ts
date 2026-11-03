@@ -79,7 +79,6 @@ it('refuses a second finger where only one pointer exists', () => {
   const two = { x2: 0.75, y2: 0.5 };
   expect(touch('web', two)).toHaveProperty('code', 'bad-request');
   expect(touch('macos', two)).toHaveProperty('code', 'bad-request');
-  expect(
-    touch('ios', { ...two, duoRevision: '123e4567-e89b-12d3-a456-426614174000' }, { postures: ['folded', 'unfolded'] }),
-  ).toHaveProperty('code', 'bad-request');
+  expect(touch('ios', two, { postures: ['folded', 'unfolded'] })).toHaveProperty('code', 'bad-request');
+  expect(touch('android', two, { postures: ['folded', 'unfolded'] })).toHaveProperty('value');
 });

@@ -305,7 +305,7 @@ export function parseInput(
       if (typeof x2 !== 'number' || typeof y2 !== 'number' || !fraction(x2) || !fraction(y2)) {
         return { code: 'bad-request', message: 'input.touch takes x2 and y2 together, each from 0 to 1.' };
       }
-      if (platform === 'web' || platform === 'macos' || duoRevision !== undefined) {
+      if (platform === 'web' || platform === 'macos' || (platform === 'ios' && postures.length > 0)) {
         return { code: 'bad-request', message: 'This device takes one finger only.' };
       }
       second = { x2, y2 };
