@@ -48,6 +48,7 @@ struct DeviceTile: View {
   /// "..." menu, which only such a tile has.
   var clickThrough = false
   @StateObject private var ownWindowChoice = MacosWindowChoice()
+  @StateObject private var serverClipboard = ServerClipboard()
   @Environment(\.displayScale) private var displayScale
   @State private var isOnscreen = false
   @State private var hovering = false
@@ -72,6 +73,7 @@ struct DeviceTile: View {
   @State private var rotateFailed = false
   @State private var clipboardRequest: ClipboardRequest?
   @State private var clipboardError: String?
+  @State private var clipboardReadFailed = false
   @State private var foldError: String?
   @State private var emulatorPosture: EmulatorPosture?
   @State private var postureFailed = false
@@ -135,9 +137,12 @@ struct DeviceTile: View {
         } else if frameOption != nil {
           controlGroup { optionsButton }
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
-        } else if offersStreamQuality {
-          controlGroup { qualityButton }
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
+        } else if offersStreamQuality || offersServerClipboard {
+          controlGroup {
+            if offersServerClipboard { optionsButton }
+            if offersStreamQuality { qualityButton }
+          }
+          .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
         }
       }
     }
@@ -175,6 +180,7 @@ struct DeviceTile: View {
     .onChange(of: clipboardTarget) { _, _ in
       clipboardRequest = nil
       clipboardError = nil
+      clipboardReadFailed = false
       clipboardSync = ClipboardSync()
     }
     .onChange(of: syncsClipboard) { _, _ in clipboardSync = ClipboardSync() }
@@ -186,16 +192,15 @@ struct DeviceTile: View {
     .task(id: clipboardRequest) {
       guard let request = clipboardRequest, request.target == clipboardTarget else { return }
       defer { if clipboardRequest == request { clipboardRequest = nil } }
-      do {
-        let text = request.text
-        let pasted: Bool
-        switch device {
-        case .ios: pasted = await simulatorButtons.paste(text)
-        case .android: pasted = await emulatorButtons.paste(text)
-        default: return
-        }
-        guard !Task.isCancelled, request.target == clipboardTarget else { return }
-        if !pasted { clipboardError = "Could not paste into the device. Check that it is connected and a text field is focused." }
+      let failure = await pasteToDevice(request.text)
+      guard !Task.isCancelled, request.target == clipboardTarget else { return }
+      if let failure {
+        clipboardError = failure
+      } else if case .ios = device {
+        ToastCenter.shared.show(
+          Toast(
+            icon: "hand.tap", title: "Paste sent",
+            body: "If nothing appears, tap the paste suggestion on the device.", key: "clipboard-paste-hint"))
       }
     }
     .alert("Clipboard Transfer", isPresented: Binding(get: { clipboardError != nil }, set: { if !$0 { clipboardError = nil } })) {
@@ -459,23 +464,25 @@ struct DeviceTile: View {
   }
 
   private var optionsButton: some View {
-    Button("Simulator Options", systemImage: "slider.horizontal.3") { showsSimulatorOptions = true }
-      .labelStyle(.iconOnly)
-      .buttonStyle(DeviceControlButtonStyle())
-      .help("Display, appearance, accessibility and clipboard settings")
-      .popover(isPresented: $showsSimulatorOptions) {
-        if let udid = simulatorOptionsUDID {
-          SimulatorOptionsView(
-            udid: udid, canControl: simulatorOptionsUDID == udid, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions),
-            frame: frameOption, audio: simulatorAudioTarget, tools: deviceToolsView
-          )
-          .id(udid)
-        } else {
-          EmulatorOptionsView(
-            title: optionsTitle, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions), frame: frameOption,
-            audio: emulatorAudioTarget, tools: deviceToolsView)
-        }
+    Button(offersServerClipboard ? "Device Options" : "Simulator Options", systemImage: "slider.horizontal.3") {
+      showsSimulatorOptions = true
+    }
+    .labelStyle(.iconOnly)
+    .buttonStyle(DeviceControlButtonStyle())
+    .help(offersServerClipboard ? "Clipboard settings" : "Display, appearance, accessibility and clipboard settings")
+    .popover(isPresented: $showsSimulatorOptions) {
+      if let udid = simulatorOptionsUDID {
+        SimulatorOptionsView(
+          udid: udid, canControl: simulatorOptionsUDID == udid, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions),
+          frame: frameOption, audio: simulatorAudioTarget, tools: deviceToolsView
+        )
+        .id(udid)
+      } else {
+        EmulatorOptionsView(
+          title: optionsTitle, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions), frame: frameOption,
+          audio: emulatorAudioTarget, tools: deviceToolsView)
       }
+    }
   }
 
   private var deviceToolsView: DeviceToolsView? {
@@ -493,6 +500,7 @@ struct DeviceTile: View {
   }
 
   private var optionsTitle: String {
+    if offersServerClipboard { return "Device options" }
     if case .android = device { return "Emulator options" }
     return "Simulator Options"
   }
@@ -784,7 +792,10 @@ struct DeviceTile: View {
   }
 
   private func clipboardOptions(dismiss: Binding<Bool>) -> ClipboardOptionsView? {
-    guard let target = clipboardTarget else { return nil }
+    guard let target = clipboardTarget else {
+      guard viewer, interactive, !replaying, case .unsupported(let reason) = serverClipboard.access else { return nil }
+      return ClipboardOptionsView(paste: {}, copy: { false }, unavailableReason: reason)
+    }
     return ClipboardOptionsView(
       paste: {
         dismiss.wrappedValue = false
@@ -801,16 +812,65 @@ struct DeviceTile: View {
       })
   }
 
+  private var offersServerClipboard: Bool {
+    guard viewer, interactive, !replaying else { return false }
+    return serverClipboard.access != .none
+  }
+
+  /// Where the clipboard of the viewed device lives: the simulator or emulator Desktop drives on this Mac, or the
+  /// control session on stim-server.
+  private enum ClipboardRoute {
+    case simulator
+    case emulator
+    case server
+  }
+
+  private var clipboardRoute: ClipboardRoute? {
+    if case .ready = serverClipboard.access { return .server }
+    switch device {
+    case .ios: return .simulator
+    case .android: return .emulator
+    default: return nil
+    }
+  }
+
+  /// The failure to show, or nil once the text is pasted.
+  private func pasteToDevice(_ text: String) async -> String? {
+    let localFailure = "Could not paste into the device. Check that it is connected and a text field is focused."
+    switch clipboardRoute {
+    case .simulator: return await simulatorButtons.paste(text) ? nil : localFailure
+    case .emulator: return await emulatorButtons.paste(text) ? nil : localFailure
+    case .server:
+      do {
+        try await serverClipboard.set(text, paste: true)
+        return nil
+      } catch is CancellationError {
+        return nil
+      } catch {
+        return "Could not paste into the device. \(error.localizedDescription)"
+      }
+    case nil: return nil
+    }
+  }
+
   private func copyDeviceClipboard(target: String) async -> Bool {
     let text: String?
-    switch device {
-    case .ios: text = await simulatorButtons.clipboard()
-    case .android: text = await emulatorButtons.clipboard()
-    default: return false
+    var failure = "Could not read the device clipboard. Check that the device is connected."
+    switch clipboardRoute {
+    case .simulator: text = await simulatorButtons.clipboard()
+    case .emulator: text = await emulatorButtons.clipboard()
+    case .server:
+      do {
+        text = try await serverClipboard.text()
+      } catch {
+        text = nil
+        failure = "Could not read the device clipboard. \(error.localizedDescription)"
+      }
+    case nil: return false
     }
     guard target == clipboardTarget else { return false }
     guard let text else {
-      clipboardError = "Could not read the device clipboard. Check that the device is connected."
+      clipboardError = failure
       return false
     }
     NSPasteboard.general.clearContents()
@@ -828,19 +888,55 @@ struct DeviceTile: View {
   }
 
   private func copyToDevice(_ text: String) async -> Bool {
-    switch device {
-    case .ios: return await simulatorButtons.setClipboard(text)
-    case .android: return await emulatorButtons.setClipboard(text)
-    default: return false
+    switch clipboardRoute {
+    case .simulator: return await simulatorButtons.setClipboard(text)
+    case .emulator: return await emulatorButtons.setClipboard(text)
+    case .server:
+      do {
+        try await serverClipboard.set(text, paste: false)
+        return true
+      } catch {
+        if !Task.isCancelled, shouldReport(error) {
+          ToastCenter.shared.show(
+            Toast(
+              icon: "doc.on.clipboard", tone: .warning, title: "Clipboard not synced", body: error.localizedDescription,
+              key: "clipboard-sync-problem"))
+        }
+        return false
+      }
+    case nil: return false
     }
   }
 
   private func readDeviceClipboard() async -> String? {
-    switch device {
-    case .ios: return await simulatorButtons.clipboard()
-    case .android: return await emulatorButtons.clipboard()
-    default: return nil
+    switch clipboardRoute {
+    case .simulator: return await simulatorButtons.clipboard()
+    case .emulator: return await emulatorButtons.clipboard()
+    case .server:
+      do {
+        let text = try await serverClipboard.text()
+        clipboardReadFailed = false
+        return text
+      } catch {
+        if !Task.isCancelled, !clipboardReadFailed, shouldReport(error) {
+          clipboardReadFailed = true
+          ToastCenter.shared.show(
+            Toast(
+              icon: "doc.on.clipboard", tone: .warning, title: "Device clipboard not read", body: error.localizedDescription,
+              key: "clipboard-sync-problem"))
+        }
+        return nil
+      }
+    case nil: return nil
     }
+  }
+
+  /// A busy connection or a control session that just ended says nothing the user can act on, and a cancelled
+  /// request is the user moving on.
+  private func shouldReport(_ error: Error) -> Bool {
+    if error is CancellationError { return false }
+    guard let error = error as? ServerError else { return true }
+    return !["limit-exceeded", "not-connected"].contains(error.code)
   }
 
   private var macChangedSinceLastLook: Bool {
@@ -891,6 +987,7 @@ struct DeviceTile: View {
 
   private var clipboardTarget: String? {
     guard viewer, interactive, !replaying, device.isRunning else { return nil }
+    if case .ready(let session) = serverClipboard.access { return "server \(session)" }
     switch device {
     case .ios(_, let sim) where sim.owned: return owned.localSimulatorUDID
     case .android(_, let avd) where avd.owned && !avd.physical && avd.host == nil: return owned.localEmulatorSerial
@@ -1080,7 +1177,7 @@ struct DeviceTile: View {
         PhysicalDeviceScreen(
           device: device, owner: owner, workspace: workspace, interactive: interactive, covered: buildCovered,
           onPixelSizeChange: { pixelSizes[1] = pointSize($0) }, onControlLost: onControlLost, windowChoice: choice,
-          quality: streamQuality
+          quality: streamQuality, clipboard: serverClipboard
         )
         .id([device.id, owned.activityKey].compactMap { $0 }.joined(separator: "|"))
         .frame(width: screenWidth(1))
@@ -1095,7 +1192,8 @@ struct DeviceTile: View {
       if let workspace, device.platform == "ios" || device.platform == "android" {
         PhysicalDeviceScreen(
           device: device, owner: owner, workspace: workspace, interactive: interactive, covered: buildCovered,
-          onPixelSizeChange: { pixelSizes[1] = $0 }, onControlLost: onControlLost, quality: streamQuality
+          onPixelSizeChange: { pixelSizes[1] = $0 }, onControlLost: onControlLost, quality: streamQuality,
+          clipboard: serverClipboard
         )
         .id(owned.id)
         .frame(width: screenWidth(1))
@@ -1180,7 +1278,7 @@ struct DeviceTile: View {
         PhysicalDeviceScreen(
           device: device, owner: owner, workspace: workspace, interactive: interactive,
           onPixelSizeChange: { pixelSizes[1] = $0 },
-          onControlLost: onControlLost, quality: streamQuality
+          onControlLost: onControlLost, quality: streamQuality, clipboard: serverClipboard
         )
         .id(device.id)
         .frame(width: screenWidth(1))
