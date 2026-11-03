@@ -33,7 +33,7 @@ stim share ios --reuse          # start the stopped share again, same link and p
 stim share stop --forget        # stop, and forget the saved links`}
 />
 
-It prints the link and a generated password once:
+It prints the link and a generated password:
 
 ```text
 Shared ios of /Users/me/app: view only, 0 viewers, expires 2026-11-02T19:12:00.000Z.
