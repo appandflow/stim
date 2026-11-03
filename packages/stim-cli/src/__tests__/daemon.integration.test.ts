@@ -9,7 +9,7 @@ import { daemonClaimRoot, daemonNdjsonFile, daemonSocket, readDaemonSnapshot } f
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
-import { beforeCommand, ensureDaemon, requestDaemonTick } from '../daemon/client.ts';
+import { beforeCommand, ensureDaemon, passPlacement, requestDaemonTick } from '../daemon/client.ts';
 import * as measure from '../daemon/measure.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
 import { runDaemon } from '../daemon/run.ts';
@@ -297,15 +297,118 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test('on win32 every command but guide, settings, help and gc runs automatic maintenance in-process', async () => {
-  const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
-  const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
-  onTestFinished(() => platform.mockRestore());
-  const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'on' };
-  delete env[HOME_PASSES_TEST_GUARD_ENV];
+test('where no daemon runs, doctor, start, ios and android run the passes in process and other commands in a background child, never guide, settings, help, gc or agent-device', () => {
+  const placements = (platform: NodeJS.Platform) =>
+    Object.fromEntries(
+      [
+        'doctor',
+        'start',
+        'ios',
+        'android',
+        'web',
+        'revive',
+        'logs',
+        'status',
+        'reload',
+        'stop',
+        'guide',
+        'settings',
+        'help',
+        'gc',
+        'agent-device',
+      ].map((name) => [name, passPlacement(name, platform)]),
+    );
+  const none = { guide: 'none', settings: 'none', help: 'none', gc: 'none', 'agent-device': 'none' };
+  const inline = { doctor: 'inline', start: 'inline', ios: 'inline', android: 'inline' };
 
-  const names = ['start', 'ios', 'android', 'web', 'revive', 'doctor', 'logs', 'status', 'reload', 'stop'];
-  for (const name of [...names, 'guide', 'settings', 'help', 'gc']) await beforeCommand(name, env);
+  expect(placements('win32')).toEqual({
+    ...inline,
+    ...none,
+    web: 'background',
+    revive: 'background',
+    logs: 'background',
+    status: 'background',
+    reload: 'background',
+    stop: 'background',
+  });
+  expect(placements('darwin')).toEqual({
+    ...inline,
+    ...none,
+    web: 'none',
+    revive: 'none',
+    logs: 'none',
+    status: 'none',
+    reload: 'none',
+    stop: 'none',
+  });
+});
 
-  expect(ran.mock.calls).toEqual(names.map((name) => [name, { report: false }]));
+describe('on win32, which has no daemon', () => {
+  const spawned: { file: string; options: SpawnOptions }[] = [];
+  let env: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    spawned.length = 0;
+    setExecutor({
+      ...getExecutor(),
+      spawn(file, _args, options) {
+        spawned.push({ file, options: options ?? {} });
+        throw new Error('no child starts in this test');
+      },
+    });
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    onTestFinished(() => {
+      platform.mockRestore();
+      resetExecutor();
+    });
+    env = { ...process.env, STIM_DAEMON: 'on' };
+    delete env[HOME_PASSES_TEST_GUARD_ENV];
+  });
+
+  test('doctor, start, ios and android run automatic maintenance before the command', async () => {
+    const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
+
+    for (const name of ['start', 'ios', 'android', 'doctor']) await beforeCommand(name, env);
+
+    expect(ran.mock.calls).toEqual(['start', 'ios', 'android', 'doctor'].map((name) => [name, { report: false }]));
+    expect(spawned).toEqual([]);
+  });
+
+  test('other commands start the passes in a detached child that prints nothing, at most once a minute', async () => {
+    const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
+
+    await beforeCommand('logs', env);
+    await beforeCommand('status', env);
+
+    expect(ran).not.toHaveBeenCalled();
+    expect(spawned).toEqual([
+      expect.objectContaining({
+        options: expect.objectContaining({ detached: true, stdio: ['ignore', expect.any(Number), expect.any(Number)] }),
+      }),
+    ]);
+
+    writeFileSync(join(home, 'daemon', 'command-passes.json'), `${JSON.stringify({ at: Date.now() - 61_000 })}\n`);
+    await beforeCommand('reload', env);
+    expect(spawned).toHaveLength(2);
+
+    for (const unreadable of ['not json', JSON.stringify({ at: Date.now() + 3_600_000 })]) {
+      writeFileSync(join(home, 'daemon', 'command-passes.json'), unreadable);
+      await beforeCommand('web', env);
+    }
+    expect(spawned).toHaveLength(4);
+  });
+
+  test('guide, settings, help, gc and agent-device start nothing', async () => {
+    const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
+
+    for (const name of ['guide', 'settings', 'help', 'gc', 'agent-device']) await beforeCommand(name, env);
+
+    expect(ran).not.toHaveBeenCalled();
+    expect(spawned).toEqual([]);
+  });
+
+  test('daemon.mode off starts nothing', async () => {
+    await beforeCommand('logs', { ...env, STIM_DAEMON: 'off' });
+    expect(spawned).toEqual([]);
+  });
 });

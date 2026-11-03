@@ -689,11 +689,13 @@ run waiting to boot, and automatic maintenance.
           with no dev server.
 
 Without a running daemon -- on Windows, which has none, or when one could not
-start -- stim doctor, start, ios and android (on Windows every command but
-guide, settings and gc) run automatic maintenance, the idle stage for owned
-devices whose workspace has no running dev server, and the pressure ladder in
-their own process, acting in on and only logging in report, never taking the
-command's own workspace. stim gc runs the same passes in its
+start -- stim doctor, start, ios and android run automatic maintenance, the idle
+stage for owned devices whose workspace has no running dev server, and the
+pressure ladder in their own process, acting in on and only logging in report,
+never taking the command's own workspace. On Windows every other top-level
+command except guide, settings, help, gc and agent-device starts the same passes
+in a detached background process, at most once a minute; the command does not
+wait for it and it prints nothing. stim gc runs the same passes in its
 own process. It is off in CI unless STIM_DAEMON is set.
 A command starts the daemon in the mode it resolves, STIM_DAEMON included; a
 later change to the machine setting can make a running daemon stricter, never

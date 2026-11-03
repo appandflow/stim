@@ -2404,9 +2404,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   or while no daemon runs, the workspace's supervisor checks once a minute and
   shuts its own devices down after idle.minutes. A device whose workspace has
   no running dev server is shut down by the idle stage that the next command
-  runs in its own process (stim doctor, start, ios and android, and on Windows
-  every command but guide, settings and gc), never for that command's own
-  workspace; with no daemon nothing times it between commands. Change the clock with
+  runs in its own process (stim doctor, start, ios and android; on Windows also
+  a background process that every other top-level command but guide, settings,
+  help, gc and agent-device starts, at most once a minute), never for that
+  command's own workspace; with no daemon nothing times it between commands. Change the clock with
   \`stim settings set idle.minutes <minutes> --scope machine\`; 0 turns idle
   and dormant off, and an explicit 0 stays 0.
 

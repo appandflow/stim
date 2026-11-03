@@ -158,9 +158,10 @@ runs, the dev server's own supervisor applies the same clock to itself and its
 devices, without deleting build outputs. A device whose workspace has no running
 dev server, such as an emulator left booted after a Release `stim android`,
 goes into the idle stage in the next command that runs the in-process passes
-(`stim doctor`, `stim start`, `stim ios` and `stim android`, and on Windows any
-command but `stim guide`, `stim settings` and `stim gc`), never in the
-workspace that command runs in. Nothing times it between commands without a
+(`stim doctor`, `stim start`, `stim ios` and `stim android`; on Windows also the
+background process that other top-level commands except `stim guide`,
+`stim settings`, `stim help`, `stim gc` and `stim agent-device` start, at most
+once a minute), never in the workspace that command runs in. Nothing times it between commands without a
 daemon.
 
 <StimTabs code={`stim settings set idle.minutes 60 --scope workspace`} />

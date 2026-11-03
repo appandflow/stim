@@ -118,8 +118,9 @@ export async function runHomePasses({
 
 /**
  * The pressure ladder in this process, for a command with no daemon holding the home: from rung 2, because the idle
- * stage of rung 1 is the activity pass, which only the daemon runs. Measures and lists devices only when the level is
- * above normal, and nothing while `daemon.mode` is off. Logs to `daemon.ndjson` under `trigger`.
+ * stage of rung 1 is the activity pass, which a command runs only for workspaces with no dev server
+ * (`runCommandIdle`). Measures and lists devices only when the level is above normal, and nothing while `daemon.mode`
+ * is off. Logs to `daemon.ndjson` under `trigger`.
  */
 async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protectedRoot?: string): Promise<void> {
   const mode = daemonMode(env);
@@ -173,7 +174,7 @@ async function runCommandIdle(trigger: string, env: NodeJS.ProcessEnv, protected
   const config = loadConfig();
   if (!config || mode === 'off') return;
   const now = Date.now();
-  const measured = await measureTick(config, now, { probe: false });
+  const measured = await measureTick(config, now);
   const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
   try {
     await runIdlePass({
