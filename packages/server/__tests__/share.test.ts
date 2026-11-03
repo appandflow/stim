@@ -3,6 +3,7 @@ import { connect as tcpConnect, Socket } from 'node:net';
 import { WebSocket } from 'ws';
 import type { FrameHint } from '../src/frame-helper.ts';
 import type { Device, FrameListener } from '../src/frames.ts';
+import { PresenceHub } from '../src/presence.ts';
 import type { ShareSource } from '../src/share-hosted.ts';
 import { ShareHub, type ShareRequest, type StartedShare, type StatusListener } from '../src/share.ts';
 import { accessUnitOf, type AccessUnit } from '../src/video.ts';
@@ -25,6 +26,13 @@ interface Fixture {
   congestions: number;
   begins: unknown[];
   inputs: unknown[];
+  /** The viewer each input came from, by name. */
+  inputBy: string[];
+  /** Names of the viewers whose pointer the control hub was told to lift. */
+  releases: string[];
+  /** A holder name the fake control hub turns every touch away for. */
+  busy: string | null;
+  presence: PresenceHub;
   routeOpens: number[];
   routeCloses: number;
   idle: number;
@@ -52,6 +60,10 @@ function fixture(): Fixture {
     congestions: 0,
     begins: [],
     inputs: [],
+    inputBy: [],
+    releases: [],
+    busy: null,
+    presence: new PresenceHub(),
     routeOpens: [],
     routeCloses: 0,
     idle: 0,
@@ -68,6 +80,7 @@ function fixture(): Fixture {
     hub: null as unknown as ShareHub,
   };
   f.hub = new ShareHub({
+    presence: f.presence,
     frames: {
       keyframe: () => f.keyframes++,
       congested: () => f.congestions++,
@@ -87,11 +100,15 @@ function fixture(): Fixture {
         return { session: 'c1', platform: 'ios', lease: { grantedAt: 'lease-1', expiresAt: '' }, postures: [] };
       },
       targetOf: (_owner, session) => (session === 'c1' ? { platform: 'ios', postures: [] } : null),
-      input: async (_owner, session, command) => {
+      input: async (_owner, session, command, participant) => {
         f.inputs.push({ session, command });
+        f.inputBy.push(participant?.name ?? '');
+        if (f.busy !== null) return { code: 'device-busy', message: 'busy', busy: f.busy };
         return null;
       },
-      release: () => {},
+      release: (_owner, _session, participant) => {
+        f.releases.push(participant.name);
+      },
       endFor: () => {},
     },
     subscribeStatus: (listener) => {
@@ -230,11 +247,17 @@ function connect(
   url: string,
   headers: Record<string, string>,
   query = '',
-): Promise<{ socket: WebSocket; status: number | null }> {
+): Promise<{ socket: WebSocket; status: number | null; messages: Record<string, unknown>[] }> {
   return new Promise((resolve) => {
     const socket = new WebSocket(`${url.replace(/^http/, 'ws')}ws${query}`, { headers });
-    socket.once('open', () => resolve({ socket, status: null }));
-    socket.once('unexpected-response', (_request, response) => resolve({ socket, status: response.statusCode! }));
+    const messages: Record<string, unknown>[] = [];
+    socket.on('message', (data, binary) => {
+      if (!binary) messages.push(JSON.parse(String(data)));
+    });
+    socket.once('open', () => resolve({ socket, status: null, messages }));
+    socket.once('unexpected-response', (_request, response) =>
+      resolve({ socket, status: response.statusCode!, messages }),
+    );
     socket.once('error', () => {});
   });
 }
@@ -267,6 +290,7 @@ describe('a web share', () => {
   });
   afterEach(async () => {
     await f.hub.close();
+    f.presence.close();
   });
 
   it('opens one Funnel route for its loopback listener and hands out a high-entropy link and password', async () => {
@@ -508,6 +532,168 @@ describe('a web share', () => {
     socket.close();
   });
 
+  describe('with a view password next to the control one', () => {
+    const touch = (x = 0.25) => JSON.stringify({ type: 'touch', phase: 'down', x, y: 0.75 });
+    const signed = async (control = 'control pass', view = 'view password') => {
+      const share = await started(f, { control: true, password: control, view: { password: view } });
+      const url = local(share, f.hub.port!);
+      return { share, url, headers: { origin: origin(url) } };
+    };
+
+    it('refuses a view password without control or with a password it equals, and never returns either', async () => {
+      expect(await f.hub.start(shareRequest({ view: {} }))).toMatchObject({ code: 'bad-request' });
+      expect(await f.hub.start(shareRequest({ control: true, passwordless: true, view: {} }))).toMatchObject({
+        code: 'bad-request',
+      });
+      expect(
+        await f.hub.start(shareRequest({ control: true, password: 'same one!', view: { password: 'same one!' } })),
+      ).toMatchObject({ code: 'bad-request' });
+      const share = await started(f, { control: true, view: {} });
+      expect(share).toMatchObject({ auth: 'generated', viewAuth: 'generated' });
+      expect(share.viewPassword).toMatch(/^[a-z2-9]{16}$/);
+      expect(share.viewPassword).not.toBe(share.password);
+      const chosen = await started(f, { control: true, view: { password: 'watch only' } });
+      expect(chosen).toMatchObject({ viewAuth: 'set' });
+      expect(JSON.stringify([chosen, f.hub.list()])).not.toContain('watch only');
+    });
+
+    it('lets the control password tap and drops every input from a viewer that logged in with the view password', async () => {
+      const { url, headers } = await signed();
+      const watcher = await connect(url, { ...headers, cookie: await login(url, 'view%20password') });
+      const driver = await connect(url, { ...headers, cookie: await login(url, 'control%20pass') });
+      for (const type of ['touch', 'text', 'key', 'button', 'rotate']) {
+        watcher.socket.send(
+          JSON.stringify({
+            type,
+            phase: 'down',
+            x: 0.5,
+            y: 0.5,
+            text: 'a',
+            key: 'left',
+            button: 'home',
+            direction: 'left',
+          }),
+        );
+      }
+      driver.socket.send(touch());
+      await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(f.inputs).toEqual([{ session: 'c1', command: { input: 'touch', phase: 'down', x: 0.25, y: 0.75 } }]);
+      watcher.socket.close();
+      driver.socket.close();
+    });
+
+    it('serves a view session the view-only page with the upgrade offer, and a control session the controls', async () => {
+      const { url } = await signed();
+      const watching = (await http(url, { cookie: await login(url, 'view%20password') })).body;
+      expect(watching).toContain('data-control="false"');
+      expect(watching).toContain('data-view-only="true"');
+      expect(watching).toContain('data-upgrade="true"');
+      const driving = (await http(url, { cookie: await login(url, 'control%20pass') })).body;
+      expect(driving).toContain('data-control="true"');
+      expect(driving).toContain('data-view-only="false"');
+      expect(driving).toContain('data-upgrade="false"');
+    });
+
+    it('raises a view session to control on the control password, keeps it view on a wrong one, and never lowers one', async () => {
+      const { url, headers } = await signed();
+      const cookie = await login(url, 'view%20password');
+      const wrong = await http(`${url}login`, { method: 'POST', body: 'password=nope', cookie });
+      expect(wrong).toMatchObject({ status: 303 });
+      expect(wrong.headers.location).toContain('?upgrade=wrong');
+      expect(wrong.headers['set-cookie']).toBeUndefined();
+      const { socket } = await connect(url, { ...headers, cookie });
+      socket.send(touch());
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(f.inputs).toEqual([]);
+
+      const raised = await http(`${url}login`, { method: 'POST', body: 'password=control%20pass', cookie });
+      expect(raised.status).toBe(303);
+      expect(raised.headers['set-cookie']).toBeUndefined();
+      socket.send(touch());
+      await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
+      await http(`${url}login`, { method: 'POST', body: 'password=view%20password', cookie });
+      socket.send(touch(0.5));
+      await vi.waitFor(() => expect(f.inputs).toHaveLength(2));
+      socket.close();
+    });
+
+    it('counts a wrong upgrade password against the share, like any wrong password', async () => {
+      const { url } = await signed();
+      const cookie = await login(url, 'view%20password');
+      for (let attempt = 0; attempt < 3; attempt++)
+        await http(`${url}login`, { method: 'POST', body: 'password=x', cookie });
+      const locked = await http(`${url}login`, { method: 'POST', body: 'password=control%20pass', cookie });
+      expect(locked.headers.location).toContain('?upgrade=limited');
+    });
+
+    it('names each viewer, tells it who it is, and shows the others on the roster without echoing its own entry', async () => {
+      const { url, headers } = await signed();
+      const named = await http(`${url}login`, {
+        method: 'POST',
+        body: 'password=control%20pass&name=%20%20Ann%E2%80%AE%20',
+      });
+      const first = await connect(url, { ...headers, cookie: String(named.headers['set-cookie']).split(';')[0]! });
+      const firstMessages = first.messages;
+      const second = await connect(url, { ...headers, cookie: await login(url, 'view%20password') });
+      const secondMessages = second.messages;
+      await vi.waitFor(() => expect(firstMessages.map((m) => m.type)).toContain('presence'));
+      expect(firstMessages.find((m) => m.type === 'you')).toMatchObject({ name: 'Ann', color: 2, access: 'control' });
+      expect(firstMessages.filter((m) => m.type === 'presence')).toEqual([
+        {
+          type: 'presence',
+          participants: [{ id: expect.any(String), kind: 'viewer', name: 'Guest 1', color: 3, viewOnly: true }],
+        },
+      ]);
+      await vi.waitFor(() => expect(secondMessages.find((m) => m.type === 'you')).toBeDefined());
+      expect(secondMessages.find((m) => m.type === 'you')).toMatchObject({ name: 'Guest 1', color: 3, access: 'view' });
+      second.socket.close();
+      await vi.waitFor(() =>
+        expect(firstMessages.at(-1)).toMatchObject({
+          type: 'presence',
+          participants: [{ name: 'Guest 1', touch: null }],
+        }),
+      );
+      first.socket.close();
+    });
+
+    it("tells a viewer whose touch another holds who holds the pointer, and lifts a closed socket's pointer", async () => {
+      const { url, headers } = await signed();
+      const { socket, messages } = await connect(url, { ...headers, cookie: await login(url, 'control%20pass') });
+      f.busy = 'Ann';
+      socket.send(touch());
+      await vi.waitFor(() => expect(messages).toContainEqual({ type: 'busy', name: 'Ann' }));
+      expect(messages.filter((m) => m.type === 'control')).toEqual([]);
+      socket.close();
+      await vi.waitFor(() => expect(f.releases).toEqual(['Guest 1']));
+    });
+  });
+
+  describe('on a share without a login', () => {
+    it('names a viewer by what it sends, one change per five seconds, and falls back to Guest N', async () => {
+      const share = await started(f, { passwordless: true, control: true });
+      const url = local(share, f.hub.port!);
+      const headers = { origin: origin(url) };
+      expect((await http(url)).body).toContain('data-ask-name="true"');
+      const { socket } = await connect(url, headers);
+      const other = await connect(url, headers);
+      const seen = new Promise<Record<string, unknown>[]>((resolve) => {
+        const received: Record<string, unknown>[] = [];
+        other.socket.on('message', (data, binary) => {
+          if (binary) return;
+          received.push(JSON.parse(String(data)));
+          if (received.some((m) => m.type === 'presence' && JSON.stringify(m).includes('Zed'))) resolve(received);
+        });
+      });
+      socket.send(JSON.stringify({ type: 'name', name: '  Zed\u202e ' }));
+      socket.send(JSON.stringify({ type: 'name', name: 'Too soon' }));
+      const received = await seen;
+      expect(JSON.stringify(received)).not.toContain('Too soon');
+      socket.close();
+      other.socket.close();
+    });
+  });
+
   it('serves its stylesheet and script without a token, and nothing else under that path', async () => {
     const share = await started(f);
     const base = new URL(local(share, f.hub.port ?? 0)).origin;
@@ -539,9 +725,10 @@ describe('a web share', () => {
       background: 'Qkc=',
       foreground: 'Rkc=',
     });
-    await vi.waitFor(() => expect(messages).toHaveLength(2));
+    await vi.waitFor(() => expect(messages).toHaveLength(3));
     expect(messages[0]).toEqual({ type: 'hello', expiresAt: share.expiresAt });
-    expect(messages[1]).toMatchObject({
+    expect(messages[1]).toMatchObject({ type: 'you', name: 'Guest 1', access: 'view' });
+    expect(messages[2]).toMatchObject({
       type: 'artwork',
       artwork: {
         aperture: { width: 8 },

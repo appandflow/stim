@@ -123,6 +123,42 @@ describe('stim share', () => {
     expect(deps.sent).toEqual([]);
   });
 
+  it('refuses a view password that has no separate control password to go with, before asking the server', async () => {
+    const deps = fake([]);
+    for (const opts of [
+      { viewPassword: true as const },
+      { viewPassword: true as const, control: true, password: false as const },
+      { viewPassword: 'short', control: true },
+      { viewPassword: 'same password', password: 'same password', control: true },
+    ]) {
+      expect(await runShare('android', opts, deps, '1.0.0')).toMatchObject({ error: { code: 'STIM_BAD_ARG' } });
+    }
+    expect(deps.sent).toEqual([]);
+  });
+
+  it('asks for a generated or a chosen view password and prints both passwords once', async () => {
+    const deps = fake([
+      () => ({
+        result: {
+          ...ROW,
+          control: true,
+          auth: 'generated',
+          viewAuth: 'generated',
+          password: 'ctrlpass1',
+          viewPassword: 'viewpass2',
+        },
+      }),
+      () => ({ result: { ...ROW, control: true, auth: 'generated', viewAuth: 'set', password: 'ctrlpass1' } }),
+    ]);
+    const generated = await runShare('android', { control: true, viewPassword: true }, deps, '1.0.0');
+    expect(deps.sent[0]!.params).toMatchObject({ control: true, view: {} });
+    expect(generated).toMatchObject({ ok: true, text: expect.stringContaining('Control password: ctrlpass1') });
+    expect(generated).toMatchObject({ text: expect.stringContaining('View password:    viewpass2') });
+    const chosen = await runShare('android', { control: true, viewPassword: 'watch only!' }, deps, '1.0.0');
+    expect(deps.sent[1]!.params).toMatchObject({ view: { password: 'watch only!' } });
+    expect(JSON.stringify(chosen)).not.toContain('watch only!');
+  });
+
   it('sends a password the person set without ever printing it back', async () => {
     const deps = fake([() => ({ result: { ...ROW, auth: 'set' } })]);
     const result = await runShare('android', { password: 'correct horse', expires: '30' }, deps, '1.0.0');
