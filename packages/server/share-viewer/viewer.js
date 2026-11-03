@@ -199,9 +199,16 @@ if (control) {
   };
   screen.addEventListener('pointerup', up);
   screen.addEventListener('pointercancel', up);
+  const keys = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Escape: 'escape' };
   const typed = { Enter: '\n', Tab: '\t', Backspace: '\b' };
   screen.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const key = keys[event.key];
+    if (key && !event.shiftKey) {
+      send({ type: 'key', key });
+      event.preventDefault();
+      return;
+    }
     const text =
       typed[event.key] ?? (event.key.length === 1 && event.key >= ' ' && event.key <= '~' ? event.key : null);
     if (text === null) return;

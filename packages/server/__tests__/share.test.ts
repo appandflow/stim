@@ -343,6 +343,7 @@ describe('a web share', () => {
     const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
     socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
     socket.send(JSON.stringify({ type: 'text', text: 'hi' }));
+    socket.send(JSON.stringify({ type: 'key', key: 'left' }));
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
     expect(f.begins).toEqual([]);
@@ -367,6 +368,20 @@ describe('a web share', () => {
     expect(f.hub.unrecordedTargets()).toEqual(new Set([key]));
     vi.advanceTimersByTime(2 * 60_000);
     expect(f.hub.unrecordedTargets()).toEqual(new Set());
+  });
+
+  it('with --control, passes the arrow keys and Escape and drops every other key', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    for (const key of ['tab', 'a', 'return', 'unknown', 7, null]) socket.send(JSON.stringify({ type: 'key', key }));
+    for (const key of ['left', 'escape']) socket.send(JSON.stringify({ type: 'key', key }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(2));
+    expect(f.inputs).toEqual([
+      { session: 'c1', command: { input: 'key', key: 'left', modifiers: [] } },
+      { session: 'c1', command: { input: 'key', key: 'escape', modifiers: [] } },
+    ]);
+    socket.close();
   });
 
   it('serves its stylesheet and script without a token, and nothing else under that path', async () => {
