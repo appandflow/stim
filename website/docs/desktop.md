@@ -440,7 +440,7 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   password. A share with control and a password can also have a separate
   view-only password (generated or chosen), shown as **View password** next to
   the control one. The link and generated passwords appear once, each with a Copy button;
-  Desktop does not keep them. **Settings > Web Shares** lists the live shares with
+  Desktop does not keep them. **Settings > Web Shares** lists the shares, live or waiting, with
   their viewers and time left ("View and control, view password" for a share with
   two passwords). A share whose device is away waits and keeps its row; Desktop
   does not mark it yet, but `stim share list` does. **Stop** on a row ends that one share; a workspace with
