@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MaintenanceSection: View {
   var maintenance: MaintenanceStatus?
+  var daemon: DaemonStatus?
   var statusLoaded: Bool
   var settings: MachineSettingsStore
   @State private var writing: String?
@@ -11,7 +12,22 @@ struct MaintenanceSection: View {
   var body: some View {
     Section {
       LabeledContent("Mode") {
-        Text(modeTitle).foregroundStyle(maintenance?.cleansAutomatically == true ? Palette.text : Palette.warning)
+        Text(modeTitle).foregroundStyle(daemon?.mode == "on" && maintenance?.invalid == nil ? Palette.text : Palette.warning)
+      }
+      if let daemon {
+        LabeledContent("Pressure") {
+          Text(daemon.headline).foregroundStyle(daemon.isRaised ? Palette.warning : Palette.secondary)
+        }
+        ForEach(daemon.lastActions()) { action in
+          LabeledContent {
+            if let date = action.date {
+              Text(date, style: .relative).foregroundStyle(Palette.tertiary)
+            }
+          } label: {
+            Text(action.title + (action.bytes > 0 ? ", \(Format.fileSize(action.bytes))" : ""))
+              .help(action.detail)
+          }
+        }
       }
       if let maintenance {
         LabeledContent("Last pass") { Text(lastPass(maintenance)).foregroundStyle(Palette.secondary) }
@@ -23,7 +39,7 @@ struct MaintenanceSection: View {
         "Clean up what is unused for", key: "maintenance.olderThanDays", choices: AppPreferences.olderThanDayChoices
       ) { days in days == 0 ? "Never" : days == 1 ? "1 day" : "\(days) days" }
       picker(
-        "Shut down idle devices after", key: "devices.idleShutdownMinutes",
+        "Stop idle workspaces after", key: "idle.minutes",
         choices: AppPreferences.idleShutdownMinuteChoices
       ) { minutes in minutes == 0 ? "Never" : minutes % 60 == 0 ? "\(minutes / 60) h" : "\(minutes) min" }
       toggle("Also remove clean, pushed worktrees unused that long", key: "maintenance.removeIdleWorktrees")
@@ -34,7 +50,7 @@ struct MaintenanceSection: View {
       Text("Automatic Maintenance")
     } footer: {
       Text(
-        "With the mode On, Stim cleans up on its own whenever stim commands, a dev server or this app's status watch run: it shuts down owned simulators and emulators idle that long, never deleting them, and once a day clears the build outputs of workspaces and the cache entries unused that long and deletes devices parked that long. Removing idle worktrees whose branch is not merged is off by default and also needs worktree removal on and a cleanup age other than Never: it takes their git-ignored files, such as .env.local, and counts a worktree as unused when no stim command ran there. Under the disk budget it reclaims more. These are machine settings, written with stim settings set, which a project's own setting overrides; Never for cleanup and the worktree switch need a stim newer than 1.25.0. Every maintenance.* setting is under Stim Settings."
+        "With daemon.mode on, the stim-daemon stops a workspace with no activity for that long: its dev server, its owned simulators and emulators, and its regenerable build outputs, which stim revive brings back. After idle.dormantDays it deletes the workspace's owned devices. Under disk or memory pressure it reclaims idle workspaces, parked devices and shared caches first, and never touches a workspace in use. Once a day it clears the build outputs and cache entries unused for the cleanup age and deletes devices parked that long. Removing idle worktrees whose branch is not merged is off by default and also needs worktree removal on and a cleanup age other than Never: it takes their git-ignored files, such as .env.local. These are machine settings, written with stim settings set, which a project's own setting overrides. Every setting is under Stim Settings."
       )
       .multilineTextAlignment(.leading)
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -44,16 +60,16 @@ struct MaintenanceSection: View {
   }
 
   private var modeTitle: String {
-    guard let maintenance else {
-      return statusLoaded
-        ? "Not reported: update stim to 1.18.0 or later to clean up automatically" : "Unknown until stim status loads"
+    guard let daemon else {
+      return statusLoaded ? "Not reported: update stim to run the stim-daemon" : "Unknown until stim status loads"
     }
-    if let invalid = maintenance.invalid { return "Off: \(invalid)" }
-    if maintenance.claim != nil { return "Blocked by an unresolved claim; see stim status" }
-    switch maintenance.mode {
-    case "on": return "On"
-    case "report": return "Report only: plans and logs, deletes nothing"
-    default: return "Off"
+    if let invalid = maintenance?.invalid { return "Off: \(invalid)" }
+    if maintenance?.claim != nil { return "Blocked by an unresolved claim; see stim status" }
+    let running = daemon.running == nil ? ", not running now" : ""
+    switch daemon.mode {
+    case "on": return "On\(running)"
+    case "report": return "Report only: logs what it would do, deletes nothing\(running)"
+    default: return "Off: nothing reclaims on its own"
     }
   }
 

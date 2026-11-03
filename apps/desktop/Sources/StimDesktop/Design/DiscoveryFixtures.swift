@@ -30,7 +30,7 @@
       case .slotWait: return Discovery.slotWait(placements: three, peers: [mac], paired: [], now: now)!
       case .lowWithCaches:
         return Discovery.lowWithCaches(
-          plan: PressurePlan.make(freeBytes: 0, minimumFreeGb: 20, hardFloorGb: 5, report: nil),
+          pressure: DaemonStatus.Pressure(level: "high", disk: "high", memory: "normal"),
           cacheBytes: 48 * 1_073_741_824)!
       case .capHit:
         return Discovery.capHit(

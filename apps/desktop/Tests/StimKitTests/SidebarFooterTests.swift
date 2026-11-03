@@ -5,18 +5,14 @@ import Testing
 
 private let compatible = CLICompatibility.compatible(SemanticVersion("1.11.0")!)
 private let outdated = CLICompatibility.outdated(found: "1.9.0")
-private let critical = PressurePlan(
-  freeBytes: 2_000_000_000, minimumFreeGb: 20, belowHardFloor: true, clearsWorkspaces: 0, removesWorktrees: 0,
-  deletesDevices: 0, reclaimableBytes: 0)
-private let warning = PressurePlan(
-  freeBytes: 12_000_000_000, minimumFreeGb: 20, belowHardFloor: false, clearsWorkspaces: 0, removesWorktrees: 0,
-  deletesDevices: 0, reclaimableBytes: 0)
+private let critical = DaemonStatus.Pressure(level: "critical", disk: "critical", reasons: ["4 GB free on /"])
+private let warning = DaemonStatus.Pressure(level: "high", disk: "high", reasons: ["12 GB free on /"])
 
 @Suite struct SidebarFooterStatusTests {
   @Test func optionalCLIDoesNotHideMachineProblems() {
     #expect(
       SidebarFooterStatus.decide(stim: outdated, pressure: critical, desktopUpdateAvailable: true)
-        == .diskCritical(freeBytes: critical.freeBytes))
+        == .pressureCritical(reasons: critical.reasons))
     #expect(
       SidebarFooterStatus.decide(stim: .missing, pressure: nil, desktopUpdateAvailable: false)
         == .normal(nil))
@@ -25,7 +21,7 @@ private let warning = PressurePlan(
   @Test func criticalDiskOutranksADesktopUpdate() {
     #expect(
       SidebarFooterStatus.decide(stim: compatible, pressure: critical, desktopUpdateAvailable: true)
-        == .diskCritical(freeBytes: critical.freeBytes))
+        == .pressureCritical(reasons: critical.reasons))
   }
 
   @Test func desktopUpdateOutranksAWarningLevelDisk() {
@@ -37,7 +33,7 @@ private let warning = PressurePlan(
   @Test func warningLevelDiskShowsWhenNothingHigherApplies() {
     #expect(
       SidebarFooterStatus.decide(stim: compatible, pressure: warning, desktopUpdateAvailable: false)
-        == .diskWarning(freeBytes: warning.freeBytes))
+        == .pressureHigh(reasons: warning.reasons))
   }
 
   @Test func aNewerStimShowsBelowEveryOtherNotice() {
@@ -50,7 +46,7 @@ private let warning = PressurePlan(
         == .desktopUpdateAvailable)
     #expect(
       SidebarFooterStatus.decide(stim: compatible, pressure: warning, desktopUpdateAvailable: false, stimUpdate: newer)
-        == .diskWarning(freeBytes: warning.freeBytes))
+        == .pressureHigh(reasons: warning.reasons))
     #expect(
       SidebarFooterStatus.decide(stim: outdated, pressure: nil, desktopUpdateAvailable: false, stimUpdate: newer)
         == .normal(nil))

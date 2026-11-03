@@ -9,7 +9,7 @@ final class DiscoveryCoordinator: ObservableObject {
   private let status: StatusStore
   private let machines: BuildMachinesModel
   private let stats: StatsReader
-  private let autopilot: AutopilotRunner
+  private let pressure: DaemonPressureMonitor
   private let gc: GcReportStore
   private let environment: Task<[String: String], Never>
   private let persistence: DiscoveryStore
@@ -28,7 +28,7 @@ final class DiscoveryCoordinator: ObservableObject {
   private var delivering = false
 
   init(
-    status: StatusStore, machines: BuildMachinesModel, stats: StatsReader, autopilot: AutopilotRunner,
+    status: StatusStore, machines: BuildMachinesModel, stats: StatsReader, pressure: DaemonPressureMonitor,
     gc: GcReportStore, environment: Task<[String: String], Never>,
     persistence: DiscoveryStore = DiscoveryStore(defaults: .standard),
     idleSeconds: @escaping () -> TimeInterval = {
@@ -38,7 +38,7 @@ final class DiscoveryCoordinator: ObservableObject {
     self.status = status
     self.machines = machines
     self.stats = stats
-    self.autopilot = autopilot
+    self.pressure = pressure
     self.gc = gc
     self.environment = environment
     self.persistence = persistence
@@ -217,7 +217,7 @@ final class DiscoveryCoordinator: ObservableObject {
       }
     }
     let sizes = gc.report?.sections.caches?.compactMap(\.bytes)
-    if let prompt = Discovery.lowWithCaches(plan: autopilot.pressure, cacheBytes: sizes.map { $0.reduce(0, +) }) {
+    if let prompt = Discovery.lowWithCaches(pressure: pressure.daemon?.pressure, cacheBytes: sizes.map { $0.reduce(0, +) }) {
       candidates.append(prompt)
     }
     candidates = Discovery.suppressedByMacSuggestion(candidates, macSuggested: persistence.macSuggested)

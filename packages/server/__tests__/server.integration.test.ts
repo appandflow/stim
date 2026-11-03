@@ -4705,7 +4705,7 @@ describe('status views', () => {
       event: 'machine',
       subscription: 's1',
       seq: 0,
-      machine: { ...machine, maintenance: null },
+      machine: { ...machine, maintenance: null, daemon: null },
     });
   });
 

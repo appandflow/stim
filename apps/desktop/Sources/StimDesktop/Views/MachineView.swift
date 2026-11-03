@@ -15,7 +15,7 @@ struct MachineView: View {
   var metrics: MetricsStore
   var gc: GcReportStore
   @ObservedObject var storage: StorageStore
-  @ObservedObject var autopilot: AutopilotRunner
+  @ObservedObject var pressure: DaemonPressureMonitor
   @ObservedObject var tips: TipCoordinator
   @EnvironmentObject private var actions: ActionCenter
   @Environment(\.openSettings) private var openSettings
@@ -86,11 +86,11 @@ struct MachineView: View {
             EmptyView()
           }
           tabs
-          if let plan = autopilot.pressure { pressureBanner(plan) }
+          if let daemon = pressure.daemon { pressureBanner(daemon) }
           switch selectedTab {
           case .overview:
             MachineResourceSummary(
-              metrics: metrics, volume: lowestVolume, minimumFreeBytes: minimumFreeBytes, compact: width < 620)
+              metrics: metrics, volume: lowestVolume, pressure: pressure.daemon?.pressure, compact: width < 620)
             if width >= 820 {
               HStack(alignment: .top, spacing: Space.xl) {
                 NowBand(status: status, metrics: metrics, gc: gc).frame(maxWidth: .infinity)
@@ -169,11 +169,7 @@ struct MachineView: View {
   }
 
   private var lowestVolume: DiskVolume? {
-    metrics.volumes.min { $0.freeBytes < $1.freeBytes } ?? autopilot.lowestVolume
-  }
-
-  private var minimumFreeBytes: Int64? {
-    autopilot.budget.flatMap { $0.minFree > 0 ? Int64($0.minFree * 1_000_000_000) : nil }
+    metrics.volumes.min { $0.freeBytes < $1.freeBytes }
   }
 
   #if DEBUG
@@ -392,17 +388,37 @@ struct MachineView: View {
     }
   }
 
-  private func pressureBanner(_ plan: PressurePlan) -> some View {
-    Banner(tone: .warning, icon: "exclamationmark.triangle.fill") {
-      Text(plan.headline).font(.stim(.body, weight: .semibold))
-      Text(plan.proposal).foregroundStyle(Palette.secondary)
-      if plan.belowHardFloor {
-        Text("Below the hard floor, stim start, ios and android refuse with STIM_LOW_DISK.")
-          .foregroundStyle(Palette.warning)
+  private func pressureBanner(_ daemon: DaemonStatus) -> some View {
+    Banner(
+      tone: daemon.level == "critical" ? .error : daemon.isRaised ? .warning : .neutral,
+      icon: daemon.isRaised ? "exclamationmark.triangle.fill" : "gauge.with.dots.needle.33percent"
+    ) {
+      Text(daemon.headline).font(.stim(.body, weight: .semibold))
+      Text(
+        daemon.mode == "off"
+          ? "daemon.mode is off: nothing reclaims on its own. stim gc --delete runs the pressure ladder now."
+          : daemon.running == nil
+            ? "No stim-daemon runs in this Stim home now; the next stim start, ios or android starts one."
+            : daemon.isRaised
+              ? "The stim-daemon reclaims idle workspaces, parked devices and caches each minute until the level is normal."
+              : "The stim-daemon measures the machine each minute and reclaims only under pressure."
+      )
+      .foregroundStyle(Palette.secondary)
+      ForEach(daemon.lastActions(3)) { action in
+        HStack(spacing: Space.sm) {
+          Text(action.title).lineLimit(1).truncationMode(.middle)
+          if action.bytes > 0 { Text(Format.fileSize(action.bytes)).foregroundStyle(Palette.secondary) }
+          Spacer()
+          if let date = action.date {
+            Text(date, style: .relative).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+          }
+        }
+        .font(.stim(.callout))
+        .help(action.detail)
       }
     } trailing: {
-      if !plan.isEmpty {
-        Button("Free Disk Space") { autopilot.runPressurePlan() }
+      if daemon.isRaised {
+        Button("Free Disk Space") { pressure.freeDiskSpace() }
           .buttonStyle(.stim(.primary))
           .help("stim gc --delete")
       }
@@ -424,10 +440,10 @@ struct MachineView: View {
 
   private func headline(_ report: StorageReport) -> some View {
     let lowest = lowestVolume
-    let budget = minimumFreeBytes
+    let disk = pressure.daemon?.pressure?.disk
     let categories: [(DiskCategory, CategoryTotal)] = DiskCategory.allCases.map { ($0, report.total($0)) }
     let total = max(1, categories.map { $0.1.bytes }.reduce(0, +))
-    let under = lowest.flatMap { volume in budget.map { volume.freeBytes < $0 } } ?? false
+    let under = disk == "high" || disk == "critical"
     return Card(clipsContent: false) {
       VStack(alignment: .leading, spacing: Space.lg) {
         HStack(alignment: .firstTextBaseline, spacing: Space.md) {
@@ -437,12 +453,9 @@ struct MachineView: View {
           VStack(alignment: .leading, spacing: Space.xxs) {
             Text(lowest.map { "free on \($0.name) of \(Format.fileSize($0.totalBytes))" } ?? "free")
               .foregroundStyle(Palette.secondary)
-            Text(
-              budget.map { under ? "Under the \(Format.fileSize($0)) Stim budget" : "Stim budget \(Format.fileSize($0)) free" }
-                ?? "No Stim disk budget set"
-            )
-            .font(.stim(.footnote))
-            .foregroundStyle(under ? Palette.warning : Palette.tertiary)
+            Text(disk.map { "Disk pressure \($0)" } ?? "Disk pressure unknown until the stim-daemon ticks")
+              .font(.stim(.footnote))
+              .foregroundStyle(under ? Palette.warning : Palette.tertiary)
           }
           Spacer()
         }

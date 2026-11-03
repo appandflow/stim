@@ -329,9 +329,6 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       ["gc", "--delete", "--worktrees", "--older-than", "7", "--json"],
       ["delete": .bool(true), "worktrees": .bool(true), "olderThan": .number(7)]
     ),
-    (["gc", "--idle", "30m", "--json"], ["idleMs": .number(1_800_000)]),
-    (["gc", "--idle", "2h", "--json"], ["idleMs": .number(7_200_000)]),
-    (["gc", "--idle", "1d", "--json"], ["idleMs": .number(86_400_000)]),
   ])
   func cleanupKeepsSelectorsOrderedProgressAndPartialFailureReports(arguments: [String], options: [String: JSONValue])
     async throws
@@ -402,8 +399,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     for invalid in [
       ["gc", "--cache"], ["gc", "--cache", "--json"], ["gc", "--cache", " "], ["gc", "--json", "--json"],
       ["gc", "--older-than", "1.5"], ["gc", "--older-than", "9007199254740992"],
-      ["gc", "--idle", "0m"], ["gc", "--idle", "01m"], ["gc", "--idle", "1.5h"],
-      ["gc", "--idle", "infd"], ["gc", "--idle", "99999999999999999d"], ["gc", "--idle", "30"], ["gc", "--reclaim"],
+      ["gc", "--idle", "30m"], ["gc", "--reclaim"],
     ] {
       do {
         _ = try await runServerGc(
