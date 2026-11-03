@@ -138,9 +138,11 @@ hosted device runs, while `maintenance.keep` pins it, or while `stim start` is
 running. The daemon checks all of this again under the workspace's locks just
 before it acts. A dev server whose requests Stim cannot see, `metro.command`
 or an Expo SDK before 54, never stops for being idle. Set `idle.minutes` to
-`0` to keep everything running. While `idle.minutes` is unset, the smaller of
-the older `metro.idleStopMinutes` and `devices.idleShutdownMinutes` applies,
-so a `0` in either keeps both running.
+`0` to keep everything running. Under disk or memory pressure the
+`stim-daemon`'s [pressure ladder](./build-caches.md#disk-pressure), and
+`stim gc --delete`, move every workspace idle 2 minutes or more into the idle
+stage without waiting for `idle.minutes`, except one whose `idle.minutes` is
+`0`.
 
 The stage is recorded in the timeline as `workspace_idle`, with the bytes it
 freed, and `stim status` shows `stage: idle` and the port as `stopped (idle)`
@@ -177,14 +179,14 @@ the app's UI again and check stim logs --errors.
 
 ## Idle workspace stop
 
-While `maintenance.mode` is not `off`, automatic maintenance stops a workspace
-whose device is hosted on a remote Mac, and `stim gc --delete` stops any
-workspace whose dev server runs, whose owned simulator or emulator is booted, or
-whose device is hosted, once it has had no real activity for
-`maintenance.idleStopHours`: 6 hours by default, `0` never. Six hours outlasts
-a lunch break, a meeting or an agent's pause between tasks, and still frees the
-memory overnight. The setting takes machine and project layers, accepts
-fractions, and `STIM_MAINTENANCE_IDLE_STOP_HOURS` overrides it.
+While [`daemon.mode`](./settings.md#stim-daemon) is `on`, automatic maintenance
+stops a workspace whose device is hosted on a remote Mac once it has had no
+real activity for `maintenance.idleStopHours`: 6 hours by default, `0` never.
+Six hours outlasts a lunch break, a meeting or an agent's pause between tasks,
+and still frees the memory overnight. The setting takes machine and project
+layers, accepts fractions, and `STIM_MAINTENANCE_IDLE_STOP_HOURS` overrides it.
+Every other workspace follows the [idle stop](#idle-stop) at `idle.minutes`
+instead.
 
 Real activity is the newest of:
 
@@ -214,10 +216,10 @@ emulator in `adb devices` has no readable AVD name; `adb kill-server` clears it.
 each workspace kept past the window with its reason (`stim logs --source maintenance`).
 The port is released, so `stim status` shows the workspace idle as after
 `stim stop`, and the timeline's `supervisor_stopped` line names the idle time
-and the requester, automatic maintenance or `stim gc --delete`. The next
+and the requester, automatic maintenance. The next
 `stim start`, `stim ios` or `stim android` starts it again. A stop never
-targets the workspace of the command that started the pass, `stim gc --delete`
-included; a pass the `stim-daemon` runs can stop any workspace.
+targets the workspace of the command that started the pass; a pass the
+`stim-daemon` runs can stop any workspace.
 
 A workspace whose iOS, Android or macOS device is hosted on a remote Mac is
 stopped the same way, once the host confirms the session is `ready`. The stop
@@ -245,8 +247,8 @@ Try it with an agent:
 
 ```text
 Run `stim settings get maintenance.idleStopHours` and tell me after how many
-hours without activity Stim stops this workspace's dev server and simulator.
-If I am about to step away for longer, set it for this workspace only with
+hours without activity Stim stops this workspace while its device is hosted on
+a remote Mac. If I am about to step away for longer, set it for this workspace only with
 `stim settings set maintenance.idleStopHours <hours> --scope workspace`.
 ```
 
@@ -259,17 +261,13 @@ the workspace keeps its port. `stim stop` releases the port, so its own stops
 show only in the timeline. In `--json`, the environment's `metro.lastStop`
 carries it:
 
-| `reason`        | Meaning                                                                                                                                                                                                                                                         |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `requested`     | A Stim command stopped it. `by` names the command: `stim stop`, `stim worktree remove`, `stim gc --delete`, `stim start --reset-cache`, `budget reclaim` from another workspace's run, or `automatic maintenance` with its [idle reason](#idle-workspace-stop). |
-| `signal`        | A SIGTERM or SIGINT with no Stim stop request recorded, so it likely came from outside Stim.                                                                                                                                                                    |
-| `server-exited` | The dev server exited on its own. Expo CLI also exits with code 0 on SIGTERM, so exit code 0 with no request usually means something outside Stim signalled the Expo process.                                                                                   |
-| `idle`          | [Idle stop](#idle-stop).                                                                                                                                                                                                                                        |
-| `vanished`      | The supervisor is gone and recorded no cause, usually because of SIGKILL, a crash or a machine restart. The next supervisor logs `supervisor_vanished`.                                                                                                         |
-
-Budget reclaim stops idle dev servers of other workspaces when a
-`stim ios`, `stim android` or `stim start` run finds the machine over its
-disk or memory budget. See [machine settings](./settings.md#machine-settings).
+| `reason`        | Meaning                                                                                                                                                                                                          |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `requested`     | A Stim command stopped it. `by` names the command: `stim stop`, `stim worktree remove`, `stim gc --delete`, `stim start --reset-cache`, or `automatic maintenance` with its [idle reason](#idle-workspace-stop). |
+| `signal`        | A SIGTERM or SIGINT with no Stim stop request recorded, so it likely came from outside Stim.                                                                                                                     |
+| `server-exited` | The dev server exited on its own. Expo CLI also exits with code 0 on SIGTERM, so exit code 0 with no request usually means something outside Stim signalled the Expo process.                                    |
+| `idle`          | [Idle stop](#idle-stop).                                                                                                                                                                                         |
+| `vanished`      | The supervisor is gone and recorded no cause, usually because of SIGKILL, a crash or a machine restart. The next supervisor logs `supervisor_vanished`.                                                          |
 
 ## Watchman roots
 

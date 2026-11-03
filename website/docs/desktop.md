@@ -366,7 +366,11 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   for owned work. Shared Watchman, Gradle and Kotlin reclaim actions describe their category-wide
   scope in a confirmation. Worktree rows use the same trailing menu presentation.
   **Review cleanup** opens **Storage**, where you can inspect devices, caches,
-  repositories and cleanup candidates before choosing what to free. The summary
+  repositories and cleanup candidates before choosing what to free. The Machine
+  page also shows the `stim-daemon`'s pressure level and its last three
+  actions; while the level is high or critical it shows why, the sidebar marks
+  Machine, and **Free Disk Space** runs `stim gc --delete`, which runs the
+  pressure ladder to its end at high. The summary
   includes optional caches, so it is not an amount selected for deletion.
   The cleanup checklist shows a selected-row count; changing checkboxes performs no cleanup.
   Mixed cleanup confirmations name the selected items and consequences before command details.
@@ -415,7 +419,7 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   same response limit and do not retry through the CLI.
 - **Cleanup history.** **Settings > App > Cleanup History** lists every run that deleted
   or changed something, newest first: `stim gc` from this app, an agent or a terminal,
-  automatic maintenance, and the budget check before a build. A row shows what started
+  and automatic maintenance. A row shows what started
   the run, when, how many items it cleared, kept and failed, and the bytes freed; expand it
   for each item's path and the reason a kept or failed item was left. It reads
   `stim logs --source gc --json`, so it needs a Stim version that writes the gc log.
@@ -470,11 +474,14 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   stay centered, fill available width up to 640 points, and form extra columns
   only when full-width cards fit.
 - **Notifications and cleanup.** Alerts for stuck agents and builds that keep failing.
-  Cleanup is Stim's own automatic maintenance, which runs from the CLI whether
-  Desktop is open or not; **Settings > App > Automatic Maintenance** shows its
-  mode and last pass, and sets how long something stays unused before it is
-  cleaned up (`maintenance.olderThanDays`) and when idle devices shut down
-  (`devices.idleShutdownMinutes`), and whether idle unmerged worktrees are
+  Cleanup is the `stim-daemon`'s, which runs from the CLI whether Desktop is
+  open or not; Desktop reads its mode, pressure level and last actions from the
+  status stim-server serves, and runs no timer and keeps no thresholds of its
+  own. **Settings > App > Automatic Maintenance** shows the daemon mode, the
+  level, the last actions and the last maintenance pass, and sets how long
+  something stays unused before it is cleaned up (`maintenance.olderThanDays`),
+  when idle workspaces stop (**Stop idle workspaces after**, which writes
+  `idle.minutes`), and whether idle unmerged worktrees are
   removed (`maintenance.removeIdleWorktrees`, off by default). The worktree
   switch, **Never** for the cleanup age and Cleanup History need a Stim newer
   than 1.25.0; with an older one they say to update Stim. See
