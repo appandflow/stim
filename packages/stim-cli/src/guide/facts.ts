@@ -1123,17 +1123,23 @@ RULES
                               .stim-delete-* directories --delete finishes
                               removing
     machineCaches           { measuredAt, complete, notices, gradle, simRuntimes,
-                              deviceSupport, runnerBuilds } | null
-                              report-only, never deleted; null with any
+                              deviceSupport, orphanedDerivedData, runnerBuilds }
+                              | null report-only, never deleted; null with any
                               --cache scope. gradle: { home, unusedVersions:
-                              [{ version, bytes, dirs, remedy }],
+                              [{ version, bytes, dirs, transforms, remedy }]
+                              (transforms is null or { dir, bytes,
+                              privateBytes, remedy } for caches/<version>/
+                              transforms),
                               usedVersions: [{ version, projects }],
                               unreadableProjects, modules }. simRuntimes:
                               { checked, runtimes: [{ identifier,
                               runtimeIdentifier, version, build, bytes,
                               deletable, lastUsedAt, devices, remedy }] }.
                               deviceSupport: { entries: [{ dir, bytes }],
-                              remedy }. runnerBuilds: { agentDeviceVersion,
+                              remedy }. orphanedDerivedData: [{ dir, bytes,
+                              privateBytes, workspacePath, remedy }]
+                              (DerivedData whose recorded workspace is
+                              gone). runnerBuilds: { agentDeviceVersion,
                               xcodeBuildVersion, groups: [{ packageVersion,
                               xcodeBuildVersion, current, entries, inUse,
                               bytes, oldestUseAt }], remedy }. Sizes and

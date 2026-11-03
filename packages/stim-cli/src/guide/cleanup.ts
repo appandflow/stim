@@ -475,11 +475,20 @@ each with its size and the owning tool's own remedy:
   section incomplete.
   Gradle removes version caches and modules-2 entries unused for 30 days on
   its own. The remedy for a version is stim gc --delete --cache
-  gradle-versions (see GRADLE VERSIONS); modules-2 stays report only.
+  gradle-versions (see GRADLE VERSIONS); modules-2 stays report only. A listed
+  version's caches/<version>/transforms directory is shown on its own with its
+  size, the part deleting it frees ("its own" on APFS) and the manual remedy
+  rm -rf <dir>; Gradle extracts the transforms again on the next build. The
+  transforms of a version a registered project pins are not listed.
 - iOS simulator runtimes with their simulator count. Only a deletable
   runtime no simulator uses gets the remedy xcrun simctl runtime delete <id>.
 - Xcode device support entries under ~/Library/Developer/Xcode/*DeviceSupport.
   Xcode copies an entry again when that device next connects.
+- Xcode DerivedData directories (~/Library/Developer/Xcode/DerivedData) whose
+  info.plist WorkspacePath is gone from a mounted volume, with the size, the
+  recorded path and the remedy rm -rf <dir>; Xcode builds the project again if
+  it returns. A directory without a readable WorkspacePath, with a relative
+  path, or whose path is on a volume that is not mounted is not listed.
 - agent-device runner builds grouped by agent-device and Xcode build version,
   compared with the installed agent-device and Xcode. agent-device has no
   prune command; remove an entry not in use by hand.

@@ -10,6 +10,8 @@ import {
   type SimRuntimeUsage,
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
+import { isAbsentPath, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
+import { measureTree } from '../private-size.ts';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import { androidLayoutSetting, resolveProjectSettingsAsync } from '../workspace/settings.ts';
 import { canonical, measureDu, writeUsageCache } from './report-only-usage.ts';
@@ -23,6 +25,8 @@ import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.t
 
 const MAX_AGE_MS = 10 * 60_000;
 const TOOL_TIMEOUT_MS = DEVICE_LIST_TIMEOUT_MS;
+const SIZE_TIMEOUT_MS = 20_000;
+const WORKSPACE_PATH = /<key>WorkspacePath<\/key>\s*<string>([^<]*)<\/string>/;
 const GRADLE_VERSION = /^\d+\.\d+(?:\.\d+)?(?:-[\w.-]+)?$/;
 const GRADLE_DIST = /^gradle-(\d+\.\d+(?:\.\d+)?(?:-[\w.-]+)?)-(?:bin|all)$/;
 
@@ -31,13 +35,24 @@ interface SizedDir {
   bytes: number | null;
 }
 
+interface OwnSizedDir extends SizedDir {
+  /** What deleting the directory would free, or null when the volume or the machine cannot tell. */
+  privateBytes: number | null;
+}
+
 export interface MachineCacheReport {
   measuredAt: string;
   complete: boolean;
   notices: string[];
   gradle: {
     home: string;
-    unusedVersions: { version: string; bytes: number | null; dirs: SizedDir[]; remedy: string | null }[];
+    unusedVersions: {
+      version: string;
+      bytes: number | null;
+      dirs: SizedDir[];
+      transforms: (OwnSizedDir & { remedy: string }) | null;
+      remedy: string | null;
+    }[];
     usedVersions: { version: string; projects: string[] }[];
     unreadableProjects: string[];
     modules: (SizedDir & { remedy: string }) | null;
@@ -47,6 +62,7 @@ export interface MachineCacheReport {
     runtimes: (SimRuntimeUsage & { remedy: string | null })[];
   };
   deviceSupport: { entries: SizedDir[]; remedy: string };
+  orphanedDerivedData: (OwnSizedDir & { workspacePath: string; remedy: string })[];
   runnerBuilds: {
     agentDeviceVersion: string | null;
     xcodeBuildVersion: string | null;
@@ -66,9 +82,15 @@ export interface MachineCacheReport {
 interface Discovery {
   gradleHome: string;
   versionDirs: Map<string, string[]>;
+  transformsDirs: Map<string, string>;
   modulesDir: string | null;
   deviceSupportEntries: string[];
   notices: string[];
+}
+
+interface OrphanedDerivedData {
+  dir: string;
+  workspacePath: string;
 }
 
 function missing(error: unknown): boolean {
@@ -123,9 +145,15 @@ function discover(env?: NodeJS.ProcessEnv, cwd?: string): Discovery {
           .filter((name) => name.endsWith(' DeviceSupport'))
           .flatMap((name) => directories(join(xcode, name), notices).map((entry) => join(xcode, name, entry)))
       : [];
+  const transformsDirs = new Map<string, string>();
+  for (const version of versionDirs.keys()) {
+    const transforms = join(caches, version, 'transforms');
+    if (isDirectory(transforms)) transformsDirs.set(version, transforms);
+  }
   return {
     gradleHome,
     versionDirs,
+    transformsDirs,
     modulesDir: isDirectory(join(caches, 'modules-2')) ? join(caches, 'modules-2') : null,
     deviceSupportEntries,
     notices,
@@ -218,6 +246,52 @@ export async function projectGradleVersions(
   return { used, unreadable };
 }
 
+function decodeXml(text: string): string {
+  return text
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'")
+    .replaceAll('&amp;', '&');
+}
+
+/** The directories of Xcode's DerivedData whose `info.plist` names a workspace that is gone from a mounted volume. */
+async function orphanedDerivedData(
+  env: NodeJS.ProcessEnv | undefined,
+  notices: string[],
+  operation?: StimContext,
+): Promise<OrphanedDerivedData[]> {
+  if (process.platform !== 'darwin') return [];
+  const root = join(env?.HOME || env?.USERPROFILE || homedir(), 'Library', 'Developer', 'Xcode', 'DerivedData');
+  const mounted = listMountedVolumes();
+  const orphans: OrphanedDerivedData[] = [];
+  for (const name of directories(root, notices)) {
+    operation?.signal.throwIfAborted();
+    const dir = join(root, name);
+    const plist = join(dir, 'info.plist');
+    let text: string;
+    try {
+      text = readFileSync(plist, 'utf8');
+    } catch {
+      continue;
+    }
+    const xml = WORKSPACE_PATH.exec(text)?.[1];
+    const workspacePath = text.startsWith('bplist')
+      ? (await quiet('plutil', ['-extract', 'WorkspacePath', 'raw', '-o', '-', plist], operation))?.trim()
+      : xml === undefined
+        ? undefined
+        : decodeXml(xml);
+    if (
+      workspacePath &&
+      isAbsolute(workspacePath) &&
+      isAbsentPath(workspacePath) &&
+      isOnMountedVolume(workspacePath, mounted)
+    )
+      orphans.push({ dir, workspacePath });
+  }
+  return orphans;
+}
+
 function parseSimRuntimes(runtimeList: string, deviceList: string): SimRuntimeUsage[] | null {
   try {
     const counts = new Map<string, number>();
@@ -253,9 +327,17 @@ async function quiet(file: string, args: string[], operation?: StimContext): Pro
   }
 }
 
-async function measure(dirs: string[], operation?: StimContext): Promise<MachineCacheUsage> {
+async function measure(
+  dirs: string[],
+  privateDirs: ReadonlySet<string>,
+  operation?: StimContext,
+): Promise<MachineCacheUsage> {
   const darwin = process.platform === 'darwin';
   const size = async (dir: string) => {
+    if (privateDirs.has(dir)) {
+      const tree = await measureTree(dir, { timeoutMs: SIZE_TIMEOUT_MS, operation });
+      return { dir, bytes: tree?.bytes ?? null, privateBytes: tree?.privateBytes ?? null };
+    }
     const result = await measureDu(['-sk', dir], operation);
     return { dir, bytes: result.complete ? (result.sizes.get(dir) ?? null) : null };
   };
@@ -301,20 +383,30 @@ function assembleMachineCacheReport(
   usage: MachineCacheUsage,
   discovery: Discovery,
   gradleUse: GradleVersionUse,
+  orphans: readonly OrphanedDerivedData[],
   agentDeviceUsage: AgentDeviceUsage | null,
   env?: NodeJS.ProcessEnv,
 ): MachineCacheReport {
   const sizes = new Map(usage.sizes.map((entry) => [entry.dir, entry.bytes]));
+  const privateSizes = new Map(usage.sizes.map((entry) => [entry.dir, entry.privateBytes ?? null]));
   const sized = (dir: string): SizedDir => ({ dir, bytes: sizes.get(dir) ?? null });
+  const owned = (dir: string): OwnSizedDir => ({ ...sized(dir), privateBytes: privateSizes.get(dir) ?? null });
   const unusedVersions = largest(
     [...discovery.versionDirs]
       .filter(([version]) => !gradleUse.used.has(version))
       .map(([version, dirs]) => {
         const measured = dirs.map(sized);
+        const transforms = discovery.transformsDirs.get(version);
         return {
           version,
           bytes: sum(measured.map((entry) => entry.bytes)),
           dirs: measured,
+          transforms: transforms
+            ? {
+                ...owned(transforms),
+                remedy: `rm -rf ${quote(transforms)}; Gradle extracts the transforms again on the next build with ${version}`,
+              }
+            : null,
           remedy: scopedOutside(discovery.gradleHome, env) ? null : 'stim gc --delete --cache gradle-versions',
         };
       }),
@@ -373,6 +465,13 @@ function assembleMachineCacheReport(
       remedy:
         'Xcode copies an entry again the next time that device connects; remove entries for devices you no longer debug',
     },
+    orphanedDerivedData: largest(
+      orphans.map(({ dir, workspacePath }) => ({
+        ...owned(dir),
+        workspacePath,
+        remedy: `rm -rf ${quote(dir)}; Xcode builds the project again if it returns`,
+      })),
+    ),
     runnerBuilds: {
       agentDeviceVersion: usage.agentDeviceVersion,
       xcodeBuildVersion: usage.xcodeBuildVersion,
@@ -402,17 +501,23 @@ export async function getMachineCacheReport(
 ): Promise<MachineCacheReport> {
   const discovery = discover(operation?.env, operation?.cwd);
   const gradleUse = await projectGradleVersions(Object.keys(loadConfig()?.projects ?? {}), operation);
+  const orphans = await orphanedDerivedData(operation?.env, discovery.notices, operation);
+  const privateDirs = new Set([
+    ...[...discovery.transformsDirs].filter(([version]) => !gradleUse.used.has(version)).map(([, dir]) => dir),
+    ...orphans.map(({ dir }) => dir),
+  ]);
   const dirs = [
     ...[...discovery.versionDirs].filter(([version]) => !gradleUse.used.has(version)).flatMap(([, list]) => list),
     ...(discovery.modulesDir ? [discovery.modulesDir] : []),
     ...discovery.deviceSupportEntries,
+    ...privateDirs,
   ].toSorted();
   const cached = readMachineCacheUsage();
   const age = cached ? Date.now() - Date.parse(cached.measuredAt) : Infinity;
   let usage = cached;
   if (!usage || age < 0 || age >= maxAgeMs || JSON.stringify(usage.roots) !== JSON.stringify(dirs)) {
-    usage = await measure(dirs, operation);
+    usage = await measure(dirs, privateDirs, operation);
     writeUsageCache(machineCacheUsageFile(), usage, operation?.signal);
   }
-  return assembleMachineCacheReport(usage, discovery, gradleUse, agentDeviceUsage, operation?.env);
+  return assembleMachineCacheReport(usage, discovery, gradleUse, orphans, agentDeviceUsage, operation?.env);
 }

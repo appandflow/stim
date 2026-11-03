@@ -97,6 +97,7 @@ vi.mock('../devices/machine-cache-usage.ts', () => ({
     gradle: { home: '', unusedVersions: [], usedVersions: [], unreadableProjects: [], modules: null },
     simRuntimes: { checked: true, runtimes: [] },
     deviceSupport: { entries: [], remedy: '' },
+    orphanedDerivedData: [],
     runnerBuilds: { agentDeviceVersion: null, xcodeBuildVersion: null, groups: [], remedy: '' },
   }),
 }));

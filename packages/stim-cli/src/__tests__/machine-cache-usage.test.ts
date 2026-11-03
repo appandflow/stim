@@ -13,6 +13,13 @@ import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { runReport } from '../report-runtime.ts';
 import { testContext } from './_context.ts';
 
+const PRIVATE_SIZE_HELPER = '/fake/stim-privsize';
+
+vi.mock('../clonefile.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../clonefile.ts')>()),
+  privateSizeHelper: async () => PRIVATE_SIZE_HELPER,
+}));
+
 const UNUSED_RUNTIME = '88E8478B-6BAD-4120-A046-0F9F9221E17A';
 const USED_RUNTIME = '244912DF-0671-4197-9C70-85AF161BF600';
 const BUNDLED_RUNTIME = '11111111-2222-3333-4444-555555555555';
@@ -113,6 +120,8 @@ beforeEach(() => {
       }
       calls.push([file, ...args]);
       if (file === 'du') return `2048\t${args.at(-1)}\n`;
+      if (file === PRIVATE_SIZE_HELPER || (file === 'nice' && args[2] === PRIVATE_SIZE_HELPER))
+        return '4194304 1048576 0\n';
       const result = tools[[file, ...args].join(' ')];
       if (result === undefined || result instanceof Error) throw result ?? new Error('unexpected');
       return result;
@@ -249,3 +258,78 @@ const spoilers: [string, (file: string) => void][] = [
   ['names no version', (file) => writeFileSync(file, 'distributionBase=GRADLE_USER_HOME\n')],
 ];
 if (posixModes) spoilers.push(['cannot be read', (file) => chmodSync(file, 0o000)]);
+
+test('an unused Gradle version lists its transforms with their own size and a manual remedy, and a pinned one does not', async () => {
+  const caches = join(gradle, 'caches');
+  writeDirs(join(caches, '9.3.1'), join(caches, '9.3.1', 'transforms'), join(caches, '9.4.1', 'transforms'));
+  const project = join(home, 'app');
+  wrapper(project, '9.4.1');
+  upsertProject(project, {});
+
+  const report = await getMachineCacheReport(null);
+
+  const transforms = join(caches, '9.3.1', 'transforms');
+  expect(report.gradle.unusedVersions).toMatchObject([
+    {
+      version: '9.3.1',
+      transforms: {
+        dir: transforms,
+        bytes: 4_194_304,
+        privateBytes: 1_048_576,
+        remedy: expect.stringContaining(`rm -rf '${transforms}'`),
+      },
+    },
+  ]);
+  expect(calls.flat()).not.toContain(join(caches, '9.4.1', 'transforms'));
+  expect(machineCacheLines(report).join('\n')).toContain(`transforms: ${transforms} 4M (1M its own)`);
+});
+
+function derivedData(name: string, plist: string | null): string {
+  const dir = join(home, 'Library', 'Developer', 'Xcode', 'DerivedData', name);
+  mkdirSync(join(dir, 'Logs'), { recursive: true });
+  if (plist !== null) writeFileSync(join(dir, 'info.plist'), plist);
+  return dir;
+}
+
+const workspacePlist = (path: string) =>
+  `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n\t<key>LastAccessedDate</key>\n\t<date>2026-10-21T21:48:29Z</date>\n\t<key>WorkspacePath</key>\n\t<string>${path}</string>\n</dict>\n</plist>\n`;
+
+test('DerivedData is reported only when its recorded workspace is gone from a mounted volume', async () => {
+  const alive = join(home, 'alive', 'App.xcworkspace');
+  mkdirSync(alive, { recursive: true });
+  const orphan = derivedData('Gone-abc', workspacePlist(join(home, 'gone', 'App.xcworkspace')));
+  const escaped = derivedData('Escaped-def', workspacePlist(join(home, 'a &amp; b', 'App.xcworkspace')));
+  const binary = derivedData('Binary-ghi', 'bplist00');
+  derivedData('Alive-jkl', workspacePlist(alive));
+  derivedData('NoPlist-mno', null);
+  derivedData('Relative-pqr', workspacePlist('relative/App.xcworkspace'));
+  derivedData('Offline-stu', workspacePlist('/Volumes/stim-test-not-mounted/App.xcworkspace'));
+  tools[`plutil -extract WorkspacePath raw -o - ${join(binary, 'info.plist')}`] =
+    `${join(home, 'gone', 'Binary.xcworkspace')}\n`;
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
+
+  const report = await getMachineCacheReport(null);
+
+  expect(report.orphanedDerivedData.map((entry) => [entry.dir, entry.workspacePath]).toSorted()).toEqual(
+    [
+      [orphan, join(home, 'gone', 'App.xcworkspace')],
+      [escaped, join(home, 'a & b', 'App.xcworkspace')],
+      [binary, join(home, 'gone', 'Binary.xcworkspace')],
+    ].toSorted(),
+  );
+  expect(report.orphanedDerivedData[0]).toMatchObject({
+    bytes: 4_194_304,
+    privateBytes: 1_048_576,
+    remedy: expect.stringContaining('rm -rf '),
+  });
+  const lines = machineCacheLines(report).join('\n');
+  expect(lines).toContain('Xcode DerivedData of workspaces that no longer exist');
+  expect(lines).toContain(`workspace ${join(home, 'gone', 'App.xcworkspace')}`);
+});
+
+test('no DerivedData is listed off macOS', async () => {
+  derivedData('Gone-abc', workspacePlist(join(home, 'gone', 'App.xcworkspace')));
+  Object.defineProperty(process, 'platform', { value: 'linux' });
+
+  expect((await getMachineCacheReport(null)).orphanedDerivedData).toEqual([]);
+});
