@@ -41,6 +41,8 @@ interface Fixture {
   inputBy: string[];
   /** Names of the viewers whose pointer the control hub was told to lift. */
   releases: string[];
+  /** The messages the control hub was told to end the share's control session with. */
+  endFors: string[];
   /** A holder name the fake control hub turns every touch away for. */
   busy: string | null;
   /** Holds the fake control hub's `begin` until it resolves. */
@@ -76,6 +78,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
     inputResult: null,
     inputBy: [],
     releases: [],
+    endFors: [],
     busy: null,
     beginGate: null,
     presence: new PresenceHub(),
@@ -125,7 +128,9 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
       release: (_owner, _session, participant) => {
         f.releases.push(participant.name);
       },
-      endFor: () => {},
+      endFor: (_owner, _session, message) => {
+        f.endFors.push(message);
+      },
     },
     subscribeStatus: (listener) => {
       listeners.add(listener);
@@ -198,6 +203,8 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
   });
   return f;
 }
+
+const stateOf = (f: Fixture) => f.hub.list()[0]?.state;
 
 const shareRequest = (overrides: Partial<ShareRequest> = {}): ShareRequest => ({
   workspace: WORKSPACE,
@@ -1197,16 +1204,193 @@ describe('a web share', () => {
     expect(f.strandedPort).toBeNull();
   });
 
-  it('ends at its expiry, and when its device stops', async () => {
+  it('ends at its expiry', async () => {
     await started(f, { expiresMinutes: 1 });
     vi.advanceTimersByTime(60_000);
     await vi.waitFor(() => expect(f.routeCloses).toBe(1));
     expect(f.hub.list()).toEqual([]);
+  });
 
+  describe('when its device goes away', () => {
+    const signedIn = async (overrides: Partial<ShareRequest> = {}) => {
+      const share = await started(f, overrides);
+      const url = local(share, f.hub.port ?? 0);
+      const cookie = await login(url, share.password!);
+      const viewer = await connect(url, { origin: origin(url), cookie });
+      await vi.waitFor(() => expect(f.subscribed).toHaveLength(1));
+      return { share, url, cookie, ...viewer };
+    };
+    const frames = (socket: WebSocket) => {
+      const received: Buffer[] = [];
+      socket.on('message', (data, binary) => {
+        if (binary) received.push(data as Buffer);
+      });
+      return received;
+    };
+    const frame = { width: 1, height: 1, capturedAt: '', data: JPEG.toString('base64') };
+
+    it('waits instead of ending: viewers stay connected and signed in, capture stops and control is released', async () => {
+      const { share, url, cookie, socket, messages } = await signedIn({ control: true });
+      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+      const expiresAt = f.hub.list()[0]?.expiresAt;
+
+      f.status(payload('Shutdown'));
+
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('waiting'));
+      expect(f.hub.list()).toEqual([
+        expect.objectContaining({ id: share.id, state: 'waiting', expiresAt, viewers: 1 }),
+      ]);
+      expect(socket.readyState).toBe(socket.OPEN);
+      expect(f.subscribed[0]!.unsubscribed).toBe(true);
+      expect(f.endFors).toHaveLength(1);
+      expect(f.routeCloses).toBe(0);
+      expect(f.hub.port).not.toBeNull();
+      expect((await http(url, { cookie })).status).toBe(200);
+      expect((await http(`${url}login`, { method: 'POST', body: `password=${share.password}` })).status).toBe(303);
+      socket.close();
+    });
+
+    it('resumes on the same page when the device is back: frames flow again, with no new login and a fresh control session', async () => {
+      const { cookie, url, socket, messages } = await signedIn({ control: true });
+      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      const received = frames(socket);
+
+      f.status(payload('Booted'));
+
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('resumed'));
+      expect(stateOf(f)).toBe('live');
+      expect(f.subscribed).toHaveLength(2);
+      f.subscribed[1]!.listener.frame(frame);
+      await vi.waitFor(() => expect(received).toHaveLength(1));
+      expect(Buffer.compare(received[0]!, JPEG)).toBe(0);
+      expect((await http(url, { cookie })).body).toContain('data-control="true"');
+      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      await vi.waitFor(() => expect(f.begins).toHaveLength(2));
+      socket.close();
+    });
+
+    it('refuses input while it waits and does not begin a control session', async () => {
+      const { socket } = await signedIn({ control: true });
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      await vi.advanceTimersByTimeAsync(50);
+      expect(f.begins).toEqual([]);
+      socket.close();
+    });
+
+    it('lets a viewer join a waiting share and feeds it when the device is back', async () => {
+      const share = await started(f);
+      const url = local(share, f.hub.port ?? 0);
+      const cookie = await login(url, share.password!);
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+
+      const { socket, messages } = await connect(url, { origin: origin(url), cookie });
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('waiting'));
+      expect(f.subscribed).toEqual([]);
+      const received = frames(socket);
+      f.status(payload('Booted'));
+      await vi.waitFor(() => expect(f.subscribed).toHaveLength(1));
+      f.subscribed[0]!.listener.frame(frame);
+      await vi.waitFor(() => expect(received).toHaveLength(1));
+      socket.close();
+    });
+
+    it('waits when its frames fail, and looks for the device again until the stream is back', async () => {
+      const { socket, messages } = await signedIn();
+      f.subscribed[0]!.listener.failed?.('the frame helper stopped');
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      expect(messages.map((message) => message.type)).toContain('waiting');
+
+      vi.advanceTimersByTime(2000);
+      await vi.waitFor(() => expect(stateOf(f)).toBe('live'));
+      expect(f.subscribed).toHaveLength(2);
+
+      f.subscribed[1]!.listener.failed?.('the frame helper stopped again');
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      vi.advanceTimersByTime(2000);
+      expect(stateOf(f)).toBe('waiting');
+      vi.advanceTimersByTime(2000);
+      await vi.waitFor(() => expect(stateOf(f)).toBe('live'));
+      socket.close();
+    });
+
+    it('ignores a failure its old source reports after the share resumed', async () => {
+      const { socket } = await signedIn();
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      f.status(payload('Booted'));
+      await vi.waitFor(() => expect(f.subscribed).toHaveLength(2));
+      f.subscribed[0]!.listener.failed?.('late');
+      await vi.advanceTimersByTimeAsync(20);
+      expect(stateOf(f)).toBe('live');
+      socket.close();
+    });
+
+    it('follows its slot to another simulator, without a new login', async () => {
+      const { socket, messages } = await signedIn();
+      const other = payload('Booted');
+      other.environments[0]!.ios.udid = 'SIM-2';
+      f.status(other);
+      await vi.waitFor(() => expect(f.subscribed).toHaveLength(2));
+      expect(f.subscribed[1]!.device).toMatchObject({ udid: 'SIM-2' });
+      expect(stateOf(f)).toBe('live');
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('resumed'));
+      expect(messages.map((message) => message.type)).toContain('waiting');
+      socket.close();
+    });
+
+    it('keeps its expiry while it waits, and ends when that comes', async () => {
+      await started(f, { expiresMinutes: 1 });
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      vi.advanceTimersByTime(60_000);
+      await vi.waitFor(() => expect(f.hub.list()).toEqual([]));
+      expect(f.routeCloses).toBe(1);
+    });
+
+    it('is ended by an explicit stop, and is not idle while it waits', async () => {
+      const share = await started(f);
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      expect(f.hub.isIdle()).toBe(false);
+      expect(await f.hub.stopOne(WORKSPACE, share.id)).toMatchObject({ state: 'waiting' });
+      expect(f.hub.list()).toEqual([]);
+      expect(f.routeCloses).toBe(1);
+      f.status(payload('Booted'));
+      expect(f.hub.list()).toEqual([]);
+    });
+
+    it('releases the recording exemption it held for control when it starts waiting', async () => {
+      const { socket } = await signedIn({ control: true });
+      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+      expect(f.hub.unrecordedTargets().size).toBe(1);
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      vi.advanceTimersByTime(2 * 60_000);
+      expect(f.hub.unrecordedTargets().size).toBe(0);
+      socket.close();
+    });
+  });
+
+  it('stops only the shares of one slot when asked', async () => {
+    const other = payload();
+    (other.environments[0] as Record<string, unknown>).slots = [
+      { slot: 'beta', ios: { udid: 'SIM-3', owned: true, state: 'Booted', name: 'stim-beta (iPhone 17)' } },
+    ];
+    f.status(other as never);
     await started(f);
-    f.status(payload('Shutdown'));
-    await vi.waitFor(() => expect(f.hub.list()).toEqual([]));
-    expect(f.routeCloses).toBe(2);
+    const beta = await started(f, { slot: 'beta' });
+    const stopped = await f.hub.stop(WORKSPACE, undefined, 'beta');
+    expect(stopped.map((row) => row.id)).toEqual([beta.id]);
+    expect(f.hub.list().map((row) => row.slot)).toEqual(['default']);
+    expect(await f.hub.stop(WORKSPACE, undefined, 'default')).toHaveLength(1);
   });
 
   it('offers rotation on a local simulator, and not on a physical device', async () => {
@@ -1301,7 +1485,7 @@ describe('a web share', () => {
       expect(await page('android')).toContain('data-can-rotate="false"');
     });
 
-    it('refuses a session that is not ready, and ends when the session is replaced or gone', async () => {
+    it('refuses to start on a session that is not ready, and waits when its session is replaced or gone', async () => {
       f.status(hostedPayload('sess-1', false) as never);
       expect(await f.hub.start(shareRequest())).toMatchObject({
         code: 'action-failed',
@@ -1309,23 +1493,36 @@ describe('a web share', () => {
       });
       f.status(hostedPayload() as never);
       await started(f);
-      f.status(hostedPayload('sess-2') as never);
-      await vi.waitFor(() => expect(f.hub.list()).toEqual([]));
+      f.status(hostedPayload('sess-2', false) as never);
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
       expect(f.hostedSources[0]!.closed).toBe(1);
+      f.status(hostedPayload('sess-2') as never);
+      await vi.waitFor(() => expect(f.hostedSources).toHaveLength(2));
+      expect(stateOf(f)).toBe('live');
 
-      f.status(hostedPayload() as never);
-      await started(f);
       f.status(payload('Shutdown'));
-      await vi.waitFor(() => expect(f.hub.list()).toEqual([]));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      expect(f.hostedSources[1]!.closed).toBe(1);
     });
 
-    it('ends when the host stream fails', async () => {
+    it('waits when the host stream fails, as when an install closes the capture, and resumes on the same session', async () => {
       f.status(hostedPayload() as never);
       const share = await started(f);
       const url = local(share, f.hub.port ?? 0);
-      const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
-      f.hostedSources[0]!.subscribed[0]!.failed?.('mini: the host connection closed');
-      await vi.waitFor(() => expect(f.hub.list()).toEqual([]));
+      const cookie = await login(url, share.password!);
+      const { socket, messages } = await connect(url, { origin: origin(url), cookie });
+      await vi.waitFor(() => expect(f.hostedSources[0]!.subscribed).toHaveLength(1));
+      f.hostedSources[0]!.subscribed[0]!.failed?.('mini: The hosted capture session ended.');
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      expect(messages.map((message) => message.type)).toContain('waiting');
+      expect(f.hostedSources[0]!.closed).toBe(1);
+
+      vi.advanceTimersByTime(2000);
+      await vi.waitFor(() => expect(f.hostedSources).toHaveLength(2));
+      await vi.waitFor(() => expect(f.hostedSources[1]!.subscribed).toHaveLength(1));
+      expect(stateOf(f)).toBe('live');
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('resumed'));
+      expect((await http(url, { cookie })).status).toBe(200);
       socket.close();
     });
   });

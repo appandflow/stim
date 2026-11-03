@@ -25,6 +25,7 @@ let expiresAt = null;
 let live = false;
 let finished = false;
 let hasFrame = false;
+let away = false;
 let noteTimer = null;
 
 function setStatus(state, text) {
@@ -49,7 +50,8 @@ function timeLeft() {
 
 function refreshStatus() {
   if (finished) return;
-  setStatus(live ? 'live' : 'waiting', live ? 'Live' : 'Waiting');
+  if (away) setStatus('waiting', 'Waiting for the device');
+  else setStatus(live ? 'live' : 'waiting', live ? 'Live' : 'Waiting');
   leftText.textContent = timeLeft();
 }
 setInterval(() => {
@@ -354,8 +356,21 @@ function connect(codec) {
       else if (waiting) waiting.reject(new Error(message.error || 'The device did not return its clipboard.'));
     } else if (message.type === 'artwork') void setArtwork(message.artwork);
     else if (message.type === 'delayed') {
+      if (away) return;
       live = !message.delayed && hasFrame;
       refreshStatus();
+    } else if (message.type === 'waiting') {
+      away = true;
+      live = false;
+      body.dataset.away = 'true';
+      refreshStatus();
+    } else if (message.type === 'resumed') {
+      away = false;
+      live = false;
+      delete body.dataset.away;
+      waitingForKeyframe = true;
+      refreshStatus();
+      if (codec === 'h264') askForKeyframe();
     } else if (message.type === 'you') {
       me = { id: message.id, name: message.name, color: message.color };
       roster.set(me.id, { ...me, self: true, viewOnly });

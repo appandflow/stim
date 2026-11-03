@@ -2071,7 +2071,10 @@ workspace device with three methods that only the local Unix socket may call
   one or a generated one; `password` stays the control password. It returns
   `auth` (`generated`, `set` or `none`), `viewAuth` (`generated`, `set` or
   `null`), and `password` and `viewPassword` only when it generated them, in
-  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, viewAuth, url, password, viewPassword }`.
+  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, state, auth, viewAuth, url, password, viewPassword }`.
+  `state` (the `share-waiting` feature) is `live` while the device streams and
+  `waiting` while it is away; a server without the feature sends none, which
+  means `live`.
   It refuses a device the workspace does not own or lease, a hosted device,
   `control` on a physical iPhone, `password` with `passwordless`, and `view`
   without `control`, with `passwordless`, or with the same password as
@@ -2079,7 +2082,11 @@ workspace device with three methods that only the local Unix socket may call
 - `share.stop` takes `workspace` and ends its shares, returning `stopped`. With
   `id` (the `share-stop-id` feature) it ends only that share of the workspace,
   and refuses an `id` the workspace does not have with `bad-request`. A server
-  without the feature refuses `id`, so a client checks the feature first.
+  without the feature refuses `id`, so a client checks the feature first. With
+  `slot` (the `share-waiting` feature) it ends only that slot's shares
+  (`default` for the default slot), and `id` and `slot` together are refused.
+  `stim stop` and `stim worktree remove` end shares this way, because a device
+  that goes away only makes a share wait.
 - `share.list` returns `shares`, the same rows without `url`, `password` or
   `viewPassword`.
 
@@ -2097,8 +2104,19 @@ startup, it does not wait: it logs why and exits, so `stim share` refuses with
 ("This share has ended.", "Control is not available right now."); the reasons
 go to the server log.
 
-Shares live in memory only and end at their expiry, on `share.stop`, when the
-device stops or changes in status, when its frames fail, and when the server stops. The server serves
+Shares live in memory only and end at their expiry, on `share.stop` and when the
+server stops. When a share's device goes away on its own (the frame stream
+fails, the status shows the device or hosted session gone, or not ready) the
+share waits instead: it releases control, closes its source and stops capture,
+and keeps its token, password digests, signed-in sessions, viewer sockets and
+expiry. Each viewer gets `{ "type": "waiting" }` and the page says so. The share
+re-resolves its slot's device on every status item, and by a timer (every 2
+seconds, backing off to 30 after a failed stream, which leaves status as it was),
+and once a local device resolves or a hosted session of the slot is ready it
+builds a new source, feeds every connected viewer again and sends
+`{ "type": "resumed" }`. A slot that now runs another device is followed to it.
+A waiting share still counts as a share for the listener, the Funnel route and
+idleness. The server serves
 them on one listener on a loopback port of its own, not on this protocol, and
 publishes it with `tailscale funnel --bg --yes --https=<port>
 http://127.0.0.1:<listener>` on the first Funnel port the node's

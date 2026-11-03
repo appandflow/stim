@@ -4829,11 +4829,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           !isJsonObject(params) ||
           typeof params.workspace !== 'string' ||
           (params.id !== undefined && (typeof params.id !== 'string' || params.id === '')) ||
-          Object.keys(params).some((key) => key !== 'workspace' && key !== 'id')
+          (params.slot !== undefined && (typeof params.slot !== 'string' || !SLOT_NAME.test(params.slot))) ||
+          Object.keys(params).some((key) => key !== 'workspace' && key !== 'id' && key !== 'slot')
         )
-          return error(id, 'bad-request', 'share.stop needs params.workspace and takes an optional params.id.');
+          return error(
+            id,
+            'bad-request',
+            'share.stop needs params.workspace and takes an optional params.id or params.slot.',
+          );
+        if (params.id !== undefined && params.slot !== undefined)
+          return error(id, 'bad-request', 'share.stop takes params.id or params.slot, not both.');
         if (params.id === undefined)
-          return send(socket, { id, result: { stopped: await shares.stop(params.workspace) } });
+          return send(socket, {
+            id,
+            result: { stopped: await shares.stop(params.workspace, undefined, params.slot) },
+          });
         const stopped = await shares.stopOne(params.workspace, params.id);
         if (!stopped) return error(id, 'bad-request', `No share ${params.id} in this workspace.`);
         return send(socket, { id, result: { stopped: [stopped] } });

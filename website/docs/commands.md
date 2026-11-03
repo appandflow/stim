@@ -1119,8 +1119,9 @@ background when none runs, and is served through Tailscale Funnel. The
 password is generated unless you set one with `--password` or drop it with
 `--no-password`. With `--control`, `--view-password` adds a second password that
 only watches. Viewers see each other's touches live. Every share expires (60 minutes by default, at most 480) and ends with
-`stim share stop`, `stim stop` (without `--slot`), `stim worktree remove`, its
-device, or stim-server. It refuses with `STIM_SERVER_NOT_RUNNING` when it cannot start a
+`stim share stop`, `stim stop` (the workspace, or one slot with `--slot`),
+`stim worktree remove`, or stim-server. A device that goes away, as it does when
+you rebuild or relaunch the app, only makes it wait and resume. It refuses with `STIM_SERVER_NOT_RUNNING` when it cannot start a
 stim-server and `STIM_SHARE_REFUSED` with the reason otherwise. See
 [Share a running app](./share.md) for the requirements and the security model.
 

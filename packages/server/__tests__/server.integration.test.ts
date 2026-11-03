@@ -1049,6 +1049,15 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(await local.request('share.stop', { workspace: root, id: '' })).toMatchObject({
       error: { code: 'bad-request' },
     });
+    expect(await local.request('share.stop', { workspace: root, slot: 'beta' })).toEqual(
+      expect.objectContaining({ result: { stopped: [] } }),
+    );
+    for (const params of [
+      { workspace: root, slot: 'not a slot' },
+      { workspace: root, id: 'w1', slot: 'beta' },
+    ]) {
+      expect(await local.request('share.stop', params)).toMatchObject({ error: { code: 'bad-request' } });
+    }
   });
 
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {
@@ -1338,6 +1347,7 @@ describe('pairing', () => {
           'presence',
           'device-clipboard',
           'share-view-password',
+          'share-waiting',
         ],
         actions: [],
         device: { name: 'Test phone' },

@@ -442,7 +442,8 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   the control one. The link and generated passwords appear once, each with a Copy button;
   Desktop does not keep them. **Settings > Web Shares** lists the live shares with
   their viewers and time left ("View and control, view password" for a share with
-  two passwords). **Stop** on a row ends that one share; a workspace with
+  two passwords). A share whose device is away waits and keeps its row; Desktop
+  does not mark it yet, but `stim share list` does. **Stop** on a row ends that one share; a workspace with
   several shares also has **Stop All**. A stim-server older than this (without the
   `share-stop-id` feature) has only the workspace-wide **Stop**, which ends every share of
   the workspace. Quitting
