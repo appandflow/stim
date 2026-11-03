@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import type { StatusPayload } from '@stim-cli/core/state';
 import type { ShareRequest } from './share.ts';
 
-const MIDDOT = '·';
+const MIDDOT = String.fromCharCode(0xb7);
 const MAX_TITLE_PART = 60;
 const LOOKUP_TIMEOUT_MS = 5000;
 const PLATFORM_LABEL = { ios: 'iOS', android: 'Android', macos: 'macOS', web: 'web' } as const;
@@ -22,7 +22,7 @@ export function cleanTitleText(raw: unknown): string | null {
 /** `stim-label (iPhone 18 Pro 27.0)` is `iPhone 18 Pro`: the label and the runtime version stay out of a public title. */
 export function deviceModel(name: string | null | undefined): string | null {
   if (!name) return null;
-  const inner = /\(([^()]+)\)\s*$/u.exec(name)?.[1] ?? (name.startsWith('stim-') ? null : name);
+  const inner = name.startsWith('stim-') ? /^stim-.*? \((.+)\)\s*$/u.exec(name)?.[1] : name;
   return inner ? cleanTitleText(inner.replace(/\s+\d+\.\d+(?:\.\d+)*$/u, '')) : null;
 }
 
