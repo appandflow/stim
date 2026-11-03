@@ -525,13 +525,18 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   async stop(): Promise<void> {
     this.stopping = true;
     await this.starting?.catch(() => undefined);
-    await this.recordStarting;
+    await this.recordStarting?.catch(() => undefined);
+    let recorderError: unknown;
     if (this.options.device?.udid) {
       clearTimeout(this.recording?.timer);
       this.recording = null;
-      if (this.recorder) await this.trackRecorder(this.options.device.udid);
-      await stopRecorders(recorderClaimRoot(this.options.stateDir), this.recorder);
-      this.recorder = null;
+      try {
+        if (this.recorder) await this.trackRecorder(this.options.device.udid);
+        await stopRecorders(recorderClaimRoot(this.options.stateDir), this.recorder);
+        this.recorder = null;
+      } catch (error) {
+        recorderError = error;
+      }
     }
     const sessions = [...this.released];
     this.released.clear();
@@ -569,6 +574,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     if (running || this.claim) await this.teardown(running?.proxy, running ?? undefined);
     for (const session of sessions) this.removeSessionDirectories(session);
     rmSync(this.recordings, { recursive: true, force: true });
+    if (recorderError !== undefined) throw recorderError;
   }
 
   private async teardown(proxy?: ChildProcess, running?: Running): Promise<void> {
@@ -1001,7 +1007,9 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
     const answer = await this.send(running, lease, target, body).catch(() => null);
     next.pending = false;
-    const tracked = udid ? await this.trackRecorder(udid) : true;
+    let tracked = true;
+    if (udid && (!answer || succeeded(answer.body))) tracked = await this.trackRecorder(udid);
+    else if (this.recorder && releaseClaim(this.recorder)) this.recorder = null;
     if (udid && this.recording === next && answer && succeeded(answer.body) && !tracked) {
       await this.send(
         running,
@@ -1594,10 +1602,13 @@ export function recorderClaimRoot(stateDir: string): string {
 }
 
 function recorderPids(ps: string, udid: string): number[] {
-  const io = new RegExp(`\\sio\\s+${udid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+recordVideo\\s`, 'i');
+  const recorder = new RegExp(
+    `(?:^|/)(?:xcrun\\s+)?simctl(?:\\s.*)?\\sio\\s+${udid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+recordVideo\\s`,
+    'i',
+  );
   return ps.split('\n').flatMap((line) => {
     const [, pid, command = ''] = /^\s*(\d+)\s+(.*)$/.exec(line) ?? [];
-    return /^(?:\S*\/)?(?:xcrun\s+)?simctl\s/.test(command) && io.test(command) ? [Number(pid)] : [];
+    return recorder.test(command) ? [Number(pid)] : [];
   });
 }
 

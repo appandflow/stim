@@ -15,7 +15,13 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
-import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
+import {
+  claimRemoveCommand,
+  readClaimSet,
+  releaseClaim,
+  setClaimChild,
+  tryAcquireClaim,
+} from '@stim-cli/core/ownership-claim';
 import { keepAgentClaim, killKeptChild } from './fixtures/kept-agent-claim.ts';
 import type { ProcessIdentityStatus } from '@stim-cli/core/process-identity';
 import { AgentDeviceDriver, recover } from '@stim-cli/agent-driver-agent-device';
@@ -622,13 +628,20 @@ test('a stop from another agent-device session keeps the running recording', asy
   expect((await rpc({ command: 'record', session: 'default', positionals: ['stop'] })).status).toBe(200);
 });
 
-function recorder(pid: number, udid = UDID): string {
-  return `${pid} /Applications/Xcode.app/Contents/Developer/usr/bin/simctl io ${udid} recordVideo --codec=h264 /var/folders/ab/T/stim-server-recordings-0/1/recording.mp4`;
+function recorder(
+  pid: number,
+  udid = UDID,
+  simctl = '/Applications/Xcode.app/Contents/Developer/usr/bin/simctl',
+): string {
+  return `${pid} ${simctl} io ${udid} recordVideo --codec=h264 /var/folders/ab/T/stim-server-recordings-0/1/recording.mp4`;
 }
 
-test('stopping the driver ends its simulator recorder with SIGINT before the daemon', async () => {
+test.each([
+  '/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl',
+  '/Applications/Xcode 27.app/Contents/Developer/usr/bin/simctl',
+])('stopping the driver ends its simulator recorder with SIGINT before the daemon: %s', async (simctl) => {
   await start();
-  fixture.ps = [`${recorder(888890)}\n${recorder(888891, SESSION)}`];
+  fixture.ps = [`${recorder(888890, UDID, simctl)}\n${recorder(888891, SESSION)}`];
   fixture.identities = { 888890: 'same', 888891: 'same' };
   expect((await rpc(recordStart())).status).toBe(200);
   fixture.events = [];
@@ -686,3 +699,40 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
+
+test('a record start agent-device refuses adopts no recorder', async () => {
+  await start();
+  fixture.ps = [recorder(888890)];
+  fixture.identities = { 888890: 'same' };
+  fixture.recordError = { code: 'DEVICE_IN_USE', message: 'CoreSimulator host recording is already in progress' };
+  await rpc(recordStart());
+  fixture.recordError = { code: '', message: '' };
+  await driver.stop();
+  expect(fixture.events).not.toContain('signal:888890:SIGINT');
+  expect(fixture.identities[888890]).toBe('same');
+});
+
+test('stop still stops the daemon when the recorder is unresolved, then refuses', async () => {
+  await start();
+  fixture.ps = [`${recorder(888890)}\n${recorder(888891)}`];
+  fixture.identities = { 888890: 'same', 888891: 'same' };
+  expect((await rpc(recordStart())).status).toBe(500);
+  fixture.events = [];
+  await expect(driver.stop()).rejects.toThrow('hosted simulator recorder is unresolved');
+  expect(fixture.events).toEqual(['ps', 'daemon-stop', 'ps']);
+  fixture.ps = [''];
+});
+
+test('recovery leaves alone a recorder whose stim-server is alive', async () => {
+  const root = join(home, 'agent', 'recorder.claims');
+  const claim = tryAcquireClaim({ root, mode: 'exclusive' }).acquired!;
+  setClaimChild(claim, { pid: 888892, processToken: 'runner-888892' });
+  fixture.identities = { 888892: 'same' };
+  try {
+    await recover({ env: {}, stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') });
+    expect(fixture.events).toEqual([]);
+    expect(readClaimSet(root).live).toMatchObject([{ claimId: claim.claimId }]);
+  } finally {
+    releaseClaim(claim);
+  }
+});
