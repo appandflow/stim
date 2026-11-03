@@ -222,6 +222,10 @@ msgstr "{gb} GB"
 msgid "{heading} {size}: {summary}"
 msgstr "{heading} {size}: {summary}"
 
+#: src/screens/workspace-resources.tsx
+msgid "{heading} {size}: {summary}, shared with other folders {sharedSize}"
+msgstr "{heading} {size}: {summary}, shared with other folders {sharedSize}"
+
 #: src/screens/build-details.tsx
 msgid "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
 msgstr "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
@@ -2069,6 +2073,10 @@ msgstr "idle for {spoken}"
 msgid "Idle for {spoken}"
 msgstr "Idle for {spoken}"
 
+#: src/lib/build-machines.ts
+msgid "if {machine} or its Stim home was replaced, run stim remote remove {machine}, then stim remote add {machine} on the computer this phone is paired with"
+msgstr "if {machine} or its Stim home was replaced, run stim remote remove {machine}, then stim remote add {machine} on the computer this phone is paired with"
+
 #: src/screens/home.tsx
 msgid "In Stim Desktop, open Pair a Phone and scan its QR code. This phone and the machine both need Tailscale."
 msgstr "In Stim Desktop, open Pair a Phone and scan its QR code. This phone and the machine both need Tailscale."
@@ -2174,6 +2182,10 @@ msgstr "just now"
 #: src/screens/workspace-resources.tsx
 msgid "Kept until {until}"
 msgstr "Kept until {until}"
+
+#: src/lib/build-machines.ts
+msgid "Key not confirmed"
+msgstr "Key not confirmed"
 
 #: src/screens/device-view.tsx
 msgid "Keyboard"
@@ -2726,6 +2738,10 @@ msgstr "no upstream"
 msgid "node_modules {nodeModules}"
 msgstr "node_modules {nodeModules}"
 
+#: src/screens/mac-status.tsx
+msgid "node_modules {nodeModules} ({shared} shared)"
+msgstr "node_modules {nodeModules} ({shared} shared)"
+
 #: src/intl/format.ts
 #: src/screens/workspace-work.tsx
 msgid "None"
@@ -2900,6 +2916,10 @@ msgstr "On {host}"
 #: src/lib/worktree-row.ts
 msgid "on {machine}"
 msgstr "on {machine}"
+
+#: src/lib/build-machines.ts
+msgid "on {machine}, run stim-server service update --release <version>, then run stim remote add {machine} on the computer this phone is paired with"
+msgstr "on {machine}, run stim-server service update --release <version>, then run stim remote add {machine} on the computer this phone is paired with"
 
 #: src/lib/home-list.ts
 msgid "on {macName}"
@@ -3486,6 +3506,10 @@ msgstr "Rotated to {name}"
 msgid "run Stim from a git checkout"
 msgstr "run Stim from a git checkout"
 
+#: src/lib/build-machines.ts
+msgid "run stim remote list in a terminal on the computer this phone is paired with, and answer y only if the fingerprint matches the one stim-server setup printed on {machine}"
+msgstr "run stim remote list in a terminal on the computer this phone is paired with, and answer y only if the fingerprint matches the one stim-server setup printed on {machine}"
+
 #: src/lib/workspaces.ts
 #: src/screens/logs.tsx
 msgid "running"
@@ -3586,6 +3610,10 @@ msgstr "select the same Xcode on both"
 msgid "Selected: {selectedName}"
 msgstr "Selected: {selectedName}"
 
+#: src/lib/build-machines.ts
+msgid "Server is outdated"
+msgstr "Server is outdated"
+
 #: src/screens/settings.tsx
 msgid "Set by STIM_RECORDING on the Mac"
 msgstr "Set by STIM_RECORDING on the Mac"
@@ -3614,6 +3642,10 @@ msgstr "Shared by the machine"
 #: src/screens/mac-status.tsx
 msgid "Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache."
 msgstr "Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache."
+
+#: src/screens/workspace-resources.tsx
+msgid "Shared with other folders"
+msgstr "Shared with other folders"
 
 #: src/components/viewer-keyboard.tsx
 msgid "Shift"

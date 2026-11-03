@@ -138,7 +138,7 @@ extension DeviceRef {
 extension Workspace {
   public var diskBytes: Double? {
     guard let disk, disk.worktreeBytes != nil || disk.buildBytes != nil else { return nil }
-    return (disk.worktreeBytes ?? 0) + (disk.buildBytes ?? 0)
+    return (disk.worktreeBytes ?? 0) + (disk.buildBytes ?? 0) - (diskBreakdown?.sharedNodeModules ?? 0)
   }
 
   /// The workspace's machine owners summed, else its status memory.
@@ -179,20 +179,14 @@ extension Workspace {
   }
 
   /// The disk the workspace holds, split into parts that add up to `diskBytes`: node_modules, the rest of the
-  /// worktree, and Stim's build folder. node_modules is part of the worktree, so it is split out of it.
+  /// worktree, and Stim's build folder. node_modules is part of the worktree, so it is split out of it. A linked
+  /// worktree counts only the private part of node_modules; a primary checkout (no `worktree`) counts all of it,
+  /// so the bytes its clones share are counted once, under the source.
   public var diskBreakdown: DiskBreakdown? {
     guard let disk else { return nil }
-    var parts: [DiskBreakdown.Part] = []
-    if let worktree = disk.worktreeBytes {
-      if let modules = disk.nodeModulesBytes, modules > 0, modules <= worktree {
-        parts.append(.init(kind: .nodeModules, bytes: modules))
-        if worktree > modules { parts.append(.init(kind: .worktree, bytes: worktree - modules)) }
-      } else {
-        parts.append(.init(kind: .worktree, bytes: worktree))
-      }
-    }
-    if let build = disk.buildBytes, build > 0 { parts.append(.init(kind: .build, bytes: build)) }
-    return parts.isEmpty ? nil : DiskBreakdown(parts: parts)
+    return DiskBreakdown(
+      worktree: disk.worktreeBytes, nodeModules: disk.nodeModulesBytes,
+      nodeModulesPrivate: worktree == nil ? nil : disk.nodeModulesPrivateBytes, build: disk.buildBytes)
   }
 }
 
@@ -213,6 +207,39 @@ public struct DiskBreakdown: Equatable, Sendable {
   }
 
   public var parts: [Part]
+  /// The part of node_modules that clones or hard links share with other folders. It is on disk once and is not in
+  /// `parts` or `total`; nil when Stim did not report a private size.
+  public var sharedNodeModules: Double?
+
+  public init(parts: [Part], sharedNodeModules: Double? = nil) {
+    self.parts = parts
+    self.sharedNodeModules = sharedNodeModules
+  }
+
+  /// Splits node_modules out of the worktree when it is measured and fits inside it. With a private size, node_modules
+  /// counts only that part and the rest is `sharedNodeModules`; without one it counts in full. Nil when nothing is
+  /// measured.
+  public init?(worktree: Double?, nodeModules: Double?, nodeModulesPrivate: Double?, build: Double?) {
+    var parts: [Part] = []
+    var shared: Double?
+    if let worktree {
+      if let modules = nodeModules, modules > 0, modules <= worktree {
+        var own = modules
+        if let measured = nodeModulesPrivate, measured >= 0, measured <= modules {
+          own = measured
+          shared = modules - measured
+        }
+        parts.append(.init(kind: .nodeModules, bytes: own))
+        if worktree > modules { parts.append(.init(kind: .worktree, bytes: worktree - modules)) }
+      } else {
+        parts.append(.init(kind: .worktree, bytes: worktree))
+      }
+    }
+    if let build, build > 0 { parts.append(.init(kind: .build, bytes: build)) }
+    if parts.isEmpty { return nil }
+    self.init(parts: parts, sharedNodeModules: shared)
+  }
+
   public var total: Double { parts.reduce(0) { $0 + $1.bytes } }
   public var hasNodeModules: Bool { parts.contains { $0.kind == .nodeModules } }
   public func label(of part: Part) -> String { part.label(splitFromNodeModules: hasNodeModules) }
