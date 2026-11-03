@@ -110,6 +110,11 @@ export function agentSessionsCacheFile(): string {
   return join(configDir(), 'agent-sessions.json');
 }
 
+/** The last device listing a boot admission took, which queued runs reuse while it is fresh instead of listing again. */
+export function deviceListingCacheFile(): string {
+  return join(configDir(), 'device-listing.json');
+}
+
 export function diskUsageCacheDir(): string {
   return join(configDir(), 'disk-usage');
 }
