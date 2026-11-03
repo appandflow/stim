@@ -14,32 +14,31 @@
       <form class="card" method="post" action="login">
         <h1>Enter the password</h1>
         <p class="hint">The person who shared this app gave you one.</p>
-        <input
-          type="text"
-          name="password"
-          class="field secret"
-          autocomplete="off"
-          autocapitalize="off"
-          autocorrect="off"
-          spellcheck="false"
-          data-1p-ignore
-          data-lpignore="true"
-          data-bwignore
-          data-form-type="other"
-          autofocus
-          required
-          maxlength="128"
-          aria-label="Password"
-        />
-        <input
-          type="text"
-          name="name"
-          class="field"
-          autocomplete="nickname"
-          maxlength="24"
-          placeholder="Your name (optional)"
-          aria-label="Your name (optional)"
-        />
+        <div class="labeled">
+          <label for="password">Password</label>
+          <input
+            id="password"
+            type="text"
+            name="password"
+            class="field secret"
+            autocomplete="off"
+            autocapitalize="off"
+            autocorrect="off"
+            spellcheck="false"
+            data-1p-ignore
+            data-lpignore="true"
+            data-bwignore
+            data-form-type="other"
+            autofocus
+            required
+            maxlength="128"
+            placeholder="Password"
+          />
+        </div>
+        <div class="labeled">
+          <label for="name">Your name <span class="optional">(optional)</span></label>
+          <input id="name" type="text" name="name" class="field" autocomplete="nickname" maxlength="24" />
+        </div>
         <p class="error" role="alert">{{message}}</p>
         <button class="primary" type="submit">View app</button>
       </form>
