@@ -544,6 +544,8 @@ and repeat the affected gate rather than waiving it.
 - Cut the Stim Desktop release for this version now, at the release commit
   that `vX.Y.Z` points to, so the bundled CLI and server equal the published
   packages. See [apps/desktop/RELEASING.md](./apps/desktop/RELEASING.md).
+  Tag it without waiting for a `Desktop next` run: the two workflows build in
+  parallel and take turns only to publish the appcast.
 
 ## Prerelease channel
 
@@ -596,7 +598,8 @@ Stim Desktop has its own `next` channel. A push to `main` that changes `apps/des
 of `main` through the same build steps as a stable Desktop release and publishes it as a GitHub prerelease
 and a Sparkle item on the `next` channel. See [apps/desktop/RELEASING.md](./apps/desktop/RELEASING.md#next-channel)
 for the details; this repository's variable `DESKTOP_NEXT_PAUSED` set to `true` pauses it, as `NEXT_PAUSED`
-pauses the npm channel. A stable `desktop-v*` release is unaffected.
+pauses the npm channel. A stable `desktop-v*` release is unaffected and never waits for a
+next build: only the short appcast publish of each workflow takes turns.
 
 ## Stim Host releases
 

@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -101,21 +102,32 @@ describe('--json', () => {
     expect(Date.parse(output.expiresAt)).toBeGreaterThan(Date.now());
   });
 
-  it('devices lists paired devices by key fingerprint, without their public keys', () => {
-    const keyPair = generateNoiseKeyPair();
-    spend(createPairingToken().token, 'Phone', keyPair);
+  it('devices lists each record with its kind, access and owner, by key fingerprint, without public keys', () => {
+    const phoneKey = generateNoiseKeyPair();
+    spend(createPairingToken(Date.now(), ['read', 'control']).token, 'Phone', phoneKey);
+    const machine = setupClient(['build', 'device-host'], 'Laptop');
     const { devices } = run('devices', '--json') as { devices: Record<string, unknown>[] };
-    expect(devices).toHaveLength(1);
-    expect(Object.keys(devices[0]!).toSorted()).toEqual([
-      'capabilities',
-      'from',
-      'id',
-      'keyFingerprint',
-      'lastSeenAt',
-      'name',
-      'pairedAt',
+    const machineKey = keyFingerprint(machine.keyPair.publicKey);
+    const shape = ({ id, pairedAt, lastSeenAt, ...rest }: Record<string, unknown>) => {
+      expect(typeof id).toBe('string');
+      expect(Date.parse(String(pairedAt))).not.toBeNaN();
+      expect(Date.parse(String(lastSeenAt))).not.toBeNaN();
+      return rest;
+    };
+    const client = { name: 'Laptop', from: 'test', keyFingerprint: machineKey, owner: 'theirs-running-here' };
+    expect(devices.map(shape)).toEqual([
+      {
+        name: 'Phone',
+        from: 'test',
+        keyFingerprint: keyFingerprint(phoneKey.publicKey),
+        capabilities: ['read', 'control'],
+        kind: 'phone',
+        access: ['view', 'control'],
+        owner: 'this-machine',
+      },
+      { ...client, capabilities: ['build'], kind: 'build-client', access: ['build'] },
+      { ...client, capabilities: ['device-host'], kind: 'device-host-client', access: ['run-devices'] },
     ]);
-    expect(devices[0]).toMatchObject({ name: 'Phone', keyFingerprint: keyFingerprint(keyPair.publicKey) });
   });
 });
 
@@ -145,6 +157,18 @@ describe('control', () => {
     expect(plain('devices', 'grant', 'nope', '--read').stderr).toContain('no paired device or approved client nope');
     expect(plain('devices', '--control').status).toBe(1);
   }, 20_000);
+
+  it('devices rename renames a record and refuses an unknown id or an unprintable name', () => {
+    const phone = spend(createPairingToken().token, 'Phone')?.device;
+    assert(phone);
+    expect(plain('devices', 'rename', phone.id, 'Kitchen iPad').stdout).toBe(`Renamed ${phone.id}.\n`);
+    const unknown = plain('devices', 'rename', 'nope', 'Name');
+    expect(unknown.status).toBe(1);
+    expect(unknown.stderr).toContain('no paired device or approved client nope');
+    expect(plain('devices', 'rename', phone.id, 'two\nlines').status).toBe(1);
+    expect(plain('devices', 'rename', phone.id).status).toBe(1);
+    expect(readDevices()).toEqual([{ ...phone, name: 'Kitchen iPad' }]);
+  }, 20_000);
 });
 
 describe.each(['build', 'device-host'] as const)('%s approval', (capability) => {
@@ -161,6 +185,7 @@ describe.each(['build', 'device-host'] as const)('%s approval', (capability) => 
     expect(result.stderr).toContain(`--${capability} applies only to \`stim-server setup\``);
     expect(readdirSync(home)).not.toContain('server');
     const id = setupClient([capability]).records[capability]!.id;
+    expect(plain('devices', 'rename', id, 'Renamed').status).toBe(0);
     const granted = plain('devices', 'grant', id, `--${capability}`);
     expect(granted.status).toBe(1);
     expect(granted.stderr).toContain('stim-server setup');

@@ -22,6 +22,7 @@ import {
   readDevices,
   readRegistries,
   RegistryUnavailable,
+  renameDevice,
   revokeDevice,
   secretPsk,
   dropSetupSecret,
@@ -163,6 +164,39 @@ describe('registries', () => {
     expect(readDevices()).toEqual([]);
     expect(revokeDevice(phone.id)).toBe(false);
   });
+
+  it('renames a record in whichever registry holds it and changes nothing else', () => {
+    const phone = pair('Phone', newKey(), capabilitiesFor(true));
+    const { ticket, key } = setup(['build', 'device-host']);
+    spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net');
+    const before = readRegistries();
+    const emoji = "Janic's phone \u{1F469}\u200d\u{1F4BB}";
+    expect(renameDevice(before.build[0]?.id ?? 'missing', '  Studio build box  ')).toBe('renamed');
+    expect(renameDevice(phone.id, emoji)).toBe('renamed');
+    expect(readRegistries()).toEqual({
+      devices: before.devices.map((record) => ({ ...record, name: emoji })),
+      build: before.build.map((record) => ({ ...record, name: 'Studio build box' })),
+      deviceHost: before.deviceHost,
+    });
+  });
+
+  it('refuses an unknown id and a name that is empty, too long or not one printable line', () => {
+    const phone = pair();
+    const before = readRegistries();
+    expect(renameDevice('missing', 'Name')).toBe('unknown');
+    const invalid = [
+      '',
+      '   ',
+      'x'.repeat(65),
+      'two\nlines',
+      'tab\there',
+      'zero\u200bwidth',
+      'line\u2028sep',
+      'lone\ud800',
+    ];
+    for (const name of invalid) expect(renameDevice(phone.id, name)).toBe('invalid-name');
+    expect(readRegistries()).toEqual(before);
+  });
 });
 
 describe('a Stim home that does not answer', () => {
@@ -192,6 +226,7 @@ describe('a Stim home that does not answer', () => {
     writeFileSync(file, '{"version": 2, "devices": [');
     expect(() => readRegistries()).toThrow(RegistryUnavailable);
     expect(() => revokeDevice(phone.id)).toThrow(RegistryUnavailable);
+    expect(() => renameDevice(phone.id, 'Renamed')).toThrow(RegistryUnavailable);
     expect(readFileSync(file, 'utf8')).toBe('{"version": 2, "devices": [');
   });
 });
