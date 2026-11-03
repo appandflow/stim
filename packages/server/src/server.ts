@@ -53,6 +53,7 @@ import {
   type StatusViews,
   type WorkspaceSummary,
   type WorktreeRow,
+  SHARE_TOKEN,
 } from '@stim-cli/core/state';
 import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
 import type { DesktopBootstrap } from './desktop-bootstrap.ts';
@@ -1241,8 +1242,20 @@ function leaseGrace(leaseFor: string): { leaseGraceMs?: number } {
 /** Validates `share.start` params; returns why they are refused. */
 function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { workspace: string }) | string {
   if (!isJsonObject(params)) return 'params must be an object.';
-  const { workspace, platform, slot, physical, control, expiresMinutes, password, passwordless, view, ...rest } =
-    params;
+  const {
+    workspace,
+    platform,
+    slot,
+    physical,
+    control,
+    expiresMinutes,
+    expiresAt,
+    token,
+    password,
+    passwordless,
+    view,
+    ...rest
+  } = params;
   if (Object.keys(rest).length) return `share.start does not take ${Object.keys(rest).join(', ')}.`;
   if (typeof workspace !== 'string') return 'params.workspace must be a workspace path.';
   if (platform !== 'ios' && platform !== 'android') return 'params.platform must be ios or android.';
@@ -1267,7 +1280,18 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     if (view.password !== undefined && view.password === password)
       return 'The view password and the control password must differ.';
   }
-  const minutes = expiresMinutes ?? SHARE_EXPIRY.default;
+  if (token !== undefined && (typeof token !== 'string' || !SHARE_TOKEN.test(token)))
+    return 'params.token must be a 43-character URL token.';
+  if (expiresAt !== undefined && expiresMinutes !== undefined)
+    return 'A share takes expiresMinutes or expiresAt, not both.';
+  let until: number | undefined;
+  if (expiresAt !== undefined) {
+    until = typeof expiresAt === 'string' ? Date.parse(expiresAt) : NaN;
+    if (!Number.isFinite(until) || until <= Date.now() || until > Date.now() + SHARE_EXPIRY.max * 60_000)
+      return `params.expiresAt must be a time within the next ${SHARE_EXPIRY.max} minutes.`;
+  }
+  const minutes =
+    until === undefined ? (expiresMinutes ?? SHARE_EXPIRY.default) : Math.ceil((until - Date.now()) / 60_000);
   if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > SHARE_EXPIRY.max)
     return `params.expiresMinutes must be a whole number of minutes from 1 to ${SHARE_EXPIRY.max}.`;
   return {
@@ -1277,6 +1301,8 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     ...(physical ? { physical } : {}),
     control: control === true,
     expiresMinutes: minutes,
+    ...(until === undefined ? {} : { expiresAt: until }),
+    ...(token === undefined ? {} : { token }),
     ...(typeof password === 'string' ? { password } : {}),
     ...(passwordless ? { passwordless } : {}),
     ...(view ? { view: typeof view.password === 'string' ? { password: view.password } : {} } : {}),

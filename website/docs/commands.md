@@ -1108,7 +1108,8 @@ check stim logs --source agent.
 
 ```text
 stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--view-password [value]] [--device] [--slot <name>] [--json]
-stim share stop [--json]
+stim share ios|android --reuse [--expires <minutes>] [--device] [--slot <name>] [--json]
+stim share stop [--forget] [--json]
 stim share list [--json]
 ```
 
@@ -1123,7 +1124,9 @@ only watches. Viewers see each other's touches live. Every share expires (60 min
 `stim worktree remove`, or stim-server. A device that goes away, as it does when
 you rebuild or relaunch the app, only makes it wait and resume. It refuses with
 `STIM_SERVER_NOT_RUNNING` when it cannot start a stim-server and
-`STIM_SHARE_REFUSED` with the reason otherwise, including at once on Windows. See
+`STIM_SHARE_REFUSED` with the reason otherwise, including at once on Windows. `--reuse` starts the saved link and passwords of the workspace's last share of
+that target again, until it expires, and `stop --forget` also deletes the saved
+links. See
 [Share a running app](./share.md) for the requirements and the security model.
 
 ## `logs`

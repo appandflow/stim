@@ -517,7 +517,13 @@ outside it moves to its own issue and pull request.
   `share.publicUrl`, and the frame socket accepts exactly that URL's origin,
   never Host or `X-Forwarded-*`. The CLI asks this Stim home's stim-server over its Unix socket
   (`share.start|stop|list`, refused on every network connection); a share
-  lives only in that server's memory and always expires. A share outlives its
+  lives only in that server's memory and always expires. The CLI saves each
+  share it starts, with its URL token and passwords, in the workspace's
+  `share-links.json` (mode 0600, written under the workspace state lock, removed
+  with the workspace, by `share stop --forget` and once expired) so that
+  `share ios|android --reuse` can start the same link again through
+  `share.start`'s `token` and `expiresAt`; stim-server writes nothing to disk and
+  an expired link is never extended or reused. A share outlives its
   device: when the device goes away on its own (frames fail, the device or hosted
   session changes or is not ready) the share waits, keeping its token, passwords,
   viewer sessions and expiry, and resumes on the slot's device when it is back.

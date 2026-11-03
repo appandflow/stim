@@ -66,6 +66,11 @@ export function workspaceLightenedFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'lightened.json');
 }
 
+/** The links `stim share` started in the workspace that `stim share --reuse` can start again; holds secrets, mode 0600. */
+export function workspaceShareLinksFile(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'share-links.json');
+}
+
 export function workspaceStateLock(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'state.lock');
 }

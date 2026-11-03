@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Command } from 'commander';
 import { registerShare, runShare, type ShareDeps } from '../commands/share.ts';
+import { workspaceShareLinksFile } from '@stim-cli/core/state';
 import { LocalServerUnavailable, requestLocalServer, stopIdleShareServer } from '../local-server.ts';
 
 const ROW = {
@@ -244,5 +245,194 @@ describe('stim share', () => {
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     expect(await stopIdleShareServer('1.0.0')).toBeNull();
     expect(kill).not.toHaveBeenCalled();
+  });
+
+  describe('saved links and --reuse', () => {
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+    const URL_OF = `https://mac.tail.ts.net:10000/s/${TOKEN}/`;
+    const FUTURE = new Date(Date.now() + 40 * 60_000).toISOString();
+    const started =
+      (overrides: Record<string, unknown> = {}) =>
+      () => ({
+        result: {
+          ...ROW,
+          url: URL_OF,
+          expiresAt: FUTURE,
+          auth: 'generated',
+          viewAuth: null,
+          password: 'generated-pw-1',
+          ...overrides,
+        },
+      });
+    const links = () => JSON.parse(readFileSync(workspaceShareLinksFile('/work/app'), 'utf8')).links;
+
+    it('saves the link and the passwords of a started share, privately, and replaces the entry of the same target', async () => {
+      const deps = fake([started(), started({ url: URL_OF.replace('abc', 'xyz') })]);
+      await runShare('android', { expires: '40' }, deps, '1.0.0');
+      expect(links()).toEqual({
+        android: expect.objectContaining({
+          token: TOKEN,
+          password: 'generated-pw-1',
+          auth: 'generated',
+          expiresAt: FUTURE,
+        }),
+      });
+      expect(statSync(workspaceShareLinksFile('/work/app')).mode & 0o777).toBe(
+        process.platform === 'win32' ? 0o666 : 0o600,
+      );
+      await runShare('android', {}, deps, '1.0.0');
+      expect(Object.keys(links())).toEqual(['android']);
+      expect(links().android.token).toBe(TOKEN.replace('abc', 'xyz'));
+    });
+
+    it('keeps one link per platform, slot and physical device, with the password the person set and none for an open share', async () => {
+      const deps = fake([
+        started({ auth: 'set', password: undefined }),
+        started({ slot: 'tablet', auth: 'none', password: undefined, control: true }),
+        started({ physical: true }),
+      ]);
+      await runShare('android', { password: 'my own password' }, deps, '1.0.0');
+      await runShare('android', { slot: 'tablet', password: false, control: true }, deps, '1.0.0');
+      await runShare('android', { device: true }, deps, '1.0.0');
+      expect(Object.keys(links()).toSorted()).toEqual(['android', 'android:device', 'android@tablet']);
+      expect(links().android.password).toBe('my own password');
+      expect(links()['android@tablet']).not.toHaveProperty('password');
+    });
+
+    it('starts the saved link again with its passwords and expiry, says it was reused, and prints no password the person set', async () => {
+      const deps = fake([
+        started({ control: true, viewAuth: 'generated', viewPassword: 'generated-view-1' }),
+        started({ control: true, viewAuth: 'generated' }),
+      ]);
+      await runShare('android', { control: true, viewPassword: true }, deps, '1.0.0');
+      const again = await runShare('android', { reuse: true }, deps, '1.0.0');
+      expect(deps.sent[1]!.params).toEqual({
+        workspace: '/work/app',
+        platform: 'android',
+        control: true,
+        token: TOKEN,
+        expiresAt: FUTURE,
+        password: 'generated-pw-1',
+        view: { password: 'generated-view-1' },
+      });
+      expect(again).toMatchObject({
+        ok: true,
+        output: { reused: true, url: URL_OF, password: 'generated-pw-1', viewPassword: 'generated-view-1' },
+        text: expect.stringContaining('Control password: generated-pw-1'),
+      });
+
+      const chosen = fake([started({ auth: 'set', password: undefined }), started()]);
+      await runShare('android', { password: 'my own password' }, chosen, '1.0.0');
+      const reused = await runShare('android', { reuse: true }, chosen, '1.0.0');
+      expect(chosen.sent[1]!.params).toMatchObject({ password: 'my own password' });
+      expect(JSON.stringify(reused)).not.toContain('my own password');
+    });
+
+    it('with --expires, starts it with that many minutes from now and saves the new expiry', async () => {
+      const later = new Date(Date.now() + 90 * 60_000).toISOString();
+      const deps = fake([started(), started({ expiresAt: later })]);
+      await runShare('android', {}, deps, '1.0.0');
+      await runShare('android', { reuse: true, expires: '90' }, deps, '1.0.0');
+      expect(deps.sent[1]!.params).toMatchObject({ expiresMinutes: 90 });
+      expect(deps.sent[1]!.params).not.toHaveProperty('expiresAt');
+      expect(links().android.expiresAt).toBe(later);
+    });
+
+    it('refuses flags that the saved setup already decides, before asking the server', async () => {
+      const deps = fake([started()]);
+      await runShare('android', {}, deps, '1.0.0');
+      for (const opts of [
+        { control: true },
+        { password: 'another password' },
+        { password: false as const },
+        { viewPassword: true as const },
+      ]) {
+        expect(await runShare('android', { reuse: true, ...opts }, deps, '1.0.0')).toMatchObject({
+          ok: false,
+          error: { code: 'STIM_BAD_ARG', message: expect.stringContaining('--reuse') },
+        });
+      }
+      expect(await runShare('stop', { reuse: true }, deps, '1.0.0')).toMatchObject({ error: { code: 'STIM_BAD_ARG' } });
+      expect(await runShare('android', { forget: true }, deps, '1.0.0')).toMatchObject({
+        error: { code: 'STIM_BAD_ARG' },
+      });
+      expect(deps.sent).toHaveLength(1);
+    });
+
+    it('fails clearly when there is nothing to reuse: no entry, another target, an expired link, or an invalid one', async () => {
+      const deps = fake([]);
+      const nothing = {
+        ok: false,
+        error: { code: 'STIM_SHARE_NOTHING_TO_REUSE', remedy: expect.stringContaining('without --reuse') },
+      };
+      expect(await runShare('android', { reuse: true }, deps, '1.0.0')).toMatchObject(nothing);
+
+      const file = workspaceShareLinksFile('/work/app');
+      mkdirSync(dirname(file), { recursive: true });
+      const entry = {
+        platform: 'android',
+        slot: 'default',
+        physical: false,
+        token: TOKEN,
+        control: false,
+        password: 'generated-pw-1',
+        auth: 'generated',
+        viewAuth: null,
+        createdAt: FUTURE,
+      };
+      writeFileSync(
+        file,
+        JSON.stringify({ version: 1, links: { android: { ...entry, expiresAt: '2020-01-01T00:00:00.000Z' } } }),
+      );
+      expect(await runShare('android', { reuse: true }, deps, '1.0.0')).toMatchObject(nothing);
+      expect(existsSync(file)).toBe(false);
+
+      writeFileSync(
+        file,
+        JSON.stringify({ version: 1, links: { android: { ...entry, expiresAt: FUTURE, token: 'short' } } }),
+      );
+      expect(await runShare('android', { reuse: true }, deps, '1.0.0')).toMatchObject(nothing);
+      writeFileSync(file, JSON.stringify({ version: 1, links: { android: { ...entry, expiresAt: FUTURE } } }));
+      expect(await runShare('android', { reuse: true, slot: 'tablet' }, deps, '1.0.0')).toMatchObject(nothing);
+      expect(await runShare('android', { reuse: true, device: true }, deps, '1.0.0')).toMatchObject(nothing);
+      expect(deps.sent).toEqual([]);
+    });
+
+    it('reports a link that is live now as a refused share', async () => {
+      const deps = fake([started(), () => ({ error: { code: 'bad-request', message: 'That link is live now.' } })]);
+      await runShare('android', {}, deps, '1.0.0');
+      expect(await runShare('android', { reuse: true }, deps, '1.0.0')).toMatchObject({
+        error: { code: 'STIM_SHARE_REFUSED', message: 'That link is live now.' },
+      });
+    });
+
+    it('stop keeps the saved links reusable and lists them without any secret, and stop --forget deletes them', async () => {
+      const deps = fake([started(), () => ({ result: { stopped: [ROW] } }), () => ({ result: { stopped: [] } })]);
+      await runShare('android', {}, deps, '1.0.0');
+      const stopped = await runShare('stop', {}, deps, '1.0.0');
+      expect(stopped).toMatchObject({
+        ok: true,
+        output: { reusable: [{ platform: 'android', slot: 'default', physical: false, expiresAt: FUTURE }] },
+        text: expect.stringContaining('stim share android --reuse'),
+      });
+      expect(JSON.stringify(stopped)).not.toContain(TOKEN);
+      expect(JSON.stringify(stopped)).not.toContain('generated-pw-1');
+      expect(existsSync(workspaceShareLinksFile('/work/app'))).toBe(true);
+
+      const forgotten = await runShare('stop', { forget: true }, deps, '1.0.0');
+      expect(forgotten).toMatchObject({ ok: true, output: { forgot: 1 } });
+      expect(existsSync(workspaceShareLinksFile('/work/app'))).toBe(false);
+    });
+
+    it('stop --forget still forgets when no stim-server runs, and stop alone then reports the missing server', async () => {
+      const deps = fake([started(), unavailable, unavailable]);
+      await runShare('android', {}, deps, '1.0.0');
+      expect(await runShare('stop', { forget: true }, deps, '1.0.0')).toMatchObject({
+        ok: true,
+        output: { forgot: 1 },
+      });
+      expect(existsSync(workspaceShareLinksFile('/work/app'))).toBe(false);
+      expect(await runShare('stop', {}, deps, '1.0.0')).toMatchObject({ error: { code: 'STIM_SERVER_NOT_RUNNING' } });
+    });
   });
 });

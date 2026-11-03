@@ -1051,6 +1051,17 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(await local.request('share.stop', { workspace: root, id: '' })).toMatchObject({
       error: { code: 'bad-request' },
     });
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+    for (const params of [
+      { token: 'short' },
+      { token: TOKEN, expiresAt: '2000-01-01T00:00:00.000Z' },
+      { token: TOKEN, expiresAt: new Date(Date.now() + 3600_000).toISOString(), expiresMinutes: 30 },
+      { token: TOKEN, expiresAt: new Date(Date.now() + 10 * 3600_000).toISOString() },
+    ]) {
+      expect(await local.request('share.start', { workspace: root, platform: 'ios', ...params })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+    }
     expect(await local.request('share.stop', { workspace: root, slot: 'beta' })).toEqual(
       expect.objectContaining({ result: { stopped: [] } }),
     );
@@ -1350,6 +1361,7 @@ describe('pairing', () => {
           'device-clipboard',
           'share-view-password',
           'share-waiting',
+          'share-reuse',
         ],
         actions: [],
         device: { name: 'Test phone' },

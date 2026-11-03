@@ -2072,6 +2072,13 @@ workspace device with three methods that only the local Unix socket may call
   `auth` (`generated`, `set` or `none`), `viewAuth` (`generated`, `set` or
   `null`), and `password` and `viewPassword` only when it generated them, in
   `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, state, auth, viewAuth, url, password, viewPassword }`.
+  `token` and `expiresAt` (the `share-reuse` feature) start the share under
+  that 43-character URL token and expire it at that time (an ISO time within the
+  next 480 minutes, instead of `expiresMinutes`), as `stim share --reuse`
+  restarts a stopped share with the link it saved; the server registers the
+  token's digest like a generated one and keeps no more than before. It refuses
+  a malformed token, a token a live or waiting share already uses (`That link is
+live now.`) and a time already past.
   `state` (the `share-waiting` feature) is `live` while the device streams and
   `waiting` while it is away; a server without the feature sends none, which
   means `live`.
