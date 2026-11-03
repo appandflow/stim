@@ -112,13 +112,17 @@ function load(image, src) {
   return image.decode().catch(() => {});
 }
 
+let artworkSeq = 0;
+
 async function setArtwork(next) {
+  const seq = ++artworkSeq;
   if (!next) {
     artwork = null;
     if (hasFrame) layout(screen.width, screen.height);
     return;
   }
   await Promise.all([load(bezelBack, next.background), load(bezelFront, next.foreground)]);
+  if (seq !== artworkSeq) return;
   artwork = next;
   if (hasFrame) layout(screen.width, screen.height);
 }

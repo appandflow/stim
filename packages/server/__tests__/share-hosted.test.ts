@@ -89,7 +89,7 @@ describe('a share of a hosted device', () => {
       background: 'a',
       foreground: 'b',
     };
-    f.routes.get('s:up')!.event({ event: 'device-frame', subscription: 'up', artwork });
+    f.routes.get('s:up')?.event({ event: 'device-frame', subscription: 'up', artwork });
     expect(art).toHaveBeenCalledWith(artwork);
     const late = vi.fn<(artwork: unknown) => void>();
     f.source.subscribe({ ...listener(), artwork: late }, hint);
