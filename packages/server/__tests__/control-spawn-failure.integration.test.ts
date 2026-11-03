@@ -16,9 +16,9 @@ afterEach(() => {
 
 const url = (path: string): string => JSON.stringify(new URL(path, import.meta.url).href);
 
-// Node signals the caller's own process group when a child that never spawned is killed, so the hub runs in a child
-// Node process of its own group: a regression ends that process, not this test runner.
-const SCRIPT = `
+// Node signals the caller's own process group when a child that never spawned is killed, so each scenario runs in a
+// child Node process of its own group: a regression ends that process, not this test runner.
+const HUB_SCRIPT = `
 import { join } from 'node:path';
 import { ControlHub } from ${url('../src/control.ts')};
 import { FramePool } from ${url('../src/frames.ts')};
@@ -52,9 +52,10 @@ await hub.close();
 await frames.close();
 `;
 
-it('refuses an input whose tool cannot start while a claim is held, and keeps the server running', async () => {
-  mkdirSync(join(home, 'no-tools'));
-  const child = spawn(process.execPath, ['--input-type=module', '-e', SCRIPT], {
+async function runDetached(
+  script: string,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }> {
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
     detached: true,
     env: { ...process.env, SPAWN_FAILURE_HOME: home },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -66,9 +67,39 @@ it('refuses an input whose tool cannot start while a claim is held, and keeps th
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
     child.on('close', (code, signal) => resolve({ code, signal })),
   );
-  expect({ ...exit, stderr }).toEqual({ code: 0, signal: null, stderr: '' });
+  return { ...exit, stdout, stderr };
+}
+
+it('reports the spawn error of an input whose tool cannot start while a claim is held', async () => {
+  mkdirSync(join(home, 'no-tools'));
+  const { stdout, ...rest } = await runDetached(HUB_SCRIPT);
+  expect(rest).toEqual({ code: 0, signal: null, stderr: '' });
   expect(JSON.parse(stdout)).toMatchObject({
     code: 'action-failed',
-    message: expect.stringContaining('simctl pbcopy'),
+    message: expect.stringMatching(/^simctl pbcopy could not start \(spawn xcrun ENOENT\)/),
   });
+}, 15_000);
+
+const GUARDS_SCRIPT = `
+import { spawn } from 'node:child_process';
+import { join } from 'node:path';
+import { signalChild, terminate } from ${url('../src/stim-command.ts')};
+const missing = () => spawn(join(process.env.SPAWN_FAILURE_HOME, 'missing-tool'), [], { stdio: 'ignore' });
+const result = {};
+const first = missing();
+first.on('error', () => {});
+result.signalChild = signalChild(first, 'SIGTERM');
+const second = missing();
+let errored = false;
+second.on('error', () => (errored = true));
+await terminate(second);
+result.terminateReturnedBeforeError = !errored;
+await new Promise((resolve) => setTimeout(resolve, 100));
+process.stdout.write(JSON.stringify(result));
+`;
+
+it('does not signal a child that never spawned, and does not wait for it to exit', async () => {
+  const { stdout, ...rest } = await runDetached(GUARDS_SCRIPT);
+  expect(rest).toEqual({ code: 0, signal: null, stderr: '' });
+  expect(JSON.parse(stdout)).toEqual({ signalChild: false, terminateReturnedBeforeError: true });
 }, 15_000);
