@@ -413,7 +413,7 @@ export async function runDaemon({
   let interval = tickMs;
   const kept = new Map<string, string>();
   for (;;) {
-    if (!tickRequested && !handover) {
+    if (!tickRequested && !handover && !closing) {
       await new Promise<void>((done) => {
         let timer = setTimeout(done, interval);
         interrupt = () => {
