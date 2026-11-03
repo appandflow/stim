@@ -127,10 +127,19 @@ on Android, the hardware arrow and Escape keys on iOS).
 With `--control` on an iOS simulator, an Android emulator or an Android phone,
 Command-V (Control-V on Windows and Linux) while the screen has focus pastes the
 text on your computer's clipboard into the focused field on the device. The
-"Copy device clipboard" button in the toolbar copies the device's clipboard to
-your computer. Nothing syncs on its own, text only, up to 8 KiB for a paste. A
-web page and a native macOS app have no clipboard action, and a share without
-`--control` never reads the device clipboard.
+options menu in the top bar has a "Sync clipboard" switch, on by default and
+remembered by your browser. While the page is focused it copies new text from
+the device to your computer's clipboard (a "Copy from device" chip appears when
+the browser refuses), and in Chrome and Edge, after a one-time permission
+prompt, it sends text you copied on your computer to the device when you return
+to the page. In other browsers press Command-V on the device screen. The menu's
+"Copy from device" button copies once. Sending your copied text to the device counts as input and starts the share's
+control session like a paste. Syncing from the device starts after
+someone has tapped, typed or pasted, and does not keep an idle share's control
+session alive. Everyone who controls the share with sync on shares the device
+clipboard, so text one of them copies reaches the others. Text only, up to 8 KiB
+sent to the device. A web page and a native macOS app have no clipboard action, and a share
+without `--control` never reads the device clipboard.
 
 Two-finger gestures work on iOS simulators and on Android emulators and
 phones, with `--control`. On a phone or tablet, use two fingers on the screen
@@ -406,7 +415,7 @@ reload.
   costs only its listener and route. A share never records anything to disk.
 - **Control is the existing control path.** Input goes through the same
   control session and device lease Stim Desktop and the phone app use, limited
-  to taps, two-finger gestures, text, the arrow keys and Escape, pasting your clipboard into the device and copying the device's clipboard to your computer, rotation and the hardware buttons of the shared device. A device an
+  to taps, two-finger gestures, text, the arrow keys and Escape, pasting and syncing the clipboard with your computer, rotation and the hardware buttons of the shared device. A device an
   agent or another client is driving answers busy; a share never takes it over.
 - **Ephemeral.** Shares live only in stim-server's memory. A share ends at its
   expiry, on `stim share stop`, `stim stop` (without `--slot`),

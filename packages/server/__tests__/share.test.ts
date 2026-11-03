@@ -607,6 +607,26 @@ describe('a web share', () => {
     other.socket.close();
   });
 
+  it('answers a polling clipboard read without starting control, and serves it once control runs', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    const messages: unknown[] = [];
+    socket.on('message', (data, binary) => {
+      if (!binary) messages.push(JSON.parse(data.toString()));
+    });
+    f.inputResult = { text: 'from the device' };
+    socket.send(JSON.stringify({ type: 'clipboard-get', id: 1, poll: true }));
+    await vi.waitFor(() => expect(messages).toContainEqual({ type: 'clipboard', id: 1, error: expect.any(String) }));
+    expect(f.begins).toEqual([]);
+    expect(f.inputs).toEqual([]);
+    socket.send(JSON.stringify({ type: 'key', key: 'left' }));
+    await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+    socket.send(JSON.stringify({ type: 'clipboard-get', id: 2, poll: true }));
+    await vi.waitFor(() => expect(messages).toContainEqual({ type: 'clipboard', id: 2, text: 'from the device' }));
+    socket.close();
+  });
+
   it('answers a clipboard read at once when control cannot start', async () => {
     f.refuseControl = true;
     const share = await started(f, { control: true });
