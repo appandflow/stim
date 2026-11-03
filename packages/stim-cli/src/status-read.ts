@@ -10,7 +10,7 @@ import { isAbsentPath, isOnMountedVolume, listMountedVolumes } from './fs-util.t
 import { basename, dirname, join } from 'path';
 import { admissionLimits, getPlatformDeviceLimits, loadConfig } from './workspace/config.ts';
 import { buildSlotUsage } from './engine/build-slots.ts';
-import { deviceSlotUsages } from './engine/device-capacity.ts';
+import { deviceSlotUsages, readFreshDeviceListing } from './engine/device-capacity.ts';
 import type { ProjectRecord, SupervisorRecord } from './workspace/config.ts';
 import { getExecutor } from './exec.ts';
 import { isMetroRunning } from './ports.ts';
@@ -208,6 +208,8 @@ export interface StatusSnapshot {
 export interface StatusProbes {
   /** Rejects when simctl cannot be read. */
   simulators(): Promise<IosSimRecord[]>;
+  /** The emulator listing that came with the simulators when they were answered from the shared device listing. */
+  listedAdb?(): AdbDevices | null;
   metro(
     projects: [string, ProjectRecord][],
   ): Promise<{ metro: MetroResolution | null; supervisor: SupervisorFacts | null }[]>;
@@ -228,21 +230,32 @@ export interface StatusProbes {
 
 /**
  * Probes that read everything when asked. `simctlListing`, when given, answers `simulators` without running simctl,
- * `gitMaxAgeMs` reuses git summaries read that recently, and `archives` answers `archives` without reading them.
+ * `sharedListing` answers it from the shared device listing when that is fresh, `gitMaxAgeMs` reuses git summaries
+ * read that recently, and `archives` answers `archives` without reading them.
  */
 export function liveProbes({
   simctlListing = null,
+  sharedListing = false,
   gitMaxAgeMs = 0,
   archives,
-}: { simctlListing?: string | null; gitMaxAgeMs?: number; archives?: ArchivedWorkspace[] } = {}): StatusProbes {
+}: {
+  simctlListing?: string | null;
+  sharedListing?: boolean;
+  gitMaxAgeMs?: number;
+  archives?: ArchivedWorkspace[];
+} = {}): StatusProbes {
   const androidRuntimeOf = androidRuntimeReader();
+  let listedAdb: AdbDevices | null = null;
   return {
-    simulators: () =>
-      process.platform !== 'darwin'
-        ? Promise.resolve([])
-        : simctlListing === null
-          ? listAllIosSimsAsync()
-          : Promise.resolve().then(() => parseSimctlList(simctlListing)),
+    simulators: () => {
+      if (process.platform !== 'darwin') return Promise.resolve([]);
+      if (simctlListing !== null) return Promise.resolve().then(() => parseSimctlList(simctlListing));
+      const shared = sharedListing ? readFreshDeviceListing() : null;
+      if (!shared) return listAllIosSimsAsync();
+      listedAdb = shared.adb;
+      return Promise.resolve(shared.sims);
+    },
+    listedAdb: () => listedAdb,
     metro: readMetroFacts,
     hostedIos: readHostedIosStatus,
     hostedAndroid: readHostedAndroidStatus,
@@ -533,7 +546,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
                 : () => {
                     throw simctlFailure;
                   },
-          adb: () => listAdbDevicesAsync({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS }),
+          adb: () => probes.listedAdb?.() ?? listAdbDevicesAsync({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS }),
         })
       : {}),
   };

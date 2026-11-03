@@ -304,7 +304,10 @@ CAPACITY
 TWO REPORTS, TWO QUESTIONS
   "What is running" is \`stim status\`: live state, right now, including
   each running ios or android build's phase and time left (see
-  \`guide facts status\`). "How much the
+  \`guide facts status\`). One-shot status reads simulator state from the
+  device listing a boot admission took in the last 10 seconds, when there is
+  one, so it can lag a just-booted or just-stopped device by that long plus the
+  listing time; \`stim status --watch\` always lists itself. "How much the
   cache saved" is \`stim stats\`: aggregate counters for this project and for
   the machine, with a hit rate and an estimate of the time saved (see
   \`guide facts stats\`).

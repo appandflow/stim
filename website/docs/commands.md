@@ -1525,6 +1525,15 @@ only for live environments; `stim status --watch` shows it for every worktree. S
 [Parallel environments](./worktrees.md#parallel-environments) for the JSON
 fields.
 
+One-shot `stim status` takes simulator state and device slot usage from the
+device listing that a boot admission took in the last 10 seconds, when there
+is one, and runs `simctl list` itself otherwise. Under a burst of starting
+workspaces the admissions keep that listing fresh, so status does not wait on
+a slow `simctl`. The listing can be up to 10 seconds old plus the time it took,
+and `stim stop` and `stim ios` do not refresh it, so a device that just booted
+or stopped can show its earlier state for that long. `stim status --watch`
+always lists the devices itself.
+
 Each workspace is marked with its lifecycle phase: `[warming: <step>]` while
 `stim worktree warm` runs in it, or `[ready]` after a warm until its first run.
 Other workspaces have no marker; their `stage:` line says whether they are running,

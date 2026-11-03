@@ -10,6 +10,7 @@ import {
   countLiveOwnedDevices,
   countLiveOwnedDevicesByPlatform,
   deviceSlotUsages,
+  readFreshDeviceListing,
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
@@ -759,4 +760,42 @@ test('concurrency settings override the derived caps, and 0 means derived', () =
   expect(
     admissionLimits({ env: { STIM_MAX_BUILDS: '3', STIM_MAX_DEVICES: '0' }, cores: 10, totalBytes: 16 * 1024 ** 3 }),
   ).toEqual({ maxBuilds: 3, maxDevices: 8, derived: { builds: false, devices: true } });
+});
+
+describe('the shared device listing status reads', () => {
+  const listingFile = () => join(root, 'device-listing.json');
+  const sims = [
+    makeIosSim({ udid: 'a', name: 'stim-a', state: 'Booted', dataPathSize: 123 }),
+    makeIosSim({ udid: 'b', name: 'stim-b', state: 'Shutdown' }),
+  ];
+
+  test('a boot admission publishes the simulator records it listed', async () => {
+    await withDeviceBootAdmission({ platform: 'ios', key: 'a' }, async () => {}, {
+      root,
+      sources: { ...empty, sims },
+    });
+    expect(readFreshDeviceListing()?.sims).toEqual(sims);
+  });
+
+  test.each([
+    ['older than 10 s', { schema: 1, listedAt: Date.now() - 11_000, sims }],
+    ['from the future', { schema: 1, listedAt: Date.now() + 60_000, sims }],
+    ['written before records carried a schema', { listedAt: Date.now(), sims }],
+    ['a record missing its runtime', { schema: 1, listedAt: Date.now(), sims: [{ ...sims[0], runtime: undefined }] }],
+    ['not an array of records', { schema: 1, listedAt: Date.now(), sims: 'booted' }],
+  ])('a listing that is %s is not used', (_name, record) => {
+    writeFileSync(listingFile(), JSON.stringify(record));
+    expect(readFreshDeviceListing()).toBeNull();
+  });
+
+  test('a corrupt or missing file is not used', () => {
+    expect(readFreshDeviceListing()).toBeNull();
+    writeFileSync(listingFile(), '{"schema":1,"listedAt":');
+    expect(readFreshDeviceListing()).toBeNull();
+  });
+
+  test('a listing 9 s old is still used', () => {
+    writeFileSync(listingFile(), JSON.stringify({ schema: 1, listedAt: Date.now() - 9_000, sims }));
+    expect(readFreshDeviceListing()).toEqual({ sims, adb: null });
+  });
 });

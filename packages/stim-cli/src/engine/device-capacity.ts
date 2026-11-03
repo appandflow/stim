@@ -745,16 +745,38 @@ interface SharedListing {
   adb: AdbDevices | null;
 }
 
-function readSharedListing(at: number): SharedListing | null {
+const SHARED_LISTING_SCHEMA = 1;
+
+function isSimRecord(value: unknown): value is SimRecord {
+  if (!isJsonObject(value)) return false;
+  return (
+    ['udid', 'name', 'state', 'runtime', 'deviceTypeIdentifier'].every((field) => typeof value[field] === 'string') &&
+    typeof value.available === 'boolean' &&
+    (value.dataPathSize === undefined || typeof value.dataPathSize === 'number')
+  );
+}
+
+function readSharedListing(at: number, { complete = false }: { complete?: boolean } = {}): SharedListing | null {
   const record = readJsonObject(deviceListingCacheFile());
   const listedAt = record?.listedAt;
   const sims = record?.sims;
   if (typeof listedAt !== 'number' || !Array.isArray(sims) || at < listedAt || at - listedAt > INVENTORY_REFRESH_MS)
     return null;
+  if (complete && (record?.schema !== SHARED_LISTING_SCHEMA || !sims.every(isSimRecord))) return null;
   const adb = isJsonObject(record?.adb) ? record.adb : null;
   if (adb && Array.isArray(adb.emulators) && Array.isArray(adb.physical) && Array.isArray(adb.unhealthy))
     return { listedAt, sims, adb: { emulators: adb.emulators, physical: adb.physical, unhealthy: adb.unhealthy } };
   return { listedAt, sims, adb: null };
+}
+
+/**
+ * The simulator records (and the emulator listing, when the writer took one) of the last device listing a boot
+ * admission took, while it is at most `INVENTORY_REFRESH_MS` old. Null when the file is missing, stale, corrupt or
+ * written without simulator records.
+ */
+export function readFreshDeviceListing(at: number = Date.now()): Pick<SharedListing, 'sims' | 'adb'> | null {
+  const listing = readSharedListing(at, { complete: true });
+  return listing && { sims: listing.sims, adb: listing.adb };
 }
 
 function takeBootMarker(device: BootingDevice): ClaimHandle {
@@ -1024,7 +1046,7 @@ export async function withDeviceBootAdmission<T>(
         sims: read.sims,
         adb: recordsOwnedEmulator(read.config) ? read.adb : null,
       };
-      writeCacheFile(deviceListingCacheFile(), listing);
+      writeCacheFile(deviceListingCacheFile(), { schema: SHARED_LISTING_SCHEMA, ...listing });
     }
     return decide(read) ?? admit();
   };
