@@ -10,6 +10,7 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { beforeCommand, ensureDaemon, requestDaemonTick } from '../daemon/client.ts';
+import * as measure from '../daemon/measure.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
 import { runDaemon } from '../daemon/run.ts';
 import * as maintenanceRun from '../maintenance/run.ts';
@@ -148,6 +149,19 @@ test('a tick request is answered when a tick finishes, and the snapshot carries 
 }, 20_000);
 
 test('exits after two ticks with nothing running in its home, releasing its claim and removing its socket', async () => {
+  const measureTick = measure.measureTick;
+  const normal = vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {
+    const measured = await measureTick(...args);
+    return {
+      ...measured,
+      measurement: {
+        ...measured.measurement,
+        disk: [{ volume: '/', freeMb: 500_000 }],
+        memory: { level: 'normal', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
+      },
+    };
+  });
+  onTestFinished(() => normal.mockRestore());
   await runDaemon({ tickMs: 50 });
   expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
   expect(existsSync(daemonSocket())).toBe(false);
