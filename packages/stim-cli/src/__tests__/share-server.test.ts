@@ -44,18 +44,21 @@ describe('starting a stim-server for a share', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('stops its own server and joins the one that won the local socket', async () => {
-    const winner = await otherServer(1);
-    const kill = vi.spyOn(process, 'kill');
-    let result: ShareServerStart | null = null;
-    void startShareServer(sleeper, '1.0.0').then((value) => (result = value));
-    await vi.waitFor(() => expect(result).not.toBeNull(), { timeout: 20_000, interval: 250 });
-    expect(result).toEqual({ started: false, reason: 'joined' });
-    const [pid, signal] = kill.mock.calls[0] ?? [];
-    spawned.push(Number(pid));
-    expect(signal).toBe('SIGTERM');
-    winner.close();
-  });
+  test.skipIf(process.platform === 'win32')(
+    'stops its own server and joins the one that won the local socket; skipped on win32',
+    async () => {
+      const winner = await otherServer(1);
+      const kill = vi.spyOn(process, 'kill');
+      let result: ShareServerStart | null = null;
+      void startShareServer(sleeper, '1.0.0').then((value) => (result = value));
+      await vi.waitFor(() => expect(result).not.toBeNull(), { timeout: 20_000, interval: 250 });
+      expect(result).toEqual({ started: false, reason: 'joined' });
+      const [pid, signal] = kill.mock.calls[0] ?? [];
+      spawned.push(Number(pid));
+      expect(signal).toBe('SIGTERM');
+      winner.close();
+    },
+  );
 
   it('stops its own server and reports the log when no server answers within 60 s', async () => {
     const kill = vi.spyOn(process, 'kill');
