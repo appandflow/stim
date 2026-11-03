@@ -182,8 +182,8 @@ never replays a build. This transport is a migration prerequisite; existing
 Desktop buttons do not use it yet.
 
 The private `desktop-gc` feature provides `desktop.gc.subscribe` with an absolute
-existing `cwd` and optional `cache`, `olderThan` (whole days), `worktrees`, `delete`
-and `idleMs` (positive whole milliseconds). It invokes `createStim.collectGarbage`
+existing `cwd` and optional `cache`, `olderThan` (whole days), `worktrees` and
+`delete`. It invokes `createStim.collectGarbage`
 with the same scoped cleanup and ownership rules as the CLI. Only the proved
 Desktop connection can call it; phone, network and adopted-server connections
 cannot. Ordered `desktop-gc-progress` events end with `desktop-gc-ended`, whose
