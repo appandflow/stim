@@ -1075,7 +1075,9 @@ Stim adds what agent-device needs to reach the device:
   single-action command (`snapshot`, `press`, `tap`, `scroll`, `type` and the like)
   opens the app the workspace last launched on the same session and runs once more.
   The output of that command is held until it ends, and only the last run's output
-  is printed. Multi-step commands such as `batch` are not retried.
+  is printed. The command acts on that app's screen as it is after the reopen, so take a
+  fresh snapshot when a coordinate gesture matters. Multi-step commands such as `batch`
+  are not retried.
 - `AGENT_DEVICE_STATE_DIR`, the workspace's
   [agent-device state directory](./dev-server-and-logs.md#agent-device-actions),
   except for a hosted session, which keeps agent-device's own.

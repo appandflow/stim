@@ -624,7 +624,8 @@ interface Run {
   session: string | null;
 }
 
-const SESSION_LOST = /SESSION_NOT_FOUND|requires an active app session/;
+const SESSION_LOST =
+  /Error \(SESSION_NOT_FOUND\)|"code":\s*"SESSION_NOT_FOUND"|requires an active app session on the target device/;
 
 function lostSession(exit: AgentDeviceExit): boolean {
   const text = `${exit.stdout}${exit.stderr}`;
@@ -747,9 +748,11 @@ async function execute(
     );
     const opened = await spawnAgentDevice(invocation, reopen, env, { capture: true });
     if (opened.code === 0) exit = await spawnAgentDevice(invocation, args, env, { capture: true });
-    else process.stderr.write(opened.stderr);
+    else exit = opened.signal === null ? { ...exit, stderr: Buffer.concat([exit.stderr, opened.stderr]) } : opened;
   }
   if (reopen) {
+    process.stdout.on('error', () => {});
+    process.stderr.on('error', () => {});
     process.stdout.write(exit.stdout);
     process.stderr.write(exit.stderr);
   }
