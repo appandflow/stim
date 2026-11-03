@@ -229,7 +229,7 @@ test.skipIf(process.platform === 'win32')(
 
     const { payload } = await gcJson();
 
-    const paths: string[] = payload.sections.worktreeDependencies.map((entry: { path: string }) => entry.path);
+    const paths = criticalDependencies(payload);
     expect(paths.some((path) => path.startsWith(`${roots.feature}/`))).toBe(true);
     expect(paths.some((path) => path.startsWith(`${roots.keyless}/`))).toBe(false);
   },
