@@ -98,7 +98,7 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
             : advice?.key
               ? ` Use ${advice.key} instead.`
               : advice
-                ? ` ${advice.replacement[0]!.toUpperCase()}${advice.replacement.slice(1)}.`
+                ? ` ${advice.replacement.charAt(0).toUpperCase()}${advice.replacement.slice(1)}.`
                 : '';
           io.note(chalk.yellow(`Warning: ${entry.key} in ${entry.file} is not read by Stim.${instead}`));
         }

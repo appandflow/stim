@@ -121,12 +121,12 @@
   },
   "packages/stim-cli": {
     "src": {
-      "as": 835,
-      "nonNull": 341
+      "as": 831,
+      "nonNull": 340
     },
     "test": {
-      "as": 440,
-      "nonNull": 622
+      "as": 436,
+      "nonNull": 617
     }
   },
   "packages/transport": {

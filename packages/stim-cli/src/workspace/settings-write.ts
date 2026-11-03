@@ -45,7 +45,7 @@ export function requireSetting(key: string, raw?: string, scope?: string): Setti
       `${removedSettingWords(JSON.stringify(key), replaced)}.`,
       replaced.key
         ? `${command ? `Run \`${command}\`` : `Set ${replaced.key} (\`stim guide settings\` lists its values)`}, then ${unset}.`
-        : `${unset[0]!.toUpperCase()}${unset.slice(1)}.`,
+        : `${unset.charAt(0).toUpperCase()}${unset.slice(1)}.`,
     );
   }
   throw new SettingsRefusal(

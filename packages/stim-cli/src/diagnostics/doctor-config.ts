@@ -173,7 +173,7 @@ export function checkMachineSettings({
     });
 
   for (const { key, env: name, replaced } of removedEnvironment(env)) {
-    const raw = env[name]!.trim();
+    const raw = (env[name] ?? '').trim();
     const advice = replacementAdvice(key, /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw);
     const instead = replaced.key ? settingDefinition(replaced.key)?.env : undefined;
     const refusal = replaced.refuses

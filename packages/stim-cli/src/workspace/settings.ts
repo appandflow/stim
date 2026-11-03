@@ -639,7 +639,7 @@ export function inertSettingWarning(settings: unknown, key: string): string {
       ? ` Run \`${advice.command}\` instead.`
       : advice.key
         ? ` Use ${advice.key} instead.`
-        : ` ${advice.replacement[0]!.toUpperCase()}${advice.replacement.slice(1)}.`
+        : ` ${advice.replacement.charAt(0).toUpperCase()}${advice.replacement.slice(1)}.`
     : '';
   return `Warning: setting "${key}" is not read by Stim and will be ignored.${instead}`;
 }
