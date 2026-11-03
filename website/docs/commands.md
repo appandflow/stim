@@ -397,8 +397,9 @@ can compile on a paired remote machine instead: see `remote.build` in
 - `--wait <seconds>` bounds the wait for a physical-device lease (default 60;
   `0` refuses immediately if busy). Without `--device`, it bounds the
   owned-device slot wait across the Stim home; without it, a waiting run
-  refuses once its queue position has not improved for max(10 minutes,
-  position x 5 minutes). Remote targets do not join this local slot queue.
+  keeps waiting while the devices ahead of it are listed and refuses after 90
+  minutes, or once the devices cannot be counted for max(10 minutes, position
+  x 5 minutes). Remote targets do not join this local slot queue.
   While a run waits to boot at a full cap, the `stim-daemon` shuts down the
   longest-idle owned device of another workspace idle 2 minutes, one per
   tick. Reclaim shuts down, never deletes, and excludes this workspace,
@@ -684,8 +685,9 @@ can compile on a paired remote machine instead: see `remote.build` in
 - `--wait <seconds>` bounds the physical-device lease wait (default 60;
   `0` refuses immediately if busy). Without `--device`, it bounds the
   owned-device slot wait across the Stim home; without it, a waiting run
-  refuses once its queue position has not improved for max(10 minutes,
-  position x 5 minutes). Remote targets do not join this local slot queue.
+  keeps waiting while the devices ahead of it are listed and refuses after 90
+  minutes, or once the devices cannot be counted for max(10 minutes, position
+  x 5 minutes). Remote targets do not join this local slot queue.
   While a run waits to boot at a full cap, the `stim-daemon` shuts down the
   longest-idle owned device of another workspace idle 2 minutes, one per
   tick. Reclaim shuts down, never deletes, and excludes this workspace,

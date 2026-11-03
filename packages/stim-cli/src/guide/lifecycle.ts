@@ -2174,8 +2174,12 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
     build       waiting for a build slot: queue position 2 of 3, all 1 in use, 40s elapsed -- stim guide lifecycle concurrency
     device      waiting for a device slot (8/8 devices booted, concurrency.maxDevices) held by app-a, app-b: queue position 1 of 1, 10s elapsed -- stim guide lifecycle concurrency
 
-  A run whose queue position has not improved for max(10 minutes, position x
-  5 minutes) refuses with STIM_AT_CAPACITY and the queue state.
+  A waiting run never refuses while its position improves or every holder
+  ahead of it is alive: a slot claim whose process is live, or a device the
+  listing shows. It refuses with STIM_AT_CAPACITY and the queue state after 90
+  minutes, or once a holder cannot be verified (an unresolved slot claim, or a
+  device listing that fails) for max(10 minutes, position x 5 minutes). A boot
+  held only by memory keeps waiting while the ladder reclaims.
   \`--wait <seconds>\` bounds a device wait instead; \`--no-wait\` or
   \`--wait 0\` refuses at once and cannot jump queued runs. iOS waits
   beside its build. Stop cancels a queued run and releases its ticket.

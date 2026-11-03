@@ -145,10 +145,13 @@ Caps are derived. `concurrency.*` overrides them; 0 means derived, no longer unl
 | boots in flight   | 2                                                                                                                     |
 | booted devices    | max(2, floor((RAM - 4 GB) / 1.5 GB)); no boot while memory pressure is critical, or warning with under 2 GB available |
 
-Waiting: a run past a cap waits with a progress line every 10 s naming its position and what it waits for. The ceiling
-is position-based, max(10 min, position x 5 min); after it the run refuses `STIM_AT_CAPACITY` with the queue state.
-`--wait <seconds>` and `--no-wait` keep their contract; `--no-wait` refuses at once. Waiters wake in arrival order per
-resource.
+Waiting: a run past a cap waits with a progress line every 10 s naming its position and what it waits for. It never
+refuses while its position improves or while every holder ahead of it is provably alive (a claim whose process identity
+is live, a device the listing shows). It refuses `STIM_AT_CAPACITY` with the queue state only when a holder's liveness
+cannot be established for max(10 min, position x 5 min), such as an unverifiable slot claim or a device listing that
+fails, or at an absolute ceiling of 90 minutes, or when `--wait <seconds>` expires; `--no-wait` refuses at once. A boot
+held only by memory follows the same rule: it keeps waiting while the ladder reclaims, up to the ceiling. Waiters wake in
+arrival order per resource.
 
 ### 4.3 Reclaim
 

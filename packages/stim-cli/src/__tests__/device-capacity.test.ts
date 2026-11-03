@@ -453,23 +453,71 @@ describe('boot admission beyond the device caps', () => {
     },
   );
 
-  test('without --wait a run refuses once its position has not improved for 10 minutes', async () => {
-    let now = Date.now();
+  const minuteSleep = (clock: { now: number }) => async () => {
+    clock.now += 60_000;
+  };
+  const listingFails = () => {
+    throw Object.assign(new Error('simctl list timed out'), { code: 'ETIMEDOUT' });
+  };
+
+  test('without --wait a run behind booted devices keeps waiting until the 90-minute ceiling', async () => {
+    const clock = { now: Date.now() };
+    const started = clock.now;
     await expect(
       admit({
         max: 1,
         noWait: false,
         sources: { ...empty, sims: occupied },
-        now: () => now,
-        sleep: async () => {
-          now += 60_000;
-        },
+        now: () => clock.now,
+        sleep: minuteSleep(clock),
       }),
     ).rejects.toMatchObject({
       code: 'STIM_AT_CAPACITY',
-      message: expect.stringMatching(/queue position 1 of 1.*did not improve for 10m00s/),
+      message: expect.stringMatching(/queue position 1 of 1.*, the 90-minute ceiling\.$/),
     });
+    expect(clock.now - started).toBe(90 * 60_000);
     expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+  });
+
+  test('devices that cannot be counted make the run wait, and it refuses with the listing error after 10 minutes', async () => {
+    const clock = { now: Date.now() };
+    const started = clock.now;
+    await expect(
+      admit({
+        noWait: false,
+        sources: { ...empty, sims: listingFails },
+        now: () => clock.now,
+        sleep: minuteSleep(clock),
+      }),
+    ).rejects.toMatchObject({
+      code: 'STIM_AT_CAPACITY',
+      message: expect.stringMatching(/a device count \(Stim could not count .*simctl list timed out\).*for 10m00s/),
+    });
+    expect(clock.now - started).toBe(10 * 60_000);
+  });
+
+  test('a count that comes back admits the boot, and --no-wait refuses at once on an uncountable count', async () => {
+    let failures = 3;
+    const clock = { now: Date.now() };
+    const sims = () => (failures-- > 0 ? listingFails() : []);
+    await expect(
+      admit({ noWait: false, sources: { ...empty, sims }, now: () => clock.now, sleep: minuteSleep(clock) }),
+    ).resolves.toBe('booted');
+    await expect(admit({ sources: { ...empty, sims: listingFails } })).rejects.toMatchObject({
+      code: 'STIM_AT_CAPACITY',
+      message: expect.stringContaining('This run would wait for a device count'),
+    });
+  });
+
+  test('a boot held only by memory keeps waiting past the position ceiling and boots once memory recovers', async () => {
+    const clock = { now: Date.now() };
+    const started = clock.now;
+    const memory = () =>
+      clock.now - started < 30 * 60_000 ? { level: 'critical', availableBytes: 8 * 1024 ** 3 } : null;
+    await expect(admit({ noWait: false, memory, now: () => clock.now, sleep: minuteSleep(clock) })).resolves.toBe(
+      'booted',
+    );
+    expect(clock.now - started).toBe(30 * 60_000);
   });
 });
 

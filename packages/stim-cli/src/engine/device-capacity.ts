@@ -34,7 +34,7 @@ import {
 import { withWorkspaceProcessLock, workspaceProcessLockError } from './workspace-process-lock.ts';
 import { workspaceDisplayLabel, workspaceLabels } from '../workspace/display-label.ts';
 import { daemonWaiter, notifyReleased } from '../daemon/client.ts';
-import { liveWaiters, positionClock, queuePosition, takeWaitTicket } from './wait-queue.ts';
+import { liveWaiters, queuePosition, takeWaitTicket, waitCeiling } from './wait-queue.ts';
 import type { StimContext } from '@stim-cli/core';
 import type {
   BuildWaitingFor,
@@ -268,7 +268,7 @@ function atCapacityRefusal({ count, max, setting, noun }: DeviceLimit): Capacity
 function uncountedRefusal(error: unknown): CapacityRefusal {
   return {
     code: 'STIM_NO_DEVICE',
-    message: `A device cap (concurrency.maxDevices, concurrency.maxIosDevices or concurrency.maxAndroidDevices) is set, and Stim could not count the booted devices: ${(error as Error)?.message || error}`,
+    message: `Stim could not count the booted devices against concurrency.maxDevices (derived from RAM when 0) and the per-platform caps: ${(error as Error)?.message || error}`,
     remedy: `Listing devices times out when the machine is overloaded: retry once the load falls. Otherwise run \`stim doctor\` to check the simulator and adb toolchains, and check that ${join(getConfigDir(), 'config.json')} and ${bootingDevicesRoot()} are readable.`,
   };
 }
@@ -554,7 +554,7 @@ export async function peekDeviceSlots({
 
 export interface DeviceSlotWaitPolicy {
   automatic?: boolean;
-  /** An explicit `--wait <seconds>` in milliseconds; absent, the position-based ceiling applies. */
+  /** An explicit `--wait <seconds>` in milliseconds; absent, the queue's liveness ceiling applies. */
   waitMs?: number;
   signal?: AbortSignal;
   noWait?: boolean;
@@ -736,12 +736,13 @@ async function admissionTransaction<T>(
 }
 
 /**
- * Boots an owned device once admission lets it: in arrival order per the `device-waits` queue, while booted devices
- * stay under `concurrency.maxDevices` (derived from RAM when 0) and the per-platform caps, at most two boots run at
- * once, and memory pressure is not critical (nor warning with under 2 GB available). The boot holds a marker that
- * counts it until it finishes. A waiting run prints a progress line every 10 seconds, and refuses with
- * `STIM_AT_CAPACITY` after `waitMs`, or without it once its position has not improved for the position-based ceiling;
- * the stim-daemon wakes it when a boot finishes and reclaims an idle device of another workspace for it.
+ * Boots an owned device once admission lets it: in arrival order per the `device-waits` queue, while the booted devices
+ * can be counted and stay under `concurrency.maxDevices` (derived from RAM when 0) and the per-platform caps, at most
+ * two boots run at once, and memory pressure is not critical (nor warning with under 2 GB available). The boot holds a
+ * marker that counts it until it finishes. A waiting run prints a progress line every 10 seconds, and refuses with
+ * `STIM_AT_CAPACITY` after `waitMs`; without it, once the devices have stayed uncountable for the position-based
+ * ceiling, or after 90 minutes in all. The stim-daemon wakes it when a boot finishes and reclaims an idle device of
+ * another workspace for it.
  */
 export async function withDeviceBootAdmission<T>(
   device: BootingDevice,
@@ -758,8 +759,6 @@ export async function withDeviceBootAdmission<T>(
     automatic = false,
     displayName = workspaceDisplayLabel(root, loadConfig()),
     memory = snapshotMemory,
-    countRequired = !admissionLimits().derived.devices ||
-      (isCappedPlatform(device.platform) && (platformMax[device.platform] ?? 0) > 0),
     now = Date.now,
     signal,
     sleep,
@@ -774,11 +773,6 @@ export async function withDeviceBootAdmission<T>(
     lockWaitMs?: number;
     out?: (line: string) => void;
     memory?: () => { level: string | null; availableBytes: number | null } | null;
-    /**
-     * Whether a boot refuses when the booted devices cannot be counted: when a cap is set. Under the derived cap alone
-     * an uncounted boot goes ahead with only the boots in flight counted.
-     */
-    countRequired?: boolean;
   },
 ): Promise<T> {
   const requireMembership = () => {
@@ -805,7 +799,7 @@ export async function withDeviceBootAdmission<T>(
         throw error;
       }
     });
-  const clock = positionClock(now);
+  const ceiling = waitCeiling(now);
   let ticket: ClaimHandle | undefined;
   let marker: ClaimHandle | undefined;
   let started: number | undefined;
@@ -815,7 +809,6 @@ export async function withDeviceBootAdmission<T>(
   let lastTurn = false;
   let binding: DeviceLimit | undefined;
   let lastListed = -Infinity;
-  let uncountedNoted = false;
   const own = deviceKey(device.platform, device.key);
   try {
     try {
@@ -839,6 +832,7 @@ export async function withDeviceBootAdmission<T>(
               use: { inUse: number; max: number },
               limit: DeviceLimit | undefined,
               holders: string[],
+              unverified: string | null = null,
             ) => {
               const shown = holders.length ? `${what} held by ${holders.join(', ')}` : what;
               const queue = `queue position ${position} of ${Math.max(waiters.length, position)}`;
@@ -853,14 +847,18 @@ export async function withDeviceBootAdmission<T>(
               if (!ticket) {
                 ticket = takeWaitTicket('boot', { ...device }, waiters);
                 started = now();
-                clock.update(waiters.length + 1);
-              } else clock.update(position);
+                ceiling.update(waiters.length + 1, unverified);
+              } else ceiling.update(position, unverified);
               const elapsed = now() - started!;
               const overdue =
-                waitMs === undefined ? clock.overdue() : elapsed >= waitMs ? { position, waitedMs: elapsed } : null;
+                waitMs === undefined
+                  ? ceiling.overdue()
+                  : elapsed >= waitMs
+                    ? ({ kind: 'absolute', waitedMs: elapsed } as const)
+                    : null;
               if (overdue)
                 throw refusal(
-                  `Waited ${formatElapsed(elapsed)} for ${state}${waitMs === undefined ? `; its position did not improve for ${formatElapsed(overdue.waitedMs)}` : ''}.`,
+                  `Waited ${formatElapsed(elapsed)} for ${state}${overdue.kind === 'unverified' ? `; ${overdue.reason} for ${formatElapsed(overdue.waitedMs)}` : waitMs === undefined ? ', the 90-minute ceiling' : ''}.`,
                   remedy,
                 );
               return { what: shown, resource, use, limit, position, waiting: Math.max(waiters.length, position) };
@@ -878,13 +876,16 @@ export async function withDeviceBootAdmission<T>(
               );
             }
             const read = await readInventoryAsync(sources);
-            if ('code' in read && countRequired) throw new DeviceAdmissionRefusal(read);
-            if ('code' in read && !uncountedNoted) {
-              uncountedNoted = true;
-              out(phaseLine('device', `${read.message}; booting under the derived device cap without the count`));
-            }
-            const inventory: DeviceInventory =
-              'code' in read ? { sims: [], adb: NO_ADB, config: loadConfig(), booting: readBootingDevices() } : read;
+            if ('code' in read)
+              return wait(
+                `a device count (${read.message})`,
+                'device count',
+                { inUse: lastInventory?.limit.count ?? 0, max: lastInventory?.limit.max ?? max },
+                undefined,
+                [],
+                read.message,
+              );
+            const inventory = read;
             const keys = inventoryKeys(inventory);
             const ownBooting = inventory.booting.some((entry) => deviceKey(entry.platform, entry.key) === own);
             if ((device.platform === 'ios' && keys.has(own)) || ownBooting) return admit();

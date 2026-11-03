@@ -990,10 +990,12 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   boots under concurrency.maxDevices (derived max(2, floor((RAM - 4 GB) / 1.5
   GB)) when 0) and the per-platform caps, at most 2 boots at once, and no boot
   while memory pressure is critical. A run past a cap waits in arrival order
-  per resource and prints its queue position every 10 seconds. This code means
-  its position did not improve for max(10 minutes, position x 5 minutes), a
-  device wait outlived \`--wait <seconds>\`, or \`--no-wait\` / \`--wait 0\`
-  found a cap full or another run queued. The message names what it waited
+  per resource and prints its queue position every 10 seconds, and keeps
+  waiting while every holder ahead of it is alive. This code means it waited 90
+  minutes, a holder could not be verified (an unresolved slot claim, or a
+  device listing that fails) for max(10 minutes, position x 5 minutes) without
+  the run's position improving, a device wait outlived \`--wait <seconds>\`, or
+  \`--no-wait\` / \`--wait 0\` found a cap full or another run queued. The message names what it waited
   for, who holds it and the queue. iOS waits for a device beside its build, so
   a rerun can reuse the artifact. While a run waits to boot at a full device
   cap, the stim-daemon shuts down the longest-idle device of another workspace

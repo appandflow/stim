@@ -310,9 +310,11 @@ once, and no boot starts while macOS memory pressure is critical, or warning
 with under 2 GB available.
 
 A run past a cap waits in arrival order per resource and prints its queue
-position and what it waits for every 10 seconds. It refuses with
-`STIM_AT_CAPACITY` and the queue state once its position has not improved for
-`max(10 minutes, position x 5 minutes)`. Use `--wait <seconds>` to bound a
+position and what it waits for every 10 seconds, and keeps waiting while every
+holder ahead of it is alive. It refuses with `STIM_AT_CAPACITY` and the queue
+state after 90 minutes, or once a holder cannot be verified (an unresolved slot
+claim, or a device listing that fails) for `max(10 minutes, position x 5
+minutes)`. A boot held only by memory keeps waiting. Use `--wait <seconds>` to bound a
 device wait instead, or `--no-wait` / `--wait 0` to refuse immediately. A
 workspace's own live device bypasses the queue. `stim stop` cancels a queued
 run and releases its ticket without booting its device. Status adds

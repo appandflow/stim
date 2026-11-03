@@ -7,7 +7,7 @@ import { readClaimSet, releaseClaim, type ClaimHandle, type ClaimHolder } from '
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 import { ambientContext } from '@stim-cli/core';
 import { daemonWaiter, notifyReleased } from '../daemon/client.ts';
-import { liveWaiters, positionClock, queuePosition, takeWaitTicket } from './wait-queue.ts';
+import { liveWaiters, queuePosition, takeWaitTicket, waitCeiling } from './wait-queue.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 
 const SLOT_PREFIX = 'slot-';
@@ -36,7 +36,7 @@ interface AcquireBuildSlotOptions extends TryAcquireBuildSlotOptions {
   now?: () => number;
   intervalMs?: number;
   progressMs?: number;
-  /** A fixed wait before `STIM_AT_CAPACITY`; absent, the position-based ceiling applies. */
+  /** A fixed wait before `STIM_AT_CAPACITY`; absent, the queue's liveness ceiling applies. */
   ceilingMs?: number;
 }
 
@@ -63,7 +63,7 @@ export interface BuildSlotInfo {
   unresolved: boolean;
 }
 
-/** A build that waited past the position-based ceiling for a slot. */
+/** A build that waited past its ceiling for a slot. */
 export class BuildSlotCapacityError extends Error {
   readonly code = 'STIM_AT_CAPACITY';
   readonly remedy: string;
@@ -154,9 +154,9 @@ function queueState(max: number, waiters: readonly ClaimHolder[]): string {
 
 /**
  * Takes one of `max` build slots in arrival order. A run that finds no free slot, or older runs waiting, joins the
- * build queue under `$STIM_HOME/build-waits`, retries each second and when the daemon wakes it, prints a progress line
- * every 10 seconds, and refuses with `STIM_AT_CAPACITY` once its position has not improved for the position-based
- * ceiling.
+ * build queue under `$STIM_HOME/build-waits`, retries each second and when the daemon wakes it, and prints a progress
+ * line every 10 seconds. It refuses with `STIM_AT_CAPACITY` after `ceilingMs`; without it, once a slot's holder has
+ * stayed unverifiable for the position-based ceiling, or after 90 minutes in all.
  */
 export async function acquireBuildSlot({
   max,
@@ -178,7 +178,7 @@ export async function acquireBuildSlot({
   const waiter = daemonWaiter('build');
   const sleep = sleepOverride ?? ((ms: number) => waiter.wait(ms, signal));
   const started = now();
-  const clock = positionClock(now);
+  const ceiling = waitCeiling(now);
   let lastProgress = started;
   let ticket: ClaimHandle | undefined;
   try {
@@ -187,7 +187,8 @@ export async function acquireBuildSlot({
       if (automatic) requireAutomaticMachine('build', 'local');
       const waiters = liveWaiters('build');
       const position = queuePosition(waiters, ticket);
-      if (position <= max - busySlots(max).filter((slot) => slot.alive).length) {
+      const busy = busySlots(max);
+      if (position <= max - busy.filter((slot) => slot.alive).length) {
         const got = tryAcquireBuildSlot({ max, root, logFile });
         if (got) return { ...got, slotWaitMs: ticket ? Math.max(0, Math.round(now() - started)) : 0 };
       }
@@ -195,7 +196,11 @@ export async function acquireBuildSlot({
         ticket = takeWaitTicket('build', { root, displayName: root ? basename(root) : 'build', logFile }, waiters);
         continue;
       }
-      clock.update(position);
+      const unverified = busy.filter((slot) => slot.unresolved);
+      ceiling.update(
+        position,
+        unverified.length ? `the holder of ${unverified.map((slot) => slot.path).join(', ')} cannot be verified` : null,
+      );
       waitingFor({
         kind: 'build-slot',
         inUse: max,
@@ -206,10 +211,14 @@ export async function acquireBuildSlot({
       });
       const elapsed = now() - started;
       const overdue =
-        ceilingMs === undefined ? clock.overdue() : elapsed >= ceilingMs ? { position, waitedMs: elapsed } : null;
+        ceilingMs === undefined
+          ? ceiling.overdue()
+          : elapsed >= ceilingMs
+            ? ({ kind: 'absolute', waitedMs: elapsed } as const)
+            : null;
       if (overdue) {
         throw new BuildSlotCapacityError(
-          `Waited ${formatElapsed(elapsed)} for one of ${max} build slots (concurrency.maxBuilds, derived from the CPU cores when 0), ${formatElapsed(overdue.waitedMs)} of it at queue position ${overdue.position} of ${waiters.length}; ${queueState(max, waiters)}.`,
+          `Waited ${formatElapsed(elapsed)} for one of ${max} build slots (concurrency.maxBuilds, derived from the CPU cores when 0) at queue position ${position} of ${waiters.length}${overdue.kind === 'unverified' ? `; ${overdue.reason} for ${formatElapsed(overdue.waitedMs)}` : ''}; ${queueState(max, waiters)}.`,
           `Retry once a build finishes, stop a run that holds a slot, or raise concurrency.maxBuilds. A slot whose holder is not really building lives under ${buildSlotsDir()}.`,
         );
       }

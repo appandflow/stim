@@ -287,9 +287,11 @@ shut down the phone or uninstall the app.
 
 Builds and boots of owned devices take a slot under caps derived from the
 machine (concurrency.* overrides them). A run past a cap waits in arrival
-order and prints its queue position every 10s; it refuses with
-STIM_AT_CAPACITY once its position has not improved for max(10m, position x
-5m). Use --wait <seconds> to bound a device wait or --no-wait to refuse at once.
+order and prints its queue position every 10s. It keeps waiting while the
+holders ahead are alive; it refuses with STIM_AT_CAPACITY only after 90m, or
+when a holder cannot be verified (or devices cannot be counted) for
+max(10m, position x 5m). Use --wait <seconds> to bound a device wait or
+--no-wait to refuse at once.
 While a run waits to boot, the stim-daemon shuts down one idle device (2m) of
 another workspace per tick; it never deletes devices or touches this
 workspace, physical, hosted, remote, parked or other homes' devices.
