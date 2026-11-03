@@ -331,6 +331,66 @@ describe('ensureBooted: ios', () => {
     },
   );
 
+  test.each([
+    ['none', false],
+    ['siniulator', true],
+  ] as const)(
+    'boots an owned sim with simulatorApp %s and opens a viewer only when one is chosen',
+    async (simulatorApp, opens) => {
+      let listCalls = 0;
+      let springBoardCalls = 0;
+      const commands: string[] = [];
+      const run = (cmd: string) => {
+        commands.push(cmd);
+        if (cmd.includes('list devices')) {
+          listCalls += 1;
+          const state = listCalls >= 3 ? 'Booted' : 'Shutdown';
+          return simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]);
+        }
+        return '';
+      };
+      setExecutor({
+        run,
+        runQuiet: () => '',
+        runFileQuiet: (file, args = []) => {
+          commands.push([file, ...args].join(' '));
+          return '';
+        },
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+          }
+          if (file === 'xcrun' && args[1] === 'spawn' && args[3] === 'notifyutil') {
+            return springBoardCalls++ === 0 ? springBoardStarting : springBoardStarted;
+          }
+          return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+            ? run([file, ...args].join(' '))
+            : simctlSpawnStub(file, args);
+        },
+        spawn: (cmd: string, args: readonly string[] = []) => {
+          commands.push([cmd, ...args].join(' '));
+          return makeExitingChild();
+        },
+      });
+      const booting = ensureBooted({
+        projectPath: tmpHome,
+        platform: 'ios',
+        simulatorApp,
+        device: { deviceUdid: 'U1', owned: true },
+        timeoutMs: 5000,
+        pollMs: 5,
+        out: () => {},
+      });
+      await vi.waitUntil(() => springBoardCalls > 0);
+      await vi.advanceTimersToNextTimerAsync();
+      const result = await vi.waitUntil(() => booting);
+      expect(result).toEqual({ ok: true, udid: 'U1' });
+      expect(commands.filter((c) => c === 'xcrun simctl boot U1')).toHaveLength(1);
+      expect(commands.some((c) => c.startsWith('open '))).toBe(opens);
+      expect(deviceLog().some((record) => record.phase === 'viewer_opened')).toBe(opens);
+    },
+  );
+
   test('reports boot setup failures instead of treating the Booted state as ready', async () => {
     setExecutor({
       run: (cmd) => {

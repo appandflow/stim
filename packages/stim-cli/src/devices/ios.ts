@@ -508,10 +508,7 @@ export async function bootIosSim(
   } finally {
     clearInterval(monitor);
   }
-  if (openViewer) {
-    await viewer.open(udid);
-    onPhase?.({ phase: 'viewer_opened' });
-  }
+  if (openViewer && (await viewer.open(udid))) onPhase?.({ phase: 'viewer_opened' });
 }
 
 export async function shutdownIosSim(udid: string, operation?: StimContext): Promise<void> {
