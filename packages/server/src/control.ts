@@ -130,6 +130,14 @@ export interface SessionTarget {
   physical?: boolean;
 }
 
+/** The keys an iOS or Android device takes as `input.key`: the arrows and Escape. */
+const DEVICE_KEYS = ['left', 'right', 'up', 'down', 'escape'] as const;
+type DeviceKey = (typeof DEVICE_KEYS)[number];
+
+function isDeviceKey(key: unknown): key is DeviceKey {
+  return DEVICE_KEYS.some((candidate) => candidate === key);
+}
+
 const IOS_BUTTONS: readonly InputButton[] = ['home', 'lock'];
 const WEB_BUTTONS: readonly InputButton[] = ['back'];
 
@@ -139,6 +147,71 @@ function delta(value: unknown): boolean {
 
 function fraction(value: unknown): boolean {
   return typeof value === 'number' && value >= 0 && value <= 1;
+}
+
+function parseDeviceKey(
+  session: string,
+  platform: 'ios' | 'android',
+  params: Record<string, unknown>,
+): Parsed<{ session: string; command: InputCommand }> {
+  const { key, modifiers = [] } = params;
+  if (!isDeviceKey(key) || !Array.isArray(modifiers) || modifiers.length) {
+    return {
+      code: 'bad-request',
+      message: `An ${platform === 'ios' ? 'iOS' : 'Android'} device takes the keys ${DEVICE_KEYS.join(', ')}, without modifiers.`,
+    };
+  }
+  return { value: { session, command: { input: 'key', key, modifiers: [] } } };
+}
+
+function parseScrollOrKey(
+  method: 'input.scroll' | 'input.key',
+  session: string,
+  platform: ControlPlatform,
+  params: Record<string, unknown>,
+): Parsed<{ session: string; command: InputCommand }> {
+  if (platform !== 'macos' && method === 'input.key' && platform !== 'web') {
+    return parseDeviceKey(session, platform, params);
+  }
+  if (platform !== 'macos')
+    return { code: 'bad-request', message: 'This input is for a native macOS app window only.' };
+  if (method === 'input.scroll') {
+    const { x, y, deltaX, deltaY } = params;
+    if (!fraction(x) || !fraction(y) || !delta(deltaX) || !delta(deltaY)) {
+      return {
+        code: 'bad-request',
+        message: 'input.scroll needs x and y from 0 to 1 and finite pixel deltas from -1000 to 1000.',
+      };
+    }
+    return {
+      value: {
+        session,
+        command: {
+          input: 'scroll',
+          x: x as number,
+          y: y as number,
+          deltaX: deltaX as number,
+          deltaY: deltaY as number,
+        },
+      },
+    };
+  }
+  const { key, modifiers = [] } = params;
+  if (
+    !INPUT_KEYS.includes(key as InputKey) ||
+    !Array.isArray(modifiers) ||
+    modifiers.length > 4 ||
+    new Set(modifiers).size !== modifiers.length ||
+    !modifiers.every((modifier) => KEY_MODIFIERS.includes(modifier as KeyModifier))
+  ) {
+    return {
+      code: 'bad-request',
+      message: 'input.key needs a supported native key and unique command, shift, option or control modifiers.',
+    };
+  }
+  return {
+    value: { session, command: { input: 'key', key: key as InputKey, modifiers: modifiers as KeyModifier[] } },
+  };
 }
 
 /** Validates an `input.*` request for one of the connection's sessions; returns its session id and command. */
@@ -174,47 +247,7 @@ export function parseInput(
       return { code: 'bad-request', message: 'input.window needs a window id from 0 to 4294967295 or null.' };
     return { value: { session, command: { input: 'window', window } } };
   }
-  if (method === 'input.scroll' || method === 'input.key') {
-    if (platform !== 'macos')
-      return { code: 'bad-request', message: 'This input is for a native macOS app window only.' };
-    if (method === 'input.scroll') {
-      const { x, y, deltaX, deltaY } = params;
-      if (!fraction(x) || !fraction(y) || !delta(deltaX) || !delta(deltaY)) {
-        return {
-          code: 'bad-request',
-          message: 'input.scroll needs x and y from 0 to 1 and finite pixel deltas from -1000 to 1000.',
-        };
-      }
-      return {
-        value: {
-          session,
-          command: {
-            input: 'scroll',
-            x: x as number,
-            y: y as number,
-            deltaX: deltaX as number,
-            deltaY: deltaY as number,
-          },
-        },
-      };
-    }
-    const { key, modifiers = [] } = params;
-    if (
-      !INPUT_KEYS.includes(key as InputKey) ||
-      !Array.isArray(modifiers) ||
-      modifiers.length > 4 ||
-      new Set(modifiers).size !== modifiers.length ||
-      !modifiers.every((modifier) => KEY_MODIFIERS.includes(modifier as KeyModifier))
-    ) {
-      return {
-        code: 'bad-request',
-        message: 'input.key needs a supported native key and unique command, shift, option or control modifiers.',
-      };
-    }
-    return {
-      value: { session, command: { input: 'key', key: key as InputKey, modifiers: modifiers as KeyModifier[] } },
-    };
-  }
+  if (method === 'input.scroll' || method === 'input.key') return parseScrollOrKey(method, session, platform, params);
   if (platform === 'web' && (method === 'input.rotate' || method === 'input.posture')) {
     return { code: 'bad-request', message: 'A web page does not rotate or fold.' };
   }
@@ -319,11 +352,16 @@ export function parseInput(
   return { value: { session, command: { input: 'button', button: button as InputButton } } };
 }
 
-const ANDROID_KEYS: Record<InputButton | '\n' | '\t' | '\b', string> = {
+const ANDROID_KEYS: Record<InputButton | DeviceKey | '\n' | '\t' | '\b', string> = {
   home: 'KEYCODE_HOME',
   back: 'KEYCODE_BACK',
   'app-switch': 'KEYCODE_APP_SWITCH',
   lock: 'KEYCODE_POWER',
+  left: 'KEYCODE_DPAD_LEFT',
+  right: 'KEYCODE_DPAD_RIGHT',
+  up: 'KEYCODE_DPAD_UP',
+  down: 'KEYCODE_DPAD_DOWN',
+  escape: 'KEYCODE_ESCAPE',
   '\n': 'KEYCODE_ENTER',
   '\t': 'KEYCODE_TAB',
   '\b': 'KEYCODE_DEL',
@@ -334,8 +372,11 @@ const ANDROID_KEYS: Record<InputButton | '\n' | '\t' | '\b', string> = {
  * (`hw.keyboard=no`), which drops gRPC key events. `adb shell` joins its arguments into one device shell
  * command, so text goes single-quoted; `input text` reads `%s` as a space.
  */
-function adbInputArgs(command: Extract<InputCommand, { input: 'text' | 'button' }>): string[][] {
+export function adbInputArgs(command: Extract<InputCommand, { input: 'text' | 'button' | 'key' }>): string[][] {
   if (command.input === 'button') return [['shell', 'input', 'keyevent', ANDROID_KEYS[command.button]]];
+  if (command.input === 'key') {
+    return isDeviceKey(command.key) ? [['shell', 'input', 'keyevent', ANDROID_KEYS[command.key]]] : [];
+  }
   const calls: string[][] = [];
   for (const part of command.text.split(/([\n\t\b]+)/)) {
     if (!part) continue;
@@ -828,7 +869,7 @@ export class ControlHub {
     const run = (async (): Promise<Refusal | null> => {
       await previous;
       try {
-        for (const args of adbInputArgs(command as Extract<InputCommand, { input: 'text' | 'button' }>)) {
+        for (const args of adbInputArgs(command as Extract<InputCommand, { input: 'text' | 'button' | 'key' }>)) {
           if (session.ended) return null;
           await runAdb(this.options.env, serial, args);
         }

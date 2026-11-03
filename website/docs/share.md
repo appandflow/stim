@@ -62,7 +62,9 @@ holds:
 - **Fullscreen.**
 
 The header shows Live or Waiting and the time left before the share expires.
-With `--control`, click the screen to tap and type with the keyboard.
+With `--control`, click the screen to tap and type with the keyboard. While the
+screen has focus, the arrow keys and Escape go to the device as well (the
+D-pad keys and Escape on Android, the hardware arrow and Escape keys on iOS).
 
 ## Requirements
 
@@ -195,7 +197,7 @@ the next listener, after the last share ends.
   costs only its listener and route. A share never records anything to disk.
 - **Control is the existing control path.** Input goes through the same
   control session and device lease Stim Desktop and the phone app use, limited
-  to taps, text, rotation and the hardware buttons of the shared device. A device an
+  to taps, text, the arrow keys and Escape, rotation and the hardware buttons of the shared device. A device an
   agent or another client is driving answers busy; a share never takes it over.
 - **Ephemeral.** Shares live only in stim-server's memory. A share ends at its
   expiry, on `stim share stop`, `stim stop` (without `--slot`),

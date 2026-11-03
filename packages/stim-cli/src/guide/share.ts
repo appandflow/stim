@@ -125,8 +125,8 @@ SECURITY MODEL
   seconds after the last one leaves. A share never records: footage of share
   viewing is not written to disk.
 - Control goes through the same control session and device lease stim-server
-  uses for Desktop and the phone app: taps, text, rotation and the hardware buttons of
-  the shared device only. A device an agent or another client drives answers
+  uses for Desktop and the phone app: taps, text, the arrow keys and Escape, rotation and the
+  hardware buttons of the shared device only. A device an agent or another client drives answers
   busy instead of being taken over.
 - A share ends at its expiry, on stim share stop, stim stop (without --slot),
   stim worktree remove, when its device stops or changes (stim stop --slot
