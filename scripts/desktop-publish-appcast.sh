@@ -16,8 +16,13 @@ version=$(sed -n 's|.*<sparkle:shortVersionString>\(.*\)</sparkle:shortVersionSt
 [ -n "$version" ] || { echo "::error::$item has no sparkle:shortVersionString"; exit 1; }
 
 fetch() {
+  local assets
   : > "$1"
-  if gh release view desktop-latest --json assets --jq '.assets[].name' | grep -qx appcast.xml; then
+  assets=$(gh release view desktop-latest --json assets --jq '.assets[].name') || {
+    echo "::error::Could not list the assets of desktop-latest; the appcast is left as it is."
+    exit 1
+  }
+  if grep -qx appcast.xml <<<"$assets"; then
     rm -rf "$dir/download"
     gh release download desktop-latest --pattern appcast.xml --dir "$dir/download"
     mv "$dir/download/appcast.xml" "$1"
@@ -28,6 +33,10 @@ for attempt in 1 2 3 4 5; do
   fetch "$dir/current.xml"
   node "$script" merge --current "$dir/current.xml" --item "$item" --link "$APPCAST_URL" \
     --out "$dir/appcast.xml" --keep "${DESKTOP_NEXT_KEEP:-5}"
+  if ! node "$script" list --current "$dir/appcast.xml" | cut -f1 | grep -qx stable; then
+    echo "::error::The merged appcast has no stable item; not uploading it."
+    exit 1
+  fi
   gh release upload desktop-latest --clobber "$dir/appcast.xml"
   fetch "$dir/served.xml"
   if node "$script" list --current "$dir/served.xml" | cut -f3 | grep -qxF "$version"; then

@@ -80,6 +80,6 @@ private final class UpdaterDelegateForwarder: NSObject, SPUUpdaterDelegate {
   }
 
   func allowedChannels(for updater: SPUUpdater) -> Set<String> {
-    UpdateChannel.allowed(prereleaseUpdates: AppUpdater.prereleaseUpdatesEnabled())
+    AppUpdater.prereleaseUpdatesEnabled() ? [UpdateChannel.prerelease] : []
   }
 }

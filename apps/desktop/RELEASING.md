@@ -109,7 +109,9 @@ composite action `.github/actions/desktop-build`.
 - **In the app.** Sparkle offers a `next` item only to a build that returns `next` from
   `allowedChannels(for:)`: **Settings > App > Updates > Get prerelease updates**, off by default and on for a
   build whose version contains `-next.`. A stable build with it off never sees one. Turning it off keeps the
-  installed prerelease until a newer stable release.
+  installed prerelease until a newer stable release. A prerelease is a candidate only for a build with a
+  lower commit count, so a stable release tagged at a commit older than the newest next build is not offered
+  to builds on the channel until a newer item appears.
 - **Bundled server.** A next build bundles the `stim-server` of the commit it builds, as a stable release
   does. That server reports the version `packages/server` carries on `main`, such as `1.39.0`, although its
   code can be newer than that npm release; the npm `next` dist-tag carries the unreleased packages.

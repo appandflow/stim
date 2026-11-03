@@ -5,10 +5,6 @@ import Foundation
 public enum UpdateChannel {
   public static let prerelease = "next"
 
-  public static func allowed(prereleaseUpdates: Bool) -> Set<String> {
-    prereleaseUpdates ? [prerelease] : []
-  }
-
   /// A prerelease build was installed from the `next` channel, so it keeps receiving that channel until
   /// the user turns it off. Stable builds default to stable updates only.
   public static func prereleaseUpdatesDefault(bundleVersion: String?) -> Bool {
