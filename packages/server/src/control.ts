@@ -997,8 +997,8 @@ export class ControlHub {
     const set = command.input === 'clipboard' ? command : null;
     const read = async (): Promise<string> => {
       const text = await this.readClipboard(session, device);
-      if (Buffer.byteLength(text, 'utf8') > MAX_CLIPBOARD_BYTES) {
-        throw new Error(`The device clipboard is larger than ${MAX_CLIPBOARD_BYTES} bytes.`);
+      if (Buffer.byteLength(text, 'utf8') > MAX_CLIPBOARD_READ_BYTES) {
+        throw new Error(`The device clipboard is larger than ${MAX_CLIPBOARD_READ_BYTES} bytes.`);
       }
       return text;
     };

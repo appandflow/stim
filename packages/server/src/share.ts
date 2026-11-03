@@ -919,10 +919,15 @@ export class ShareHub {
                   ? {}
                   : { button: fields.button };
     if (method === 'input.button' && !BUTTONS[share.request.platform].includes(String(fields.button))) return;
+    const failRead = () => {
+      if (method === 'input.clipboard.get' && viewer.socket.readyState === viewer.socket.OPEN) {
+        viewer.socket.send(JSON.stringify({ type: 'clipboard', id: fields.id, error: VIEWER_TEXT.clipboardRefused }));
+      }
+    };
     const session = await this.controlSession(share, viewer);
-    if (!session || share.ended) return;
+    if (!session || share.ended) return failRead();
     const parsed = parseInput(method, { ...params, session }, (name) => share.source.targetOf(share.owner, name));
-    if ('code' in parsed) return;
+    if ('code' in parsed) return failRead();
     const command: InputCommand = parsed.value.command;
     if (
       command.input === 'text' &&

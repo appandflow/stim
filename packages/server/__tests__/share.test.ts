@@ -571,6 +571,20 @@ describe('a web share', () => {
     other.socket.close();
   });
 
+  it('answers a clipboard read at once when control cannot start', async () => {
+    f.refuseControl = true;
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    const messages: unknown[] = [];
+    socket.on('message', (data, binary) => {
+      if (!binary) messages.push(JSON.parse(data.toString()));
+    });
+    socket.send(JSON.stringify({ type: 'clipboard-get', id: 9 }));
+    await vi.waitFor(() => expect(messages).toContainEqual({ type: 'clipboard', id: 9, error: expect.any(String) }));
+    socket.close();
+  });
+
   it('answers a refused clipboard read or set with a fixed message, never the internal reason', async () => {
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port ?? 0);

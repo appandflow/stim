@@ -5,7 +5,7 @@ import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ControlHub, type InputCommand } from '../src/control.ts';
 import { FramePool, type Device, type DeviceInput } from '../src/frames.ts';
-import { MAX_CLIPBOARD_READ_BYTES } from '../src/protocol.ts';
+import { MAX_CLIPBOARD_BYTES, MAX_CLIPBOARD_READ_BYTES } from '../src/protocol.ts';
 
 const TEXT = 'line one\nsecret "quoted" é \u{1f600}';
 const owner = { device: { id: 'client', name: 'Client' }, send: () => {} };
@@ -140,6 +140,13 @@ describe('an iOS simulator clipboard', () => {
     ]);
   });
 
+  it('reads a clipboard larger than the set limit, up to the read limit', async () => {
+    const big = 'x'.repeat(MAX_CLIPBOARD_BYTES * 2);
+    recordingTool(join(home, 'bin', 'xcrun'), `process.stdout.write(${JSON.stringify(big)});`);
+    const id = await session(device, { ...process.env, PATH: `${join(home, 'bin')}:${process.env.PATH}` });
+    expect(await hub.input(owner, id, get)).toEqual({ text: big });
+  });
+
   it('refuses a device clipboard over the read limit instead of cutting it', async () => {
     recordingTool(join(home, 'bin', 'xcrun'), `process.stdout.write('x'.repeat(${MAX_CLIPBOARD_READ_BYTES + 1}));`);
     const id = await session(device, { ...process.env, PATH: `${join(home, 'bin')}:${process.env.PATH}` });
@@ -178,10 +185,11 @@ describe('an Android emulator clipboard', () => {
     expect(events.filter((event) => event.startsWith('helper'))).toEqual(['helper clipboard set paste=false']);
   });
 
-  it('reads it through the helper', async () => {
+  it('reads it through the helper, also above the set limit', async () => {
     const id = await session(device, env());
-    helper.clipboard.mockResolvedValue('from the emulator');
-    expect(await hub.input(owner, id, get)).toEqual({ text: 'from the emulator' });
+    const big = 'x'.repeat(MAX_CLIPBOARD_BYTES * 2);
+    helper.clipboard.mockResolvedValue(big);
+    expect(await hub.input(owner, id, get)).toEqual({ text: big });
     expect(calls()).toEqual([]);
   });
 
@@ -203,8 +211,8 @@ describe('an Android phone clipboard', () => {
     const id = await session(device, { ...process.env, ANDROID_HOME: join(home, 'no-sdk') });
     expect(await hub.input(owner, id, set(TEXT, true))).toBeNull();
     expect(helper.clipboard).toHaveBeenCalledWith({ text: TEXT, paste: true });
-    helper.clipboard.mockResolvedValue('from the phone');
-    expect(await hub.input(owner, id, get)).toEqual({ text: 'from the phone' });
+    helper.clipboard.mockResolvedValue('x'.repeat(MAX_CLIPBOARD_BYTES * 2));
+    expect(await hub.input(owner, id, get)).toEqual({ text: 'x'.repeat(MAX_CLIPBOARD_BYTES * 2) });
     expect(calls()).toEqual([]);
   });
 
