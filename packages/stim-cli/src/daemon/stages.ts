@@ -11,7 +11,7 @@ import {
 } from '@stim-cli/core/state';
 import { archiveWorkspace } from '../archive.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { deleteProjectDevices, findStaleProjectDevices } from '../commands/gc/devices.ts';
+import { deleteProjectDevices, findStaleProjectDevices, withAndroidAvdSizes } from '../commands/gc/devices.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { listAvdsAsync } from '../devices/android.ts';
@@ -36,7 +36,6 @@ import { existingBuildDirs } from '../workspace/regenerable-dirs.ts';
 import { idleMinutesSetting, maintenanceKeepSetting, resolveProjectSettings } from '../workspace/settings.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { deleteOutputs, idleOutputs, revivable, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
-import { lowestFreeMb, measureDisk } from './measure.ts';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
@@ -339,28 +338,32 @@ export async function enterDormantStage(
           restore: '',
         };
       }
-      const before = lowestFreeMb(await measureDisk(config));
-      const devices = findStaleProjectDevices({
-        config: { ...config, projects: { [path]: project } },
-        sims,
-        avds,
-        olderThanDays: 0,
-        lastTouched: () => 0,
-      });
+      const devices = await withAndroidAvdSizes(
+        findStaleProjectDevices({
+          config: { ...config, projects: { [path]: project } },
+          sims,
+          avds,
+          olderThanDays: 0,
+          lastTouched: () => 0,
+        }),
+      );
       const deleted: string[] = [];
+      const unmeasured: string[] = [];
+      let bytes = 0;
       const failures = await deleteProjectDevices([], devices, [], {
         log: () => {},
         error: () => {},
         fail: () => {},
-        record: (_kind, status, label) => {
-          if (status === 'done') deleted.push(label);
+        record: (_kind, status, label, result) => {
+          if (status !== 'done') return;
+          deleted.push(label);
+          if (typeof result?.bytes === 'number') bytes += result.bytes;
+          else unmeasured.push(label);
         },
       });
       const logs = hasLogs(path);
       if (logs) await archiveWorkspace(path, 'maintenance', readWorkspaceState(path));
       const archived = logs && !hasLogs(path);
-      const freed = Math.max(0, lowestFreeMb(await measureDisk(config)) - before);
-      const bytes = Number.isFinite(freed) ? Math.round(freed * 1024 * 1024) : 0;
       const record: DormantStageRecord = {
         at: new Date().toISOString(),
         dormantDays: dormantAfterMs(config) / DAY_MS,
@@ -369,7 +372,7 @@ export async function enterDormantStage(
       };
       await updateWorkspaceStateAsync(path, (state) => ({ ...state, [DORMANT_STAGE_KEY]: record }));
       const restore = dormantRestore(path, deleted);
-      const detail = `no activity for ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes (${why}): ${deleted.length ? `deleted ${deleted.join(', ')}` : 'no owned device to delete'}${failures ? `; ${failures} could not be deleted and stay recorded` : ''}; ${archived ? 'archived its logs' : 'kept its logs (archive.enabled is off or nothing to archive)'}; node_modules and Pods that are copy-on-write clones stay. ${deleted.length ? 'The next stim ios or stim android creates a device.' : `${restore} resumes it.`}`;
+      const detail = `no activity for ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes (${why}): ${deleted.length ? `deleted ${deleted.join(', ')}` : 'no owned device to delete'}${unmeasured.length ? ` (freed size not counted for ${unmeasured.join(', ')}: its data directory could not be measured)` : ''}${failures ? `; ${failures} could not be deleted and stay recorded` : ''}; ${archived ? 'archived its logs' : 'kept its logs (archive.enabled is off or nothing to archive)'}; node_modules and Pods that are copy-on-write clones stay. ${deleted.length ? 'The next stim ios or stim android creates a device.' : `${restore} resumes it.`}`;
       writeWorkspaceEvent(path, failures ? 'warn' : 'info', 'workspace_dormant', detail, {
         bytes,
         deletedDevices: deleted,
