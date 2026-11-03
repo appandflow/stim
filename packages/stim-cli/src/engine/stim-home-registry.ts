@@ -2,25 +2,19 @@ import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { configDir } from '@stim-cli/core';
-import {
-  readStimHomes,
-  stimHomesFile,
-  stimHomesLock,
-  stimHomesRoot,
-  type StimHomeEntry,
-} from '@stim-cli/core/state';
+import { readStimHomes, stimHomesFile, stimHomesLock, stimHomesRoot, type StimHomeEntry } from '@stim-cli/core/state';
 import { debugLog } from '../debug-log.ts';
 import { withDirLock } from '../dir-lock.ts';
 import { STIM_HOMES_TEST_GUARD_ROOT_ENV } from './eas-machine-root-guard-env.ts';
 
-export { readStimHomes, stimHomesRoot, type StimHomeEntry } from '@stim-cli/core/state';
+export { stimHomesRoot } from '@stim-cli/core/state';
 
 /** A home's last-seen time moves forward at most this often, so a busy home does not rewrite the list on every command. */
 const LAST_SEEN_REFRESH_MS = 10 * 60_000;
 
 type HomeDevices = StimHomeEntry['devices'];
 
-export function assertStimHomesRootWritable(root: string): void {
+function assertStimHomesRootWritable(root: string): void {
   const guardedRoot = process.env[STIM_HOMES_TEST_GUARD_ROOT_ENV];
   if (!guardedRoot || resolve(root) !== resolve(guardedRoot)) return;
   throw new Error(
@@ -131,6 +125,6 @@ export function noteStimHome(devices?: HomeDevices, now: number = Date.now()): v
     recordStimHome(home, { devices, now });
     noted.set(key, now);
   } catch (error) {
-    debugLog.log('home-registry.note-failed', { message: (error as Error).message });
+    debugLog.log('home-registry.note-failed', { message: error instanceof Error ? error.message : String(error) });
   }
 }

@@ -1,7 +1,7 @@
 import { throwIfCancelled } from '../cancellation.ts';
 import { runProcessOperation } from '../cli-operation.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
-import { configDir, type StimContext } from '@stim-cli/core';
+import { configDir, isScopedHome, type StimContext } from '@stim-cli/core';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
 import { maintenanceRunClaims } from '@stim-cli/core/state';
@@ -504,14 +504,16 @@ export async function collectGcReport(
         operation,
       },
     );
-    otherHomes = await collectOtherHomes(
-      configDir(),
-      { sims: everySim, avds: avdsChecked ? avds : null },
-      mountedVolumes,
-      deps,
-      operation,
-    );
-    if (otherHomes.notice) deviceSweepNotices.push(otherHomes.notice);
+    if (!isScopedHome(env)) {
+      otherHomes = await collectOtherHomes(
+        configDir(),
+        { sims: everySim, avds: avdsChecked ? avds : null },
+        mountedVolumes,
+        deps,
+        operation,
+      );
+      if (otherHomes.notice) deviceSweepNotices.push(otherHomes.notice);
+    }
     if (simsChecked || avdsChecked) {
       const lists = { sims, avds: [...registeredAvds] };
       listed = lists;

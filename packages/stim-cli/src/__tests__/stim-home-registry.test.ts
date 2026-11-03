@@ -1,16 +1,10 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { stimHomesFile, stimHomesLock } from '@stim-cli/core/state';
+import { readStimHomes, stimHomesFile, stimHomesLock } from '@stim-cli/core/state';
 import { recordCreatedDevice, forgetCreatedDevice } from '../devices/created-devices.ts';
 import { STIM_HOMES_TEST_GUARD_ROOT_ENV } from '../engine/eas-machine-root-guard-env.ts';
-import {
-  forgetStimHomes,
-  isTrackedStimHome,
-  noteStimHome,
-  readStimHomes,
-  recordStimHome,
-} from '../engine/stim-home-registry.ts';
+import { forgetStimHomes, isTrackedStimHome, noteStimHome, recordStimHome } from '../engine/stim-home-registry.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 
 const renameHook = vi.hoisted((): { beforeRename?: (path: unknown) => void } => ({}));
@@ -24,8 +18,6 @@ vi.mock('node:fs', async (importOriginal) => {
     },
   };
 });
-
-const MINUTE = 60_000;
 
 describe('the machine list of Stim homes', () => {
   let dir: string;

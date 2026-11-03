@@ -2,7 +2,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { workspaceName } from '../index.ts';
 import { isJsonObject, readStateFile } from './json-file.ts';
-import { createdDevicesFile, easMachineStateRoot, easSessionLedgerFile, stimHomesFile, stimHomesRoot } from './paths.ts';
+import {
+  createdDevicesFile,
+  easMachineStateRoot,
+  easSessionLedgerFile,
+  stimHomesFile,
+  stimHomesRoot,
+} from './paths.ts';
 
 export type CreatedDevicePlatform = 'ios' | 'android' | 'web';
 
@@ -135,17 +141,12 @@ function validIds(value: unknown): value is string[] {
 
 /** Returns the entry normalized, or null when `value` is not a valid entry for `path`. */
 export function validStimHomeEntry(path: string, value: unknown): StimHomeEntry | null {
-  if (!isAbsolute(path) || !value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const entry = value as Partial<StimHomeEntry>;
-  const devices = entry.devices as Partial<StimHomeEntry['devices']> | undefined;
-  if (!validTimestamp(entry.createdAt) || !validTimestamp(entry.lastSeenAt)) return null;
-  if (!devices || typeof devices !== 'object' || !validIds(devices.ios) || !validIds(devices.android)) return null;
-  return {
-    path,
-    createdAt: entry.createdAt,
-    lastSeenAt: entry.lastSeenAt,
-    devices: { ios: [...devices.ios], android: [...devices.android] },
-  };
+  if (!isAbsolute(path) || !isJsonObject(value)) return null;
+  const { createdAt, lastSeenAt, devices } = value;
+  if (!validTimestamp(createdAt) || !validTimestamp(lastSeenAt) || !isJsonObject(devices)) return null;
+  const { ios, android } = devices;
+  if (!validIds(ios) || !validIds(android)) return null;
+  return { path, createdAt, lastSeenAt, devices: { ios: [...ios], android: [...android] } };
 }
 
 export function readStimHomes(root: string = stimHomesRoot()): StimHomesRead {
@@ -158,15 +159,13 @@ export function readStimHomes(root: string = stimHomesRoot()): StimHomesRead {
   });
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(file, 'utf-8')) as unknown;
+    parsed = JSON.parse(readFileSync(file, 'utf-8'));
   } catch (error) {
-    return unsafe(`is unreadable: ${(error as Error).message}`);
+    return unsafe(`is unreadable: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const list = parsed as { version?: unknown; homes?: unknown } | null;
-  if (!list || typeof list !== 'object' || list.version !== 1) return unsafe('is malformed');
-  if (!list.homes || typeof list.homes !== 'object' || Array.isArray(list.homes)) return unsafe('is malformed');
+  if (!isJsonObject(parsed) || parsed.version !== 1 || !isJsonObject(parsed.homes)) return unsafe('is malformed');
   const homes = new Map<string, StimHomeEntry>();
-  for (const [path, value] of Object.entries(list.homes)) {
+  for (const [path, value] of Object.entries(parsed.homes)) {
     const entry = validStimHomeEntry(path, value);
     if (!entry) return unsafe('is malformed');
     homes.set(path, entry);

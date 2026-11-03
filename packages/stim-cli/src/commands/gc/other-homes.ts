@@ -9,13 +9,14 @@ import { forgetStimHomes, isTrackedStimHome, stimHomesRoot } from '../../engine/
 import { formatBytes, isAbsentPath, isOnMountedVolume } from '../../fs-util.ts';
 import { measureTree } from '../../private-size.ts';
 import { unverifiedDeviceCommand } from './devices.ts';
+import { describeError } from './eas-sessions.ts';
 import { mapLimited, sizeConcurrency } from './limited.ts';
 import { canonicalPath } from './paths.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 
 const SIZE_TIMEOUT_MS = 30_000;
 
-export interface OtherHomeDevice {
+interface OtherHomeDevice {
   kind: 'ios' | 'android';
   id: string;
   /** The simulator's name; null for an AVD, whose id is its name, and for a simulator that is not listed. */
@@ -207,7 +208,8 @@ export function otherHomeLines(homes: readonly OtherHome[] = [], now: number = D
           : 'directory missing on a volume that is not mounted; kept';
     lines.push(`  ${home.path} (${state}, last seen ${ago(home.lastSeenAt, now)})`);
     for (const device of home.devices) lines.push(...deviceLine(device, home));
-    if (home.forgettable) lines.push('    nothing of it is left on this machine; --delete forgets the LIST ENTRY only.');
+    if (home.forgettable)
+      lines.push('    nothing of it is left on this machine; --delete forgets the LIST ENTRY only.');
     for (const command of home.teardown) lines.push(`    ${command}`);
   }
   return lines;
@@ -245,8 +247,8 @@ export function forgetGoneHomes(
     }
     return 0;
   } catch (error) {
-    output.log(chalk.red(`Could not forget the gone Stim homes: ${(error as Error).message}`));
-    output.record('homeEntry', 'failed', 'gone Stim homes', { detail: (error as Error).message });
+    output.log(chalk.red(`Could not forget the gone Stim homes: ${describeError(error)}`));
+    output.record('homeEntry', 'failed', 'gone Stim homes', { detail: describeError(error) });
     return candidates.length;
   }
 }
