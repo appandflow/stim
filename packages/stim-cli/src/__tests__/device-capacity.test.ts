@@ -121,6 +121,7 @@ test.each(['equal timestamps', 'backward clock'])(
     expect(readClaimSet(join(root, 'device-waits')).live).toHaveLength(3);
     full = false;
     const listings = listDevices.mock.calls.length;
+    expect(listings).toBe(1);
     await poll(2);
     await poll(1);
     expect(listDevices).toHaveBeenCalledTimes(listings);
@@ -145,6 +146,66 @@ test.each(['equal timestamps', 'backward clock'])(
     expect(readStats().record?.capacityWaits).toHaveLength(3);
   },
 );
+
+test('a run queued behind the head waits on the shared listing without taking the admission lock', async () => {
+  const head = takeTicket({ sequence: 1 });
+  const controller = new AbortController();
+  const listDevices = vi.fn<() => typeof occupied>(() => occupied);
+  let lock: ReturnType<typeof takeTicket> | undefined;
+  let rounds = 0;
+  try {
+    const run = withDeviceBootAdmission({ platform: 'ios', key: 'queued' }, async () => {}, {
+      root,
+      max: 1,
+      lockWaitMs: 0,
+      signal: controller.signal,
+      sources: { ...empty, sims: listDevices },
+      sleep: async () => {
+        rounds += 1;
+        if (rounds === 1)
+          lock = tryAcquireClaim({ root: join(root, 'device-admission.lock'), mode: 'exclusive' }).acquired;
+        if (rounds === 3) controller.abort();
+      },
+    });
+    await expect(run).rejects.toMatchObject({ name: 'AbortError' });
+    expect(lock).toBeDefined();
+    expect(rounds).toBe(3);
+    expect(listDevices).toHaveBeenCalledTimes(1);
+  } finally {
+    releaseClaim(lock);
+    releaseClaim(head);
+  }
+});
+
+test('a shared listing never admits a boot: a device that finished booting after it was taken still counts', async () => {
+  const head = takeTicket({ platform: 'android', key: 'ahead', sequence: 1 });
+  const boot = vi.fn<() => Promise<void>>(async () => {});
+  let clock = Date.now();
+  let later = false;
+  try {
+    await expect(
+      withDeviceBootAdmission({ platform: 'ios', key: 'queued' }, boot, {
+        root,
+        max: 2,
+        platformMax: { android: 1 },
+        waitMs: 6_000,
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+          later = true;
+        },
+        sources: {
+          ...empty,
+          sims: () => (later ? occupied : []),
+          booting: () => (later ? [{ platform: 'android', key: 'walls-the-head' }] : []),
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY', message: expect.stringContaining('2/2 devices booted') });
+    expect(boot).not.toHaveBeenCalled();
+  } finally {
+    releaseClaim(head);
+  }
+});
 
 describe('per-platform device caps', () => {
   const sim = (udid: string) => makeIosSim({ udid, name: `stim-${udid}`, state: 'Booted' });
@@ -537,6 +598,7 @@ describe('boot admission beyond the device caps', () => {
     });
     await vi.waitFor(() => expect(liveWaiters('boot')).toHaveLength(1));
     full = false;
+    vi.advanceTimersByTime(11_000);
     await expect(admit({ max: 1, sources: { ...empty, sims } })).rejects.toMatchObject({
       code: 'STIM_AT_CAPACITY',
       message: expect.stringContaining('its turn in the device queue'),

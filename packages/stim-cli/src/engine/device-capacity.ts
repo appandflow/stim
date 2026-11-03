@@ -20,7 +20,14 @@ import {
 } from '../devices/ios.ts';
 import { listAdbDevices, listAdbDevicesAsync, type SystemImage } from '../devices/android.ts';
 import { workspaceId } from '@stim-cli/core';
-import { automaticMachineEnabled, readDaemonSnapshot } from '@stim-cli/core/state';
+import {
+  automaticMachineEnabled,
+  deviceListingCacheFile,
+  isJsonObject,
+  readDaemonSnapshot,
+  readJsonObject,
+} from '@stim-cli/core/state';
+import { writeCacheFile } from '../status-measures.ts';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { recordCapacityRefusal, recordCapacityWait } from './stats.ts';
 import {
@@ -732,6 +739,24 @@ export async function deviceSlotUsages(
   }
 }
 
+interface SharedListing {
+  listedAt: number;
+  sims: SimRecord[];
+  adb: AdbDevices | null;
+}
+
+function readSharedListing(at: number): SharedListing | null {
+  const record = readJsonObject(deviceListingCacheFile());
+  const listedAt = record?.listedAt;
+  const sims = record?.sims;
+  if (typeof listedAt !== 'number' || !Array.isArray(sims) || at < listedAt || at - listedAt > INVENTORY_REFRESH_MS)
+    return null;
+  const adb = isJsonObject(record?.adb) ? record.adb : null;
+  if (adb && Array.isArray(adb.emulators) && Array.isArray(adb.physical) && Array.isArray(adb.unhealthy))
+    return { listedAt, sims, adb: { emulators: adb.emulators, physical: adb.physical, unhealthy: adb.unhealthy } };
+  return { listedAt, sims, adb: null };
+}
+
 function takeBootMarker(device: BootingDevice): ClaimHandle {
   const attempt = tryAcquireClaim({
     root: bootingDevicesRoot(),
@@ -862,145 +887,152 @@ export async function withDeviceBootAdmission<T>(
   let lastLine = -Infinity;
   let visibleWait = false;
   let lastInventory: { limit: DeviceLimit; holders: StatusDeviceSlotHolder[] } | undefined;
-  let lastTurn = false;
   let binding: DeviceLimit | undefined;
-  let lastListed = -Infinity;
   const own = deviceKey(device.platform, device.key);
+  const round = () => {
+    signal?.throwIfAborted();
+    requireMembership();
+    const waiters = liveWaiters('boot');
+    const mine = waiters.findIndex((holder) => holder.claimId === ticket?.claimId);
+    const ahead = mine < 0 ? waiters : waiters.slice(0, mine);
+    const position = queuePosition(waiters, ticket);
+    const admit = () => {
+      const admitted = takeBootMarker(device);
+      if (releaseClaim(ticket)) ticket = undefined;
+      return { marker: admitted };
+    };
+    const wait = (
+      what: string,
+      resource: string,
+      use: { inUse: number; max: number },
+      limit: DeviceLimit | undefined,
+      holders: string[],
+      unverified: string | null = null,
+      held: readonly StatusDeviceSlotHolder[] = [],
+    ) => {
+      const shown = holders.length ? `${what} held by ${holders.join(', ')}` : what;
+      const queue = `queue position ${position} of ${Math.max(waiters.length, position)}`;
+      const refusal = (message: string, remedy: string) =>
+        new DeviceAdmissionRefusal({ code: 'STIM_AT_CAPACITY', message, remedy });
+      const state = `${shown}; ${queue}${waiters.length ? ` (${waiters.map((holder, index) => `${index + 1}. ${String(holder.details.displayName ?? holder.details.key)}`).join(', ')})` : ''}`;
+      const remedy = `Stop an environment (stim stop), retry with a longer --wait <seconds>, or ${limit?.derived ? 'set' : 'raise'} ${limit?.setting ?? 'concurrency.maxDevices'}.`;
+      if (noWait || waitMs === 0)
+        throw limit && limit.count >= limit.max
+          ? new DeviceAdmissionRefusal(atCapacityRefusal(limit))
+          : refusal(`This run would wait for ${state}.`, remedy);
+      if (!ticket) {
+        ticket = takeWaitTicket('boot', { ...device }, waiters);
+        started = now();
+        ceiling.update(waiters.length + 1, unverified);
+      } else ceiling.update(position, unverified);
+      const elapsed = now() - started!;
+      const overdue =
+        waitMs === undefined
+          ? ceiling.overdue()
+          : elapsed >= waitMs
+            ? ({ kind: 'absolute', waitedMs: elapsed } as const)
+            : null;
+      if (overdue)
+        throw refusal(
+          `Waited ${formatElapsed(elapsed)} for ${state}${overdue.kind === 'unverified' ? `; ${overdue.reason} for ${formatElapsed(overdue.waitedMs)}` : waitMs === undefined ? ', the 90-minute ceiling' : ''}.`,
+          remedy,
+        );
+      return {
+        what: shown,
+        resource,
+        use,
+        limit,
+        position,
+        waiting: Math.max(waiters.length, position),
+        held,
+      };
+    };
+    const decide = (read: DeviceInventory | CapacityRefusal) => {
+      if ('code' in read)
+        return wait(
+          `a device count (${read.message})`,
+          'device count',
+          { inUse: lastInventory?.limit.count ?? 0, max: lastInventory?.limit.max ?? max },
+          undefined,
+          [],
+          read.message,
+        );
+      const inventory = read;
+      const keys = inventoryKeys(inventory);
+      const ownBooting = inventory.booting.some((entry) => deviceKey(entry.platform, entry.key) === own);
+      if ((device.platform === 'ios' && keys.has(own)) || ownBooting) return null;
+      keys.delete(own);
+      const limits = deviceLimits(keys, device.platform, max, ownCap, admission?.derived.devices);
+      const turn = ahead.every((waiter) => platformWalled(keys, waiter, platformMax));
+      const full = limits.find((limit) => limit.count >= limit.max);
+      const limit = full ?? limits[0];
+      binding = limit;
+      if (limit) {
+        const held = limit.platform ? new Set([...keys].filter((key) => key.startsWith(`${limit.platform}:`))) : keys;
+        lastInventory = { limit, holders: slotHolders(inventory, held) };
+      }
+      if (full)
+        return wait(
+          `a device slot (${limitUse(full)})`,
+          'booted devices',
+          { inUse: full.count, max: full.max },
+          full,
+          holderLabels(lastInventory?.holders ?? []),
+          null,
+          lastInventory?.holders ?? [],
+        );
+      const booting = inventory.booting.filter((entry) => deviceKey(entry.platform, entry.key) !== own);
+      if (booting.length >= BOOTS_IN_FLIGHT)
+        return wait(
+          `a boot slot (${booting.length}/${BOOTS_IN_FLIGHT} boots in flight)`,
+          'boots in flight',
+          { inUse: booting.length, max: BOOTS_IN_FLIGHT },
+          undefined,
+          booting.map((entry) => entry.displayName ?? entry.key),
+        );
+      const deviceUse = { inUse: limit?.count ?? keys.size, max: limit?.max ?? max };
+      if (!turn) return wait(`its turn in the device queue (${limitUse(limit)})`, 'its turn', deviceUse, limit, []);
+      const measured = memory();
+      const held = measured ? memoryHold(measured) : null;
+      if (held) return wait(held, 'memory', deviceUse, undefined, []);
+      return null;
+    };
+    const shared = async () => {
+      if (ahead.length === 0) return null;
+      const listing = readSharedListing(now());
+      if (!listing) return null;
+      const read = await readInventoryAsync({ ...sources, sims: listing.sims, adb: listing.adb ?? NO_ADB });
+      return listing.adb === null && !('code' in read) && recordsOwnedEmulator(read.config) ? null : read;
+    };
+    return { admit, decide, shared };
+  };
+  const reuse = async () => {
+    if (!ticket) return null;
+    const { decide, shared } = round();
+    const read = await shared();
+    return read && decide(read);
+  };
+  const count = async () => {
+    const { admit, decide, shared } = round();
+    const reused = await shared();
+    const waiting = reused && decide(reused);
+    if (waiting) return waiting;
+    const listedAt = now();
+    const read = await readInventoryAsync(sources);
+    if (!('code' in read)) {
+      const listing: SharedListing = {
+        listedAt,
+        sims: read.sims,
+        adb: recordsOwnedEmulator(read.config) ? read.adb : null,
+      };
+      writeCacheFile(deviceListingCacheFile(), listing);
+    }
+    return decide(read) ?? admit();
+  };
   try {
     try {
       for (;;) {
-        const result = await admissionTransaction(
-          async () => {
-            signal?.throwIfAborted();
-            requireMembership();
-            const waiters = liveWaiters('boot');
-            const mine = waiters.findIndex((holder) => holder.claimId === ticket?.claimId);
-            const ahead = mine < 0 ? waiters : waiters.slice(0, mine);
-            const position = queuePosition(waiters, ticket);
-            const admit = () => {
-              const admitted = takeBootMarker(device);
-              if (releaseClaim(ticket)) ticket = undefined;
-              return { marker: admitted };
-            };
-            const wait = (
-              what: string,
-              resource: string,
-              use: { inUse: number; max: number },
-              limit: DeviceLimit | undefined,
-              holders: string[],
-              unverified: string | null = null,
-              held: readonly StatusDeviceSlotHolder[] = [],
-            ) => {
-              const shown = holders.length ? `${what} held by ${holders.join(', ')}` : what;
-              const queue = `queue position ${position} of ${Math.max(waiters.length, position)}`;
-              const refusal = (message: string, remedy: string) =>
-                new DeviceAdmissionRefusal({ code: 'STIM_AT_CAPACITY', message, remedy });
-              const state = `${shown}; ${queue}${waiters.length ? ` (${waiters.map((holder, index) => `${index + 1}. ${String(holder.details.displayName ?? holder.details.key)}`).join(', ')})` : ''}`;
-              const remedy = `Stop an environment (stim stop), retry with a longer --wait <seconds>, or ${limit?.derived ? 'set' : 'raise'} ${limit?.setting ?? 'concurrency.maxDevices'}.`;
-              if (noWait || waitMs === 0)
-                throw limit && limit.count >= limit.max
-                  ? new DeviceAdmissionRefusal(atCapacityRefusal(limit))
-                  : refusal(`This run would wait for ${state}.`, remedy);
-              if (!ticket) {
-                ticket = takeWaitTicket('boot', { ...device }, waiters);
-                started = now();
-                ceiling.update(waiters.length + 1, unverified);
-              } else ceiling.update(position, unverified);
-              const elapsed = now() - started!;
-              const overdue =
-                waitMs === undefined
-                  ? ceiling.overdue()
-                  : elapsed >= waitMs
-                    ? ({ kind: 'absolute', waitedMs: elapsed } as const)
-                    : null;
-              if (overdue)
-                throw refusal(
-                  `Waited ${formatElapsed(elapsed)} for ${state}${overdue.kind === 'unverified' ? `; ${overdue.reason} for ${formatElapsed(overdue.waitedMs)}` : waitMs === undefined ? ', the 90-minute ceiling' : ''}.`,
-                  remedy,
-                );
-              return {
-                what: shown,
-                resource,
-                use,
-                limit,
-                position,
-                waiting: Math.max(waiters.length, position),
-                held,
-              };
-            };
-            if (ticket && lastInventory && ahead.length > 0 && !lastTurn && now() - lastListed < INVENTORY_REFRESH_MS) {
-              const booting = sources.booting ?? readBootingDevices;
-              const claims = typeof booting === 'function' ? booting() : booting;
-              if (claims.some((entry) => deviceKey(entry.platform, entry.key) === own)) return admit();
-              return wait(
-                `a device slot (${limitUse(lastInventory.limit)})`,
-                'booted devices',
-                { inUse: lastInventory.limit.count, max: lastInventory.limit.max },
-                lastInventory.limit,
-                holderLabels(lastInventory.holders),
-                null,
-                lastInventory.holders,
-              );
-            }
-            const read = await readInventoryAsync(sources);
-            if ('code' in read)
-              return wait(
-                `a device count (${read.message})`,
-                'device count',
-                { inUse: lastInventory?.limit.count ?? 0, max: lastInventory?.limit.max ?? max },
-                undefined,
-                [],
-                read.message,
-              );
-            const inventory = read;
-            const keys = inventoryKeys(inventory);
-            const ownBooting = inventory.booting.some((entry) => deviceKey(entry.platform, entry.key) === own);
-            if ((device.platform === 'ios' && keys.has(own)) || ownBooting) return admit();
-            keys.delete(own);
-            const limits = deviceLimits(keys, device.platform, max, ownCap, admission?.derived.devices);
-            const turn = ahead.every((waiter) => platformWalled(keys, waiter, platformMax));
-            lastListed = now();
-            lastTurn = turn;
-            const full = limits.find((limit) => limit.count >= limit.max);
-            const limit = full ?? limits[0];
-            binding = limit;
-            if (limit) {
-              const held = limit.platform
-                ? new Set([...keys].filter((key) => key.startsWith(`${limit.platform}:`)))
-                : keys;
-              lastInventory = { limit, holders: slotHolders(inventory, held) };
-            }
-            if (full)
-              return wait(
-                `a device slot (${limitUse(full)})`,
-                'booted devices',
-                { inUse: full.count, max: full.max },
-                full,
-                holderLabels(lastInventory?.holders ?? []),
-                null,
-                lastInventory?.holders ?? [],
-              );
-            const booting = inventory.booting.filter((entry) => deviceKey(entry.platform, entry.key) !== own);
-            if (booting.length >= BOOTS_IN_FLIGHT)
-              return wait(
-                `a boot slot (${booting.length}/${BOOTS_IN_FLIGHT} boots in flight)`,
-                'boots in flight',
-                { inUse: booting.length, max: BOOTS_IN_FLIGHT },
-                undefined,
-                booting.map((entry) => entry.displayName ?? entry.key),
-              );
-            const deviceUse = { inUse: limit?.count ?? keys.size, max: limit?.max ?? max };
-            if (!turn)
-              return wait(`its turn in the device queue (${limitUse(limit)})`, 'its turn', deviceUse, limit, []);
-            const measured = memory();
-            const held = measured ? memoryHold(measured) : null;
-            if (held) return wait(held, 'memory', deviceUse, undefined, []);
-            return admit();
-          },
-          lockWaitMs,
-          out,
-          signal,
-        );
+        const result = (await reuse()) ?? (await admissionTransaction(count, lockWaitMs, out, signal));
         if ('marker' in result) {
           marker = result.marker;
           signal?.throwIfAborted();
