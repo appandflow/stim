@@ -1617,7 +1617,8 @@ export async function offloadBuild(
     const deadline = Date.now() + RESUME_WINDOW_MS;
     let delay = RESUME_DELAY_MS;
     let probe = await probeAgain();
-    while (patient && 'failure' in probe && Date.now() + delay < deadline) {
+    while ('failure' in probe && Date.now() + delay < deadline) {
+      if (!patient) break;
       await wait(delay, undefined, { signal }).catch(() => {});
       checkCancelled();
       delay = Math.min(delay * 2, RESUME_MAX_DELAY_MS);
