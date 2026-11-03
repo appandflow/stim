@@ -2372,8 +2372,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   parked pool is untouched) and its logs are archived when archive.enabled is
   on. The bytes it reports as freed are the data directories of the devices it
   deleted, measured before deletion; a device whose size cannot be measured is
-  named in the action's detail and left out of the total. node_modules and Pods that hold 256 MB or more of their own (private)
-  bytes in a linked worktree are deleted, recorded for \`stim worktree warm\`,
+  named in the action's detail and left out of the total. node_modules and
+  Pods that hold 256 MB or more of their own (private) bytes in a linked
+  worktree are deleted, recorded for \`stim worktree warm\`,
   and logged as dormant_dependencies; copy-on-write clones under that, and
   trees whose private size is unknown, stay. \`stim status\` shows a dormant
   stage line, and --json \`dormantStage\` { at, dormantDays, deletedDevices,
