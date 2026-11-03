@@ -184,6 +184,16 @@ the server's authorization, use the Mac-side action above.
 | Read captured logs, build diagnostics and supported text diffs. | Tap, swipe, type and use supported buttons on controllable devices. |
 | View device screens and supported replay.                       | Control a leased Android phone while its lease is valid.            |
 
+With control on, the viewer's **More** menu has **Paste from Phone** and **Copy
+Device Clipboard** for an iOS simulator, an Android emulator or an Android phone,
+when the Mac's `stim-server` is new enough to offer them. Paste reads the phone's
+clipboard when you tap it (iOS asks you to allow the paste), sets the device
+clipboard to that text and pastes it into the focused field. Text over 8 KiB is
+not sent. On an iOS simulator the first paste can leave a "Paste from
+CoreSimulatorBridge" suggestion on the device to tap, and a simulator slimmed by
+`ios.simslimProfile` cannot show it. Copy reads the device clipboard into the
+phone's. Nothing syncs by itself, only text is sent, and Stim never logs it.
+
 Each machine the phone pairs with reports the work it started, including
 work it placed on another machine. A Home row names that machine on the build
 line, such as **Pods** beside `janics-mac-mini-2` for an offloaded build, and on

@@ -1512,6 +1512,10 @@ msgstr "Control ended. {ended}"
 msgid "Copied"
 msgstr "Copied"
 
+#: src/screens/device-view.tsx
+msgid "Copied the device clipboard."
+msgstr "Copied the device clipboard."
+
 #: src/components/copy-button.tsx
 #: src/components/copy-button.tsx
 #: src/components/viewer-keyboard.tsx
@@ -1523,6 +1527,14 @@ msgstr "Copy"
 #: src/screens/mac-status.tsx
 msgid "Copy Command"
 msgstr "Copy Command"
+
+#: src/screens/device-view.tsx
+msgid "Copy Device Clipboard"
+msgstr "Copy Device Clipboard"
+
+#: src/screens/device-view.tsx
+msgid "Copy Failed"
+msgstr "Copy Failed"
 
 #: src/screens/logs.tsx
 msgid "Copy Message and Location"
@@ -3080,6 +3092,22 @@ msgstr "Parked simulator, kept for reuse"
 msgid "Paste"
 msgstr "Paste"
 
+#: src/screens/device-view.tsx
+msgid "Paste Failed"
+msgstr "Paste Failed"
+
+#: src/screens/device-view.tsx
+msgid "Paste from Phone"
+msgstr "Paste from Phone"
+
+#: src/screens/device-view.tsx
+msgid "Pasted from the phone."
+msgstr "Pasted from the phone."
+
+#: src/screens/device-view.tsx
+msgid "Pasted. If nothing appears, tap the paste suggestion on the device."
+msgstr "Pasted. If nothing appears, tap the paste suggestion on the device."
+
 #: src/components/replay-bar.tsx
 msgid "Pause"
 msgstr "Pause"
@@ -3977,6 +4005,15 @@ msgstr "The chips above show why each machine is offline."
 msgid "The connection dropped."
 msgstr "The connection dropped."
 
+#: src/hooks/device-control.ts
+#: src/hooks/device-control.ts
+msgid "The control session ended."
+msgstr "The control session ended."
+
+#: src/screens/device-view.tsx
+msgid "The device clipboard is empty."
+msgstr "The device clipboard is empty."
+
 #: src/lib/pairing.ts
 msgid "The endpoint is not a ws:// or wss:// URL."
 msgstr "The endpoint is not a ws:// or wss:// URL."
@@ -4021,6 +4058,14 @@ msgstr "The page failed to load."
 #: src/lib/pairing.ts
 msgid "The pairing token is 43 letters, digits, - and _."
 msgstr "The pairing token is 43 letters, digits, - and _."
+
+#: src/screens/device-view.tsx
+msgid "The phone clipboard is empty."
+msgstr "The phone clipboard is empty."
+
+#: src/screens/device-view.tsx
+msgid "The phone clipboard is over {CLIPBOARD_LIMIT_KIB} KiB. Copy a shorter text to paste it."
+msgstr "The phone clipboard is over {CLIPBOARD_LIMIT_KIB} KiB. Copy a shorter text to paste it."
 
 #: src/screens/build-details.tsx
 msgid "The run ended without recording a result; the next run in this workspace recorded it."

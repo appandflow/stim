@@ -42,6 +42,10 @@ export interface DeviceControl {
   /** Rejects with the server's reason; a Duo fold takes a few seconds to settle. */
   posture: (posture: DevicePosture) => Promise<void>;
   simulator: (command: SimulatorCommand) => Promise<void>;
+  /** Sets the device clipboard, and with `paste` pastes it into the focused field. Rejects with the server's reason. */
+  clipboardSet: (text: string, paste: boolean) => Promise<void>;
+  /** Reads the device clipboard. Rejects with the server's reason. */
+  clipboardGet: () => Promise<string>;
 }
 
 type HeldState =
@@ -199,5 +203,32 @@ export function useDeviceControl(
     },
     [connection, session, link],
   );
-  return { allowed, state, begin, end, touch, text, scroll, key, selectWindow, button, rotate, posture, simulator };
+  const clipboardSet = useCallback(
+    async (value: string, paste: boolean) => {
+      if (!connection || !session) throw new Error(t`The control session ended.`);
+      await connection.request('input.clipboard.set', { session, text: value, ...(paste ? { paste } : {}) });
+    },
+    [connection, session],
+  );
+  const clipboardGet = useCallback(async () => {
+    if (!connection || !session) throw new Error(t`The control session ended.`);
+    return (await connection.request('input.clipboard.get', { session })).text;
+  }, [connection, session]);
+  return {
+    allowed,
+    state,
+    begin,
+    end,
+    touch,
+    text,
+    scroll,
+    key,
+    selectWindow,
+    button,
+    rotate,
+    posture,
+    simulator,
+    clipboardSet,
+    clipboardGet,
+  };
 }
