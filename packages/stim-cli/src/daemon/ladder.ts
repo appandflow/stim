@@ -20,9 +20,9 @@ import { readParked } from '../devices/sim-pool.ts';
 import { restoreProblem } from '../workspace/lightened.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { executeAction, type ActContext } from '../maintenance/act.ts';
-import { artifactWorktrees } from '../maintenance/artifacts.ts';
+import { artifactWorktreesFor } from '../maintenance/artifacts.ts';
 import { cacheBlocked } from '../maintenance/measure.ts';
-import { cacheEntryProtection } from '../maintenance/protect.ts';
+import { cacheEntryProtectionFor } from '../maintenance/protect.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../maintenance/settings.ts';
 import { planRung6 } from '../maintenance/sweep.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
@@ -181,7 +181,7 @@ async function run(
   }
   let outcome;
   try {
-    outcome = await executeAction(plan, actContext(context.settings));
+    outcome = await executeAction(plan, { ...actContext(context.settings), operation: context.operation });
   } catch (error) {
     outcome = { status: 'failed' as const, bytes: 0, detail: error instanceof Error ? error.message : String(error) };
   }
@@ -210,7 +210,7 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
   for (const candidate of await stoppedOutputCandidates(context.config, context, PRESSURE_IDLE_MS)) {
     if (!(await context.stillShort())) return;
     const result = context.act
-      ? await clearStoppedOutputs(candidate, context.config, PRESSURE_IDLE_MS)
+      ? await clearStoppedOutputs(candidate, context.config, PRESSURE_IDLE_MS, context.operation)
       : {
           outcome: 'would' as const,
           bytes: context.measure ? await idleOutputBytes(candidate.path, context.config) : 0,
@@ -292,7 +292,7 @@ async function trim(
   const result = pruneCache(cache, {
     olderThanDays: recentDays,
     byMtime: true,
-    protect: cacheEntryProtection(context.config),
+    protect: await cacheEntryProtectionFor(context.config, context.operation),
     evictBytes,
   });
   if (result.skipped) return { outcome: 'kept', bytes: 0, detail: result.skipped };
@@ -386,7 +386,7 @@ async function dormantRung(context: RungContext): Promise<void> {
   for (const candidate of await dormantCandidates(context.config, context, idleMs)) {
     if (!(await context.stillShort())) return;
     const result = context.act
-      ? await enterDormantStage(candidate, context.config, idleMs, context.why)
+      ? await enterDormantStage(candidate, context.config, idleMs, context.why, context.operation)
       : {
           outcome: 'would' as const,
           bytes: context.measure ? await workspaceDeviceBytes(context, candidate.project) : 0,
@@ -444,7 +444,7 @@ async function dependenciesRung(context: RungContext): Promise<void> {
       },
       context.why,
     );
-  const worktrees = take.length ? artifactWorktrees() : [];
+  const worktrees = take.length ? await artifactWorktreesFor(context.operation) : [];
   const restoreCache: Parameters<typeof restoreProblem>[1] = new Map();
   for (const dependency of take) {
     if (!(await context.stillShort())) return;
@@ -482,7 +482,14 @@ async function dependenciesRung(context: RungContext): Promise<void> {
         });
       continue;
     }
-    const result = await clearDependency(dependency, PRESSURE_IDLE_MS, protectedRoot, worktrees, why);
+    const result = await clearDependency(
+      dependency,
+      PRESSURE_IDLE_MS,
+      protectedRoot,
+      worktrees,
+      why,
+      context.operation,
+    );
     recordAction(
       context,
       {

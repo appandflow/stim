@@ -137,7 +137,10 @@ export interface WorktreeRow {
   /** Where the workspace sits inside its checkout, such as `apps/mobile`. */
   inCheckout: string | null;
   lifecycle: Chip | null;
+  /** A linked worktree's private node_modules size when status reports one, else its size with clones in full; a primary checkout's all of it. */
   nodeModules: number | null;
+  /** The part of node_modules that clones or hard links share with other folders, null without a private size. */
+  nodeModulesShared: number | null;
   devices: number | null;
   deviceCount: number;
   /** Stim's build outputs, with the logs when gc did not size them apart. */
@@ -393,7 +396,16 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
     const deviceBytes = own.length ? total(own.map((d) => d.bytes)) : null;
     const output = outputs.get(env.path);
     const log = logs.get(env.path);
-    const nodeModules = env.disk?.nodeModulesBytes ?? null;
+    const modulesBytes = env.disk?.nodeModulesBytes ?? null;
+    const modulesPrivate = env.disk?.nodeModulesPrivateBytes ?? null;
+    const measuredPrivate =
+      !!env.worktree &&
+      modulesBytes !== null &&
+      modulesPrivate !== null &&
+      modulesPrivate >= 0 &&
+      modulesPrivate <= modulesBytes;
+    const nodeModules = measuredPrivate ? modulesPrivate : modulesBytes;
+    const nodeModulesShared = measuredPrivate ? modulesBytes - modulesPrivate : null;
     const outputBytes = gc ? (output ? output.bytes : 0) : (env.disk?.buildBytes ?? null);
     const logBytes = gc ? (log?.bytes ?? 0) : null;
     const parts = [nodeModules, deviceBytes?.bytes ?? 0, outputBytes];
@@ -408,6 +420,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       inCheckout: pathInCheckout(env, roots),
       lifecycle: lifecycle(linked.get(root), env.worktree, dead.has(env.path), false),
       nodeModules,
+      nodeModulesShared,
       devices: deviceBytes?.bytes ?? null,
       deviceCount: own.length,
       outputs: outputBytes,
@@ -427,6 +440,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
       inCheckout: null,
       lifecycle: lifecycle(linked.get(tree.path), tree, false, true),
       nodeModules: null,
+      nodeModulesShared: null,
       devices: null,
       deviceCount: 0,
       outputs: null,
