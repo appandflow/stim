@@ -1772,6 +1772,21 @@ settings, including under --fix. This inspection runs only in doctor, with
 failed metadata queries, and unresolved settings produce an unverified note
 rather than an architecture warning or a verified clean result.
 
+PREBUILT REACT NATIVE FLAVOR
+\`ios-pods-flavor\` (a note) fires in a linked worktree when the source
+checkout's ios/Pods/React-Core-prebuilt, ReactNativeDependencies or hermes-engine
+\`.last_build_configuration\` names Debug or Release and differs from the
+configuration this workspace builds (ios.configuration, else Debug), and the
+worktree has the same marker. React Native's build phase then re-extracts the
+prebuilt frameworks from Pods/*-artifacts on the worktree's first build, which
+writes about 1 GB of unshared disk (the Debug core is about 640 MB) and
+spends extraction time that the copy-on-write Pods clone otherwise avoids.
+Build the source checkout once in the configuration the worktrees build
+(\`stim ios\` there, or with --configuration) before warming more worktrees.
+Projects without these markers, other configuration names, and the source
+checkout itself are not flagged. \`worktree warm\` prints the same advice as one
+"carry" line on stderr. Doctor changes nothing, including under --fix.
+
 WHY ANDROID NEEDS CCACHE, AND WHAT IT COSTS
 Every AGP CMake task is uncacheable by Gradle, so --build-cache serves not one
 C++ compile. Without a launcher a fresh worktree recompiles every translation

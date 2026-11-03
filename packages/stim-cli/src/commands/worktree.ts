@@ -3,6 +3,8 @@ import { runProcessOperation } from '../cli-operation.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { existsSync, realpathSync, rmSync } from 'fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
+import { inspectPodsFlavor } from '../diagnostics/doctor-pods-flavor.ts';
+import { iosConfigurationSetting } from './ios/support.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact, shortHash, shortUdid } from '../command-output.ts';
@@ -163,7 +165,13 @@ function checkNativeDir(
   };
 }
 
-function reportCarriedStateHealth(root: string, target: string, copied: string[], out: (line: string) => void): void {
+function reportCarriedStateHealth(
+  root: string,
+  target: string,
+  copied: string[],
+  configuration: string,
+  out: (line: string) => void,
+): void {
   const outOfSync = depsOutOfSync(root, target, copied);
   for (const d of outOfSync.filter((dependency) => dependency.reason === 'installed')) {
     const where = d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`;
@@ -203,6 +211,12 @@ function reportCarriedStateHealth(root: string, target: string, copied: string[]
         ),
       ),
     );
+  }
+  for (const rel of copied) {
+    if (rel !== 'Pods' && !rel.endsWith('/Pods')) continue;
+    const iosDir = rel.slice(0, -'Pods'.length);
+    const flavor = inspectPodsFlavor(join(root, iosDir), join(target, iosDir), configuration);
+    if (flavor) out(chalk.yellow(phaseLine('carry', `carried ${rel}: ${flavor.detail} ${flavor.fix}`)));
   }
 }
 
@@ -398,7 +412,7 @@ export async function warmWorktreeTarget(opts: {
             if (result.copied.length) {
               out(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
               relocateCarriedPods(root, target, result.copied, out);
-              reportCarriedStateHealth(root, target, result.copied, out);
+              reportCarriedStateHealth(root, target, result.copied, iosConfigurationSetting(settings) ?? 'Debug', out);
             }
             out(
               phaseLine(

@@ -63,6 +63,15 @@ worktree's path and makes `Manifest.lock` match `Podfile.lock`, so the first
 carried `node_modules` that do not match the worktree's lockfile leaves Pods as
 copied and `pod install` runs. Warm does not edit `Podfile.lock`.
 
+Clones of `ios/Pods` share disk only while the worktree builds the configuration
+the source checkout last built. React Native swaps its prebuilt core, Hermes and
+dependency frameworks when `.last_build_configuration` differs from the
+configuration being built, and the extracted files are unshared, about 1 GB per
+worktree. When the source checkout's marker is Debug or Release and the
+worktree builds the other, warm prints one line on stderr and `stim doctor`
+reports the same note. Build the source checkout once in that configuration with
+`stim ios` before warming more worktrees.
+
 When the two locks already match but the copied Pods still name the source
 path, warm applies the same rewrite and scan, so builds do not read the source
 checkout's files (entitlements, `Podfile.properties.json`). If it cannot, warm

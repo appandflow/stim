@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
 import { phaseLine } from '../command-output.ts';
 import {
   checkMainCheckout,
@@ -9,6 +10,8 @@ import {
   type DoctorPlatform,
 } from '../diagnostics/doctor.ts';
 import { inspectIosDebugArchitectures } from '../diagnostics/doctor-ios-architectures.ts';
+import { inspectPodsFlavor } from '../diagnostics/doctor-pods-flavor.ts';
+import { iosConfigurationSetting } from '../commands/ios/support.ts';
 import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 import { bundlerPin } from '../engine/bundler.ts';
 import type { BuildTarget } from '../offload/toolchain.ts';
@@ -22,6 +25,14 @@ import {
 import { detectIsExpo } from '../workspace/project-files.ts';
 import { resolveAndroidLayout, resolveIosProjectDir } from '../workspace/settings.ts';
 import type { ProjectDoctor } from './project-doctor.ts';
+
+function realpathOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
 
 export function reactNativeProjectDoctor(root: string): ProjectDoctor {
   return {
@@ -40,19 +51,30 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
             iosProjectPath,
             androidLayout: resolveAndroidLayout(settings, root, repoRoot ?? root),
           });
-      const architectures =
-        !machineSettings?.corrupt && platform !== 'android' && host === 'darwin'
-          ? await inspectIosDebugArchitectures(await mainCheckoutProjectRoot(root), iosProjectPath)
-          : [];
+      const checksIos = !machineSettings?.corrupt && platform !== 'android' && host === 'darwin';
+      const sourceRoot = checksIos ? await mainCheckoutProjectRoot(root) : root;
+      const architectures = checksIos ? await inspectIosDebugArchitectures(sourceRoot, iosProjectPath) : [];
+      const podsFlavor =
+        checksIos && realpathOrSelf(sourceRoot) !== realpathOrSelf(root)
+          ? inspectPodsFlavor(
+              join(sourceRoot, iosProjectPath),
+              join(root, iosProjectPath),
+              iosConfigurationSetting(settings) ?? 'Debug',
+            )
+          : null;
       const parity = await detectFingerprintParity(root, {
         platform,
         iosProjectPath,
         operation,
       });
       const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform, operation });
-      return [...source, ...architectures, parity, linkedGit?.code === parity?.code ? null : linkedGit].filter(
-        (finding) => finding !== null,
-      );
+      return [
+        ...source,
+        ...architectures,
+        podsFlavor,
+        parity,
+        linkedGit?.code === parity?.code ? null : linkedGit,
+      ].filter((finding) => finding !== null);
     },
     offloadTargets({ options: { platform, host = process.platform, operation }, settings, repoRoot }, iosRuntime) {
       const iosDir = resolveIosProjectDir(settings, root).dir;
@@ -95,7 +117,10 @@ export function reactNativeDoctorSuccessLines(platform: DoctorPlatform | undefin
   const lines = [
     '',
     'Project',
-    phaseLine('project', 'source checkout, dependencies, local upstream, nested worktrees Watchman would crawl'),
+    phaseLine(
+      'project',
+      'source checkout, dependencies, local upstream, nested worktrees Watchman would crawl, prebuilt React Native frameworks the source checkout built in another configuration',
+    ),
   ];
 
   if (platform !== 'android') {
