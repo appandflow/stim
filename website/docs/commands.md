@@ -2340,7 +2340,16 @@ the owning tool's remedy, as JSON `sections.machineCaches`:
   settings cannot be resolved, or whose wrapper cannot be read or names no
   Gradle version is named, since it may still pin a listed version; every
   version a readable wrapper of it pins still counts as pinned. A directory gc
-  cannot list adds a notice and marks the section incomplete.
+  cannot list adds a notice and marks the section incomplete. Each listed
+  version's `caches/<version>/transforms` directory is also shown with its size,
+  its private size on APFS (`privateBytes`) and the manual remedy `rm -rf <dir>`;
+  Gradle extracts the transforms again on the next build.
+- Xcode DerivedData directories under `~/Library/Developer/Xcode/DerivedData`
+  whose `info.plist` `WorkspacePath` no longer exists on a mounted volume, as
+  `orphanedDerivedData` with the size, the recorded workspace path and the
+  remedy `rm -rf <dir>`. A directory without a readable absolute
+  `WorkspacePath`, or whose path is on a volume that is not mounted, is not
+  listed.
 - iOS simulator runtimes with their simulator count. Only a deletable runtime
   no simulator uses gets `xcrun simctl runtime delete <id>`.
 - Xcode device support entries, which Xcode copies again when the device
