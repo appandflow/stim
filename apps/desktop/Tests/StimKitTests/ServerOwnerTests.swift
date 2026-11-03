@@ -125,6 +125,22 @@ struct ServerOwnerTests {
       ])
   }
 
+  @Test func aMachineThatIsBothRemoteAndPairedGetsTwoChipsWithDisjointWork() throws {
+    let workspaces = [
+      OwnedWorkspace(owner: .local, workspace: try hosted(path: "/Users/me/app", session: "s-mine")),
+      OwnedWorkspace(owner: .paired("mini-key"), workspace: try hosted(path: "/home/mini/app", session: "s-theirs")),
+    ]
+
+    let chips = MachineChoices.groups(remote: ["janics-mac-mini-2:7443"], paired: ["mini-key"]).flatMap(\.choices)
+    #expect(chips == [.thisMachine, .remote("janics-mac-mini-2:7443"), .paired("mini-key")])
+
+    let placed = PlacedWork.list(workspaces).filter { $0.isOn("janics-mac-mini-2:7443") }
+    let theirs = ForeignWork.list(workspaces, server: "mini-key")
+    #expect(placed.map(\.workspace) == ["/Users/me/app"])
+    #expect(theirs.map(\.workspace) == ["/home/mini/app"])
+    #expect(Set(placed.map(\.id) + theirs.map(\.id)).count == 2)
+  }
+
   @Test func placedWorkBelongsToTheRemoteMachineEntryThatNamesItsHost() throws {
     let mine = try #require(
       PlacedWork.list([OwnedWorkspace(owner: .local, workspace: try hosted(path: "/Users/me/app", session: "s"))]).first)

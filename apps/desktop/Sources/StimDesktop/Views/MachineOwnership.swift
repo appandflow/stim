@@ -1,8 +1,6 @@
 import StimKit
 import SwiftUI
 
-/// This machine's own work placed on a remote machine: the hosted simulators and offloaded builds its workspaces run
-/// there.
 struct PlacedWorkSection: View {
   var machine: String
   var work: [PlacedWork]
@@ -34,8 +32,6 @@ struct PlacedWorkSection: View {
   }
 }
 
-/// Other machines' work running on this machine, each row labelled with the client that owns it. It is not a list of
-/// this machine's workspaces: a hosted session lives in its own home, and the clients' workspaces are theirs.
 struct HostingSection: View {
   var sessions: [HostedSession]
   var stopping: Set<String>

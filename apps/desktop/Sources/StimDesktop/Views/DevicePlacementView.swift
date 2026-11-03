@@ -16,7 +16,6 @@ struct DevicePlacementView: View {
   }
 }
 
-/// A sidebar row's note that one of its devices runs on another machine, worded by whose work it is.
 struct PlacementBadgeView: View {
   var badge: PlacementBadge
 

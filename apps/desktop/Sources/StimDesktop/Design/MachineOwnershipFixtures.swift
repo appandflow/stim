@@ -4,8 +4,6 @@
   import StimStores
   import SwiftUI
 
-  /// The Machines page's chip groups and the two pages that follow from them: a remote machine shows this machine's
-  /// work placed there, and this machine's own page shows other machines' work it hosts.
   struct MachineOwnershipPlayground: View {
     var now: Date
 

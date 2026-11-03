@@ -797,9 +797,9 @@ after Forget, or `stim-server devices` to find this Mac's record when the machin
 pairing and pair again. A build of Desktop without the Keychain entitlement, such as a development
 copy, keeps pairings only until it quits and says so in the sheet.
 
-Once paired, the machine gets its own section in the sidebar, below this Mac's
+Once paired, the machine gets its own section in the sidebar, below this machine's
 projects, titled "NAME (viewing)" because the work in it belongs to that machine, with a
-connection dot and **View Only**, or **View and Control** for a control pairing. Its workspaces open the same workspace page as this Mac's own,
+connection dot and **View Only**, or **View and Control** for a control pairing. Its workspaces open the same workspace page as this machine's own,
 with the devices, build, Metro and agent sections the machine reports, and a line
 under the header that names the machine controlling them, such as "Viewing floco ·
 read-only" or "Controlled by floco". Controls that need the machine's files, logs or

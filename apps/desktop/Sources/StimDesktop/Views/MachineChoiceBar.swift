@@ -8,8 +8,6 @@ struct MachineChip {
   var help: String?
 }
 
-/// The machines the Machines page can show, in the groups `MachineChoices` makes: "Your machines" holds this machine
-/// and the remote machines it sends work to, "Viewing" the paired machines whose work it only looks at.
 struct MachineChoiceBar: View {
   var groups: [MachineChoiceGroup]
   var selection: MachineChoice

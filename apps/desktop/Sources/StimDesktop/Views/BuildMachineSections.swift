@@ -49,7 +49,6 @@ struct MachineBuildMachines: View {
   var model: BuildMachinesModel
   var checkout: String?
   var selectedMachine: String
-  /// This machine's work placed on `selectedMachine`.
   var placed: [PlacedWork] = []
 
   private var machines: [BuildMachineStatus] { model.check(in: checkout)?.statuses ?? [] }

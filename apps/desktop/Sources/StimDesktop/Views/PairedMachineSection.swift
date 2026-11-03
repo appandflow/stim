@@ -8,7 +8,7 @@ struct PairedMachineSection: View {
   var status: PairedStatus?
   var work: [ForeignWork]
 
-  private var name: String { session?.name ?? entry.pairing?.name ?? "Paired machine" }
+  private var name: String { PairedServerWording.displayName(session?.name ?? entry.pairing?.name ?? "") }
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.xxl) {

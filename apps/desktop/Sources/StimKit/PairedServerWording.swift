@@ -131,10 +131,13 @@ public enum PairedServerWording {
     return "Not confirmed"
   }
 
+  /// A paired machine's name as a section or page shows it; a pairing nobody named reads "Machine".
+  public static func displayName(_ name: String) -> String { name.isEmpty ? "Machine" : name }
+
+  public static let viewingSuffix = "(viewing)"
+
   /// The sidebar title of a paired machine's section, which holds work that belongs to that machine.
-  public static func sectionTitle(name: String) -> String {
-    "\(name.isEmpty ? "Machine" : name) (viewing)"
-  }
+  public static func sectionTitle(name: String) -> String { "\(displayName(name)) \(viewingSuffix)" }
 
   /// The command that removes this Mac's record on the server, which Forget does not do.
   public static func revokeCommand(deviceID: String?) -> String {

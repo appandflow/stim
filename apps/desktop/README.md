@@ -295,11 +295,11 @@ and shows `stim-server devices revoke <id>`; it does not revoke on the machine. 
 right now is tried again, not reported as revoked.
 
 `PairedServerSessions` wraps each of those clients in a `ServerSession` (owner `.paired(<pairing id>)`), so a pairing
-has one connection, and `StatusStore.usePairedServers` follows each one's status in memory. Below this Mac's
+has one connection, and `StatusStore.usePairedServers` follows each one's status in memory. Below this machine's
 projects, the sidebar gets a section per paired server, titled "&lt;name&gt; (viewing)" (`PairedServerWording.sectionTitle`): its name, connection dot, a **View Only** pill (**View and
 Control** for a `--control` pairing), and its
-workspaces with the same grouping, status filter and row layout as this Mac's: the status sits beside the name when the whole name fits and on its own line below it otherwise. Hidden, expanded and collapsed state for those
-rows is kept in memory only, keyed by the owner and path, and this Mac's hidden paths never apply to them. A paired
+workspaces with the same grouping, status filter and row layout as this machine's: the status sits beside the name when the whole name fits and on its own line below it otherwise. Hidden, expanded and collapsed state for those
+rows is kept in memory only, keyed by the owner and path, and this machine's hidden paths never apply to them. A paired
 row opens a page: the status, the path as text, the agent and device lines with the machine each runs on
 ("Running on janics-mac-mini-2"), the build and where it compiles, and "Viewing floco · read-only" or "Controlled by
 floco". An iOS or Android device row, own or hosted, and a hosted macOS app open `DeviceViewer` with the pairing's
@@ -318,7 +318,7 @@ machine's page lists **Your work on &lt;machine&gt;** (`PlacedWork`: this machin
 builds there). A paired server's page shows its reported capacity and its `ForeignWork`, worded "&lt;name&gt; runs it on
 &lt;machine&gt;". The two types never share a list: `PlacedWork.list` keeps `owner == .local`, `ForeignWork.list` one
 paired owner. This machine's page lists **Hosting for other machines**, the `device-host.sessions` rows labelled
-with the client's name, apart from its workspaces. A hosted session two servers report counts once, under the first. A pairing whose server says it is this Mac's own gets no section.
+with the client's name, apart from its workspaces. A hosted session two servers report counts once, under the first. A pairing whose server says it is this machine's own gets no section.
 With the flag off, or with no pairing, nothing connects and the sidebar and Machines page are unchanged.
 
 ## Hiding a workspace

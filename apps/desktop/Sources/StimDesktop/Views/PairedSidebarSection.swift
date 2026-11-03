@@ -106,12 +106,13 @@ private struct PairedServerHeader: View {
     Button(action: toggle) {
       HStack(spacing: Space.sm) {
         StatusDot(color: Color(entry.status.tone), size: 6, label: entry.status.title)
-        HStack(spacing: Space.xs) {
-          Text(verbatim: (name.isEmpty ? "Machine" : name).uppercased()).font(.stim(.caption, weight: .bold)).tracking(0.6)
-            .foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle).layoutPriority(1)
-          Text(verbatim: "(viewing)").font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
+        ViewThatFits(in: .horizontal) {
+          HStack(spacing: Space.sm) {
+            title
+            Pill(tone: .neutral, size: .small) { Text(accessLabel) }
+          }
+          title
         }
-        Pill(tone: .neutral, size: .small) { Text(accessLabel) }
         Spacer(minLength: 0)
         if !expanded, active > 0 {
           Text("\(active) active").font(.stim(.caption)).foregroundStyle(Palette.tertiary).fixedSize()
@@ -127,6 +128,15 @@ private struct PairedServerHeader: View {
     )
     .accessibilityHint(expanded ? "Collapses this machine's workspaces" : "Shows this machine's workspaces")
     .help(Text(verbatim: "Workspaces \(name) controls, as its stim-server reports them"))
+  }
+
+  private var title: some View {
+    HStack(spacing: Space.xs) {
+      Text(verbatim: PairedServerWording.displayName(name).uppercased()).font(.stim(.caption, weight: .bold))
+        .tracking(0.6).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
+      Text(verbatim: PairedServerWording.viewingSuffix).font(.stim(.caption)).foregroundStyle(Palette.tertiary)
+        .lineLimit(1).fixedSize()
+    }
   }
 
   private var accessLabel: String {
