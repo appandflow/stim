@@ -17,13 +17,21 @@ import { saveConfig } from '../workspace/config.ts';
 
 const entry = fileURLToPath(new URL('../daemon/run.ts', import.meta.url));
 let home: string;
+interface SpawnedDaemon {
+  child: ReturnType<ReturnType<typeof getExecutor>['spawn']>;
+  exited: Promise<number | null>;
+}
+let daemons: SpawnedDaemon[] = [];
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = home;
 });
 
-afterEach(() => {
+afterEach(async () => {
+  for (const daemon of daemons) daemon.child.kill('SIGTERM');
+  await Promise.all(daemons.map((daemon) => daemon.exited));
+  daemons = [];
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });
@@ -32,9 +40,10 @@ function daemonLog(): string {
   return existsSync(daemonNdjsonFile()) ? readFileSync(daemonNdjsonFile(), 'utf8') : '';
 }
 
-function startDaemonProcess() {
+function startDaemonProcess(): SpawnedDaemon {
   const child = getExecutor().spawn(process.execPath, [entry], { env: { ...process.env }, stdio: 'ignore' });
   const exited = new Promise<number | null>((done) => child.once('exit', (code) => done(code)));
+  daemons.push({ child, exited });
   return { child, exited };
 }
 
@@ -77,10 +86,6 @@ function release(resource: 'slot' | 'boot' = 'slot'): void {
 
 test('one daemon per home: a second one exits and leaves the first one holding the claim and socket', async () => {
   const first = startDaemonProcess();
-  onTestFinished(async () => {
-    first.child.kill('SIGTERM');
-    await first.exited;
-  });
   await listening();
   const second = startDaemonProcess();
   expect(await second.exited).toBe(0);
@@ -90,11 +95,7 @@ test('one daemon per home: a second one exits and leaves the first one holding t
 }, 20_000);
 
 test('a released build slot wakes the oldest waiter at once, and the next release the one after it', async () => {
-  const daemon = startDaemonProcess();
-  onTestFinished(async () => {
-    daemon.child.kill('SIGTERM');
-    await daemon.exited;
-  });
+  startDaemonProcess();
   await listening();
   const holder = tryAcquireBuildSlot({ max: 1 });
   assert(holder);
@@ -115,11 +116,7 @@ test('a released build slot wakes the oldest waiter at once, and the next releas
 }, 20_000);
 
 test('a finished boot wakes the oldest boot waiter only, never a build waiter', async () => {
-  const daemon = startDaemonProcess();
-  onTestFinished(async () => {
-    daemon.child.kill('SIGTERM');
-    await daemon.exited;
-  });
+  startDaemonProcess();
   await listening();
   const build = await waiter('slot');
   const first = await waiter('boot');
@@ -140,11 +137,7 @@ test('a finished boot wakes the oldest boot waiter only, never a build waiter', 
 }, 20_000);
 
 test('a tick request is answered when a tick finishes, and the snapshot carries the pressure level', async () => {
-  const daemon = startDaemonProcess();
-  onTestFinished(async () => {
-    daemon.child.kill('SIGTERM');
-    await daemon.exited;
-  });
+  startDaemonProcess();
   await listening();
   await expect(requestDaemonTick({ STIM_DAEMON: 'on' })).resolves.toBe(true);
   expect(readDaemonSnapshot()).toMatchObject({

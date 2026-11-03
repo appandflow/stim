@@ -675,8 +675,8 @@ run waiting to boot, and automatic maintenance.
           quiet home. A workspace waits until its idle.dormantDays have passed
           plus one slow tick, and never while maintenance.keep, idle.minutes
           0, idle.dormantDays 0, a hosted placement, an unreadable state or a
-          failing device listing keeps it out; a finished-worktree removal
-          keeps the daemon only in on mode, while its last run was not kept.
+          failing device listing keeps it out, nor with no activity recorded
+          in its state. A finished-worktree removal does not keep the daemon.
           Each tick it measures the
           machine once, classifies the pressure level, moves idle workspaces
           into the idle stage (idle.minutes) and dormant ones into the dormant

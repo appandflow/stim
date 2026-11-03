@@ -13,7 +13,6 @@ import {
   macosAppState,
   readMacosRecord,
   readDaemonSnapshot,
-  readMaintenanceState,
   type DaemonMode,
   type DaemonRecentAction,
   type DaemonSnapshot,
@@ -28,7 +27,6 @@ import {
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
-import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
@@ -153,21 +151,11 @@ function homeAlive(config: Config | null, measured: TickMeasurement): string | n
 
 /**
  * Work the daemon still has to do in a quiet home, which keeps it alive at the slow cadence: a workspace the dormant
- * stage will take (until its due time plus one slow tick), or a finished-worktree removal that automatic maintenance
- * planned in `on` mode and did not keep the last time it ran.
+ * stage will take, until its due time plus one slow tick.
  */
-function pendingWork(
-  config: Config | null,
-  measured: TickMeasurement,
-  { mode, slowTickMs }: { mode: DaemonMode; slowTickMs: number },
-): string | null {
+function pendingWork(config: Config | null, measured: TickMeasurement, slowTickMs: number): string | null {
   const dormant = pendingDormant(config, { simsFailed: measured.sims === null }, { graceMs: slowTickMs });
-  if (dormant) return `${dormant} is not dormant yet`;
-  if (mode !== 'on' || resolveMaintenanceSettings(config).mode !== 'on') return null;
-  const state = readMaintenanceState();
-  const kept = new Set(state?.skipKeys ?? []);
-  const removal = state?.plan.find((action) => action.kind === 'would-remove-worktree' && !kept.has(action.target));
-  return removal ? `the removal of ${removal.target} is pending` : null;
+  return dormant ? `${dormant} is not dormant yet` : null;
 }
 
 /**
@@ -362,7 +350,7 @@ export async function runDaemon({
         waiters.build.length || waiters.boot.length || waiting.length
           ? 'a run waits for a build slot or a device boot'
           : homeAlive(config, measured);
-      pending = alive ? null : pendingWork(config, measured, { mode, slowTickMs });
+      pending = alive ? null : pendingWork(config, measured, slowTickMs);
       wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
       interval = alive || pressure.level !== 'normal' ? tickMs : slowTickMs;
       for (const { path: workspace, outcome, detail } of workspaces) {

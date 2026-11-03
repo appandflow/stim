@@ -484,14 +484,25 @@ describe('rung 5', () => {
         devices: [],
         simsFailed: false,
         remeasure: async () => pressure(level),
+        fromRung: 5,
         ...(protectedRoot ? { protectedRoot } : {}),
       },
       pressure(level),
     );
 
-  test('at critical it deletes node_modules and Pods of an idle linked worktree in one tick, and nothing at high; it keeps one used since', async () => {
-    const { idle, recent, late } = linkedWorktrees(['idle', 'recent', 'late']);
+  test('at critical it deletes node_modules and Pods of an idle linked worktree in one tick, and nothing at high', async () => {
+    const { idle } = linkedWorktrees(['idle']);
     register(idle);
+    await ladder('high');
+    expect(existsSync(join(idle, 'node_modules'))).toBe(true);
+    const { actions } = await ladder('critical');
+    expect(existsSync(join(idle, 'node_modules'))).toBe(false);
+    expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(false);
+    expect(actions.filter((action) => action.rung === 5).map((action) => action.outcome)).toEqual(['done', 'done']);
+  });
+
+  test('it keeps a worktree used a minute ago, and one used between selection and deletion', async () => {
+    const { recent, late } = linkedWorktrees(['recent', 'late']);
     register(recent);
     recordWorkspaceUse(recent, new Date(Date.now() - MINUTE_MS));
     register(late);
@@ -500,17 +511,9 @@ describe('rung 5', () => {
       if (candidate.worktree === late) recordWorkspaceUse(late);
       return restoreProblem(candidate, ...rest);
     });
-    await ladder('high');
-    expect(existsSync(join(idle, 'node_modules'))).toBe(true);
     const { actions } = await ladder('critical');
-    expect(existsSync(join(idle, 'node_modules'))).toBe(false);
-    expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(false);
     for (const root of [recent, late]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
     const rung5 = actions.filter((action) => action.rung === 5);
-    expect(rung5.filter((action) => action.workspace === idle).map((action) => action.outcome)).toEqual([
-      'done',
-      'done',
-    ]);
     expect(rung5.filter((action) => action.workspace === recent)).toEqual([]);
     expect(rung5.find((action) => action.workspace === late)).toMatchObject({
       outcome: 'kept',

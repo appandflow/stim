@@ -195,11 +195,8 @@ async function exitsAfterTwoQuietTicks(mode: DaemonMode = 'on'): Promise<boolean
 }
 
 describe('what keeps a quiet daemon alive', () => {
-  test('a workspace not yet dormant does, and a planned removal in on mode that was not kept does', async () => {
+  test('a workspace not yet dormant does', async () => {
     quietWorkspace();
-    expect(await exitsAfterTwoQuietTicks()).toBe(false);
-    vi.stubEnv('STIM_DAEMON', 'on');
-    planRemoval();
     expect(await exitsAfterTwoQuietTicks()).toBe(false);
   });
 
@@ -227,6 +224,14 @@ describe('what keeps a quiet daemon alive', () => {
       },
     ],
     [
+      'a workspace with no activity recorded in its state',
+      () => {
+        const root = quietWorkspace();
+        writeFileSync(workspaceStateFile(root), '{}');
+        expect(readWorkspaceState(root)).toEqual({});
+      },
+    ],
+    [
       'an unreadable state.json',
       () => {
         const root = quietWorkspace();
@@ -250,6 +255,7 @@ describe('what keeps a quiet daemon alive', () => {
     ['in report mode', 'on', 'report', false],
     ['with STIM_DAEMON report', 'report', 'on', false],
     ['once its last outcome was kept', 'on', 'on', true],
+    ['whose last execution failed', 'on', 'on', false],
   ] as const)('a planned removal %s does not', async (_, maintenance, mode, kept) => {
     vi.stubEnv('STIM_DAEMON', maintenance);
     planRemoval({ kept });

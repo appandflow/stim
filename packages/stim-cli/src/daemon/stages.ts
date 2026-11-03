@@ -249,8 +249,8 @@ function recordedActivityAt(path: string): number {
 
 /**
  * A workspace the dormant stage will take later, which keeps the daemon alive: registered, not dormant yet, with an
- * owned device or logs to act on, until its dormant due time plus `graceMs`. None that the dormant pass keeps skipping
- * whatever the daemon does: `maintenance.keep`, `idle.minutes` 0, a hosted placement, an unreadable state, or an owned
+ * owned device or logs to act on, until its dormant due time plus `graceMs`. None without recorded activity, whose due
+ * time is unknown, and none that the dormant pass keeps skipping whatever the daemon does: `maintenance.keep`, `idle.minutes` 0, a hosted placement, an unreadable state, or an owned
  * simulator while the tick's simulator listing failed. Null when there is none or the stage is off.
  */
 export function pendingDormant(
@@ -273,7 +273,7 @@ export function pendingDormant(
       continue;
     }
     const activityAt = recordedActivityAt(path);
-    if (Number.isFinite(activityAt) && now >= activityAt + afterMs + graceMs) continue;
+    if (!Number.isFinite(activityAt) || now >= activityAt + afterMs + graceMs) continue;
     return path;
   }
   return null;
