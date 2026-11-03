@@ -646,10 +646,13 @@ under `C:\sw` instead (see [Windows worker](./remote-machines.md#windows-worker)
 large volume. It boots or installs nothing. It declines a build while that
 volume has less than 10 GB free, while `server.maxOffloadedBuilds` offloaded
 builds already run (default 0, no limit),
-while its own Stim builds and the offloaded ones fill its
-`concurrency.maxBuilds`, or while its load per core is at or above its
-`server.maxLoadPerCore`. While an offloaded build runs, it holds one of the
-remote machine's `concurrency.maxBuilds` slots, so a local `stim ios` or
+while its own Stim builds and the offloaded ones fill its build cap, or while
+its load per core is at or above its
+`server.maxLoadPerCore`. Offloaded builds share that cap with the worker's own
+builds: `concurrency.maxBuilds` on the worker, derived as
+`max(1, floor(CPU cores / 6))` when `0`, so a worker with fewer than 12 cores
+runs one build at a time; set `concurrency.maxBuilds` there to allow more.
+While an offloaded build runs, it holds one of the remote machine's build slots, so a local `stim ios` or
 `stim android` there waits for the slot and counts the machine as busy. The
 slot is freed when the build ends, is cancelled, or its process is gone. Delete
 a client's directory there to reclaim its space.
