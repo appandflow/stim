@@ -3,7 +3,7 @@ import { request } from 'node:http';
 import { connect as tcpConnect, Socket } from 'node:net';
 import { WebSocket } from 'ws';
 import type { FrameHint } from '../src/frame-helper.ts';
-import type { Device, FrameListener } from '../src/frames.ts';
+import type { Device, Frame, FrameListener } from '../src/frames.ts';
 import { PresenceHub, presenceKey } from '../src/presence.ts';
 import type { ShareSource } from '../src/share-hosted.ts';
 import { viewerPage } from '../src/share-page.ts';
@@ -49,6 +49,8 @@ interface Fixture {
   beginGate: Promise<void> | null;
   /** How many times the fake control hub's `begin` was called, including calls still held by `beginGate`. */
   beginCalls: number;
+  /** A frame the fake frame pool hands every new subscriber at once, as the real one replays its latest frame. */
+  replay: Frame | null;
   presence: PresenceHub;
   routeOpens: number[];
   routeCloses: number;
@@ -84,6 +86,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
     busy: null,
     beginGate: null,
     beginCalls: 0,
+    replay: null,
     presence: new PresenceHub(),
     routeOpens: [],
     routeCloses: 0,
@@ -108,6 +111,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
       subscribe: (device, listener, hint) => {
         const entry = { device, listener, hint, unsubscribed: false };
         f.subscribed.push(entry);
+        if (f.replay) listener.frame(f.replay);
         return () => {
           entry.unsubscribed = true;
         };
@@ -1295,6 +1299,38 @@ describe('a web share', () => {
       socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
       await vi.waitFor(() => expect(f.begins).toHaveLength(1));
       expect(messages.map((message) => message.type)).not.toContain('control');
+      socket.close();
+    });
+
+    it('tells a viewer the share resumed before the frame the new source replays at once', async () => {
+      const { socket } = await signedIn();
+      const order: string[] = [];
+      socket.on('message', (data, binary) => order.push(binary ? 'frame' : String(JSON.parse(String(data)).type)));
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      f.replay = frame;
+      f.status(payload('Booted'));
+      await vi.waitFor(() => expect(order).toContain('frame'));
+      expect(order.slice(order.indexOf('resumed'))).toEqual(['resumed', 'frame']);
+      socket.close();
+    });
+
+    it('starts control on the first tap after a resume even while the control that was starting before is still pending', async () => {
+      const { socket } = await signedIn({ control: true });
+      let release = () => {};
+      f.beginGate = new Promise<void>((resolve) => (release = resolve));
+      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      await vi.waitFor(() => expect(f.beginCalls).toBe(1));
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      f.status(payload('Booted'));
+      await vi.waitFor(() => expect(f.subscribed).toHaveLength(2));
+      f.beginGate = null;
+      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+      release();
+      await vi.advanceTimersByTimeAsync(20);
+      expect(f.begins).toHaveLength(1);
       socket.close();
     });
 

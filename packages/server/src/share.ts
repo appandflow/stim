@@ -785,6 +785,7 @@ export class ShareHub {
     share.source = null;
     share.bound = null;
     share.controlSession = null;
+    share.controlStarting = null;
     share.controlRetryAt = 0;
     source?.endFor(share.owner, reason);
     source?.close();
@@ -802,9 +803,9 @@ export class ShareHub {
     share.hosted = bound.hosted;
     console.error(`stim-server: web share ${share.id} resumed on ${bound.key}`);
     for (const viewer of share.viewers) {
+      if (viewer.socket.readyState === viewer.socket.OPEN) viewer.socket.send('{"type":"resumed"}');
       this.attach(share, viewer);
       this.present(share, viewer);
-      if (viewer.socket.readyState === viewer.socket.OPEN) viewer.socket.send('{"type":"resumed"}');
     }
   }
 
@@ -1357,7 +1358,7 @@ export class ShareHub {
     if (Date.now() < share.controlRetryAt) return Promise.resolve(null);
     const { workspace, platform, slot, physical } = share.request;
     this.holdRecording(share);
-    share.controlStarting = source
+    const attempt: Promise<string | null> = source
       .begin(
         share.owner,
         { workspace, platform, ...(slot ? { slot } : {}), ...(physical ? { physical } : {}) },
@@ -1367,7 +1368,6 @@ export class ShareHub {
       .then((outcome) => {
         if (share.ended || share.source !== source) {
           if (!('code' in outcome)) source.endFor(share.owner, 'The share ended.');
-          this.releaseRecording(share);
           return null;
         }
         if ('code' in outcome) {
@@ -1388,9 +1388,10 @@ export class ShareHub {
         return outcome.session;
       })
       .finally(() => {
-        share.controlStarting = null;
+        if (share.controlStarting === attempt) share.controlStarting = null;
       });
-    return share.controlStarting;
+    share.controlStarting = attempt;
+    return attempt;
   }
 
   private controlEvent(share: Share, message: ServerMessage): void {
