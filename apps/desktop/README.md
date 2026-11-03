@@ -793,9 +793,9 @@ gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
   build outputs and logs (from `stim gc --json`). `node_modules` is the private
   size `stim status` reports, what removing it frees, and the part that
   copy-on-write clones or hard links share with other folders follows it in
-  parentheses, not counted. Without a private size (an older Stim, a folder
-  status has not measured, or a workspace below the worktree root) it is sized
-  with `du`, which counts clones in full; its tooltip says so. A trash icon marks build
+  parentheses, not counted. Without a private size (an older Stim, or a folder
+  status has not measured) it is sized with `du`, which counts clones in full;
+  its tooltip says so. A trash icon marks build
   outputs `stim gc --delete` clears; a lock marks ones it keeps, with the
   reason. Scissors mark logs `stim gc --delete` trims to their newest 8 MiB; a
   lock marks logs over the cap it keeps. The lifecycle reads **Merged into

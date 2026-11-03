@@ -187,11 +187,17 @@ public struct WorktreePage: Hashable, Sendable {
   }
 
   public var diskBreakdown: DiskBreakdown? {
-    let worktree = apps.compactMap { $0.disk?.worktreeBytes }.max()
-    let disk = isUnified ? nil : apps[0].disk
+    let build = Self.sum(apps.map { $0.disk?.buildBytes })
+    if isUnified {
+      let worktree = apps.compactMap { app in
+        app.disk?.worktreeBytes.map { $0 - (app.diskBreakdown?.sharedNodeModules ?? 0) }
+      }.max()
+      return DiskBreakdown(worktree: worktree, nodeModules: nil, nodeModulesPrivate: nil, build: build)
+    }
+    let disk = apps[0].disk
     return DiskBreakdown(
-      worktree: worktree, nodeModules: disk?.nodeModulesBytes, nodeModulesPrivate: disk?.nodeModulesPrivateBytes,
-      build: Self.sum(apps.map { $0.disk?.buildBytes }))
+      worktree: disk?.worktreeBytes, nodeModules: disk?.nodeModulesBytes, nodeModulesPrivate: disk?.nodeModulesPrivateBytes,
+      build: build)
   }
 
   /// Adds histories element-wise, aligning their newest samples; missing older samples contribute zero.

@@ -130,12 +130,10 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
 }
 
 extension Workspace {
-  /// node_modules at the worktree root as `stim status` measured it: `own` is what deleting it frees and `shared`
-  /// is what clones or hard links share with other folders. Nil without a private size, or when the status figure
-  /// also covers a node_modules folder outside the worktree root.
+  /// node_modules as `stim status` measured it: `own` is what deleting it frees and `shared` is what clones or hard
+  /// links share with other folders. Nil without a private size.
   public var statusNodeModules: (own: Int64, shared: Int64)? {
-    guard path == (worktree?.path ?? path), let total = disk?.nodeModulesBytes,
-      let own = disk?.nodeModulesPrivateBytes, own >= 0, own <= total
+    guard let total = disk?.nodeModulesBytes, let own = disk?.nodeModulesPrivateBytes, own >= 0, own <= total
     else { return nil }
     return (Int64(own), Int64(total - own))
   }

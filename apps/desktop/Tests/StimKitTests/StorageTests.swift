@@ -260,9 +260,6 @@ import Testing
     let older = try env("/t/.w/a", disk: #"{"worktreeBytes":1600000000,"nodeModulesBytes":1500000000}"#)
     let fallback = try #require(StorageReport.make(environments: [older], gc: nil, disk: measured, paths: paths).workspaces.first)
     #expect(fallback.nodeModules == .size(1_500_000_000) && fallback.nodeModulesShared == nil)
-
-    let nested = try env("/t/.w/a/app", disk: #"{"nodeModulesBytes":1500000000,"nodeModulesPrivateBytes":12000000}"#)
-    #expect(nested.statusNodeModules == nil)
   }
 
   /// Catches a slow or timed-out tree blanking every row, and an absent gc entry reading as unknown.

@@ -1,5 +1,12 @@
 import { workspaceAgentSessions } from '@/lib/agents';
-import { metroHealth, supportedPlatforms, workspaceStage, workspaceUsage, type Usage } from '@/lib/workspace-view';
+import {
+  diskSharedBytes,
+  metroHealth,
+  supportedPlatforms,
+  workspaceStage,
+  workspaceUsage,
+  type Usage,
+} from '@/lib/workspace-view';
 import { devicesOf, orderDevices, platformName, type DeviceRef } from '@/lib/workspaces';
 import type {
   AgentSession,
@@ -138,10 +145,16 @@ export function worktreeDisk(apps: EnvironmentState[]): EnvironmentState['disk']
   return {
     worktreeBytes: max(disks.map((disk) => disk.worktreeBytes)),
     nodeModulesBytes: apps.length === 1 ? disks[0].nodeModulesBytes : null,
-    nodeModulesPrivateBytes: apps.length === 1 ? (disks[0].nodeModulesPrivateBytes ?? null) : null,
     buildBytes: sumMeasured(disks.map((disk) => disk.buildBytes)),
     measuredAt: disks[0].measuredAt,
   };
+}
+
+function ownWorktreeBytes(apps: EnvironmentState[]): number | null {
+  const own = apps.flatMap((env) =>
+    env.disk?.worktreeBytes == null ? [] : [env.disk.worktreeBytes - (diskSharedBytes(env) ?? 0)],
+  );
+  return own.length ? Math.max(...own) : null;
 }
 
 export function worktreeUsage(apps: EnvironmentState[], machine: MachineUsageState | null | undefined): Usage {
@@ -150,7 +163,7 @@ export function worktreeUsage(apps: EnvironmentState[], machine: MachineUsageSta
   return {
     cpuPercent: sumMeasured(usages.map((usage) => usage.cpuPercent)),
     memoryMb: sumMeasured(usages.map((usage) => usage.memoryMb)),
-    diskBytes: sumMeasured([disk?.worktreeBytes, disk?.buildBytes]),
+    diskBytes: sumMeasured([ownWorktreeBytes(apps), disk?.buildBytes]),
   };
 }
 

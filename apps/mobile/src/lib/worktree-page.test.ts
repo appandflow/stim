@@ -100,21 +100,25 @@ it('counts shared disk once and sums independently measured app resources', () =
   const grouped = worktreeApps('/w/a', primary);
   expect(worktreeDisk(grouped)?.nodeModulesBytes).toBeNull();
   expect(grouped.map((app) => app.disk?.nodeModulesBytes)).toEqual([600, 700]);
-  expect(worktreeDisk(grouped)?.nodeModulesPrivateBytes).toBeNull();
-  const cloned: EnvironmentState = {
-    path: '/w/a',
+});
+
+it('leaves node_modules shared with other folders out of the worktree disk of each app', () => {
+  const cloned = (path: string, nodeModulesPrivateBytes?: number): EnvironmentState => ({
+    path,
     live: true,
     warnings: [],
     memoryMb: 0,
     disk: {
-      worktreeBytes: 1200,
-      nodeModulesBytes: 600,
-      nodeModulesPrivateBytes: 10,
+      worktreeBytes: 1600,
+      nodeModulesBytes: 1500,
+      ...(nodeModulesPrivateBytes === undefined ? {} : { nodeModulesPrivateBytes }),
       buildBytes: 100,
       measuredAt: 'now',
     },
-  };
-  expect(worktreeDisk([cloned])?.nodeModulesPrivateBytes).toBe(10);
+  });
+  expect(worktreeUsage([cloned('/w/a', 10), cloned('/w/b', 20)], null).diskBytes).toBe(120 + 100 + 100);
+  expect(worktreeUsage([cloned('/w/a', 10), cloned('/w/b')], null).diskBytes).toBe(1600 + 100 + 100);
+  expect(worktreeUsage([cloned('/w/a', 10)], null).diskBytes).toBe(110 + 100);
 });
 
 it('keeps device ownership after ordering and applies stopped filtering to each app', () => {
