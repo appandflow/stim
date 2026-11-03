@@ -171,7 +171,8 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   AVDs or system images itself, as Stim Desktop does. Then come **Safe to
   free now** (what `stim gc --delete` would free, with the command on the Mac
   that frees each row), **Projects** (repositories and their worktrees, with each
-  worktree's `node_modules`, devices, build outputs and logs, and whether it is
+  worktree's `node_modules` (what removing it frees, with the part shared with
+  other folders noted), devices, build outputs and logs, and whether it is
   merged, has an open pull request, or is stale), **Simulators and
   emulators** (every one on the Mac, Stim's and **Yours**), **Leased
   devices**, **Runtimes and System Images**, **Recordings**, **Caches**,
@@ -245,14 +246,17 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
     or **Stopped** (with when Metro stopped when known), cut to one line.
     Under it, on one line, the workspace's CPU (`ps` CPU summed over its
     processes, so above 100% on several cores) and memory from the status
-    `machine` owners, and its disk (the worktree plus Stim's build folder) once
+    `machine` owners, and its disk (the worktree plus Stim's build folder, without
+    node_modules files shared with other folders) once
     a status watcher measured it. It opens the **Status** sheet: the whole
     stage line, CPU and memory tiles, with sparklines of the last 10
     minutes when the server sends usage history, a process table of the
     workspace's simulators, emulators, Chrome, Metro and build, and a Disk
     card: the total, a stacked bar and a legend row each for node_modules, the
     rest of the worktree and Stim's build output, with the Mac's free space
-    below it.
+    below it. When status reports a private size for node_modules, the card
+    counts only that part, what removing it frees, and a last legend row lists
+    the part that clones or hard links share with other folders, not counted.
   - **Build**: one row per platform with the Apple or Android glyph, the last
     run's time and whether it hit the cache, **Failed** in red, or the next
     build's prediction from `build.plan` before any run, in grey with a tilde

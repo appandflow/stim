@@ -154,6 +154,23 @@ describe('machineReport', () => {
     });
   });
 
+  it('counts only the private part of a cloned node_modules and reports the rest as shared', () => {
+    const cloned = machineReport(
+      status([
+        env(FEATURE, { worktree: feature, disk: { ...disk(1.5 * GB), nodeModulesPrivateBytes: 0.012 * GB } }),
+        env(FEATURE_WEB, { worktree: feature, disk: { ...disk(1.5 * GB), nodeModulesPrivateBytes: null } }),
+      ]),
+      null,
+      NOW,
+    );
+    const rows = new Map(
+      cloned.repositories.flatMap((repository) => repository.worktrees).map((row) => [row.path, row]),
+    );
+    expect(rows.get(FEATURE)?.nodeModules).toBeCloseTo(0.012 * GB);
+    expect(rows.get(FEATURE)?.nodeModulesShared).toBeCloseTo(1.488 * GB);
+    expect(rows.get(FEATURE_WEB)).toMatchObject({ nodeModules: 1.5 * GB, nodeModulesShared: null });
+  });
+
   it('lists every device with its owner, taking an AVD size the gc inventory lacks from status', () => {
     expect(report.devices.map((row) => [row.name, row.owner.label, row.bytes])).toEqual([
       ['MINE', 'Yours', 7 * GB],

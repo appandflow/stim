@@ -138,6 +138,7 @@ export function worktreeDisk(apps: EnvironmentState[]): EnvironmentState['disk']
   return {
     worktreeBytes: max(disks.map((disk) => disk.worktreeBytes)),
     nodeModulesBytes: apps.length === 1 ? disks[0].nodeModulesBytes : null,
+    nodeModulesPrivateBytes: apps.length === 1 ? (disks[0].nodeModulesPrivateBytes ?? null) : null,
     buildBytes: sumMeasured(disks.map((disk) => disk.buildBytes)),
     measuredAt: disks[0].measuredAt,
   };

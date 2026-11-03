@@ -243,6 +243,28 @@ import Testing
     #expect(shared.repositories.first?.total == 5 && shared.total(.nodeModules).bytes == 5)
   }
 
+  /// Catches a cloned node_modules showing at full size as the worktree's own use.
+  @Test func sizesNodeModulesByTheStatusPrivateSizeWhenItHasOne() throws {
+    func env(_ path: String, disk: String) throws -> Workspace {
+      try JSONDecoder().decode(
+        Workspace.self,
+        from: Data(
+          #"{"path":"\#(path)","live":false,"warnings":[],"worktree":{"path":"/t/.w/a"},"disk":\#(disk)}"#.utf8))
+    }
+    let measured = DiskMeasurements(sizes: ["/t/.w/a/node_modules": 1_500_000_000])
+    let cloned = try env(
+      "/t/.w/a", disk: #"{"worktreeBytes":1600000000,"nodeModulesBytes":1500000000,"nodeModulesPrivateBytes":12000000}"#)
+    let row = try #require(StorageReport.make(environments: [cloned], gc: nil, disk: measured, paths: paths).workspaces.first)
+    #expect(row.nodeModules == .size(12_000_000) && row.nodeModulesShared == 1_488_000_000)
+
+    let older = try env("/t/.w/a", disk: #"{"worktreeBytes":1600000000,"nodeModulesBytes":1500000000}"#)
+    let fallback = try #require(StorageReport.make(environments: [older], gc: nil, disk: measured, paths: paths).workspaces.first)
+    #expect(fallback.nodeModules == .size(1_500_000_000) && fallback.nodeModulesShared == nil)
+
+    let nested = try env("/t/.w/a/app", disk: #"{"nodeModulesBytes":1500000000,"nodeModulesPrivateBytes":12000000}"#)
+    #expect(nested.statusNodeModules == nil)
+  }
+
   /// Catches a slow or timed-out tree blanking every row, and an absent gc entry reading as unknown.
   @Test func givesEveryCategoryASizeOrAReason() throws {
     let modules = "/r/.worktrees/a/node_modules"

@@ -222,6 +222,10 @@ msgstr "{gb} GB"
 msgid "{heading} {size}: {summary}"
 msgstr "{heading} {size}: {summary}"
 
+#: src/screens/workspace-resources.tsx
+msgid "{heading} {size}: {summary}, shared with other checkouts {sharedSize}"
+msgstr "{heading} {size}: {summary}, shared with other checkouts {sharedSize}"
+
 #: src/screens/build-details.tsx
 msgid "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
 msgstr "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
@@ -2726,6 +2730,10 @@ msgstr "no upstream"
 msgid "node_modules {nodeModules}"
 msgstr "node_modules {nodeModules}"
 
+#: src/screens/mac-status.tsx
+msgid "node_modules {nodeModules} ({shared} shared)"
+msgstr "node_modules {nodeModules} ({shared} shared)"
+
 #: src/intl/format.ts
 #: src/screens/workspace-work.tsx
 msgid "None"
@@ -3614,6 +3622,10 @@ msgstr "Shared by the machine"
 #: src/screens/mac-status.tsx
 msgid "Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache."
 msgstr "Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache."
+
+#: src/screens/workspace-resources.tsx
+msgid "Shared with other checkouts"
+msgstr "Shared with other checkouts"
 
 #: src/components/viewer-keyboard.tsx
 msgid "Shift"

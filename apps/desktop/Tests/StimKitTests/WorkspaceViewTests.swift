@@ -112,6 +112,15 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(try #require(env.diskBreakdown).total == 2.2e9)
   }
 
+  @Test func leavesSharedNodeModulesOutOfTheDiskFigure() throws {
+    let env = try workspace(
+      #""disk":{"worktreeBytes":1900000000,"nodeModulesBytes":900000000,"nodeModulesPrivateBytes":10000000,"buildBytes":300000000}"#
+    )
+    let breakdown = try #require(env.diskBreakdown)
+    #expect(breakdown.sharedNodeModules == 8.9e8)
+    #expect(breakdown.total == 1.31e9 && env.usage(machine: nil).diskBytes == 1.31e9)
+  }
+
   @Test func keepsTenMinutesOfEachWorkspaceAndDropsOneThatStopped() {
     var history = OwnerHistory()
     for minute in 0...12 { history.append(machine, at: now.addingTimeInterval(Double(minute) * 60)) }
@@ -420,6 +429,7 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
       var name: String
       var workspace: Workspace
       var parts: [DiskPart]?
+      var shared: Double?
     }
 
     var now: String
@@ -508,6 +518,7 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
       b.parts.map { Vectors.DiskPart(kind: $0.kind.rawValue, bytes: $0.bytes) }
     }
     #expect(parts == c.parts)
+    #expect(breakdown?.sharedNodeModules == c.shared)
   }
 }
 
