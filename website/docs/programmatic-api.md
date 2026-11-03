@@ -362,11 +362,12 @@ Invalid scopes reject with `StimError` and their remedy. Reports can refresh
 their own measured-usage caches. An explicit `home` or `STIM_HOME` preserves
 the CLI's scoped-home restrictions on machine-global resources.
 
-`collectGarbage({ cache?, olderThan?, worktrees?, delete?, idleMs?, signal? })`
+`collectGarbage({ cache?, olderThan?, worktrees?, delete?, signal? })`
 runs the CLI's GC selections and actions in process and returns `{ report, exitCode }`.
 `exitCode` is 0 or 1; it does not change `process.exitCode`. `delete: true`
-enables deletion. `idleMs` shuts down owned devices idle for that many milliseconds,
-including when `delete` is omitted. The CLI's scoped-home restrictions also apply.
+enables deletion and, as `stim gc --delete` does, runs the pressure ladder to
+its end at high without a `cache`, or at critical with `cache: 'all'`. The
+CLI's scoped-home restrictions also apply.
 
 ```ts
 const { report, exitCode } = await stim.collectGarbage({
@@ -377,7 +378,7 @@ const { report, exitCode } = await stim.collectGarbage({
 console.log(report.results, exitCode);
 ```
 
-A deletion or idle sweep holds this home's exclusive maintenance claim.
+A deletion holds this home's exclusive maintenance claim.
 Concurrent maintenance rejects with `STIM_CLAIM_REFUSED` and names the held claim.
 Cancellation stops pending lock waits and further actions; completed actions
 remain applied. An archive whose history has started moving finishes publication

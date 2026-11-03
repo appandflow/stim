@@ -647,10 +647,6 @@ msgstr "{uncommitted} changed"
 msgid "{usedGb}/{totalGb} GB"
 msgstr "{usedGb}/{totalGb} GB"
 
-#: src/lib/home.ts
-msgid "{v} GB"
-msgstr "{v} GB"
-
 #: src/lib/home-list.ts
 msgid "{warnings, plural, one {# issue} other {# issues}}"
 msgstr "{warnings, plural, one {# issue} other {# issues}}"
@@ -712,10 +708,6 @@ msgstr "11 PM to 8 AM"
 msgid "60 min ago"
 msgstr "60 min ago"
 
-#: src/lib/home.ts
-msgid "60% of memory"
-msgstr "60% of memory"
-
 #: src/lib/settings-options.ts
 msgid "A Mac keeps the last 15 minutes of device screens. Turning this off deletes them."
 msgstr "A Mac keeps the last 15 minutes of device screens. Turning this off deletes them."
@@ -755,10 +747,6 @@ msgstr "active"
 #: src/screens/filters.tsx
 msgid "Active"
 msgstr "Active"
-
-#: src/lib/home.ts
-msgid "Active Workspaces"
-msgstr "Active Workspaces"
 
 #: src/screens/workspace-resources.tsx
 msgid "Activity Totals"
@@ -2409,10 +2397,6 @@ msgstr "memory"
 msgid "Memory"
 msgstr "Memory"
 
-#: src/lib/home.ts
-msgid "Memory Budget"
-msgstr "Memory Budget"
-
 #: src/screens/home.tsx
 #: src/screens/inbox.tsx
 msgid "Menu"
@@ -2651,10 +2635,6 @@ msgstr "no git state"
 msgid "No git state"
 msgstr "No git state"
 
-#: src/lib/home.ts
-msgid "no limit"
-msgstr "no limit"
-
 #: src/components/device-tile.tsx
 msgid "No Live Screen"
 msgstr "No Live Screen"
@@ -2876,10 +2856,6 @@ msgstr "Now"
 #: src/screens/build-details.tsx
 msgid "of {estimate}"
 msgstr "of {estimate}"
-
-#: src/lib/home.ts
-msgid "off"
-msgstr "off"
 
 #: src/lib/settings-options.ts
 #: src/lib/settings-options.ts

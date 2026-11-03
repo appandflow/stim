@@ -30,6 +30,7 @@ import {
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { leaseIsExpired, listLeaseFiles } from '../engine/device-lease.ts';
+import { liveShareKeepReason } from '../local-server.ts';
 import {
   WorkspaceProcessCleanupError,
   withWorkspaceProcessLock,
@@ -293,6 +294,8 @@ async function keepReasons(
   }
   const viewers = devices.length ? unreadableViewers() : null;
   if (viewers) keep.push(viewers);
+  const share = await liveShareKeepReason(root, now);
+  if (share) keep.push(share);
   return keep;
 }
 

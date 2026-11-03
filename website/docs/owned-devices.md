@@ -475,7 +475,9 @@ stim-server input or use of its Simulator or emulator window; app and device
 logs do not count. Reclaim rechecks under the target workspace's native-run
 lock and re-resolves ownership through centralized teardown. It shuts down,
 never deletes, and excludes the waiting workspace, physical, hosted, remote,
-parked and other homes' devices. The reclaimed workspace's status and
+parked and other homes' devices, and the devices of a workspace with a live
+[web share](./share.md); the run keeps waiting and its progress line names the
+share. The reclaimed workspace's status and
 `device_idle_shutdown` log say `reclaimed for a waiting run`. With no daemon,
 waiters wait without reclaim. `devices.reclaimIdleMinutes` is no longer read.
 
@@ -655,10 +657,10 @@ back through it in the Stim phone app.
   recreates them. The `stim-daemon`'s dormant stage deletes the owned devices
   of a workspace with nothing running and no activity for `idle.dormantDays`
   (3 days; fractions allowed; `0` never), the parked pool untouched; its
-  pressure ladder does so after 10 minutes at high disk pressure and for every
-  idle workspace at critical. Automatic maintenance deletes them after
+  pressure ladder does so at high disk pressure for a workspace idle 10
+  minutes, and at critical for every idle workspace. Automatic maintenance deletes them after
   `gc.worktreeGraceMinutes` for a workspace whose worktree is finished but
-  kept. A workspace pinned with
+  kept, unless a [web share](./share.md) of it is live. A workspace pinned with
   `maintenance.keep` keeps its devices. `stim status` shows the disk they use.
   Its daily age sweep also deletes parked simulators and emulators parked for
   `maintenance.olderThanDays` (7 days; 0 never), through centralized teardown.
@@ -669,7 +671,11 @@ back through it in the Stim phone app.
   `--older-than <days>`, it removes only the devices parked at least that long.
   It also deletes the owned devices of a linked worktree whose branch is merged
   or whose pull request ended but that it keeps, for example because it is
-  dirty, under the same idle rules as automatic maintenance. `stim gc` prints
+  dirty, under the same idle rules as automatic maintenance, a live web share
+  included. It then runs the
+  `stim-daemon`'s pressure ladder at high, whatever the machine measures, which
+  deletes parked devices and moves workspaces idle 10 minutes or more into the
+  dormant stage, deleting their owned devices. `stim gc` prints
   the disk owned devices use as `Owned device disk`.
 - `stim gc --cache parked` lists only the parked devices, with the app each
   one holds and its size. With `--delete` it erases each verified parked

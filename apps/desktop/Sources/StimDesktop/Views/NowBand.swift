@@ -5,7 +5,7 @@ import SwiftUI
 struct MachineResourceSummary: View {
   var metrics: MetricsStore
   var volume: DiskVolume?
-  var minimumFreeBytes: Int64?
+  var pressure: DaemonStatus.Pressure?
   var compact: Bool
 
   var body: some View {
@@ -33,7 +33,7 @@ struct MachineResourceSummary: View {
             .accessibilityValue(
               "\(Format.fileSize(volume.freeBytes)) of \(Format.fileSize(volume.totalBytes)) on \(volume.name)")
           }
-          Text(minimumFreeBytes.map { "\(Format.fileSize($0)) minimum free" } ?? "No minimum free space set")
+          Text(pressure?.disk.map { "Disk pressure \($0)" } ?? "Disk pressure unknown until the stim-daemon ticks")
             .font(.stim(.caption)).foregroundStyle(isLow ? Palette.warning : Palette.secondary)
         }
         .padding(Space.xl)
@@ -43,10 +43,7 @@ struct MachineResourceSummary: View {
     .fixedSize(horizontal: false, vertical: true)
   }
 
-  private var isLow: Bool {
-    guard let volume, let minimumFreeBytes else { return false }
-    return volume.freeBytes < minimumFreeBytes
-  }
+  private var isLow: Bool { pressure?.disk == "high" || pressure?.disk == "critical" }
 
   private func historyTile(_ title: String, value: String, values: [Double], peak: Double) -> some View {
     Card {

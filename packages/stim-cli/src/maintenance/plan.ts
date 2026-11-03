@@ -1,6 +1,8 @@
 import type { MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
 import type { MaintenanceSettings } from './settings.ts';
 
+const CAP_TARGET = 0.8;
+
 export interface MaintenancePlan {
   actions: MaintenanceAction[];
   blocked: string[];
@@ -50,7 +52,7 @@ export function plan({
     const cap = capGb * 1024 ** 3;
     if (cap === 0 || total <= cap) continue;
     let remaining = total;
-    const targetBytes = (cap * settings.capTargetPercent) / 100;
+    const targetBytes = cap * CAP_TARGET;
     const why = `${category} ${(total / 1024 ** 3).toFixed(1)}G over the ${capGb}G cap; ${
       category === 'compilation-cache' ? 'emptied whole' : `target ${(targetBytes / 1024 ** 3).toFixed(1)}G`
     }`;

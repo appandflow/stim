@@ -1,20 +1,21 @@
 import Foundation
 
-/// The sidebar footer prioritizes disk pressure and Desktop updates over optional agent CLI updates.
+/// The sidebar footer prioritizes the stim-daemon's pressure level and Desktop updates over optional agent CLI updates.
 public enum SidebarFooterStatus: Equatable, Sendable {
-  case diskCritical(freeBytes: Int64)
+  case pressureCritical(reasons: [String])
   case desktopUpdateAvailable
-  case diskWarning(freeBytes: Int64)
+  case pressureHigh(reasons: [String])
   case stimUpdateAvailable(installed: SemanticVersion, latest: SemanticVersion)
   /// `nil` before `Onboarding.check()` reports, when the footer has no version to show yet.
   case normal(SemanticVersion?)
 
   public static func decide(
-    stim: CLICompatibility?, pressure: PressurePlan?, desktopUpdateAvailable: Bool, stimUpdate: SemanticVersion? = nil
+    stim: CLICompatibility?, pressure: DaemonStatus.Pressure?, desktopUpdateAvailable: Bool,
+    stimUpdate: SemanticVersion? = nil
   ) -> SidebarFooterStatus {
-    if let pressure, pressure.belowHardFloor { return .diskCritical(freeBytes: pressure.freeBytes) }
+    if let pressure, pressure.level == "critical" { return .pressureCritical(reasons: pressure.reasons) }
     if desktopUpdateAvailable { return .desktopUpdateAvailable }
-    if let pressure { return .diskWarning(freeBytes: pressure.freeBytes) }
+    if let pressure, pressure.level == "high" { return .pressureHigh(reasons: pressure.reasons) }
     if case .compatible(let version) = stim {
       if let stimUpdate { return .stimUpdateAvailable(installed: version, latest: stimUpdate) }
       return .normal(version)

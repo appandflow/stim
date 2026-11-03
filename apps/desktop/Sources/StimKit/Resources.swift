@@ -291,7 +291,7 @@ public struct GcReport: Decodable, Equatable, Sendable {
   public static func changed(by command: StimCommand) -> Bool {
     guard command.program == "stim", let verb = command.arguments.first else { return false }
     switch verb {
-    case "gc": return command.arguments.contains("--delete") || command.arguments.contains("--idle")
+    case "gc": return command.arguments.contains("--delete")
     case "stop", "start", "ios", "android", "web", "worktree", "device": return true
     case "ports": return ["release", "stop"].contains(command.arguments.dropFirst().first)
     case "settings": return ["set", "unset"].contains(command.arguments.dropFirst().first)
@@ -487,8 +487,7 @@ public struct GcReport: Decodable, Equatable, Sendable {
   }
 
   public var sections: Sections
-  /// Every simulator, AVD, iOS runtime and system image on the machine; nil except on a dry run without `--cache` or
-  /// `--idle`.
+  /// Every simulator, AVD, iOS runtime and system image on the machine; nil except on a dry run without `--cache`.
   public var inventory: Inventory?
 
   public struct Inventory: Decodable, Equatable, Sendable {

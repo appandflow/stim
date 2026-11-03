@@ -68,12 +68,6 @@ function classifyActivity(evidence: ActivityEvidence, now: number): DeviceActivi
   };
 }
 
-export function idleForMs(activity: DeviceActivity | null | undefined, now: number): number | null {
-  if (activity?.state !== 'idle' || !activity.lastActivityAt) return null;
-  const at = Date.parse(activity.lastActivityAt);
-  return Number.isFinite(at) ? Math.max(0, now - at) : null;
-}
-
 interface PidStart {
   pid: number;
   startTime: string;

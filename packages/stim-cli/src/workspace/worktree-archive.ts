@@ -270,7 +270,7 @@ export async function archiveWorktreeChanges({
   if (!volume || volume.freeMb - neededMb < floorMb) {
     throw new Error(
       volume
-        ? `writing it would leave less free disk than budget.hardFloorDiskGb on ${volume.volume}`
+        ? `writing it would leave less free disk than disk.hardFloorGb on ${volume.volume}`
         : 'free disk for it could not be read',
     );
   }
@@ -359,7 +359,7 @@ export async function archiveWorktreeChanges({
     }
     const [after] = await readVolumeSpaceAsync([dir], operation?.signal);
     if (!after || after.freeMb < floorMb) {
-      throw new Error(`it left less free disk than budget.hardFloorDiskGb on ${after?.volume ?? 'its volume'}`);
+      throw new Error(`it left less free disk than disk.hardFloorGb on ${after?.volume ?? 'its volume'}`);
     }
     await retention();
     if (!(await lstat(join(dir, 'manifest.json')).catch(() => null))) throw new Error('archive retention removed it');

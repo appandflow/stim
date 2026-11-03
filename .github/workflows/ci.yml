@@ -197,6 +197,20 @@ jobs:
           packages/stim-cli/src/__tests__/cache-packages.test.ts
           packages/stim-cli/src/__tests__/engine-build-lock.integration.test.ts
           packages/stim-cli/src/__tests__/metro.test.ts
+          packages/stim-cli/src/__tests__/daemon-cadence.test.ts
+          packages/stim-cli/src/__tests__/daemon.integration.test.ts
+          packages/stim-cli/src/__tests__/daemon-idle.integration.test.ts
+          packages/stim-cli/src/__tests__/daemon-ladder.test.ts
+          packages/stim-cli/src/__tests__/daemon-pressure.test.ts
+          packages/stim-cli/src/__tests__/daemon-probe.test.ts
+          packages/stim-cli/src/__tests__/daemon-reclaim.test.ts
+          packages/stim-cli/src/__tests__/daemon-status.test.ts
+          packages/stim-cli/src/__tests__/disk-floor.test.ts
+          packages/stim-cli/src/__tests__/maintenance-rung6.test.ts
+          packages/stim-cli/src/__tests__/gc-outputs-lock.test.ts
+          packages/stim-cli/src/__tests__/device-capacity.test.ts
+          packages/stim-cli/src/__tests__/engine-build-slots.test.ts
+          packages/stim-cli/src/__tests__/supervisor-run.test.ts
 
       - name: Windows startup cancellation
         run: |

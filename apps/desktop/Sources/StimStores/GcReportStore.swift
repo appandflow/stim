@@ -2,7 +2,7 @@ import AppKit
 import Observation
 import StimKit
 
-/// The GC dry-run report the Machine page, the metrics and the autopilot share. At most one run is in
+/// The GC dry-run report the Machine page and the metrics share. At most one run is in
 /// flight; a caller that asks while it runs gets its result.
 @MainActor @Observable
 public final class GcReportStore {

@@ -1,4 +1,11 @@
-import { daemonClaimRoot, daemonNdjsonFile, readDaemonSnapshot, type DaemonStatus } from '@stim-cli/core/state';
+import {
+  daemonClaimRoot,
+  daemonNdjsonFile,
+  daemonSnapshotFile,
+  readDaemonSnapshot,
+  type DaemonStatus,
+} from '@stim-cli/core/state';
+import { formatBytes } from '../fs-util.ts';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { formatLongDuration } from '../command-output.ts';
 import type { Finding } from '../diagnostics/doctor.ts';
@@ -6,7 +13,7 @@ import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { listWaiting } from '../engine/wait-queue.ts';
-import { daemonMode, parseDaemonMode } from './client.ts';
+import { daemonMode, parseDaemonMode } from './mode.ts';
 
 /**
  * The daemon's mode, whether it runs, and its last tick. A running daemon reports the mode it runs in, from its last
@@ -36,6 +43,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
     intervalMs: snapshot?.intervalMs ?? null,
     ...(snapshot?.pressure ? { pressure: snapshot.pressure } : {}),
     ...(waiting.length ? { waiting } : {}),
+    ...(read?.recent?.length ? { recent: read.recent } : {}),
     ...(unresolved
       ? {
           claim: {
@@ -51,10 +59,16 @@ function clock(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
-export function daemonLine(status: DaemonStatus, now: number = Date.now()): string {
+export function daemonLine(
+  status: DaemonStatus,
+  now: number = Date.now(),
+  platform: NodeJS.Platform = process.platform,
+): string {
   const claim = status.claim ? `; unresolved claim ${status.claim.unresolved}; ${status.claim.removeCommand}` : '';
   if (status.mode === 'off' && !status.running)
     return `Daemon: off (daemon.mode); each dev server supervisor times its own idle stop${claim}`;
+  if (platform === 'win32' && !status.running)
+    return `Daemon: none on Windows; start, ios, android, doctor and gc run the passes in their own process (daemon.mode ${status.mode})${claim}`;
   const tickAt = Date.parse(status.lastTickAt ?? '');
   const tick = Number.isFinite(tickAt)
     ? `last tick ${formatLongDuration(Math.max(0, now - tickAt))} ago`
@@ -67,6 +81,17 @@ export function daemonLine(status: DaemonStatus, now: number = Date.now()): stri
   return status.running
     ? `${label}: running since ${clock(status.running.since)} (pid ${status.running.pid}), ${tick}${pressure}${claim}`
     : `${label}: not running, ${tick}${pressure}; start, ios, android, web, macos and revive start it${claim}`;
+}
+
+/** The last action a daemon of this home took, or null before its first. */
+export function lastActionLine(status: DaemonStatus, now: number = Date.now()): string | null {
+  const recent = status.recent ?? [];
+  const action = recent.at(-1);
+  if (!action) return null;
+  const at = Date.parse(action.at);
+  const when = Number.isFinite(at) ? `${formatLongDuration(Math.max(0, now - at))} ago` : 'at an unknown time';
+  const verb = action.outcome === 'would' ? 'would ' : action.outcome === 'failed' ? 'failed to ' : '';
+  return `Last daemon action ${when}: ${verb}${action.kind.replaceAll('-', ' ')} ${action.target}${action.bytes ? ` (${formatBytes(action.bytes)})` : ''}${recent.length > 1 ? `; ${recent.length} recent in ${daemonSnapshotFile()}` : ''}`;
 }
 
 /** One line per run waiting for a build slot or a device boot, in arrival order per resource. */
@@ -93,7 +118,11 @@ function servingWorkspaces(): string[] {
 /** A stuck daemon claim, a daemon that stopped ticking, or no daemon while a dev server runs. */
 export function daemonFindings(
   status: DaemonStatus,
-  { now = Date.now(), serving = servingWorkspaces }: { now?: number; serving?: () => string[] } = {},
+  {
+    now = Date.now(),
+    serving = servingWorkspaces,
+    platform = process.platform,
+  }: { now?: number; serving?: () => string[]; platform?: NodeJS.Platform } = {},
 ): Finding[] {
   const findings: Finding[] = [];
   if (status.claim)
@@ -116,7 +145,7 @@ export function daemonFindings(
       detail: `stim-daemon pid ${status.running.pid} holds its claim, but its last tick was ${Number.isFinite(tickAt) ? `${formatLongDuration(now - tickAt)} ago` : 'never written'}, so idle workspaces are not stopped and dev server supervisors stand down. Its log is ${daemonNdjsonFile()}.`,
       fix: `Stop it with \`kill ${status.running.pid}\`; the next stim start, ios or android starts a new one.`,
     });
-  if (!status.running && !status.claim) {
+  if (!status.running && !status.claim && platform !== 'win32') {
     const running = serving();
     if (running.length)
       findings.push({

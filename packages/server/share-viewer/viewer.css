@@ -88,13 +88,22 @@ footer {
   color: var(--muted);
   font-size: 12px;
 }
+footer .credit {
+  margin: 0;
+}
+footer .credit a {
+  text-decoration: none;
+}
+footer .credit a:hover {
+  text-decoration: underline;
+}
 .viewer footer {
   flex: none;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 2px 14px;
+  gap: 4px 12px;
   padding: 2px 16px max(8px, env(safe-area-inset-bottom));
 }
 
@@ -103,6 +112,9 @@ footer {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

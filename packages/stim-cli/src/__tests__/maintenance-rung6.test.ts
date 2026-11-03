@@ -41,9 +41,9 @@ beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-maintenance-levels-')));
   projects = realpathSync(mkdtempSync(join(tmpdir(), 'stim-maintenance-levels-projects-')));
   process.env.STIM_HOME = home;
-  process.env.STIM_MAINTENANCE = 'on';
-  process.env.STIM_BUDGET_MIN_FREE_DISK_GB = '20';
-  process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '5';
+  process.env.STIM_DAEMON = 'on';
+  process.env.STIM_DISK_MIN_FREE_GB = '20';
+  process.env.STIM_DISK_HARD_FLOOR_GB = '5';
   process.env.STIM_MAINTENANCE_SWEEP_HOURS = '24';
   process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
   process.env.STIM_GC_WORKTREE_GRACE_MINUTES = '0';
@@ -73,9 +73,10 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
   rmSync(projects, { recursive: true, force: true });
   for (const key of Object.keys(process.env))
-    if (key.startsWith('STIM_MAINTENANCE') || key.startsWith('STIM_BUDGET_')) delete process.env[key];
+    if (key.startsWith('STIM_MAINTENANCE') || key.startsWith('STIM_DISK_')) delete process.env[key];
   delete process.env.STIM_HOME;
   delete process.env.STIM_GC_WORKTREE_GRACE_MINUTES;
+  process.env.STIM_DAEMON = 'off';
   process.exitCode = 0;
 });
 

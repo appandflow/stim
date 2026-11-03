@@ -257,9 +257,7 @@ test('the private GC wire schema accepts scoped cleanup selectors and refuses ma
   const request = (params: unknown) => ({ id: 1, method: 'desktop.gc.subscribe', params });
   expect(accepts(request({ cwd: '/app' }))).toBe(true);
   expect(
-    accepts(
-      request({ cwd: '/app', cache: 'archived:history', olderThan: 7, worktrees: true, delete: true, idleMs: 1000 }),
-    ),
+    accepts(request({ cwd: '/app', cache: 'archived:history', olderThan: 7, worktrees: true, delete: true })),
   ).toBe(true);
   for (const params of [
     {},
@@ -268,9 +266,8 @@ test('the private GC wire schema accepts scoped cleanup selectors and refuses ma
     { cwd: '/app', delete: 'yes' },
     { cwd: '/app', worktrees: 1 },
     { cwd: '/app', olderThan: 1.5 },
-    { cwd: '/app', idleMs: 0 },
     { cwd: '/app', olderThan: Number.MAX_SAFE_INTEGER + 1 },
-    { cwd: '/app', idleMs: Number.MAX_SAFE_INTEGER + 1 },
+    { cwd: '/app', idleMs: 1000 },
     { cwd: '/app', signal: {} },
   ])
     expect(accepts(request(params))).toBe(false);

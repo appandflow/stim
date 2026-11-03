@@ -1,5 +1,6 @@
 import { existsSync, readdirSync } from 'node:fs';
 import {
+  currentStage,
   DORMANT_STAGE_KEY,
   readDormantStage,
   readIdleStage,
@@ -228,8 +229,7 @@ function hasLogs(path: string): boolean {
 
 function alreadyDormant(path: string): boolean {
   const state = readWorkspaceState(path);
-  const stage = readDormantStage(state);
-  return stage !== null && !(Date.parse(String(state?.lastUsedAt ?? '')) > Date.parse(stage.at));
+  return currentStage(state, readDormantStage(state)) !== null;
 }
 
 /** The newest activity `state.json` records: a Stim command, the end of a native run, a window interaction, the idle stage. */
