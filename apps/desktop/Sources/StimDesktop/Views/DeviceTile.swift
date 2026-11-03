@@ -74,6 +74,7 @@ struct DeviceTile: View {
   @State private var clipboardRequest: ClipboardRequest?
   @State private var clipboardError: String?
   @State private var clipboardReadFailed = false
+  @State private var clipboardNotice: String?
   @State private var foldError: String?
   @State private var emulatorPosture: EmulatorPosture?
   @State private var postureFailed = false
@@ -180,8 +181,27 @@ struct DeviceTile: View {
     .onChange(of: clipboardTarget) { _, _ in
       clipboardRequest = nil
       clipboardError = nil
+      clipboardNotice = nil
       clipboardReadFailed = false
       clipboardSync = ClipboardSync()
+    }
+    .task(id: clipboardNotice) {
+      guard clipboardNotice != nil else { return }
+      try? await Task.sleep(for: .seconds(8))
+      if !Task.isCancelled { clipboardNotice = nil }
+    }
+    .overlay(alignment: .top) {
+      if let clipboardNotice {
+        Text(clipboardNotice)
+          .font(.stim(.caption))
+          .padding(.horizontal, Space.md)
+          .padding(.vertical, Space.xs)
+          .background(Palette.surface, in: Capsule())
+          .overlay(Capsule().strokeBorder(Palette.border))
+          .padding(.top, Space.sm)
+          .allowsHitTesting(false)
+          .accessibilityLabel(clipboardNotice)
+      }
     }
     .onChange(of: syncsClipboard) { _, _ in clipboardSync = ClipboardSync() }
     .background(WindowStateReader { windowState = $0 })
@@ -197,10 +217,7 @@ struct DeviceTile: View {
       if let failure {
         clipboardError = failure
       } else if case .ios = device {
-        ToastCenter.shared.show(
-          Toast(
-            icon: "hand.tap", title: "Paste sent",
-            body: "If nothing appears, tap the paste suggestion on the device.", key: "clipboard-paste-hint"))
+        clipboardNotice = "If nothing appears, tap the paste suggestion on the device."
       }
     }
     .alert("Clipboard Transfer", isPresented: Binding(get: { clipboardError != nil }, set: { if !$0 { clipboardError = nil } })) {
@@ -897,10 +914,7 @@ struct DeviceTile: View {
         return true
       } catch {
         if !Task.isCancelled, shouldReport(error) {
-          ToastCenter.shared.show(
-            Toast(
-              icon: "doc.on.clipboard", tone: .warning, title: "Clipboard not synced", body: error.localizedDescription,
-              key: "clipboard-sync-problem"))
+          clipboardNotice = "Clipboard not synced. \(error.localizedDescription)"
         }
         return false
       }
@@ -920,10 +934,7 @@ struct DeviceTile: View {
       } catch {
         if !Task.isCancelled, !clipboardReadFailed, shouldReport(error) {
           clipboardReadFailed = true
-          ToastCenter.shared.show(
-            Toast(
-              icon: "doc.on.clipboard", tone: .warning, title: "Device clipboard not read", body: error.localizedDescription,
-              key: "clipboard-sync-problem"))
+          clipboardNotice = "Device clipboard not read. \(error.localizedDescription)"
         }
         return nil
       }
