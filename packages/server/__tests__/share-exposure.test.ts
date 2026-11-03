@@ -112,7 +112,7 @@ describe('web shares in proxy mode', () => {
       },
       subscribeStatus: (listener) => {
         listeners.add(listener);
-        listener.item(status as never);
+        listener.item(JSON.parse(JSON.stringify(status)));
         return () => listeners.delete(listener);
       },
       route: exposed,
