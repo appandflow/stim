@@ -586,7 +586,7 @@ export type WorkspacePhase = (typeof WORKSPACE_PHASES)[number];
 
 /**
  * A folder's size on disk as `status --watch` last measured it. `bytes` counts every allocated block, copy-on-write
- * clones in full. `privateBytes`, measured for dependency trees on APFS, is what deleting the folder would free: blocks
+ * clones in full. `privateBytes`, measured for dependency trees and DerivedData and CMake build output on APFS, is what deleting the folder would free: blocks
  * no clone or hard link outside it shares. It is absent when the volume or the machine cannot tell. `signature` is the
  * dependency tree's install signature at measurement time.
  */

@@ -18,7 +18,12 @@ import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
 import { childEnvironment } from '../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { ARTIFACT_DIRS, type ArtifactKind } from '../workspace/regenerable-dirs.ts';
+import {
+  ARTIFACT_DIRS,
+  discoveredBuildDirs,
+  isBuildDirPath,
+  type ArtifactKind,
+} from '../workspace/regenerable-dirs.ts';
 import {
   readRunningProcesses,
   readRunningProcessesAsync,
@@ -116,6 +121,17 @@ export async function artifactWorktreesAsync(
     if (entry) found.set(entry.path, entry);
   }
   return [...found.values()];
+}
+
+/** The directories of `kind` that `base` may hold: the fixed names, and for build output the discovered ones. */
+function artifactPaths(base: string, kind: ArtifactKind): string[] {
+  return [...ARTIFACT_DIRS[kind].map((dir) => join(base, dir)), ...(kind === 'build' ? discoveredBuildDirs(base) : [])];
+}
+
+function isKnownDir(kind: ArtifactKind, path: string): boolean {
+  return kind === 'build'
+    ? isBuildDirPath(path)
+    : ARTIFACT_DIRS[kind].some((dir) => path.endsWith(`${sep}${dir.split('/').join(sep)}`));
 }
 
 export function appRoots(worktree: ArtifactWorktree, kind: ArtifactKind): string[] {
@@ -274,9 +290,8 @@ export async function collectArtifactsAsync(
         }
       }
     for (const base of bases)
-      for (const dir of ARTIFACT_DIRS[kind]) {
+      for (const path of artifactPaths(base, kind)) {
         signal.throwIfAborted();
-        const path = join(base, dir);
         try {
           await pathStat(path);
         } catch {
@@ -321,8 +336,7 @@ export function collectArtifacts(
     const root = canonicalPath(worktree.path);
     const protectedHere = options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`);
     for (const base of appRoots(worktree, kind))
-      for (const dir of ARTIFACT_DIRS[kind]) {
-        const path = join(base, dir);
+      for (const path of artifactPaths(base, kind)) {
         try {
           statSync(path);
         } catch {
@@ -362,7 +376,7 @@ export async function clearArtifact(
     );
   if (kind === 'dependencies' && worktree && !worktree.linked)
     return { status: 'kept', bytes: 0, detail: 'it is in the source checkout' };
-  if (!worktree || !ARTIFACT_DIRS[kind].some((dir) => action.target.endsWith(`${sep}${dir.split('/').join(sep)}`)))
+  if (!worktree || !isKnownDir(kind, action.target))
     return { status: 'kept', bytes: 0, detail: 'it is no longer a regenerable directory of a known worktree' };
   const root = canonicalPath(worktree.path);
   if (options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`))

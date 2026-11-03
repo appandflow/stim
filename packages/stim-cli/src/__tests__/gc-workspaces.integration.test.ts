@@ -50,6 +50,7 @@ import { getProject, saveConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceName } from '../workspace/paths.ts';
 import { workspaceInUse, withIdleWorkspace } from '../workspace/in-use.ts';
+import { clearArtifact, collectArtifacts, artifactWorktrees } from '../maintenance/artifacts.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -68,7 +69,7 @@ import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } fr
 import * as identities from '../process-identity.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { diskUsageCacheFile, gitMergeCacheFile, pullRequestCacheFile, worktreeArchiveRoot } from '@stim-cli/core/state';
-import { liveClaimOwner, plantClaim } from './_factories.ts';
+import { liveClaimOwner, plantClaim, writeDerivedData } from './_factories.ts';
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
 
@@ -889,7 +890,11 @@ test('plain gc --delete leaves a workspace whose dev server runs, and --cache wo
   });
   const active = builtWorkspace('active');
   execSync('git init -q && git config user.email t@t && git config user.name t', { cwd: active.root });
-  writeFileSync(join(active.root, '.gitignore'), 'ios/build/\nandroid/\n.build/*\n!.build/keep\n');
+  writeFileSync(join(active.root, '.gitignore'), 'ios/build/\nandroid/\n.build/*\n!.build/keep\n.dd/\nbuild-device/\n');
+  writeDerivedData(join(active.root, '.dd'));
+  writeDerivedData(join(active.root, 'build-device'));
+  mkdirSync(join(active.root, 'android', 'app', '.cxx'), { recursive: true });
+  writeFileSync(join(active.root, 'android', 'app', '.cxx', 'blob'), 'cmake');
   mkdirSync(join(active.root, '.build'));
   writeFileSync(join(active.root, '.build', 'keep'), 'untracked, not ignored');
   mkdirSync(join(active.root, 'ios', 'build', 'rncore-facades'), { recursive: true });
@@ -912,11 +917,19 @@ test('plain gc --delete leaves a workspace whose dev server runs, and --cache wo
   const { payload } = await gcJson({ cache: 'workspaces' });
   expect(
     payload.sections.workspaceBuildOutputs.find((w: { projectRoot: string }) => w.projectRoot === active.root),
-  ).toMatchObject({ willClear: true, inTreeDirs: [join(active.root, 'android', 'app', 'build')] });
+  ).toMatchObject({
+    willClear: true,
+    inTreeDirs: expect.arrayContaining([
+      join(active.root, 'android', 'app', 'build'),
+      join(active.root, 'android', 'app', '.cxx'),
+      join(active.root, '.dd'),
+    ]),
+  });
 
   await captureLog(() => runGc({ delete: true }));
   for (const output of OUTPUTS) expect(existsSync(join(active.dir, output))).toBe(true);
   expect(existsSync(join(active.root, 'android', 'app', 'build'))).toBe(true);
+  expect(existsSync(join(active.root, '.dd'))).toBe(true);
 
   const report = await captureLog(() => runGc({ delete: true, cache: 'workspaces' }));
   for (const output of OUTPUTS) {
@@ -925,6 +938,9 @@ test('plain gc --delete leaves a workspace whose dev server runs, and --cache wo
     expect(existsSync(join(recent.dir, output))).toBe(true);
   }
   expect(existsSync(join(active.root, 'android', 'app', 'build'))).toBe(false);
+  expect(existsSync(join(active.root, 'android', 'app', '.cxx'))).toBe(false);
+  expect(existsSync(join(active.root, '.dd'))).toBe(false);
+  expect(existsSync(join(active.root, 'build-device', 'Build'))).toBe(true);
   expect(existsSync(join(active.root, 'ios', 'build', 'rncore-facades', 'React-Core.podspec.json'))).toBe(true);
   expect(readFileSync(join(active.root, 'android', 'build', 'tracked'), 'utf8')).toBe('committed');
   expect(readFileSync(join(active.root, '.build', 'keep'), 'utf8')).toBe('untracked, not ignored');
@@ -1786,6 +1802,72 @@ test('gc reports the in-tree build state of each worktree with its size', async 
     /in-tree build state \S+: node_modules \S+(?: \(\S+ its own\))?, \.pnpm-store \S+, android\/app\/build \S+/,
   );
 }, 30_000);
+
+test('gc lists DerivedData, CMake and other xcodebuild output in a worktree, with the other-named output marked report-only', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['built', 'loose']);
+  const built = realpathSync.native(worktrees.built ?? '');
+  const loose = realpathSync.native(worktrees.loose ?? '');
+  upsertProject(repo, { metroPort: null });
+  upsertProject(built, { metroPort: null });
+  recordWorkspaceUse(built, new Date(Date.now() - 10 * DAY_MS));
+  for (const root of [built, loose]) {
+    writeDerivedData(join(root, '.dd'), 300_000);
+    writeDerivedData(join(root, 'packages', 'rn-tester', 'build-device'), 200_000);
+    mkdirSync(join(root, 'android', 'app', '.cxx'), { recursive: true });
+    writeFileSync(join(root, 'android', 'app', '.cxx', 'blob'), Buffer.alloc(100_000));
+  }
+
+  const { payload } = await gcJson({ worktrees: true });
+
+  for (const root of [built, loose]) {
+    const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === root);
+    const dirs: { path: string; bytes: number; privateBytes: number | null; reportOnly?: true }[] =
+      entry.buildState.dirs;
+    expect(dirs.map((dir) => dir.path)).toEqual(['.dd', 'packages/rn-tester/build-device', 'android/app/.cxx']);
+    expect(dirs.filter((dir) => dir.reportOnly).map((dir) => dir.path)).toEqual(['packages/rn-tester/build-device']);
+  }
+  const report = await captureLog(() => runGc({ worktrees: true }));
+  expect(report).toMatch(
+    /\.dd \S+(?: \(\S+ its own\))?, packages\/rn-tester\/build-device \S+.*xcodebuild output, never deleted/,
+  );
+
+  await captureLog(() => runGc({ worktrees: true, delete: true }));
+  for (const root of [built, loose]) expect(existsSync(join(root, 'packages', 'rn-tester', 'build-device'))).toBe(true);
+}, 30_000);
+
+test('the maintenance ladder collects .dd and CMake output of a registered worktree only, and never other-named xcodebuild output', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['registered', 'loose']);
+  const registered = realpathSync.native(worktrees.registered ?? '');
+  const loose = realpathSync.native(worktrees.loose ?? '');
+  upsertProject(repo, { metroPort: null });
+  upsertProject(registered, { metroPort: null });
+  recordWorkspaceUse(registered, new Date(Date.now() - 10 * DAY_MS));
+  for (const root of [registered, loose]) {
+    writeDerivedData(join(root, '.dd'));
+    writeDerivedData(join(root, 'build-device'));
+    mkdirSync(join(root, 'android', 'app', '.cxx'), { recursive: true });
+  }
+
+  const found = collectArtifacts('build', { now: Date.now(), windowMs: 0, protectedRoot: '', pinned: () => false });
+
+  expect(found.candidates.map((candidate) => candidate.path).toSorted()).toEqual(
+    [join(registered, '.dd'), join(registered, 'android', 'app', '.cxx')].toSorted(),
+  );
+  expect(found.skips.map((skip) => skip.target)).not.toContain(join(registered, 'build-device'));
+
+  const clear = (target: string) =>
+    clearArtifact({ kind: 'would-clear-build-dirs', target, bytes: 0, reason: 'test' }, 'build', {
+      windowMs: 0,
+      protectedRoot: '',
+      pinned: () => false,
+      worktrees: artifactWorktrees(),
+    });
+  expect(await clear(join(registered, '.dd'))).toMatchObject({ status: 'done' });
+  expect(existsSync(join(registered, '.dd'))).toBe(false);
+  expect(await clear(join(registered, 'build-device'))).toMatchObject({ status: 'kept' });
+  expect(existsSync(join(registered, 'build-device', 'Build'))).toBe(true);
+  expect(await clear(join(registered, 'android', 'app', '.cxx'))).toMatchObject({ status: 'done' });
+});
 
 function builtWorktree(dirs: readonly string[]) {
   const { repo, worktrees } = gitRepoWithWorktrees(['built']);

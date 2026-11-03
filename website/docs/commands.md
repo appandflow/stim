@@ -2204,8 +2204,9 @@ every workspace that is not building and ran no `stim ios`, `stim android` or
 simulator booted: `derived-data/`, `gradle-build/`, `android-cas/`,
 `cache-provider/`, `js-swap-tmp/`, `macos/build`, staged `macos/<Product>.app`
 and interrupted-build `macos/staging-*` directories, and the project's
-git-ignored `android/app/build`, `android/build`, `android/.gradle` and
-`.build`. They print the bytes freed per workspace. Plain `--delete` clears them
+git-ignored `android/app/build`, `android/build`, `android/.gradle`, `.build`,
+`android/.cxx`, `android/<module>/.cxx` and `.dd` (a directory laid out as
+Xcode DerivedData). They print the bytes freed per workspace. Plain `--delete` clears them
 only through the pressure ladder, for a workspace with nothing running idle 2
 minutes or more and in the idle stage of a running one. A running, building, unverified or hosted
 macOS app keeps its workspace untouched. The workspace keeps its state, logs,
@@ -2551,8 +2552,11 @@ the worktree's branch whose head is or contains HEAD, found with `gh`, with
 could not answer, such as `"gh is not installed"`. `buildState` sizes the
 worktree's in-tree build and dependency directories, the ones automatic
 maintenance and the pressure ladder clear plus a root `.pnpm-store`, largest first; `du` counts APFS
-clones in full, so the sum can exceed what deleting them frees. Each entry's
-`privateBytes` is what deleting `node_modules` or `ios/Pods` would free, the
+clones in full, so the sum can exceed what deleting them frees. Xcode output
+laid out as DerivedData under a name other than `.dd`, such as a rn-tester
+`build-device`, is listed too with `"reportOnly": true`; Stim never deletes it.
+Each entry's
+`privateBytes` is what deleting `node_modules`, `ios/Pods`, `.dd`, `android/.cxx` or that output would free, the
 blocks no copy-on-write clone or outside hard link shares, and is `null` for
 other directories, off APFS and without the Command Line Tools. gc reuses a
 size for up to an hour while no entry was added to or removed from the

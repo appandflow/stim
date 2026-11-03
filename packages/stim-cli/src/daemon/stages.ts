@@ -32,7 +32,7 @@ import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { ARTIFACT_DIRS, existingDirsOf } from '../workspace/regenerable-dirs.ts';
+import { existingBuildDirs } from '../workspace/regenerable-dirs.ts';
 import { idleMinutesSetting, maintenanceKeepSetting, resolveProjectSettings } from '../workspace/settings.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { deleteOutputs, idleOutputs, revivable, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
@@ -143,7 +143,7 @@ async function idleWorkspaces(
 function hasOutputs(path: string): boolean {
   return (
     workspaceOutputPaths(workspaceDir(path)).length > 0 ||
-    existingDirsOf(path, ARTIFACT_DIRS.build).length > 0 ||
+    existingBuildDirs(path).length > 0 ||
     existsSync(metroStoreRoot(path))
   );
 }

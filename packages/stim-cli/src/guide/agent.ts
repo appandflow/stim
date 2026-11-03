@@ -30,7 +30,8 @@ source checkout's fitness as a seed belongs to this workflow.
 DISPOSABLE STATE
 
 In every workspace, node_modules, ios/Pods, Xcode DerivedData and the build
-directories (android/app/build, android/build, android/.gradle, .build) are
+directories (android/app/build, android/build, android/.gradle, .build,
+android/**/.cxx and a .dd directory laid out as DerivedData) are
 disposable. The stim-daemon deletes a workspace's build outputs when it goes
 idle, and node_modules and Pods of idle linked worktrees under critical disk
 pressure; the next start, ios or android restores them from the build cache

@@ -154,8 +154,8 @@ this one. Warm never installs. Install missing dependencies with the project's
 package manager when the source checkout has none to copy.
 
 In every workspace, `node_modules`, `ios/Pods`, Xcode DerivedData and the build
-directories (`android/app/build`, `android/build`, `android/.gradle`, `.build`)
-are disposable. The `stim-daemon` deletes a workspace's build outputs when it
+directories (`android/app/build`, `android/build`, `android/.gradle`, `.build`,
+`android/**/.cxx` and a `.dd` directory laid out as DerivedData) are disposable. The `stim-daemon` deletes a workspace's build outputs when it
 goes idle, and the `node_modules` and Pods of idle linked worktrees under
 critical disk pressure; the next `stim start`, `stim ios` or `stim android`
 restores them from the build cache or with `stim worktree warm`. Never fix a
