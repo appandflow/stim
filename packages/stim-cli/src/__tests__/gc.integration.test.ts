@@ -3895,6 +3895,11 @@ test('an expired lease counts as something to reclaim', () => {
   expect(lines).toMatch(/\/w\/dead/);
 });
 
+test('with nothing else to reclaim, a --delete run says the pressure ladder still runs after the report', () => {
+  expect(formatGcReport({ ladderRun: 'high' })[0]).toBe('Nothing to reclaim before the pressure ladder runs at high.');
+  expect(formatGcReport({})[0]).toBe('Nothing to reclaim.');
+});
+
 test('a kept lease file alone is not something to reclaim', () => {
   const lines = formatGcReport({
     deviceLeases: {

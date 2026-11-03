@@ -52,7 +52,7 @@ import {
   type FinishedDevice,
   type OwnedDeviceDisk,
 } from './finished-devices.ts';
-import { gcLadderLines, type GcLadder } from './ladder.ts';
+import { gcLadderLines, type GcLadder, type GcLadderLevel } from './ladder.ts';
 import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from './recordings.ts';
 import { tempLeftoverLines, tempLeftoverSection, type TempLeftoverReport } from './temp-leftovers.ts';
 import { trashLines, type TrashReport } from './trash.ts';
@@ -61,6 +61,8 @@ import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, ty
 export interface GcReport {
   maintenance?: MaintenancePreview;
   ladder?: GcLadder;
+  /** The level `--delete` runs the pressure ladder at after this report, when it runs it. */
+  ladderRun?: GcLadderLevel;
   archives?: ArchiveSelection;
   skipped: GcSkip[];
   deadProjects: string[];
@@ -235,6 +237,7 @@ export function formatGcReport(
   {
     maintenance,
     ladder,
+    ladderRun,
     archives,
     skipped = [],
     deadProjects = [],
@@ -321,10 +324,11 @@ export function formatGcReport(
     if (easSessionSweep.notices.length > 0) {
       reasons.push('EAS session sweep incomplete');
     }
+    const before = ladderRun ? ` before the pressure ladder runs at ${ladderRun}` : '';
     if (reasons.length > 0) {
-      lines.push(`Nothing to reclaim (${reasons.join('; ')}; see below).`);
+      lines.push(`Nothing to reclaim${before} (${reasons.join('; ')}; see below).`);
     } else {
-      lines.push('Nothing to reclaim.');
+      lines.push(`Nothing to reclaim${before}.`);
     }
   }
 

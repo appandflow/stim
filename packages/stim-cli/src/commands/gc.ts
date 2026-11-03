@@ -919,7 +919,10 @@ async function attachMaintenancePreview(
   refresh: boolean,
   operation?: StimContext,
 ): Promise<void> {
-  if (deleting) return;
+  if (deleting) {
+    if (cache === null || gcLadderLevel(cache) === 'critical') report.ladderRun = gcLadderLevel(cache);
+    return;
+  }
   report.maintenance = await previewMaintenance({ devices: !cache, refresh, operation });
   if (cache === null) {
     phase('ladder', 'previewing the pressure ladder', operation);
@@ -1268,9 +1271,9 @@ async function runGcCore(
       signal,
       deps.operation,
     );
-  if (cache === null || gcLadderLevel(cache) === 'critical') {
+  if (report.ladderRun) {
     throwIfCancelled(signal, 'GC');
-    deleteFailures += await runGcLadder(gcLadderLevel(cache), olderThan, output, deps.operation);
+    deleteFailures += await runGcLadder(report.ladderRun, olderThan, output, deps.operation);
   }
   if (deleteFailures) output.fail();
   return payload(deleteFailures);
