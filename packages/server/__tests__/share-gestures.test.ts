@@ -28,9 +28,9 @@ interface Gestures {
   };
 }
 
-const sandbox: { stimGestures?: Gestures } = {};
-runInNewContext(readFileSync(new URL('../share-viewer/gestures.js', import.meta.url), 'utf8'), sandbox);
-const gestures = sandbox.stimGestures!;
+const gestures: Gestures = runInNewContext(
+  `${readFileSync(new URL('../share-viewer/gestures.js', import.meta.url), 'utf8')}\nglobalThis.stimGestures`,
+);
 
 const touch = (phase: string, first: Point, second?: Point): Message => ({
   type: 'touch',
