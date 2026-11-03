@@ -938,11 +938,11 @@ export class ShareHub {
       if (method === 'input.clipboard.get') {
         viewer.socket.send(JSON.stringify({ type: 'clipboard', id: fields.id, error: VIEWER_TEXT.clipboardRefused }));
       } else {
-        const message = clipboard ? VIEWER_TEXT.clipboardRefused : VIEWER_TEXT.inputRefused;
-        viewer.socket.send(JSON.stringify({ type: 'control', message }));
+        const notice = clipboard ? VIEWER_TEXT.clipboardRefused : VIEWER_TEXT.inputRefused;
+        viewer.socket.send(JSON.stringify({ type: 'control', message: notice }));
       }
     } else if (method === 'input.clipboard.get' && open) {
-      const { text } = refused as { text?: unknown };
+      const text = isJsonObject(refused) ? refused.text : undefined;
       viewer.socket.send(
         JSON.stringify({ type: 'clipboard', id: fields.id, text: typeof text === 'string' ? text : '' }),
       );

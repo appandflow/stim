@@ -484,11 +484,7 @@ function runQuietly(
   let childPid: number | undefined;
   return new Promise<string>((resolve, reject) => {
     if (claim) markClaimChildPending(claim);
-    const child = spawn(file, args, {
-      env,
-      detached: !!claim,
-      stdio: [text.input === undefined ? 'ignore' : 'pipe', text.maxOutput === undefined ? 'ignore' : 'pipe', 'pipe'],
-    });
+    const child = spawn(file, args, { env, detached: !!claim, stdio: ['pipe', 'pipe', 'pipe'] });
     childPid = child.pid;
     let stderr = '';
     const chunks: Buffer[] = [];
@@ -504,29 +500,27 @@ function runQuietly(
       if (code === 0) resolve(Buffer.concat(chunks).toString('utf8'));
       else reject(new Error(`${label} failed (code ${code}): ${stderr.trim()}`));
     };
-    if (text.input !== undefined) {
-      child.stdin!.on('error', () => {});
-      child.stdin!.end(text.input);
-    }
-    if (text.maxOutput !== undefined) {
-      child.stdout!.on('data', (chunk: Buffer) => {
-        size += chunk.length;
-        if (size > text.maxOutput!) {
-          oversized = true;
-          child.kill();
-        } else chunks.push(chunk);
-      });
-    }
+    child.stdin.on('error', () => {});
+    child.stdin.end(text.input);
+    const limit = text.maxOutput;
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (limit === undefined) return;
+      size += chunk.length;
+      if (size > limit) {
+        oversized = true;
+        child.kill();
+      } else chunks.push(chunk);
+    });
     const timer = setTimeout(() => {
-      child.stderr!.destroy();
+      child.stderr.destroy();
       if (child.exitCode !== null || child.signalCode !== null) return finish(child.exitCode);
       timedOut = true;
       void terminate(child).then(() => {
         return reject(new Error(`${label} did not finish within ${timeoutMs / 1000} s.`));
       });
     }, timeoutMs);
-    child.stderr!.setEncoding('utf8');
-    child.stderr!.on('data', (chunk: string) => (stderr = (stderr + chunk).slice(-500)));
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => (stderr = (stderr + chunk).slice(-500)));
     child.on('error', (error) => {
       clearTimeout(timer);
       reject(new Error(`${label} could not start (${error.message}).`));
@@ -1044,7 +1038,7 @@ export class ControlHub {
         }
         return null;
       } catch (cause) {
-        return { code: 'action-failed', message: (cause as Error).message };
+        return { code: 'action-failed', message: cause instanceof Error ? cause.message : String(cause) };
       }
     };
     if (device.platform !== 'android' || device.physical) return this.pending.track(run());

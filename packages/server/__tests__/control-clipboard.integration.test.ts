@@ -15,7 +15,10 @@ let claim: ClaimHandle;
 let events: string[];
 let hub: ControlHub;
 let frames: FramePool;
-let helper: { clipboard: ReturnType<typeof vi.fn<DeviceInput['clipboard']>>; send: ReturnType<typeof vi.fn> };
+let helper: {
+  clipboard: ReturnType<typeof vi.fn<DeviceInput['clipboard']>>;
+  send: ReturnType<typeof vi.fn<(command: Record<string, unknown>) => void>>;
+};
 
 function fakeTool(path: string, body: string): void {
   mkdirSync(join(path, '..'), { recursive: true });
@@ -51,8 +54,12 @@ function calls(): { args: string[]; lang: string; input: string }[] {
 }
 
 async function session(device: Device, env: NodeJS.ProcessEnv): Promise<string> {
+  if (device.platform !== 'ios' && device.platform !== 'android') throw new Error('not a mobile device');
   frames = new FramePool(env);
-  helper = { clipboard: vi.fn<DeviceInput['clipboard']>(async () => null), send: vi.fn() };
+  helper = {
+    clipboard: vi.fn<DeviceInput['clipboard']>(async () => null),
+    send: vi.fn<(command: Record<string, unknown>) => void>(),
+  };
   vi.spyOn(frames, 'control').mockReturnValue({
     send: (command) => {
       events.push(`helper ${JSON.stringify(command)}`);
@@ -82,7 +89,7 @@ async function session(device: Device, env: NodeJS.ProcessEnv): Promise<string> 
   });
   const begun = await hub.beginHosted(
     owner,
-    { workspace: '/client/app', platform: device.platform as 'ios' | 'android' },
+    { workspace: '/client/app', platform: device.platform },
     home,
     device,
     frames,

@@ -41,6 +41,7 @@ function fixture(replies: Record<string, unknown> = {}, features: string[] = [])
   return { source, routes, requests, released, audit, acquires: () => acquires };
 }
 
+const unusedCommand = {} as never;
 const hint = { fps: 10, maxEdge: 1280 };
 const listener = () => ({
   frame: vi.fn<(frame: unknown) => void>(),
@@ -176,13 +177,13 @@ describe('a share of a hosted device', () => {
     expect(f.source.targetOf(owner, 'other')).toBeNull();
 
     expect(
-      await f.source.input(owner, 'hc1', 'input.touch', { phase: 'down', x: 0.5, y: 0.5 }, {} as never),
+      await f.source.input(owner, 'hc1', 'input.touch', { phase: 'down', x: 0.5, y: 0.5 }, unusedCommand),
     ).toBeNull();
     expect(f.requests.at(-1)).toEqual({
       method: 'device-host.input.touch',
       params: { phase: 'down', x: 0.5, y: 0.5, session: 'hc1' },
     });
-    expect(await f.source.input(owner, 'stale', 'input.touch', {}, {} as never)).toMatchObject({
+    expect(await f.source.input(owner, 'stale', 'input.touch', {}, unusedCommand)).toMatchObject({
       code: 'action-failed',
     });
 
@@ -192,6 +193,37 @@ describe('a share of a hosted device', () => {
       ['control.begin', true],
       ['control.end', true],
     ]);
+  });
+
+  it('forwards the clipboard calls to a host that advertises device-clipboard and returns the text it read', async () => {
+    const f = fixture(
+      {
+        'device-host.control.begin': { session: 'hc1', postures: [] },
+        'device-host.input.clipboard.get': { text: 'host text' },
+      },
+      ['device-clipboard'],
+    );
+    await f.source.begin(owner, { workspace: '/w', platform: 'ios' }, '/w', () => true);
+    expect(
+      await f.source.input(owner, 'hc1', 'input.clipboard.set', { text: 'abc', paste: true }, unusedCommand),
+    ).toBeNull();
+    expect(f.requests.at(-1)).toEqual({
+      method: 'device-host.input.clipboard.set',
+      params: { text: 'abc', paste: true, session: 'hc1' },
+    });
+    expect(await f.source.input(owner, 'hc1', 'input.clipboard.get', {}, unusedCommand)).toEqual({ text: 'host text' });
+  });
+
+  it('refuses the clipboard calls for a host without device-clipboard, without sending them', async () => {
+    const f = fixture({ 'device-host.control.begin': { session: 'hc1', postures: [] } });
+    await f.source.begin(owner, { workspace: '/w', platform: 'ios' }, '/w', () => true);
+    const before = f.requests.length;
+    for (const method of ['input.clipboard.set', 'input.clipboard.get']) {
+      expect(await f.source.input(owner, 'hc1', method, { text: 'abc' }, unusedCommand)).toMatchObject({
+        code: 'action-failed',
+      });
+    }
+    expect(f.requests).toHaveLength(before);
   });
 
   it('returns the host refusal when control is refused, and tells the viewer owner when the host ends control', async () => {
