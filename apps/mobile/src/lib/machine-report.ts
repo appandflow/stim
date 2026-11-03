@@ -137,7 +137,7 @@ export interface WorktreeRow {
   /** Where the workspace sits inside its checkout, such as `apps/mobile`. */
   inCheckout: string | null;
   lifecycle: Chip | null;
-  /** What removing node_modules frees: its private size when status reports one, else its size with clones in full. */
+  /** A linked worktree's private node_modules size when status reports one, else its size with clones in full; a primary checkout's all of it. */
   nodeModules: number | null;
   /** The part of node_modules that clones or hard links share with other folders, null without a private size. */
   nodeModulesShared: number | null;
@@ -399,7 +399,11 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
     const modulesBytes = env.disk?.nodeModulesBytes ?? null;
     const modulesPrivate = env.disk?.nodeModulesPrivateBytes ?? null;
     const measuredPrivate =
-      modulesBytes !== null && modulesPrivate !== null && modulesPrivate >= 0 && modulesPrivate <= modulesBytes;
+      !!env.worktree &&
+      modulesBytes !== null &&
+      modulesPrivate !== null &&
+      modulesPrivate >= 0 &&
+      modulesPrivate <= modulesBytes;
     const nodeModules = measuredPrivate ? modulesPrivate : modulesBytes;
     const nodeModulesShared = measuredPrivate ? modulesBytes - modulesPrivate : null;
     const outputBytes = gc ? (output ? output.bytes : 0) : (env.disk?.buildBytes ?? null);

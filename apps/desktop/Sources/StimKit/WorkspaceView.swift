@@ -179,12 +179,14 @@ extension Workspace {
   }
 
   /// The disk the workspace holds, split into parts that add up to `diskBytes`: node_modules, the rest of the
-  /// worktree, and Stim's build folder. node_modules is part of the worktree, so it is split out of it.
+  /// worktree, and Stim's build folder. node_modules is part of the worktree, so it is split out of it. A linked
+  /// worktree counts only the private part of node_modules; a primary checkout (no `worktree`) counts all of it,
+  /// so the bytes its clones share are counted once, under the source.
   public var diskBreakdown: DiskBreakdown? {
     guard let disk else { return nil }
     return DiskBreakdown(
-      worktree: disk.worktreeBytes, nodeModules: disk.nodeModulesBytes, nodeModulesPrivate: disk.nodeModulesPrivateBytes,
-      build: disk.buildBytes)
+      worktree: disk.worktreeBytes, nodeModules: disk.nodeModulesBytes,
+      nodeModulesPrivate: worktree == nil ? nil : disk.nodeModulesPrivateBytes, build: disk.buildBytes)
   }
 }
 

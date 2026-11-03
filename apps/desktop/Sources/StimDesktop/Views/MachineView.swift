@@ -809,18 +809,22 @@ struct MachineView: View {
       ("logs", workspace.logs),
     ]
     .compactMap { name, size in
-      size.bytes.flatMap { $0 > 0 ? "\(name) \(Format.fileSize($0))" + (name == "node_modules" ? shared : "") : nil }
+      guard let bytes = size.bytes, bytes > 0 || (name == "node_modules" && !shared.isEmpty) else { return nil }
+      return "\(name) \(Format.fileSize(bytes))" + (name == "node_modules" ? shared : "")
     }
     .joined(separator: " \u{00B7} ")
   }
 
   private func nodeModulesNote(_ workspace: WorkspaceStorage) -> String? {
-    guard case .size(let bytes) = workspace.nodeModules, bytes > 0 else { return nil }
+    guard case .size(let bytes) = workspace.nodeModules else { return nil }
+    if workspace.isCheckout {
+      return bytes > 0 ? "Counted in full here; worktrees cloned from it share these bytes and count only their own" : nil
+    }
     guard let shared = workspace.nodeModulesShared else {
-      return "Counts files cloned from other folders in full, so it can be more than this worktree frees"
+      return bytes > 0 ? "Counts files cloned from other folders in full, so it can be more than this worktree frees" : nil
     }
     return shared > 0
-      ? "What removing it frees. Another \(Format.fileSize(shared)) is shared with other checkouts and not counted."
+      ? "What removing it frees. Another \(Format.fileSize(shared)) is shared with other folders and not counted."
       : nil
   }
 

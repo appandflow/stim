@@ -113,12 +113,14 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
   }
 
   @Test func leavesSharedNodeModulesOutOfTheDiskFigure() throws {
-    let env = try workspace(
+    let disk =
       #""disk":{"worktreeBytes":1900000000,"nodeModulesBytes":900000000,"nodeModulesPrivateBytes":10000000,"buildBytes":300000000}"#
-    )
+    let env = try workspace(#""worktree":{"path":"/w"},"# + disk)
     let breakdown = try #require(env.diskBreakdown)
     #expect(breakdown.sharedNodeModules == 8.9e8)
     #expect(breakdown.total == 1.31e9 && env.usage(machine: nil).diskBytes == 1.31e9)
+    let source = try workspace(#""checkout":"/w","# + disk)
+    #expect(source.diskBreakdown?.sharedNodeModules == nil && source.usage(machine: nil).diskBytes == 2.2e9)
   }
 
   @Test func keepsTenMinutesOfEachWorkspaceAndDropsOneThatStopped() {

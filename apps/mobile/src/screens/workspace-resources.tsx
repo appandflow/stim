@@ -281,7 +281,7 @@ function DiskCard({ parts, shared, title }: { parts: DiskPart[]; shared: number 
   const summary = diskPartsLabel(parts);
   const heading = title ?? t`Disk`;
   const label = sharedSize
-    ? t`${heading} ${size}: ${summary}, shared with other checkouts ${sharedSize}`
+    ? t`${heading} ${size}: ${summary}, shared with other folders ${sharedSize}`
     : t`${heading} ${size}: ${summary}`;
   return (
     <View style={styles.card} accessible accessibilityLabel={label}>
@@ -318,7 +318,7 @@ function DiskCard({ parts, shared, title }: { parts: DiskPart[]; shared: number 
         <View style={styles.legendRow}>
           <View style={[styles.dot, styles.hollowDot, { borderColor: theme.colors.tertiary }]} />
           <Text variant="footnote" tone="tertiary" style={styles.grow}>
-            <Trans>Shared with other checkouts</Trans>
+            <Trans>Shared with other folders</Trans>
           </Text>
           <Text variant="footnote" tone="tertiary" style={styles.tabular}>
             {sharedSize}

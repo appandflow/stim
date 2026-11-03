@@ -170,20 +170,23 @@ export interface DiskPart {
 type EnvironmentDisk = NonNullable<EnvironmentState['disk']>;
 
 /**
- * node_modules measured inside the worktree. `own` is what removing it frees: its private size when Stim reported one
- * that fits, else all of it. `shared` is the part clones or hard links share with other folders, null without a
- * private size.
+ * node_modules measured inside the worktree. A linked worktree counts its private size when Stim reported one that
+ * fits, and `shared` is the part clones or hard links share with other folders. A primary checkout (no `worktree`)
+ * counts all of it, so the shared bytes are counted once, under the source.
  */
-function splitNodeModules(disk: EnvironmentDisk): { bytes: number; own: number; shared: number | null } | null {
+function splitNodeModules(
+  env: EnvironmentState,
+  disk: EnvironmentDisk,
+): { bytes: number; own: number; shared: number | null } | null {
   const { worktreeBytes, nodeModulesBytes: bytes, nodeModulesPrivateBytes: own } = disk;
   if (worktreeBytes === null || bytes == null || bytes <= 0 || bytes > worktreeBytes) return null;
-  if (own == null || own < 0 || own > bytes) return { bytes, own: bytes, shared: null };
+  if (!env.worktree || own == null || own < 0 || own > bytes) return { bytes, own: bytes, shared: null };
   return { bytes, own, shared: bytes - own };
 }
 
 /** The part of node_modules that is on disk once for several folders; it is not in `diskParts` or the disk figure. */
 export function diskSharedBytes(env: EnvironmentState): number | null {
-  return env.disk ? (splitNodeModules(env.disk)?.shared ?? null) : null;
+  return env.disk ? (splitNodeModules(env, env.disk)?.shared ?? null) : null;
 }
 
 export function diskParts(env: EnvironmentState): DiskPart[] | null {
@@ -191,7 +194,7 @@ export function diskParts(env: EnvironmentState): DiskPart[] | null {
   if (!disk) return null;
   const parts: Omit<DiskPart, 'label'>[] = [];
   const { worktreeBytes, buildBytes } = disk;
-  const modules = splitNodeModules(disk);
+  const modules = splitNodeModules(env, disk);
   if (worktreeBytes !== null) {
     if (modules) {
       parts.push({ kind: 'nodeModules', bytes: modules.own });

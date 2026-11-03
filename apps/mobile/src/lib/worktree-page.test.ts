@@ -108,6 +108,7 @@ it('leaves node_modules shared with other folders out of the worktree disk of ea
     live: true,
     warnings: [],
     memoryMb: 0,
+    worktree: { path: '/w' },
     disk: {
       worktreeBytes: 1600,
       nodeModulesBytes: 1500,

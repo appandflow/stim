@@ -3826,6 +3826,9 @@
         "phase": "live",
         "memoryMb": 0,
         "warnings": [],
+        "worktree": {
+          "path": "/w"
+        },
         "disk": {
           "measuredAt": "2026-09-27T11:00:00.000Z",
           "worktreeBytes": 1720000000,
@@ -3854,6 +3857,42 @@
       "shared": 1518000000
     },
     {
+      "name": "a primary checkout counts all of its node_modules and shows no shared part",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "checkout": "/w",
+        "disk": {
+          "measuredAt": "2026-09-27T11:00:00.000Z",
+          "worktreeBytes": 1720000000,
+          "nodeModulesBytes": 1530000000,
+          "nodeModulesPrivateBytes": 12000000,
+          "buildBytes": 19200000
+        }
+      },
+      "parts": [
+        {
+          "kind": "nodeModules",
+          "label": "node_modules",
+          "bytes": 1530000000
+        },
+        {
+          "kind": "worktree",
+          "label": "Rest of worktree",
+          "bytes": 190000000
+        },
+        {
+          "kind": "build",
+          "label": "Build output",
+          "bytes": 19200000
+        }
+      ],
+      "shared": null
+    },
+    {
       "name": "a null private size counts node_modules in full",
       "workspace": {
         "path": "/w",
@@ -3861,6 +3900,9 @@
         "phase": "live",
         "memoryMb": 0,
         "warnings": [],
+        "worktree": {
+          "path": "/w"
+        },
         "disk": {
           "measuredAt": "2026-09-27T11:00:00.000Z",
           "worktreeBytes": 1720000000,
@@ -3896,6 +3938,9 @@
         "phase": "live",
         "memoryMb": 0,
         "warnings": [],
+        "worktree": {
+          "path": "/w"
+        },
         "disk": {
           "measuredAt": "2026-09-27T11:00:00.000Z",
           "worktreeBytes": 1720000000,
@@ -3931,6 +3976,9 @@
         "phase": "live",
         "memoryMb": 0,
         "warnings": [],
+        "worktree": {
+          "path": "/w"
+        },
         "disk": {
           "measuredAt": "2026-09-27T11:00:00.000Z",
           "worktreeBytes": 1720000000,
@@ -3966,6 +4014,9 @@
         "phase": "live",
         "memoryMb": 0,
         "warnings": [],
+        "worktree": {
+          "path": "/w"
+        },
         "disk": {
           "measuredAt": "2026-09-27T11:00:00.000Z",
           "worktreeBytes": 900,

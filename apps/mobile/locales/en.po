@@ -223,8 +223,8 @@ msgid "{heading} {size}: {summary}"
 msgstr "{heading} {size}: {summary}"
 
 #: src/screens/workspace-resources.tsx
-msgid "{heading} {size}: {summary}, shared with other checkouts {sharedSize}"
-msgstr "{heading} {size}: {summary}, shared with other checkouts {sharedSize}"
+msgid "{heading} {size}: {summary}, shared with other folders {sharedSize}"
+msgstr "{heading} {size}: {summary}, shared with other folders {sharedSize}"
 
 #: src/screens/build-details.tsx
 msgid "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
@@ -3624,8 +3624,8 @@ msgid "Shared caches builds refill. Empty one on your Mac with stim gc --delete 
 msgstr "Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache."
 
 #: src/screens/workspace-resources.tsx
-msgid "Shared with other checkouts"
-msgstr "Shared with other checkouts"
+msgid "Shared with other folders"
+msgstr "Shared with other folders"
 
 #: src/components/viewer-keyboard.tsx
 msgid "Shift"

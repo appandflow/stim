@@ -196,8 +196,8 @@ public struct WorktreePage: Hashable, Sendable {
     }
     let disk = apps[0].disk
     return DiskBreakdown(
-      worktree: disk?.worktreeBytes, nodeModules: disk?.nodeModulesBytes, nodeModulesPrivate: disk?.nodeModulesPrivateBytes,
-      build: build)
+      worktree: disk?.worktreeBytes, nodeModules: disk?.nodeModulesBytes,
+      nodeModulesPrivate: apps[0].worktree == nil ? nil : disk?.nodeModulesPrivateBytes, build: build)
   }
 
   /// Adds histories element-wise, aligning their newest samples; missing older samples contribute zero.

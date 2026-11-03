@@ -274,7 +274,7 @@ private struct DiskCard: View {
           if let shared = breakdown.sharedNodeModules, shared > 0 {
             HStack(spacing: Space.sm) {
               StatusDot(color: Palette.tertiary, filled: false)
-              Text("Shared with other checkouts")
+              Text("Shared with other folders")
               Spacer(minLength: Space.sm)
               Text(Format.fileSize(Int64(shared))).monospacedDigit()
             }

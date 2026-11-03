@@ -171,8 +171,8 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   AVDs or system images itself, as Stim Desktop does. Then come **Safe to
   free now** (what `stim gc --delete` would free, with the command on the Mac
   that frees each row), **Projects** (repositories and their worktrees, with each
-  worktree's `node_modules` (what removing it frees, with the part shared with
-  other folders noted), devices, build outputs and logs, and whether it is
+  worktree's `node_modules` (for a linked worktree, what removing it frees with the
+  part shared with other folders noted; a primary checkout, all of it), devices, build outputs and logs, and whether it is
   merged, has an open pull request, or is stale), **Simulators and
   emulators** (every one on the Mac, Stim's and **Yours**), **Leased
   devices**, **Runtimes and System Images**, **Recordings**, **Caches**,
@@ -254,9 +254,11 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
     workspace's simulators, emulators, Chrome, Metro and build, and a Disk
     card: the total, a stacked bar and a legend row each for node_modules, the
     rest of the worktree and Stim's build output, with the Mac's free space
-    below it. When status reports a private size for node_modules, the card
+    below it. For a linked worktree with a private size for node_modules, the card
     counts only that part, what removing it frees, and a last legend row lists
-    the part that clones or hard links share with other folders, not counted.
+    the part that clones or hard links share with other folders, not counted. A
+    primary checkout counts all of its node_modules, so shared bytes are counted
+    once, under the source.
   - **Build**: one row per platform with the Apple or Android glyph, the last
     run's time and whether it hit the cache, **Failed** in red, or the next
     build's prediction from `build.plan` before any run, in grey with a tilde

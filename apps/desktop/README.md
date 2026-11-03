@@ -222,10 +222,10 @@ worktree's branch, else the verified checkout's folder, else its project.
 Apps sharing a reported checkout appear together, including primary checkouts;
 older servers retain linked-worktree grouping. Each app keeps its own commands,
 devices and log routes. Primary checkout groups have no Remove Worktree action.
-Resources shows each app's dependency disk breakdown separately. Its Disk card counts only the private part of
+Resources shows each app's dependency disk breakdown separately. For a linked worktree, its Disk card counts only the private part of
 `node_modules` (what removing it frees, from `stim status`) in the total and the bar, and lists the part that
-clones or hard links share with other folders on a last line, not counted. Without a private size it counts
-`node_modules` in full.
+clones or hard links share with other folders on a last line, not counted. A primary checkout, and a workspace
+without a private size, count `node_modules` in full, so the shared bytes are counted once, under the source.
 The second line is where the app sits inside its checkout, such as `apps/mobile`.
 The view options button next to the logo opens a menu:
 
@@ -790,10 +790,13 @@ gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
   not set up (**Not warmed**), grouped by repository and ranked by total. A
   repository with several worktrees expands into them. Each worktree shows its
   `node_modules`, owned devices (from the inventory), and
-  build outputs and logs (from `stim gc --json`). `node_modules` is the private
-  size `stim status` reports, what removing it frees, and the part that
-  copy-on-write clones or hard links share with other folders follows it in
-  parentheses, not counted. Without a private size (an older Stim, or a folder
+  build outputs and logs (from `stim gc --json`). For a linked worktree,
+  `node_modules` is the private size `stim status` reports, what removing it
+  frees, and the part that copy-on-write clones or hard links share with other
+  folders follows it in parentheses, not counted. A primary checkout shows all of
+  its `node_modules`, so those shared bytes are counted once, under the source
+  (when the repository's primary checkout is not listed they are not counted).
+  Without a private size (an older Stim, or a folder
   status has not measured) it is sized with `du`, which counts clones in full;
   its tooltip says so. A trash icon marks build
   outputs `stim gc --delete` clears; a lock marks ones it keeps, with the

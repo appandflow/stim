@@ -91,6 +91,8 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
   /// The part of node_modules that clones or hard links share with other folders and that `nodeModules` leaves out.
   /// Nil when `stim status` reported no private size, so `nodeModules` is a `du` figure that counts clones in full.
   public var nodeModulesShared: Int64? = nil
+  /// A primary checkout, whose `nodeModules` counts the bytes its clones share.
+  public var isCheckout = false
   public var logs: DiskSize
   /// What `stim gc --delete` would trim from the logs, or nil when it trims nothing.
   public var logsTrimmed: Int64?
@@ -130,10 +132,11 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
 }
 
 extension Workspace {
-  /// node_modules as `stim status` measured it: `own` is what deleting it frees and `shared` is what clones or hard
-  /// links share with other folders. Nil without a private size.
+  /// node_modules of a linked worktree as `stim status` measured it: `own` is what deleting it frees and `shared` is
+  /// what clones or hard links share with other folders. Nil without a private size, and for a primary checkout, which
+  /// counts all of its node_modules.
   public var statusNodeModules: (own: Int64, shared: Int64)? {
-    guard let total = disk?.nodeModulesBytes, let own = disk?.nodeModulesPrivateBytes, own >= 0, own <= total
+    guard worktree != nil, let total = disk?.nodeModulesBytes, let own = disk?.nodeModulesPrivateBytes, own >= 0, own <= total
     else { return nil }
     return (Int64(own), Int64(total - own))
   }
@@ -420,7 +423,7 @@ public struct StorageReport: Sendable {
         buildOutputs: buildOutputs,
         buildOutputsKept: output.flatMap { $0.willClear == true ? nil : ($0.detail ?? "kept") },
         nodeModules: missing ? .absent : statusModules.map { .size($0.own) } ?? disk.measure("\(root)/node_modules"),
-        nodeModulesShared: missing ? nil : statusModules?.shared,
+        nodeModulesShared: missing ? nil : statusModules?.shared, isCheckout: env.worktree == nil,
         logs: gc?.sections.workspaceLogs == nil ? .notMeasured : log.map { .size($0.bytes) } ?? .absent,
         logsTrimmed: log.flatMap { $0.willTrim ? $0.trimBytes : nil },
         logsKept: log.flatMap { $0.trimBytes > 0 && !$0.willTrim ? ($0.detail ?? "kept") : nil },

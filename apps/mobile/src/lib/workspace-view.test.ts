@@ -642,6 +642,7 @@ describe('usageParts and usageLabel', () => {
 
   it('leaves shared node_modules out of the disk parts and the workspace disk', () => {
     const e = env({
+      worktree: { path: '/w' },
       disk: {
         worktreeBytes: 1.9e9,
         nodeModulesBytes: 0.9e9,

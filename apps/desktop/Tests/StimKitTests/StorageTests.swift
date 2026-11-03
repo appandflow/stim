@@ -257,6 +257,17 @@ import Testing
     let row = try #require(StorageReport.make(environments: [cloned], gc: nil, disk: measured, paths: paths).workspaces.first)
     #expect(row.nodeModules == .size(12_000_000) && row.nodeModulesShared == 1_488_000_000)
 
+    let source = try JSONDecoder().decode(
+      Workspace.self,
+      from: Data(
+        #"{"path":"/t","live":false,"warnings":[],"checkout":"/t","disk":{"worktreeBytes":1600000000,"nodeModulesBytes":1500000000,"nodeModulesPrivateBytes":12000000}}"#
+          .utf8))
+    let checkout = try #require(
+      StorageReport.make(
+        environments: [source], gc: nil, disk: DiskMeasurements(sizes: ["/t/node_modules": 1_500_000_000]), paths: paths
+      ).workspaces.first)
+    #expect(checkout.isCheckout && checkout.nodeModules == .size(1_500_000_000) && checkout.nodeModulesShared == nil)
+
     let older = try env("/t/.w/a", disk: #"{"worktreeBytes":1600000000,"nodeModulesBytes":1500000000}"#)
     let fallback = try #require(StorageReport.make(environments: [older], gc: nil, disk: measured, paths: paths).workspaces.first)
     #expect(fallback.nodeModules == .size(1_500_000_000) && fallback.nodeModulesShared == nil)

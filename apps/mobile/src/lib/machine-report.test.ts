@@ -171,6 +171,23 @@ describe('machineReport', () => {
     expect(rows.get(FEATURE_WEB)).toMatchObject({ nodeModules: 1.5 * GB, nodeModulesShared: null });
   });
 
+  it('counts a primary checkout at the full size of its node_modules, so shared bytes are counted once', () => {
+    const source = machineReport(
+      status([
+        env(MAIN, { checkout: REPO, disk: { ...disk(1.5 * GB), nodeModulesPrivateBytes: 0.012 * GB } }),
+        env(FEATURE, { worktree: feature, disk: { ...disk(1.5 * GB), nodeModulesPrivateBytes: 0 } }),
+      ]),
+      null,
+      NOW,
+    );
+    const rows = new Map(
+      source.repositories.flatMap((repository) => repository.worktrees).map((row) => [row.path, row]),
+    );
+    expect(rows.get(MAIN)).toMatchObject({ nodeModules: 1.5 * GB, nodeModulesShared: null });
+    expect(rows.get(FEATURE)).toMatchObject({ nodeModules: 0, nodeModulesShared: 1.5 * GB });
+    expect(source.categories.find((category) => category.key === 'nodeModules')?.total.bytes).toBe(1.5 * GB);
+  });
+
   it('lists every device with its owner, taking an AVD size the gc inventory lacks from status', () => {
     expect(report.devices.map((row) => [row.name, row.owner.label, row.bytes])).toEqual([
       ['MINE', 'Yours', 7 * GB],

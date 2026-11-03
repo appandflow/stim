@@ -865,7 +865,7 @@ function worktreeLine(row: WorktreeRow): string | null {
   const logs = sizeLabel(row.logs);
   const parts = [
     row.inCheckout,
-    row.nodeModules
+    row.nodeModules !== null && (row.nodeModules > 0 || shared)
       ? shared
         ? t`node_modules ${nodeModules} (${shared} shared)`
         : t`node_modules ${nodeModules}`
