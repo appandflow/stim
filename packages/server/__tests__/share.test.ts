@@ -364,6 +364,61 @@ describe('a web share', () => {
     expect(f.hub.unrecordedTargets()).toEqual(new Set());
   });
 
+  it('serves its stylesheet and script without a token, and nothing else under that path', async () => {
+    const share = await started(f);
+    const base = new URL(local(share, f.hub.port!)).origin;
+    const script = await http(`${base}/s/assets/viewer.js`);
+    expect(script.status).toBe(200);
+    expect(String(script.headers['content-type'])).toContain('javascript');
+    expect((await http(`${base}/s/assets/viewer.css`)).status).toBe(200);
+    expect((await http(`${base}/s/assets/secret.js`)).status).toBe(404);
+    expect((await http(`${base}/s/assets/viewer.js`, { method: 'POST', body: 'x=1' })).status).toBe(404);
+  });
+
+  it('tells a viewer when the share expires and sends the device artwork as image data', async () => {
+    const share = await started(f);
+    const url = local(share, f.hub.port!);
+    const messages: Record<string, unknown>[] = [];
+    const socket = new WebSocket(`${url.replace(/^http/, 'ws')}ws`, {
+      headers: { origin: origin(url), cookie: await login(url, share.password!) },
+    });
+    socket.on('message', (data, binary) => {
+      if (!binary) messages.push(JSON.parse(String(data)));
+    });
+    await vi.waitFor(() => expect(f.subscribed).toHaveLength(1));
+    f.subscribed[0]!.listener.artwork!({
+      width: 10,
+      height: 20,
+      aperture: { x: 1, y: 1, width: 8, height: 18 },
+      cornerRadius: 2,
+      quarterTurns: 0,
+      background: 'Qkc=',
+      foreground: 'Rkc=',
+    });
+    await vi.waitFor(() => expect(messages).toHaveLength(2));
+    expect(messages[0]).toEqual({ type: 'hello', expiresAt: share.expiresAt });
+    expect(messages[1]).toMatchObject({
+      type: 'artwork',
+      artwork: {
+        aperture: { width: 8 },
+        background: 'data:image/png;base64,Qkc=',
+        foreground: 'data:image/png;base64,Rkc=',
+      },
+    });
+    socket.close();
+  });
+
+  it('with --control, rotates the shared device in the two directions only', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port!);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
+    socket.send(JSON.stringify({ type: 'rotate', direction: 'up' }));
+    socket.send(JSON.stringify({ type: 'rotate', direction: 'left' }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
+    expect(f.inputs).toEqual([{ session: 'c1', command: { input: 'rotate', direction: 'left' } }]);
+    socket.close();
+  });
+
   it('keeps no recording exemption for a device whose control another client holds', async () => {
     f.refuseControl = true;
     const share = await started(f, { control: true });

@@ -42,6 +42,17 @@ export interface ShareSource {
   close: () => void;
 }
 
+function isArtwork(value: unknown): value is DeviceFrameArtwork {
+  return (
+    isJsonObject(value) &&
+    typeof value.width === 'number' &&
+    typeof value.height === 'number' &&
+    isJsonObject(value.aperture) &&
+    typeof value.background === 'string' &&
+    typeof value.foreground === 'string'
+  );
+}
+
 /** The hosted session of the share's slot in a status payload; null for a physical device or a local one. */
 export function hostedOf(
   payload: StatusPayload,
@@ -151,7 +162,7 @@ export class HostedShareSource implements ShareSource {
       this.latest = latest;
       for (const listener of this.listeners) listener.frame(latest);
     } else if (event.event === 'device-frame') {
-      this.artwork = (event.artwork ?? null) as DeviceFrameArtwork | null;
+      this.artwork = isArtwork(event.artwork) ? event.artwork : null;
       for (const listener of this.listeners) listener.artwork?.(this.artwork);
     } else if (event.event === 'frame-delayed') {
       for (const listener of this.listeners) listener.delayed?.(event.delayed === true);

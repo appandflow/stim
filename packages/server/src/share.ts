@@ -649,7 +649,7 @@ export class ShareHub {
     if (!file || (request.method !== 'GET' && request.method !== 'HEAD')) return false;
     response.writeHead(200, {
       'content-type': file.type,
-      'cache-control': 'public, max-age=300',
+      'cache-control': 'no-cache',
       'referrer-policy': 'no-referrer',
       'x-content-type-options': 'nosniff',
       'content-security-policy': CSP,

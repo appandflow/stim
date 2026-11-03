@@ -107,11 +107,18 @@ async function showJpeg(blob) {
   }
 }
 
-function setArtwork(next) {
-  if (next) {
-    bezelBack.src = next.background;
-    bezelFront.src = next.foreground;
+function load(image, src) {
+  image.src = src;
+  return image.decode().catch(() => {});
+}
+
+async function setArtwork(next) {
+  if (!next) {
+    artwork = null;
+    if (hasFrame) layout(screen.width, screen.height);
+    return;
   }
+  await Promise.all([load(bezelBack, next.background), load(bezelFront, next.foreground)]);
   artwork = next;
   if (hasFrame) layout(screen.width, screen.height);
 }
@@ -128,7 +135,7 @@ socket.addEventListener('message', (event) => {
   if (message.type === 'hello') {
     expiresAt = Date.parse(message.expiresAt);
     refreshStatus();
-  } else if (message.type === 'artwork') setArtwork(message.artwork);
+  } else if (message.type === 'artwork') void setArtwork(message.artwork);
   else if (message.type === 'delayed') {
     live = !message.delayed && hasFrame;
     refreshStatus();
