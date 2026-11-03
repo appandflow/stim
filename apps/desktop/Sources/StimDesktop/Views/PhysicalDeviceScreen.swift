@@ -77,8 +77,10 @@ struct PhysicalDeviceScreen: View {
     .onChange(of: isControlling, initial: true) { _, _ in publishWindows(stream.windows) }
     .onAppear { clipboard?.stream = stream }
     .onDisappear {
-      clipboard?.stream = nil
-      clipboard?.access = .none
+      if clipboard?.stream === stream {
+        clipboard?.stream = nil
+        clipboard?.access = .none
+      }
       stream.stop()
       windowChoice?.windows = []
       windowChoice?.currentPointSize = nil

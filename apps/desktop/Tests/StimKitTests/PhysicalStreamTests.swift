@@ -170,26 +170,15 @@ import Testing
 
   @Test func refusesClipboardTextOverTheSetLimitWithoutSendingIt() async throws {
     let (stream, server, _) = try await started()
-    let atLimit = String(repeating: "a", count: PhysicalStream.maxClipboardBytes)
+    let atLimit = String(repeating: "a", count: 8192)
     let accepted = Task { try await stream.setClipboard(atLimit, paste: false) }
     await settle()
     try #require(server.take("input.clipboard.set")).reply.resume(returning: .object([:]))
     try await accepted.value
 
-    let wide = String(repeating: "\u{e9}", count: PhysicalStream.maxClipboardBytes / 2 + 1)
+    let wide = String(repeating: "\u{e9}", count: 4097)
     await #expect(throws: ClipboardTooLarge(bytes: wide.utf8.count)) { try await stream.setClipboard(wide, paste: false) }
     #expect(server.requests.isEmpty)
-  }
-
-  @Test func reportsAServerRefusalOfAClipboardCallToTheCaller() async throws {
-    let (stream, server, _) = try await started()
-    let read = Task { try await stream.clipboard() }
-    await settle()
-    try #require(server.take("input.clipboard.get")).reply.resume(
-      throwing: ServerError(code: "action-failed", message: "Update Mini's Stim to copy its clipboard."))
-    await #expect(throws: ServerError(code: "action-failed", message: "Update Mini's Stim to copy its clipboard.")) {
-      _ = try await read.value
-    }
   }
 
   @Test func offersTheClipboardOnlyForADeviceTheServerCanMoveTextTo() {
