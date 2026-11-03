@@ -696,7 +696,7 @@ else {
     let ok = true;
     try {
       const text = await requestDeviceText(true);
-      if (sync.deviceRead(text)) await writeToBrowser(text);
+      if (active() && sync.deviceRead(text)) await writeToBrowser(text);
     } catch {
       ok = false;
     }
@@ -710,6 +710,7 @@ else {
     try {
       const request = sync.browserRead(await navigator.clipboard.readText());
       if (request && request.message) {
+        // A send the server then drops is recorded as sent; the next poll may replace the browser text.
         if (send(request.message)) sync.sent(request.message.text);
       } else if (request) showNote(request.note);
     } catch (error) {

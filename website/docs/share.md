@@ -133,7 +133,8 @@ the device to your computer's clipboard (a "Copy from device" chip appears when
 the browser refuses), and in Chrome and Edge, after a one-time permission
 prompt, it sends text you copied on your computer to the device when you return
 to the page. In other browsers press Command-V on the device screen. The menu's
-"Copy from device" button copies once. Syncing from the device starts after
+"Copy from device" button copies once. Sending your copied text to the device counts as input and starts the share's
+control session like a paste. Syncing from the device starts after
 someone has tapped, typed or pasted, and does not keep an idle share's control
 session alive. Everyone who controls the share with sync on shares the device
 clipboard, so text one of them copies reaches the others. Text only, up to 8 KiB
