@@ -40,7 +40,7 @@ interface Fixture {
   congestions: number;
   begins: unknown[];
   inputs: unknown[];
-  inputResult: { text: string } | { code: 'action-failed'; message: string } | null;
+  inputResult: { text: string } | { typed: true } | { code: 'action-failed'; message: string } | null;
   /** The viewer each input came from, by name. */
   inputBy: string[];
   /** Names of the viewers whose pointer the control hub was told to lift. */
@@ -586,6 +586,28 @@ describe('a web share', () => {
       { session: 'c1', command: { input: 'clipboard', text, paste: true } },
       { session: 'c1', command: { input: 'clipboard', text: 'no paste', paste: false } },
     ]);
+    socket.close();
+  });
+
+  it('tells the viewer to tap the paste suggestion only when an iOS paste was not typed', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    const notes: unknown[] = [];
+    socket.on('message', (data, binary) => {
+      if (!binary) notes.push(JSON.parse(data.toString()));
+    });
+    const suggestion = { type: 'control', message: expect.stringContaining('paste suggestion') };
+    f.inputResult = { typed: true };
+    socket.send(JSON.stringify({ type: 'clipboard-set', text: 'typed', paste: true }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
+    f.inputResult = null;
+    socket.send(JSON.stringify({ type: 'clipboard-set', text: 'not typed', paste: true }));
+    await vi.waitFor(() => expect(notes).toContainEqual(suggestion));
+    expect(notes.filter((note) => JSON.stringify(note).includes('suggestion'))).toHaveLength(1);
+    socket.send(JSON.stringify({ type: 'clipboard-set', text: 'only set' }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(3));
+    expect(notes.filter((note) => JSON.stringify(note).includes('suggestion'))).toHaveLength(1);
     socket.close();
   });
 

@@ -149,6 +149,7 @@ const VIEWER_TEXT = {
   controlRefused: 'Control is not available right now. Try again in a moment.',
   inputRefused: 'That input was not accepted.',
   clipboardRefused: 'The device did not take or return its clipboard.',
+  pasteSuggestion: 'If nothing appears, tap the paste suggestion on the device.',
   controlEnded: 'Control ended.',
 };
 const CSP =
@@ -1231,6 +1232,14 @@ export class ShareHub {
         const notice = clipboard ? VIEWER_TEXT.clipboardRefused : VIEWER_TEXT.inputRefused;
         viewer.socket.send(JSON.stringify({ type: 'control', message: notice }));
       }
+    } else if (
+      open &&
+      method === 'input.clipboard.set' &&
+      fields.paste === true &&
+      share.request.platform === 'ios' &&
+      !(isJsonObject(refused) && refused.typed === true)
+    ) {
+      viewer.socket.send(JSON.stringify({ type: 'control', message: VIEWER_TEXT.pasteSuggestion }));
     } else if (method === 'input.clipboard.get' && open) {
       const text = isJsonObject(refused) ? refused.text : undefined;
       viewer.socket.send(

@@ -2171,7 +2171,8 @@ presence `touch` carries the second finger as `second`.
 With `control` on an iOS simulator, an Android emulator or an Android phone, a
 `clipboard-set` message (`text`, optional `paste`) and a `clipboard-get` message
 (`id`) from a viewer go through `input.clipboard.set` and `input.clipboard.get`,
-each costing ten inputs. The viewer sends `clipboard-set` with `paste: true` on
+each costing ten inputs. After a `paste: true` on an iOS simulator that was not typed, the
+viewer is told to tap the paste suggestion on the device. The viewer sends `clipboard-set` with `paste: true` on
 Command-V or Control-V while the screen has focus, from the browser's `paste`
 event. With its options menu's Sync clipboard switch on (the default) and the
 page focused, it sends `clipboard-get` with `poll: true` every 2 seconds, backing
@@ -2981,10 +2982,15 @@ sends reaches any other device.
   keys. When hello advertises `device-clipboard`, `input.clipboard.set` takes
   `text`, any Unicode text of at most 8192 UTF-8 bytes (a request is one
   message of at most 64 KiB, and JSON escapes a control character in up to six
-  bytes), and an optional `paste` that then pastes it into the focused field.
+  bytes), and an optional `paste` that then pastes it into the focused field. On an
+  iOS simulator, `paste` text of printable ASCII, line breaks and tabs (CRLF is one Return) is
+  typed instead, as `input.text` pieces of at most 256 characters fed at about 32 characters a
+  second, and the call answers `{ "typed": true }` once the first piece is sent; a second typed
+  paste is refused `device-busy` until the first has been typed. Other text is pasted with
+  Command-V, and the answer is `{}`.
   `input.clipboard.get` answers `{ "text" }`, refusing a clipboard over 65536
   bytes. An iOS simulator's clipboard is `simctl pbcopy` and `pbpaste` and its
-  paste is Command-V through the HID connection; an Android emulator's is the
+  paste is the typed text above, or Command-V through the HID connection; an Android emulator's is the
   gRPC `setClipboard` and `getClipboard`, pasted with `KEYCODE_PASTE` over
   `adb`; an Android phone's is scrcpy's `SET_CLIPBOARD` (with its paste flag)
   and `GET_CLIPBOARD`. A web page, a native macOS window and a physical iPhone
