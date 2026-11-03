@@ -400,6 +400,7 @@ export async function bootIosSim(
     label = udid,
     out = () => {},
     onPhase,
+    beforeBoot,
   }: {
     timeoutMs?: number;
     attemptMs?: number;
@@ -409,12 +410,13 @@ export async function bootIosSim(
     label?: string;
     out?: (message: string) => void;
     onPhase?: (event: IosBootEvent) => void;
+    beforeBoot?: (onLine: (line: string) => void) => Promise<void>;
   } = {},
 ): Promise<void> {
   const exec = getExecutor();
   const viewer = configuredIosSimulatorViewer(simulatorApp, env);
   const started = Date.now();
-  const deadline = started + timeoutMs;
+  let deadline = started + timeoutMs;
   let worst: HostMemoryPressure | null = null;
   let unknown = 0;
   let sampledAt = started;
@@ -452,8 +454,12 @@ export async function bootIosSim(
   const monitor = setInterval(report, 15000);
   monitor.unref();
   try {
+    onPhase?.({ phase: 'boot_requested' });
+    if (beforeBoot) {
+      await beforeBoot(onLine);
+      deadline = Date.now() + timeoutMs;
+    }
     try {
-      onPhase?.({ phase: 'boot_requested' });
       await awaitBootCommand(['simctl', 'boot', udid], Math.max(1, deadline - Date.now()), onLine);
       phase = 'waiting for boot completion';
     } catch (e) {
