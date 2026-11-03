@@ -2,8 +2,8 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// The live web shares of this Mac's stim-server. `share.stop` ends every share of a workspace, so a workspace's
-/// shares share one Stop.
+/// The live web shares of this Mac's stim-server. A server whose `share.stop` takes a share `id` gets a Stop on each
+/// row; an older one ends every share of a workspace, so a workspace's shares share one Stop.
 struct WebSharesView: View {
   @ObservedObject var store: StatusStore
   var model: WebSharesModel = .shared
@@ -30,17 +30,24 @@ struct WebSharesView: View {
         } else {
           ForEach(groups(shares), id: \.workspace) { group in
             Section {
-              ForEach(group.shares) { ShareRow(share: $0) }
+              ForEach(group.shares) { share in
+                ShareRow(
+                  share: share, canStop: model.stopsOneShare,
+                  isStopping: model.stopping.contains(share.id) || model.stopping.contains(group.workspace)
+                ) { Task { await model.stop(share: share) } }
+              }
             } header: {
               HStack {
                 Text(store.names(ofPath: group.workspace).title)
                 Spacer()
-                Button(group.shares.count > 1 ? "Stop All" : "Stop", role: .destructive) {
-                  Task { await model.stop(workspace: group.workspace) }
+                if group.shares.count > 1 || !model.stopsOneShare {
+                  Button(group.shares.count > 1 ? "Stop All" : "Stop", role: .destructive) {
+                    Task { await model.stop(workspace: group.workspace) }
+                  }
+                  .buttonStyle(.stim(.destructive))
+                  .disabled(model.stopping.contains(group.workspace))
+                  .help("Ends the links to all of this workspace's devices")
                 }
-                .buttonStyle(.stim(.destructive))
-                .disabled(model.stopping.contains(group.workspace))
-                .help("Ends the links to this workspace's devices")
               }
             }
           }
@@ -69,6 +76,9 @@ struct WebSharesView: View {
 
 private struct ShareRow: View {
   var share: WebShare
+  var canStop: Bool
+  var isStopping: Bool
+  var stop: () -> Void
 
   var body: some View {
     HStack(spacing: Space.lg) {
@@ -81,8 +91,14 @@ private struct ShareRow: View {
       Spacer()
       if share.auth == .none { Pill("No password", tone: .warning, size: .small) }
       Pill(share.accessLabel, tone: share.control ? .success : .neutral, size: .small)
+      if canStop {
+        Button("Stop", role: .destructive, action: stop)
+          .buttonStyle(.stim(.destructive))
+          .disabled(isStopping)
+          .help("Ends the link to this device")
+      }
     }
     .padding(.vertical, Space.xxs)
-    .accessibilityElement(children: .combine)
+    .accessibilityElement(children: .contain)
   }
 }

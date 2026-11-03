@@ -508,10 +508,7 @@ export async function bootIosSim(
   } finally {
     clearInterval(monitor);
   }
-  if (openViewer) {
-    await viewer.open(udid);
-    onPhase?.({ phase: 'viewer_opened' });
-  }
+  if (openViewer && (await viewer.open(udid))) onPhase?.({ phase: 'viewer_opened' });
 }
 
 export async function shutdownIosSim(udid: string, operation?: StimContext): Promise<void> {
@@ -721,12 +718,16 @@ export async function eraseIosSim(udid: string, operation?: StimContext): Promis
   });
 }
 
+// `simctl privacy reset all` took 52 s on a stock iOS 26.5 simulator minutes
+// after its boot (#4819).
+const SIMCTL_RESET_OPTIONS = { timeoutMs: 180_000, killSignal: 'SIGKILL' } as const;
+
 export async function resetIosPrivacy(udid: string): Promise<void> {
-  await getExecutor().runFileAsync('xcrun', ['simctl', 'privacy', udid, 'reset', 'all'], SIMCTL_OPTIONS);
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'privacy', udid, 'reset', 'all'], SIMCTL_RESET_OPTIONS);
 }
 
 export async function resetIosKeychain(udid: string): Promise<void> {
-  await getExecutor().runFileAsync('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_OPTIONS);
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_RESET_OPTIONS);
 }
 
 const CLEARED_CONTAINER_DIRS = ['Documents', 'Library', 'tmp', 'SystemData'];

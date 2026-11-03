@@ -331,6 +331,66 @@ describe('ensureBooted: ios', () => {
     },
   );
 
+  test.each([
+    ['none', false],
+    ['siniulator', true],
+  ] as const)(
+    'boots an owned sim with simulatorApp %s and opens a viewer only when one is chosen',
+    async (simulatorApp, opens) => {
+      let listCalls = 0;
+      let springBoardCalls = 0;
+      const commands: string[] = [];
+      const run = (cmd: string) => {
+        commands.push(cmd);
+        if (cmd.includes('list devices')) {
+          listCalls += 1;
+          const state = listCalls >= 3 ? 'Booted' : 'Shutdown';
+          return simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]);
+        }
+        return '';
+      };
+      setExecutor({
+        run,
+        runQuiet: () => '',
+        runFileQuiet: (file, args = []) => {
+          commands.push([file, ...args].join(' '));
+          return '';
+        },
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+          }
+          if (file === 'xcrun' && args[1] === 'spawn' && args[3] === 'notifyutil') {
+            return springBoardCalls++ === 0 ? springBoardStarting : springBoardStarted;
+          }
+          return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+            ? run([file, ...args].join(' '))
+            : simctlSpawnStub(file, args);
+        },
+        spawn: (cmd: string, args: readonly string[] = []) => {
+          commands.push([cmd, ...args].join(' '));
+          return makeExitingChild();
+        },
+      });
+      const booting = ensureBooted({
+        projectPath: tmpHome,
+        platform: 'ios',
+        simulatorApp,
+        device: { deviceUdid: 'U1', owned: true },
+        timeoutMs: 5000,
+        pollMs: 5,
+        out: () => {},
+      });
+      await vi.waitUntil(() => springBoardCalls > 0);
+      await vi.advanceTimersToNextTimerAsync();
+      const result = await vi.waitUntil(() => booting);
+      expect(result).toEqual({ ok: true, udid: 'U1' });
+      expect(commands.filter((c) => c === 'xcrun simctl boot U1')).toHaveLength(1);
+      expect(commands.some((c) => c.startsWith('open '))).toBe(opens);
+      expect(deviceLog().some((record) => record.phase === 'viewer_opened')).toBe(opens);
+    },
+  );
+
   test('reports boot setup failures instead of treating the Booted state as ready', async () => {
     setExecutor({
       run: (cmd) => {
@@ -853,10 +913,12 @@ function iosExecutor(devices: SimEntry[]) {
   const run: string[] = [];
   const files: string[][] = [];
   const spawned: string[] = [];
+  const resetDeadlines: Record<string, number | undefined> = {};
   return {
     run,
     files,
     spawned,
+    resetDeadlines,
     exec: {
       runFileQuiet: () => '',
       run(cmd: string) {
@@ -881,8 +943,10 @@ function iosExecutor(devices: SimEntry[]) {
           return null;
         }
       },
-      runFile(file: string, args: string[] = []) {
+      runFile(file: string, args: string[] = [], opts?: { timeoutMs?: number }) {
         files.push([file, ...args]);
+        if (args[0] === 'simctl' && (args[1] === 'privacy' || args[1] === 'keychain'))
+          resetDeadlines[args[1]] = opts?.timeoutMs;
         if (file === 'xcrun' && args[0] === 'simctl' && ['list', 'boot', 'create'].includes(args[1] ?? '')) {
           const result = this.run!([file, ...args].join(' '));
           if (args[1] === 'create')
@@ -1041,7 +1105,7 @@ describe('ensureOwnedDevice: ios', () => {
           });
         if (stale) setDevice(root, 'ios', { deviceUdid: 'MISSING', owned: true });
         const name = `stim-app (iPhone 17 Pro 26.2)${collision ? ` ${workspaceId(root)}` : ''}`;
-        const { run, files, exec } = iosExecutor(devices);
+        const { run, files, resetDeadlines, exec } = iosExecutor(devices);
         setExecutor(exec);
         const device = await ensureOwnedDevice({
           platform: 'ios',
@@ -1065,6 +1129,7 @@ describe('ensureOwnedDevice: ios', () => {
         expect(run).toContain('xcrun simctl boot U1');
         expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
         expect(files).toContainEqual(['xcrun', 'simctl', 'keychain', 'U1', 'reset']);
+        expect(resetDeadlines).toEqual({ privacy: 180_000, keychain: 180_000 });
         expect(getProject(root)?.platforms?.ios).toMatchObject({ schemeApprovals });
       } finally {
         delete process.env.STIM_POOL_IOS_PARKED_MAX;
@@ -1170,7 +1235,7 @@ describe('ensureOwnedDevice: ios', () => {
         adopted: true,
         adoptionPending: true,
       });
-      const { files, exec } = iosExecutor([
+      const { files, resetDeadlines, exec } = iosExecutor([
         {
           udid: 'U1',
           name: 'stim-app (iPhone 17 Pro 26.2)',
@@ -1189,6 +1254,7 @@ describe('ensureOwnedDevice: ios', () => {
       });
       expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
       expect(files).toContainEqual(['xcrun', 'simctl', 'keychain', 'U1', 'reset']);
+      expect(resetDeadlines).toEqual({ privacy: 180_000, keychain: 180_000 });
       expect(getProject(root)?.platforms?.ios?.adoptionPending).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });

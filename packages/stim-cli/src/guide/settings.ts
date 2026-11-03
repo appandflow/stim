@@ -731,6 +731,11 @@ To show the booted simulator in Stim Desktop and open no simulator window:
 
   { "iosSimulatorApp": "stim-desktop" }
 
+To boot the simulator with no viewer at all, for agents and other headless
+runs:
+
+  { "iosSimulatorApp": "none" }
+
 Stim Desktop keeps the current page and shows a launch card. Clicking Show
 opens the workspace that owns the simulator and focuses that device.
 It only displays the simulator; it never boots or shuts it down.
@@ -741,7 +746,7 @@ It shows only devices from that home: under another \`STIM_HOME\`, pick
 
 Override the preference for one local launch with
 \`stim ios --simulator-app siniulator\`, \`stim ios --simulator-app stim-desktop\`,
-or \`stim ios --simulator-app xcode\`.
+\`stim ios --simulator-app xcode\`, or \`stim ios --simulator-app none\`.
 The flag also opens an already running owned simulator without rebooting it.
 It leaves the saved preference unchanged and refuses physical or remote targets.
 

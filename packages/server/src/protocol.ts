@@ -2216,7 +2216,7 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['workspace'],
             additionalProperties: false,
-            properties: { workspace: { type: 'string', minLength: 1 } },
+            properties: { workspace: { type: 'string', minLength: 1 }, id: { type: 'string', minLength: 1 } },
           }),
           optionalParams('share.list', { type: 'object', maxProperties: 0 }),
           request('machines.update.start', {

@@ -164,18 +164,6 @@ for (const button of document.querySelectorAll('[data-rotate]')) {
   else button.addEventListener('click', () => send({ type: 'rotate', direction: button.dataset.rotate }));
 }
 
-document.getElementById('shot').addEventListener('click', () => {
-  if (!hasFrame) return;
-  screen.toBlob((blob) => {
-    if (!blob) return;
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'stim-' + new Date().toISOString().replace(/[:.]/g, '-') + '.png';
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-  }, 'image/png');
-});
-
 const fullscreen = document.getElementById('full');
 if (document.fullscreenEnabled) {
   fullscreen.addEventListener('click', () => {

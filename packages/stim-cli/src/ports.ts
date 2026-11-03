@@ -68,11 +68,12 @@ const PORT_SCAN_LIMIT = 200;
 export async function computeNextPort(
   isFree: (port: number) => Promise<boolean> = createPortProbe(),
   signal?: AbortSignal,
+  lost: ReadonlySet<number> = new Set(),
 ): Promise<number> {
   signal?.throwIfAborted();
   const taken = new Set(allMetroPorts());
   for (let port = FIRST_PORT; port < FIRST_PORT + PORT_SCAN_LIMIT; port++) {
-    if (taken.has(port)) continue;
+    if (taken.has(port) || lost.has(port)) continue;
     const free = await isFree(port);
     signal?.throwIfAborted();
     if (free) return port;
@@ -128,16 +129,15 @@ export async function allocatePort(
   probe: (port: number) => Promise<boolean> = isMetroRunning,
   isFree: (port: number) => Promise<boolean> = createPortProbe(),
   signal?: AbortSignal,
+  lost: ReadonlySet<number> = new Set(),
 ): Promise<number> {
   const reclaim = await findReclaimablePort(projectPath, probe, { signal });
-  if (reclaim && (await isFree(reclaim.port))) {
+  if (reclaim && !lost.has(reclaim.port) && (await isFree(reclaim.port))) {
     await withConfigLockAsync(() => releaseMetroPort(reclaim.ownerPath, reclaim.port), signal);
     return reclaim.port;
   }
-  return computeNextPort(isFree, signal);
+  return computeNextPort(isFree, signal, lost);
 }
-
-const RESERVE_ATTEMPTS = 5;
 
 export async function reserveMetroPort(
   projectPath: string,
@@ -151,12 +151,11 @@ export async function reserveMetroPort(
     if ((await withConfigLockAsync(() => claimMetroPort(projectPath, pinned), signal)) !== null) return pinned;
     throw new Error(`metro.port ${pinned} is already reserved by another workspace's Metro or named port.`);
   }
-  for (let attempt = 0; attempt < RESERVE_ATTEMPTS; attempt++) {
-    const port = await allocatePort(projectPath, probe, isFree, signal);
+  const lost = new Set<number>();
+  for (;;) {
+    const port = await allocatePort(projectPath, probe, isFree, signal, lost);
     const claimed = await withConfigLockAsync(() => claimMetroPort(projectPath, port), signal);
     if (claimed !== null) return claimed;
+    lost.add(port);
   }
-  throw new Error(
-    `Could not reserve a Metro port after ${RESERVE_ATTEMPTS} attempts: another Stim run claimed each one first. Retry.`,
-  );
 }

@@ -329,7 +329,7 @@ same way when it is not running, so running `start` first is optional.
 
 ```text
 stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>] [--install-runtime]
-         [--simulator-app <xcode|siniulator|stim-desktop>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <eas|proxy|auto|local|machine>]
+         [--simulator-app <xcode|siniulator|stim-desktop|none>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <eas|proxy|auto|local|machine>]
          [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--plan] [--json]
 ```
 
@@ -386,8 +386,8 @@ can compile on a paired remote machine instead: see `remote.build` in
   A recorded EAS session still running another model refuses with
   `STIM_REMOTE_DEVICE_MISMATCH`; run `stim stop`, then rerun. The
   `ios.deviceType` and `ios.runtime` settings are ignored on an eas/proxy run. A named hosting Mac uses both selectors.
-- `--simulator-app <xcode|siniulator|stim-desktop>` overrides the machine `iosSimulatorApp`
-  preference for this run. It also opens an already running owned simulator in
+- `--simulator-app <xcode|siniulator|stim-desktop|none>` overrides the machine `iosSimulatorApp`
+  preference for this run. `none` opens no viewer. It also opens an already running owned simulator in
   that app without rebooting it. The preference is not saved. Local simulators
   only; cannot be combined with `--device` or a remote target.
 - `--device [udid]` builds, installs, and launches on a connected iPhone instead
