@@ -253,11 +253,11 @@ describe('what keeps a quiet daemon alive', () => {
 
   test.each([
     ['in report mode', 'on', 'report', false],
-    ['with maintenance.mode report', 'report', 'on', false],
+    ['with STIM_DAEMON report', 'report', 'on', false],
     ['once its last outcome was kept', 'on', 'on', true],
     ['whose last execution failed', 'on', 'on', false],
   ] as const)('a planned removal %s does not', async (_, maintenance, mode, kept) => {
-    vi.stubEnv('STIM_MAINTENANCE', maintenance);
+    vi.stubEnv('STIM_DAEMON', maintenance);
     planRemoval({ kept });
     expect(await exitsAfterTwoQuietTicks(mode)).toBe(true);
   });

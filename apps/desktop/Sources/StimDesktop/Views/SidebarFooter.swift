@@ -4,7 +4,7 @@ import SwiftUI
 
 struct SidebarFooter: View {
   @ObservedObject var store: StatusStore
-  @ObservedObject var autopilot: AutopilotRunner
+  @ObservedObject var pressure: DaemonPressureMonitor
   @ObservedObject var onboarding: Onboarding
   let actions: ActionCenter
   @ObservedObject private var updater = AppUpdater.shared
@@ -17,7 +17,7 @@ struct SidebarFooter: View {
 
   private var status: SidebarFooterStatus {
     SidebarFooterStatus.decide(
-      stim: onboarding.report?.stim, pressure: autopilot.pressure,
+      stim: onboarding.report?.stim, pressure: pressure.daemon?.pressure,
       desktopUpdateAvailable: updater.isAvailable && updater.updateAvailable, stimUpdate: onboarding.stimUpdate)
   }
 
@@ -61,28 +61,28 @@ struct SidebarFooter: View {
       .help(
         "stim \(installed.description) is installed \u{2014} click to update it with \(onboarding.report?.stimOwner?.rawValue ?? "its package manager")"
       )
-    case .diskCritical(let freeBytes):
+    case .pressureCritical(let reasons):
       Button {
         selection = .machine
       } label: {
-        statusLabel(dot: Palette.error, text: "Low disk: \(Format.fileSize(freeBytes)) free")
+        statusLabel(dot: Palette.error, text: "Pressure critical")
       }
       .buttonStyle(.hoverRow(outset: Space.sm))
-      .help("Free disk is below Stim's hard floor, so start, ios and android refuse \u{2014} click to open Machine")
+      .help((reasons + ["click to open Machine"]).joined(separator: " \u{2014} "))
     case .desktopUpdateAvailable:
       Button(action: updater.checkForUpdates) {
         statusLabel(dot: Palette.primary, text: "Update available")
       }
       .buttonStyle(.hoverRow(outset: Space.sm))
       .help("A new version of Stim Desktop is available \u{2014} click to install it")
-    case .diskWarning(let freeBytes):
+    case .pressureHigh(let reasons):
       Button {
         selection = .machine
       } label: {
-        statusLabel(dot: Palette.warning, text: "Low disk: \(Format.fileSize(freeBytes)) free")
+        statusLabel(dot: Palette.warning, text: "Pressure high")
       }
       .buttonStyle(.hoverRow(outset: Space.sm))
-      .help("Free disk is under the Stim budget \u{2014} click to open Machine")
+      .help((reasons + ["click to open Machine"]).joined(separator: " \u{2014} "))
     case .normal(let version):
       let help: String =
         version.map { "Optional agent CLI stim \($0) is installed" } ?? "Stim Desktop uses its bundled server"

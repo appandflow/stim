@@ -53,11 +53,11 @@ async function spaceUsers(
 }
 
 const LOW_DISK_REMEDY =
-  'Run `stim status` to see what the stim-daemon reclaimed, `stim gc` to see what else Stim can reclaim, then `stim gc --delete` (add `--cache all` to empty the shared caches, or `--worktrees` to remove finished worktrees). Free space outside Stim from the largest uses listed, or lower budget.hardFloorDiskGb.';
+  'Run `stim status` to see what the stim-daemon reclaimed, `stim gc` to see what else Stim can reclaim, then `stim gc --delete` (add `--cache all` to empty the shared caches, or `--worktrees` to remove finished worktrees). Free space outside Stim from the largest uses listed, or lower disk.hardFloorGb.';
 
 /**
  * Rung 7 of the pressure ladder, before `start`, `ios` and `android` do their work: while free disk on the
- * workspace's or the Stim home's volume is under `budget.hardFloorDiskGb`, the ladder runs now (one daemon tick, or
+ * workspace's or the Stim home's volume is under `disk.hardFloorGb`, the ladder runs now (one daemon tick, or
  * in this process without a daemon) and the run refuses with `STIM_LOW_DISK` when free disk is still under the floor
  * after it.
  */
@@ -107,7 +107,7 @@ export async function diskFloorGate({
     refusal: {
       code: 'STIM_LOW_DISK',
       message:
-        `Only ${tight()} is free, below the ${formatSpace(thresholds.hardFloorMb)} hard floor (budget.hardFloorDiskGb) after the stim-daemon's pressure ladder reclaimed what it safely could, so this run could fill the disk.` +
+        `Only ${tight()} is free, below the ${formatSpace(thresholds.hardFloorMb)} hard floor (disk.hardFloorGb) after the stim-daemon's pressure ladder reclaimed what it safely could, so this run could fill the disk.` +
         (users.length ? ` Largest uses: ${users.join('; ')}.` : ''),
       remedy: LOW_DISK_REMEDY,
     },

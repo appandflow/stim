@@ -1773,7 +1773,7 @@ export interface Methods {
     result: SubscribeResult;
   };
   'desktop.gc.subscribe': {
-    params: { cwd: string; cache?: string; olderThan?: number; worktrees?: boolean; delete?: boolean; idleMs?: number };
+    params: { cwd: string; cache?: string; olderThan?: number; worktrees?: boolean; delete?: boolean };
     result: SubscribeResult;
   };
   'desktop.worktree.warm.subscribe': {

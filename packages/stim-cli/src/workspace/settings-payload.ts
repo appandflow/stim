@@ -276,7 +276,7 @@ export function unknownEntries(context: SettingsContext): SettingsPayload['unkno
       ? []
       : unknownSettingKeys(settings).map((key) => {
           const value = valueAt(settings, key);
-          const command = replacementAdvice(key, value)?.command;
+          const command = replacementAdvice(key, value, scope)?.command;
           const entry = { key, scope, file, value };
           return command ? Object.assign(entry, { replacement: command }) : entry;
         }),

@@ -12,9 +12,11 @@ public struct StatusPayload: Decodable, Sendable {
   public var oversight: OversightStatus?
   /// Absent from a `stim` before 1.16, and nil when the block does not decode.
   public var maintenance: MaintenanceStatus?
+  /// The home daemon and its pressure level; nil from a `stim` without one, or when the block does not decode.
+  public var daemon: DaemonStatus?
 
   enum CodingKeys: String, CodingKey {
-    case environments, capacity, unprovisionedWorktrees, machine, archived, archivedUsage, maintenance
+    case environments, capacity, unprovisionedWorktrees, machine, archived, archivedUsage, maintenance, daemon
   }
 
   public init(from decoder: Decoder) throws {
@@ -35,6 +37,7 @@ public struct StatusPayload: Decodable, Sendable {
     archivedUsage = try c.decodeIfPresent(ArchivedUsage.self, forKey: .archivedUsage)
     oversight = try? OversightStatus(from: decoder)
     maintenance = try? c.decodeIfPresent(MaintenanceStatus.self, forKey: .maintenance)
+    daemon = try? c.decodeIfPresent(DaemonStatus.self, forKey: .daemon)
   }
 }
 

@@ -565,12 +565,16 @@ export function loadLine({ loadPerCore, busyAt, limit }: StatusCapacityLoad): st
   return `load ${loadPerCore}/core (busy at ${busyAt}${limit === null ? '' : `, holding at ${limit}`})`;
 }
 
-/** The plain status lines for the `concurrency.maxBuilds` and `concurrency.maxDevices` caps that are set. */
-export function slotUsageLines({
-  builds,
-  devices,
-  platformDevices,
-}: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices'>): string[] {
+/**
+ * The plain status lines for the build and device caps, naming `concurrency.maxBuilds` and `concurrency.maxDevices`
+ * or, for a cap `derived` marks, that Stim derived it and which setting overrides it.
+ */
+export function slotUsageLines(
+  { builds, devices, platformDevices }: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices'>,
+  derived: { builds: boolean; devices: boolean } = { builds: false, devices: false },
+): string[] {
+  const buildCap = derived.builds ? 'derived; set concurrency.maxBuilds to override' : 'concurrency.maxBuilds';
+  const deviceCap = derived.devices ? 'derived; set concurrency.maxDevices to override' : 'concurrency.maxDevices';
   const lines: string[] = [];
   if (builds) {
     const holders = builds.holders.map((holder) =>
@@ -582,20 +586,18 @@ export function slotUsageLines({
             ? basename(holder.workspace)
             : `slot ${holder.slot}`,
     );
-    lines.push(
-      `builds ${builds.inUse}/${builds.max} (concurrency.maxBuilds)${holders.length ? `: ${holders.join(', ')}` : ''}`,
-    );
+    lines.push(`builds ${builds.inUse}/${builds.max} (${buildCap})${holders.length ? `: ${holders.join(', ')}` : ''}`);
   }
   if (devices) {
     if (devices.inUse === null) {
-      lines.push(`devices ?/${devices.max} (concurrency.maxDevices): ${devices.unknown ?? 'not counted'}`);
+      lines.push(`devices ?/${devices.max} (${deviceCap}): ${devices.unknown ?? 'not counted'}`);
     } else {
       const holders = devices.holders.map(
         (holder) =>
           `${holder.label} ${holder.platform}${holder.slot && holder.slot !== 'default' ? ` [${holder.slot}]` : ''}${holder.booting ? ' (booting)' : ''}`,
       );
       lines.push(
-        `devices ${devices.inUse}/${devices.max} (concurrency.maxDevices)${holders.length ? `: ${holders.join(', ')}` : ''}`,
+        `devices ${devices.inUse}/${devices.max} (${deviceCap})${holders.length ? `: ${holders.join(', ')}` : ''}`,
       );
     }
   }

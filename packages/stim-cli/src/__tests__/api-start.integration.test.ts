@@ -228,7 +228,7 @@ test.skipIf(process.platform === 'win32')(
     });
     const nested = join(root, 'src');
     mkdirSync(nested);
-    const client = createStim({ projectRoot: nested, home, env: { ...process.env, STIM_MAINTENANCE: 'off' } });
+    const client = createStim({ projectRoot: nested, home, env: { ...process.env, STIM_DAEMON: 'off' } });
     try {
       const first = await client.start({ waitSeconds: 10 });
       expect(first.alreadyRunning).toBe(false);
@@ -419,12 +419,7 @@ test('normal-home startup enforces the configured disk floor before spawning', a
       version: 2,
       projects: {},
       repos: {},
-      budget: {
-        minFreeDiskGb: 0,
-        hardFloorDiskGb: 1_000_000,
-        maxCommittedMemoryGb: 0,
-        maxLiveWorkspaces: 0,
-      },
+      disk: { minFreeGb: 0, hardFloorGb: 1_000_000 },
     }),
   );
   const real = getExecutor();
@@ -455,7 +450,7 @@ test('normal-home startup enforces the configured disk floor before spawning', a
   });
   const pending = createStim({
     projectRoot: root,
-    env: { ...process.env, HOME: userHome, USERPROFILE: userHome, STIM_HOME: undefined, STIM_MAINTENANCE: 'off' },
+    env: { ...process.env, HOME: userHome, USERPROFILE: userHome, STIM_HOME: undefined, STIM_DAEMON: 'off' },
   })
     .start()
     .catch((error: unknown) => error);

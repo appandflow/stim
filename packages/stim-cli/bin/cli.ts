@@ -66,6 +66,16 @@ try {
       const { warnCriticalDisk } = await import('../src/maintenance/trigger.ts');
       warnCriticalDisk();
     } catch {}
+    const { removedEnvironmentRefusal } = await import('../src/daemon/mode.ts');
+    const { leftoverOffRefusal } = await import('../src/workspace/leftover-off.ts');
+    const governed = path.length === 1 ? (path[0] ?? '') : '';
+    const refusal = removedEnvironmentRefusal(governed) ?? leftoverOffRefusal(governed, process.cwd(), process.env);
+    if (refusal) {
+      if (process.argv.includes('--json')) console.log(JSON.stringify(refusal));
+      console.error(`${refusal.code}: ${refusal.message}`);
+      console.error(refusal.remedy);
+      process.exit(1);
+    }
     if (path.length === 1 && !process.argv.includes('--plan')) {
       try {
         const { beforeCommand } = await import('../src/daemon/client.ts');

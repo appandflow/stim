@@ -136,7 +136,7 @@ public struct StatusViews: Sendable {
       "environments": .array(workspaces.order.compactMap { details[$0] ?? workspaces.byPath[$0] }),
       "unprovisionedWorktrees": .array(worktrees.order.compactMap { worktrees.byPath[$0] }),
     ]
-    for key in ["capacity", "machine", "deviceLeases", "simctlAvailable", "maintenance"] {
+    for key in ["capacity", "machine", "deviceLeases", "simctlAvailable", "maintenance", "daemon"] {
       if let value = machine[key], value != .null { payload[key] = value }
     }
     if let archives { payload["archived"] = .array(archives) }

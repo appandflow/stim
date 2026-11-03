@@ -655,8 +655,8 @@ back through it in the Stim phone app.
   recreates them. The `stim-daemon`'s dormant stage deletes the owned devices
   of a workspace with nothing running and no activity for `idle.dormantDays`
   (3 days; fractions allowed; `0` never), the parked pool untouched; its
-  pressure ladder does so after 10 minutes at high disk pressure and for every
-  idle workspace at critical. Automatic maintenance deletes them after
+  pressure ladder does so at high disk pressure for a workspace idle 10
+  minutes, and at critical for every idle workspace. Automatic maintenance deletes them after
   `gc.worktreeGraceMinutes` for a workspace whose worktree is finished but
   kept. A workspace pinned with
   `maintenance.keep` keeps its devices. `stim status` shows the disk they use.
@@ -669,7 +669,10 @@ back through it in the Stim phone app.
   `--older-than <days>`, it removes only the devices parked at least that long.
   It also deletes the owned devices of a linked worktree whose branch is merged
   or whose pull request ended but that it keeps, for example because it is
-  dirty, under the same idle rules as automatic maintenance. `stim gc` prints
+  dirty, under the same idle rules as automatic maintenance. It then runs the
+  `stim-daemon`'s pressure ladder at high, whatever the machine measures, which
+  deletes parked devices and moves workspaces idle 10 minutes or more into the
+  dormant stage, deleting their owned devices. `stim gc` prints
   the disk owned devices use as `Owned device disk`.
 - `stim gc --cache parked` lists only the parked devices, with the app each
   one holds and its size. With `--delete` it erases each verified parked

@@ -15,7 +15,8 @@ import {
   unknownSettingKeys,
   type SettingsLayer,
 } from '../workspace/settings.ts';
-import { REPLACED_SETTINGS, replacementAdvice, settingDefinition, type SettingsObject } from '@stim-cli/core/state';
+import { removedEnvironment, replacementAdvice, settingDefinition, type SettingsObject } from '@stim-cli/core/state';
+import { leftoverOffSettings } from '../workspace/leftover-off.ts';
 
 export interface MachineSettings {
   settings: SettingsObject;
@@ -72,6 +73,7 @@ export function checkMachineSettings({
   exists = existsSync,
   env = process.env,
   remoteBuild,
+  machineConfig = null,
 }: {
   settings: SettingsObject;
   layers: SettingsLayer[];
@@ -82,6 +84,8 @@ export function checkMachineSettings({
   exists?: (path: string) => boolean;
   env?: NodeJS.ProcessEnv;
   remoteBuild?: unknown;
+  /** The machine config, for the machine-only settings no layer carries. */
+  machineConfig?: unknown;
 }): Finding[] {
   const findings: Finding[] = [];
 
@@ -124,6 +128,17 @@ export function checkMachineSettings({
     findings.push(compilerCacheFinding({ fallback: reported, optimizations, file: fallbackEntry?.file ?? null }));
   }
 
+  const leftovers = leftoverOffSettings(layers, machineConfig, env);
+  for (const leftover of leftovers)
+    findings.push({
+      level: 'cost',
+      title: leftover.title,
+      detail: leftover.refuses
+        ? `${leftover.message} start, ios, android, web, macos, revive and gc refuse to run while it is there.`
+        : leftover.message,
+      fix: leftover.remedy,
+    });
+
   const holders = repositoryLayer ? [...layers, repositoryLayer] : layers;
   const unknownKeys = new Set([
     ...unknownSettingKeys(settings),
@@ -132,13 +147,18 @@ export function checkMachineSettings({
   for (const key of unknownKeys) {
     for (const holder of holders.filter((layer) => settingValueAt(layer.settings, key) !== undefined)) {
       const file = holder.file;
-      const advice = replacementAdvice(key, settingValueAt(holder.settings, key));
+      if (leftovers.some((leftover) => leftover.key === key && leftover.file === file)) continue;
+      const advice = replacementAdvice(key, settingValueAt(holder.settings, key), holder.scope);
       if (advice) {
         findings.push({
           level: 'note',
-          title: `${key} was replaced by ${advice.key}`,
-          detail: `${key} in ${file} is not read by Stim, so ${advice.key} decides placement and its default applies until you set it.`,
-          fix: `${advice.command ? `Run \`${advice.command}\`` : `Set ${advice.key}`}, then remove ${key} from ${file}.`,
+          title: advice.key ? `${key} was replaced by ${advice.key}` : `${key} is no longer read by Stim`,
+          detail: advice.key
+            ? `${key} in ${file} is not read by Stim, so ${advice.key} applies, at its default until you set it.`
+            : `${key} in ${file} is not read by Stim: ${advice.replacement}.`,
+          fix: advice.key
+            ? `${advice.command ? `Run \`${advice.command}\`` : `Set ${advice.key}`}, then remove ${key} from ${file}.`
+            : `Remove ${key} from ${file}.`,
         });
         continue;
       }
@@ -168,14 +188,22 @@ export function checkMachineSettings({
       fix: buildEnvRefusal.remedy,
     });
 
-  for (const [key, replaced] of Object.entries(REPLACED_SETTINGS)) {
-    if (!replaced.env || !env[replaced.env]?.trim()) continue;
-    const advice = replacementAdvice(key, env[replaced.env]);
+  for (const { key, env: name, replaced } of removedEnvironment(env)) {
+    const raw = (env[name] ?? '').trim();
+    const advice = replacementAdvice(key, /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw);
+    const instead = replaced.key ? settingDefinition(replaced.key)?.env : undefined;
+    const refusal = replaced.refuses
+      ? ' start, ios, android, web, macos, revive and gc refuse to run while it is set.'
+      : '';
     findings.push({
-      level: 'note',
-      title: `${replaced.env} was replaced by ${replaced.key}`,
-      detail: `${replaced.env} is not read by Stim, so ${replaced.key} decides placement and its default applies until you set it.`,
-      fix: `${advice?.command ? `Run \`${advice.command}\`` : `Set ${replaced.key}`}, then unset ${replaced.env}.`,
+      level: replaced.refuses ? 'cost' : 'note',
+      title: replaced.key ? `${name} was replaced by ${replaced.key}` : `${name} is no longer read by Stim`,
+      detail: replaced.key
+        ? `${name} is not read by Stim, so ${replaced.key} applies, at its default until you set it.${refusal}`
+        : `${name} sets ${key}, which is no longer read by Stim: ${replaced.replacement}.${refusal}`,
+      fix: replaced.key
+        ? `${advice?.command ? `Run \`${advice.command}\`` : `Set ${replaced.key}`}${replaced.refuses && instead ? ` or set ${instead}` : ''}, then unset ${name}.`
+        : `Unset ${name}.`,
     });
   }
 

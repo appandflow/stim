@@ -4,7 +4,7 @@ import SwiftUI
 
 struct Sidebar: View {
   @ObservedObject var store: StatusStore
-  @ObservedObject var autopilot: AutopilotRunner
+  @ObservedObject var pressure: DaemonPressureMonitor
   @ObservedObject var onboarding: Onboarding
   let actions: ActionCenter
   @Binding var selection: SidebarItem?
@@ -113,7 +113,7 @@ struct Sidebar: View {
           }
           prefs.statuses = StatusFilter.encode(updated)
         }
-        SidebarFooter(store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection)
+        SidebarFooter(store: store, pressure: pressure, onboarding: onboarding, actions: actions, selection: $selection)
       }
       .background(Palette.sidebar)
     }
@@ -189,10 +189,10 @@ struct Sidebar: View {
       PinnedRow(item: .machine, selection: $selection) {
         SidebarLabel(title: "Machines", icon: "internaldrive", selected: selection == .machine)
         Spacer()
-        if autopilot.pressure != nil {
+        if let daemon = pressure.daemon, daemon.isRaised {
           Image(systemName: "exclamationmark.circle.fill").iconFont(IconSize.small).foregroundStyle(Palette.warning)
-            .help("Free disk is under the Stim budget")
-            .accessibilityLabel("Free disk is under the Stim budget")
+            .help(daemon.headline)
+            .accessibilityLabel(daemon.headline)
         }
       }
       PinnedRow(item: .builds, selection: $selection) {

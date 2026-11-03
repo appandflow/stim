@@ -83,21 +83,139 @@ export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop', 'none'
 
 export const ANDROID_EMULATOR_APPS = ['emulator', 'stim-desktop'] as const;
 
-export const REPLACED_SETTINGS: Readonly<
-  Record<string, { key: string; env?: string; value: (old: unknown) => string | null }>
-> = {
+/**
+ * A setting Stim no longer reads. `key` names the setting that replaced it, when one did, and `value` maps an old
+ * value to that setting's; `replacement` says what replaced it in words. `env` is the old environment override; with
+ * `refuses`, the commands the stim-daemon governs refuse to run while it is set.
+ */
+export interface RemovedSetting {
+  key?: string;
+  replacement: string;
+  env?: string;
+  refuses?: true;
+  value?: (old: unknown) => string | null;
+}
+
+function sameNumber(old: unknown): string | null {
+  const value = typeof old === 'string' && old.trim() ? Number(old) : old;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? String(value) : null;
+}
+const FIXED_LADDER = 'nothing replaced it; the pressure ladder has fixed rules';
+
+function fixed(env: string): RemovedSetting {
+  return { replacement: FIXED_LADDER, env, refuses: true };
+}
+
+export const REPLACED_SETTINGS: Readonly<Record<string, RemovedSetting>> = {
   'remote.buildMode': {
     key: 'remote.build',
+    replacement: 'remote.build',
     env: 'STIM_REMOTE_BUILD_MODE',
     value: (old) => (old === 'auto' ? 'auto' : old === 'force' ? 'remote' : old === 'off' ? 'local' : null),
   },
+  'metro.idleStopMinutes': {
+    key: 'idle.minutes',
+    replacement: 'idle.minutes, which stops the dev server and the owned devices together',
+    value: sameNumber,
+  },
+  'devices.idleShutdownMinutes': {
+    key: 'idle.minutes',
+    replacement: 'idle.minutes, which stops the dev server and the owned devices together',
+    value: sameNumber,
+  },
+  'devices.reclaimIdleMinutes': {
+    replacement:
+      "the stim-daemon's reclaim rule replaced it: while a run waits to boot, the daemon shuts down the longest-idle device of another workspace idle 2 minutes or more",
+  },
+  'maintenance.deviceIdleDays': {
+    key: 'idle.dormantDays',
+    replacement: 'idle.dormantDays, after which an idle workspace goes dormant and its owned devices are deleted',
+    env: 'STIM_MAINTENANCE_DEVICE_IDLE_DAYS',
+    refuses: true,
+    value: sameNumber,
+  },
+  'budget.minFreeDiskGb': {
+    key: 'disk.minFreeGb',
+    replacement: 'disk.minFreeGb',
+    env: 'STIM_BUDGET_MIN_FREE_DISK_GB',
+    refuses: true,
+    value: sameNumber,
+  },
+  'budget.hardFloorDiskGb': {
+    key: 'disk.hardFloorGb',
+    replacement: 'disk.hardFloorGb',
+    env: 'STIM_BUDGET_HARD_FLOOR_DISK_GB',
+    refuses: true,
+    value: sameNumber,
+  },
+  'maintenance.criticalFreeDiskGb': {
+    key: 'disk.criticalFreeGb',
+    replacement: 'disk.criticalFreeGb',
+    env: 'STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB',
+    refuses: true,
+    value: sameNumber,
+  },
+  'maintenance.mode': {
+    key: 'daemon.mode',
+    replacement: 'daemon.mode, which also decides whether start, ios, android and gc run the passes themselves',
+    env: 'STIM_MAINTENANCE',
+    refuses: true,
+    value: (old) => (old === 'on' || old === 'report' || old === 'off' ? old : null),
+  },
+  'daemon.enabled': {
+    key: 'daemon.mode',
+    replacement: 'daemon.mode',
+    value: (old) => (old === true || old === 'true' ? 'on' : old === false || old === 'false' ? 'off' : null),
+  },
+  'budget.maxCommittedMemoryGb': fixed('STIM_BUDGET_MAX_COMMITTED_MEMORY_GB'),
+  'budget.maxLiveWorkspaces': fixed('STIM_BUDGET_MAX_LIVE_WORKSPACES'),
+  'maintenance.pressureCheckMinutes': fixed('STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES'),
+  'maintenance.sizeCheckMinutes': fixed('STIM_MAINTENANCE_SIZE_CHECK_MINUTES'),
+  'maintenance.maxLoadPerCore': fixed('STIM_MAINTENANCE_MAX_LOAD_PER_CORE'),
+  'maintenance.memoryPressureLevel': fixed('STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL'),
+  'maintenance.memoryWarningMinutes': fixed('STIM_MAINTENANCE_MEMORY_WARNING_MINUTES'),
+  'maintenance.minAvailableMemoryGb': fixed('STIM_MAINTENANCE_MIN_AVAILABLE_MEMORY_GB'),
+  'maintenance.capTargetPercent': fixed('STIM_MAINTENANCE_CAP_TARGET_PERCENT'),
+  'maintenance.idleCheckMinutes': fixed('STIM_MAINTENANCE_IDLE_CHECK_MINUTES'),
+  'maintenance.urgentFreeDiskGb': fixed('STIM_MAINTENANCE_URGENT_FREE_DISK_GB'),
+  'maintenance.pressureProtectMinutes': fixed('STIM_MAINTENANCE_PRESSURE_PROTECT_MINUTES'),
 };
 
-export function replacementAdvice(key: string, old: unknown): { key: string; command: string | null } | null {
-  const replaced = REPLACED_SETTINGS[key];
+/**
+ * What to do instead of a removed setting: the setting that replaced it, when one did, and the command that sets it
+ * to the old value's equivalent, with `--scope` when the replacement lives in several layers and `scope` is one of
+ * them. Null for a key that was never removed.
+ */
+export function replacementAdvice(
+  key: string,
+  old: unknown,
+  scope?: SettingScope,
+): { key: string | null; replacement: string; command: string | null } | null {
+  const replaced = Object.hasOwn(REPLACED_SETTINGS, key) ? REPLACED_SETTINGS[key] : undefined;
   if (!replaced) return null;
-  const value = replaced.value(old);
-  return { key: replaced.key, command: value ? `stim settings set ${replaced.key} ${value}` : null };
+  const value = replaced.key && replaced.value ? replaced.value(old) : null;
+  const target = replaced.key ? SETTINGS.find((setting) => setting.key === replaced.key) : undefined;
+  const scoped =
+    scope && target && target.scopes.length > 1 && target.scopes.includes(scope) ? ` --scope ${scope}` : '';
+  return {
+    key: replaced.key ?? null,
+    replacement: replaced.replacement,
+    command: replaced.key && value ? `stim settings set ${replaced.key} ${value}${scoped}` : null,
+  };
+}
+
+/** How Stim words a removed setting `name` (a key or its environment variable): `X was replaced by Y` or `X is no longer read by Stim: ...`. */
+export function removedSettingWords(name: string, removed: RemovedSetting): string {
+  return removed.key
+    ? `${name} was replaced by ${removed.replacement}`
+    : `${name} is no longer read by Stim: ${removed.replacement}`;
+}
+
+/** The removed settings whose old environment variable `env` sets, with what replaced each. */
+export function removedEnvironment(env: NodeJS.ProcessEnv): { key: string; env: string; replaced: RemovedSetting }[] {
+  return Object.entries(REPLACED_SETTINGS).flatMap(([key, replaced]) =>
+    replaced.env && env[replaced.env]?.trim() ? [{ key, env: replaced.env, replaced }] : [],
+  );
 }
 
 export const SHARE_DEFAULT_PORT = 7790;
@@ -112,6 +230,43 @@ const PROJECT: readonly SettingScope[] = ['workspace', 'repo', 'committed'];
 const EVERY: readonly SettingScope[] = ['machine', 'workspace', 'repo', 'committed'];
 const MACHINE: readonly SettingScope[] = ['machine'];
 const RECORDING: readonly SettingScope[] = ['machine', 'workspace', 'repo'];
+
+/** An old setting value that turned a mechanism off, and what turns it off now. */
+export interface LeftoverOffRule {
+  /** The setting that turns it off now. */
+  key: string;
+  /** The layers the old setting was read from. */
+  scopes: readonly SettingScope[];
+  /** The new setting's value for an old value that turned it off; null for any other old value. */
+  off: (old: unknown) => string | null;
+  /**
+   * Set when the old setting is still read for something else, which this says. Its value then never refuses; doctor
+   * reports it until `key` is set anywhere.
+   */
+  kept?: string;
+}
+
+const offAtZero = (old: unknown): string | null => (sameNumber(old) === '0' ? '0' : null);
+
+/**
+ * The old values that turned a mechanism off. While a loaded config layer still holds one of a removed setting, start,
+ * ios, android, web, macos, revive and gc refuse, so the old off never silently becomes a default that acts.
+ */
+export const LEFTOVER_OFF: Readonly<Record<string, LeftoverOffRule>> = {
+  'maintenance.mode': {
+    key: 'daemon.mode',
+    scopes: MACHINE,
+    off: (old) => (old === 'off' || old === 'report' ? old : null),
+  },
+  'metro.idleStopMinutes': { key: 'idle.minutes', scopes: PROJECT, off: offAtZero },
+  'devices.idleShutdownMinutes': { key: 'idle.minutes', scopes: EVERY, off: offAtZero },
+  'maintenance.idleStopHours': {
+    key: 'idle.dormantDays',
+    scopes: EVERY,
+    off: offAtZero,
+    kept: 'now applies to hosted device sessions only',
+  },
+};
 
 const STRING = { kind: 'string' } as const;
 const PATH = { kind: 'path' } as const;
@@ -394,7 +549,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: 15,
     description:
-      'Minutes without activity before a workspace goes idle: its dev server stops with its port kept, its owned simulators and emulators shut down, and its regenerable build outputs are deleted; stim revive resumes it. Unset, the smaller of metro.idleStopMinutes and devices.idleShutdownMinutes; 0 never',
+      'Minutes without activity before a workspace goes idle: its dev server stops with its port kept, its owned simulators and emulators shut down, and its regenerable build outputs are deleted; stim revive resumes it. 0 turns the idle and dormant stages off',
   },
   {
     key: 'idle.dormantDays',
@@ -403,28 +558,6 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 3,
     description:
       'Days without activity before a workspace goes dormant: its owned simulators and emulators are deleted (the parked pool is untouched) and its logs are archived, while node_modules and Pods stay; any Stim command run in it leaves the stage. Fractions of a day are allowed; 0 never',
-  },
-  {
-    key: 'metro.idleStopMinutes',
-    type: { kind: 'number', integer: true, minimum: 0 },
-    scopes: PROJECT,
-    default: 15,
-    description: 'Read as idle.minutes while idle.minutes is unset, when it is the smaller of the two; 0 never',
-  },
-  {
-    key: 'devices.idleShutdownMinutes',
-    type: { kind: 'number', integer: true, minimum: 0 },
-    scopes: EVERY,
-    default: 15,
-    description: 'Read as idle.minutes while idle.minutes is unset, when it is the smaller of the two; 0 never',
-  },
-  {
-    key: 'devices.reclaimIdleMinutes',
-    type: { kind: 'number', integer: true, minimum: 0 },
-    scopes: EVERY,
-    default: 10,
-    description:
-      'Not read: while a run waits for a device slot, the stim-daemon shuts down the longest-idle device of another workspace idle 2 minutes or more',
   },
   {
     key: 'macos.product',
@@ -666,20 +799,20 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Local and hosted macOS apps in separate pools, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
   },
   {
-    key: 'budget.minFreeDiskGb',
+    key: 'disk.minFreeGb',
     type: GIGABYTES,
     scopes: MACHINE,
     default: 20,
-    env: 'STIM_BUDGET_MIN_FREE_DISK_GB',
+    env: 'STIM_DISK_MIN_FREE_GB',
     description:
       'Free disk, in GB, on a volume Stim writes to below which the pressure level is high and the stim-daemon reclaims; 0 turns the high disk level off',
   },
   {
-    key: 'budget.hardFloorDiskGb',
+    key: 'disk.hardFloorGb',
     type: GIGABYTES,
     scopes: MACHINE,
     default: 5,
-    env: 'STIM_BUDGET_HARD_FLOOR_DISK_GB',
+    env: 'STIM_DISK_HARD_FLOOR_GB',
     description:
       "Free disk, in GB, below which start, ios and android refuse with STIM_LOW_DISK after the stim-daemon's pressure ladder ran; 0 never refuses",
   },
@@ -691,57 +824,6 @@ export const SETTINGS: readonly SettingDefinition[] = [
     env: 'STIM_DISK_CRITICAL_FREE_GB',
     description:
       'Free disk, in GB, on a volume Stim writes to below which the pressure level is critical: the stim-daemon empties the Metro and compilation caches and deletes the devices of idle workspaces and their node_modules and Pods; 0 turns the critical disk level off',
-  },
-  {
-    key: 'budget.maxCommittedMemoryGb',
-    type: GIGABYTES,
-    scopes: MACHINE,
-    env: 'STIM_BUDGET_MAX_COMMITTED_MEMORY_GB',
-    scopedHomeValue: 0,
-    description: "Not read: the stim-daemon's pressure ladder replaced the per-command budget",
-  },
-  {
-    key: 'budget.maxLiveWorkspaces',
-    type: CAPACITY,
-    scopes: MACHINE,
-    env: 'STIM_BUDGET_MAX_LIVE_WORKSPACES',
-    scopedHomeValue: 0,
-    description: "Not read: the stim-daemon's pressure ladder replaced the per-command budget",
-  },
-  {
-    key: 'maintenance.mode',
-    type: { kind: 'choice', choices: ['off', 'report', 'on'] },
-    scopes: MACHINE,
-    default: 'on',
-    env: 'STIM_MAINTENANCE',
-    scopedHomeValue: 'off',
-    ciValue: 'off',
-    description:
-      'Automatic resource maintenance. on removes what gc would remove under the caps and floors below and logs every action; report measures, plans and logs what it would do and never deletes anything; off disables it. Off under STIM_HOME or CI unless STIM_MAINTENANCE is set',
-  },
-  {
-    key: 'maintenance.pressureCheckMinutes',
-    type: { kind: 'number', integer: true, minimum: 1 },
-    scopes: MACHINE,
-    default: 1,
-    env: 'STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES',
-    description: 'Not read: the stim-daemon measures disk and memory every tick',
-  },
-  {
-    key: 'maintenance.sizeCheckMinutes',
-    type: { kind: 'number', integer: true, minimum: 1 },
-    scopes: MACHINE,
-    default: 60,
-    env: 'STIM_MAINTENANCE_SIZE_CHECK_MINUTES',
-    description: 'Directory size check interval in minutes',
-  },
-  {
-    key: 'maintenance.maxLoadPerCore',
-    type: { kind: 'number', exclusiveMinimum: 0 },
-    scopes: MACHINE,
-    default: 4,
-    env: 'STIM_MAINTENANCE_MAX_LOAD_PER_CORE',
-    description: 'Defer size scans above this one-minute load per CPU',
   },
   {
     key: 'maintenance.logMaxMb',
@@ -768,38 +850,6 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Write debug check records and routine skips',
   },
   {
-    key: 'maintenance.memoryPressureLevel',
-    type: { kind: 'choice', choices: ['warning', 'critical', 'off'] },
-    scopes: MACHINE,
-    default: 'warning',
-    env: 'STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL',
-    description:
-      "off: automatic maintenance names no memory culprits and stim gc --cache gradle-daemons never stops a daemon for memory; otherwise the stim-daemon's memory level (warning for 10 minutes, or critical) decides",
-  },
-  {
-    key: 'maintenance.memoryWarningMinutes',
-    type: { kind: 'number', integer: true, minimum: 0 },
-    scopes: MACHINE,
-    default: 10,
-    env: 'STIM_MAINTENANCE_MEMORY_WARNING_MINUTES',
-    description: "Not read: the stim-daemon's pressure level counts macOS memory pressure warning for 10 minutes",
-  },
-  {
-    key: 'maintenance.minAvailableMemoryGb',
-    type: { kind: 'number', minimum: 0 },
-    scopes: MACHINE,
-    env: 'STIM_MAINTENANCE_MIN_AVAILABLE_MEMORY_GB',
-    description: "Not read: the stim-daemon's pressure level is high while available memory is under 10% of RAM",
-  },
-  {
-    key: 'maintenance.capTargetPercent',
-    type: { kind: 'number', integer: true, minimum: 10, maximum: 100 },
-    scopes: MACHINE,
-    default: 80,
-    env: 'STIM_MAINTENANCE_CAP_TARGET_PERCENT',
-    description: 'Plan toward this percentage of each size cap',
-  },
-  {
     key: 'maintenance.worktreeCheckMinutes',
     type: { kind: 'number', integer: true, minimum: 1 },
     scopes: MACHINE,
@@ -808,22 +858,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Finished-worktree check interval in minutes',
   },
   {
-    key: 'maintenance.idleCheckMinutes',
-    type: { kind: 'number', integer: true, minimum: 1 },
-    scopes: MACHINE,
-    default: 5,
-    env: 'STIM_MAINTENANCE_IDLE_CHECK_MINUTES',
-    description:
-      'Interval in minutes of the automatic maintenance check that stops a workspace with a device hosted on a remote Mac once it is idle for maintenance.idleStopHours; the stim-daemon decides idle for other workspaces every minute (idle.minutes)',
-  },
-  {
     key: 'maintenance.idleStopHours',
     type: { kind: 'number', minimum: 0 },
     scopes: EVERY,
     default: 6,
     env: 'STIM_MAINTENANCE_IDLE_STOP_HOURS',
     description:
-      "Hours with no native run, Metro bundle or HMR request, agent-device command, Stim command, input forwarded to a device or use of its frontmost device window before gc --delete stops a workspace's dev server and shuts down its owned or hosted simulators and emulators, as stim stop does, automatic maintenance does the same for a workspace with a hosted device, and stim-server stops a hosted session whose client has been gone that long; device and app log lines do not count; 0 never",
+      'Hours before automatic maintenance stops a workspace with a device hosted on a remote Mac once it has no activity, as stim stop does, and before stim-server stops a hosted session whose client has been gone that long; the stim-daemon times every other workspace with idle.minutes and idle.dormantDays; 0 never',
   },
   {
     key: 'maintenance.sweepHours',
@@ -843,45 +884,12 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Days unused before the age sweep removes it: workspace build outputs, shared cache entries, parked simulators and emulators, and, with maintenance.removeIdleWorktrees, clean pushed linked worktrees; 0 turns those age removals off',
   },
   {
-    key: 'maintenance.deviceIdleDays',
-    type: { kind: 'number', integer: true, minimum: 0 },
-    scopes: MACHINE,
-    default: 3,
-    env: 'STIM_MAINTENANCE_DEVICE_IDLE_DAYS',
-    description: 'Not read: idle.dormantDays deletes the owned devices of a workspace without activity',
-  },
-  {
     key: 'maintenance.protectRecentHours',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,
     default: 2,
     env: 'STIM_MAINTENANCE_PROTECT_RECENT_HOURS',
     description: 'Cache entries used within this many hours are never evicted',
-  },
-  {
-    key: 'maintenance.urgentFreeDiskGb',
-    type: GIGABYTES,
-    scopes: MACHINE,
-    default: 12,
-    env: 'STIM_MAINTENANCE_URGENT_FREE_DISK_GB',
-    description: "Not read: budget.minFreeDiskGb and disk.criticalFreeGb set the stim-daemon's pressure levels",
-  },
-  {
-    key: 'maintenance.criticalFreeDiskGb',
-    type: GIGABYTES,
-    scopes: MACHINE,
-    default: 6,
-    env: 'STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB',
-    description: "Not read: disk.criticalFreeGb sets the stim-daemon's critical pressure level",
-  },
-  {
-    key: 'maintenance.pressureProtectMinutes',
-    type: { kind: 'number', integer: true, minimum: 0 },
-    scopes: MACHINE,
-    default: 10,
-    env: 'STIM_MAINTENANCE_PRESSURE_PROTECT_MINUTES',
-    description:
-      "Not read: the stim-daemon's pressure ladder never touches a workspace with a blocker and takes the longest-idle first",
   },
   {
     key: 'maintenance.gradleVersionIdleDays',
@@ -916,7 +924,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: PROJECT,
     default: false,
     description:
-      'Pin this workspace: automatic maintenance never clears its build outputs, deletes its owned devices or removes its worktree',
+      'Pin this workspace: the stim-daemon never moves it to the idle or dormant stage, and automatic maintenance and the pressure ladder never clear its build outputs, delete its owned devices or remove its worktree',
   },
   {
     key: 'maintenance.workspaceOutputsMaxGb',
@@ -994,7 +1002,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     env: 'STIM_DAEMON',
     ciValue: 'off',
     description:
-      'The per-home stim-daemon that start, ios, android, web, macos and revive start and that exits once nothing runs in the home and every workspace is dormant or removed. on: it decides idle, stopping idle workspaces and deleting their regenerable build outputs, and runs automatic maintenance. report: it logs what it would do and acts on nothing. off: no daemon; each dev server supervisor times its own idle stop, and doctor, start, ios and android run automatic maintenance in their own process. The daemon keeps the mode it started with, STIM_DAEMON included, unless the machine setting later turns stricter, and the CI and non-sensitive setting environment overrides of the command that started it for its whole life. Off in CI unless STIM_DAEMON is set. Windows has no daemon and works as off',
+      'The per-home stim-daemon and the passes it runs: the idle and dormant stages, the pressure ladder and automatic maintenance. on: start, ios, android, web, macos and revive start the daemon, which exits once nothing runs in the home and every workspace is dormant or removed, and the passes act. report: the passes log what they would do and act on nothing. off: no daemon, and no pass runs; each dev server supervisor times its own idle stop. Without a running daemon, as on Windows, which has none, start, ios, android, doctor and gc run the passes in their own process in this mode. The daemon keeps the mode it started with, STIM_DAEMON included, unless the machine setting later turns stricter, and the CI and non-sensitive setting environment overrides of the command that started it for its whole life. Off in CI unless STIM_DAEMON is set',
   },
   {
     key: 'debug.logs',

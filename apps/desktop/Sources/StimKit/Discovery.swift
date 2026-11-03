@@ -123,8 +123,9 @@ public enum Discovery {
     return banner(.slotWait, title: "A build waited for a build slot", mac: firstMac(candidates))
   }
 
-  public static func lowWithCaches(plan: PressurePlan?, cacheBytes: Int64?) -> DiscoveryPrompt? {
-    guard plan != nil, let cacheBytes, cacheBytes > 20 * 1_073_741_824 else { return nil }
+  public static func lowWithCaches(pressure: DaemonStatus.Pressure?, cacheBytes: Int64?) -> DiscoveryPrompt? {
+    guard let disk = pressure?.disk, disk == "high" || disk == "critical", let cacheBytes, cacheBytes > 20 * 1_073_741_824
+    else { return nil }
     let gb = Int((Double(cacheBytes) / 1_073_741_824).rounded())
     return DiscoveryPrompt(
       type: .lowWithCaches, title: "Disk is low. Native caches use \(gb) GB.", actionTitle: "Review Caches",

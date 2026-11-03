@@ -232,8 +232,7 @@ the workflow, stop the workspace and the specific unit you created:
   systemctl --user stop stim-metro-my-worktree.service
 
   IDLE STOP: once the workspace has had no activity for idle.minutes
-  (default 15; 0 never stops; unset, the smaller of metro.idleStopMinutes and
-  devices.idleShutdownMinutes), the stim-daemon moves it into the idle stage
+  (default 15; 0 never stops), the stim-daemon moves it into the idle stage
   in one pass under its native-run and metro-start locks, after deciding
   again: it stops the dev server, keeping its port reservation and launch
   records; shuts the owned simulators and emulators down, ending their log

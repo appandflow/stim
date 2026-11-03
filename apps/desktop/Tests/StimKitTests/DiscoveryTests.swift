@@ -79,14 +79,16 @@ struct DiscoveryTests {
     #expect(prompt(-1) == nil)
   }
 
-  @Test func cacheSuggestionRequiresPressureAndMoreThanTwentyGiB() {
-    let plan = PressurePlan.make(freeBytes: 0, minimumFreeGb: 1, hardFloorGb: 0, report: nil)
+  @Test func cacheSuggestionRequiresDiskPressureAndMoreThanTwentyGiB() {
+    let disk = DaemonStatus.Pressure(level: "high", disk: "high", memory: "normal")
+    let memory = DaemonStatus.Pressure(level: "high", disk: "normal", memory: "high")
     let boundary: Int64 = 20 * 1_073_741_824
-    #expect(Discovery.lowWithCaches(plan: plan, cacheBytes: boundary) == nil)
-    #expect(Discovery.lowWithCaches(plan: nil, cacheBytes: boundary + 1) == nil)
-    #expect(Discovery.lowWithCaches(plan: plan, cacheBytes: nil) == nil)
-    #expect(Discovery.lowWithCaches(plan: plan, cacheBytes: boundary + 1)?.action == .reviewCaches)
-    let prompt = Discovery.lowWithCaches(plan: plan, cacheBytes: 48 * 1_073_741_824)
+    #expect(Discovery.lowWithCaches(pressure: disk, cacheBytes: boundary) == nil)
+    #expect(Discovery.lowWithCaches(pressure: nil, cacheBytes: boundary + 1) == nil)
+    #expect(Discovery.lowWithCaches(pressure: memory, cacheBytes: boundary + 1) == nil)
+    #expect(Discovery.lowWithCaches(pressure: disk, cacheBytes: nil) == nil)
+    #expect(Discovery.lowWithCaches(pressure: disk, cacheBytes: boundary + 1)?.action == .reviewCaches)
+    let prompt = Discovery.lowWithCaches(pressure: disk, cacheBytes: 48 * 1_073_741_824)
     #expect(prompt?.title == "Disk is low. Native caches use 48 GB.")
     #expect(prompt?.actionTitle == "Review Caches")
   }

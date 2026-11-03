@@ -186,7 +186,7 @@ const BACKGROUND_TRIGGERS = new Set(['daemon']);
 /**
  * One automatic maintenance pass in this process, when a check is due. Its idle check stops only workspaces with a
  * hosted device, after `maintenance.idleStopHours`; the activity pass decides idle for every other one. `report`
- * plans and logs without acting, whatever `maintenance.mode` says.
+ * plans and logs without acting, whatever `daemon.mode` says.
  */
 export async function runMaintenance(trigger: string, { report = false }: { report?: boolean } = {}): Promise<void> {
   const startedAt = Date.now();
@@ -257,10 +257,10 @@ export async function runMaintenance(trigger: string, { report = false }: { repo
     let measuredSizes = false;
     const ran = new Set<MaintenanceCheck>();
     for (const check of checks) {
-      if (check !== 'pressure' && sizeScanDeferred(settings)) {
-        record('maintenance_skip', 'debug', `${check} check deferred: host load exceeds maintenance.maxLoadPerCore`, {
+      if (check !== 'pressure' && sizeScanDeferred()) {
+        record('maintenance_skip', 'debug', `${check} check deferred: host load exceeds 4 per core`, {
           target: check,
-          reason: 'host load exceeds maintenance.maxLoadPerCore',
+          reason: 'host load exceeds 4 per core',
         });
         state.deferredAt = { ...state.deferredAt, [check]: Date.now() };
         keepState();
@@ -274,8 +274,7 @@ export async function runMaintenance(trigger: string, { report = false }: { repo
         if (check === 'worktree' || check === 'sweep' || check === 'idle') continue;
         if (check === 'pressure') {
           state.pressure = measurePressure(state.pressure, state.lastAt[check]!);
-          const culprits =
-            settings.memoryPressureLevel === 'off' ? null : memoryCulpritsUnder(state.pressure.memory.level);
+          const culprits = memoryCulpritsUnder(state.pressure.memory.level);
           if (culprits) state.pressure.memory.culprits = culprits;
           for (const disk of state.pressure.disk)
             record('maintenance_check', 'debug', `Disk free on ${disk.volume}: ${(disk.freeMb / 1024).toFixed(1)}G`, {

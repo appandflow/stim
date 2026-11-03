@@ -827,7 +827,7 @@ function recordAbsence(id: string, absentMs: number) {
 
 describe('a hosted session whose client is gone', () => {
   beforeEach(() => {
-    hostEnv.STIM_MAINTENANCE = 'on';
+    hostEnv.STIM_DAEMON = 'on';
     hostEnv.STIM_MAINTENANCE_IDLE_STOP_HOURS = '1';
   });
 
@@ -873,8 +873,8 @@ describe('a hosted session whose client is gone', () => {
   });
 
   test.each([
-    ['maintenance.mode is off', { STIM_MAINTENANCE: 'off' }],
-    ['maintenance.mode is report', { STIM_MAINTENANCE: 'report' }],
+    ['daemon.mode is off', { STIM_DAEMON: 'off' }],
+    ['daemon.mode is report', { STIM_DAEMON: 'report' }],
     ['maintenance.idleStopHours is invalid', { STIM_MAINTENANCE_IDLE_STOP_HOURS: '-1' }],
   ])('stops nothing when %s', async (_, env) => {
     Object.assign(hostEnv, env);

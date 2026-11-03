@@ -586,13 +586,13 @@ test('an in-process stop refusal keeps the log path, and a throwing onProgress r
 
 test('a settings refusal rejects with its code and remedy, and an aborted read does not start', async () => {
   const { root, home } = fixture('settings-refusal');
-  vi.stubEnv('STIM_BUDGET_MIN_FREE_DISK_GB', 'lots');
+  vi.stubEnv('STIM_DISK_MIN_FREE_GB', 'lots');
   const stim = createStim({ projectRoot: root, home });
   await expect(stim.settings()).rejects.toMatchObject({
     name: 'StimError',
     code: 'STIM_BAD_ARG',
-    message: 'Invalid STIM_BUDGET_MIN_FREE_DISK_GB value "lots". Expected a number, 0 or more.',
-    remedy: expect.stringContaining('stim settings set budget.minFreeDiskGb'),
+    message: 'Invalid STIM_DISK_MIN_FREE_GB value "lots". Expected a number, 0 or more.',
+    remedy: expect.stringContaining('stim settings set disk.minFreeGb'),
   });
   const controller = new AbortController();
   controller.abort();
@@ -620,14 +620,11 @@ test('a settings read uses only the client environment for its default home and 
     home: join(userHome, '.stim'),
     env: { PATH: process.env.PATH, ...windowsRuntime },
   }).settings();
-  for (const [key, normal, isolated] of [
-    ['archive.enabled', true, false],
-    ['maintenance.mode', 'on', 'off'],
-  ] as const) {
+  for (const [key, normal, isolated] of [['archive.enabled', true, false]] as const) {
     expect(payload.settings.find((entry) => entry.key === key)).toMatchObject({ value: normal, origin: 'default' });
     expect(scoped.settings.find((entry) => entry.key === key)).toMatchObject({ value: isolated, origin: 'env' });
   }
-  expect(scoped.settings.find((entry) => entry.key === 'budget.minFreeDiskGb')).toMatchObject({
+  expect(scoped.settings.find((entry) => entry.key === 'disk.minFreeGb')).toMatchObject({
     value: 20,
     origin: 'default',
   });

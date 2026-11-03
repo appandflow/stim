@@ -56,7 +56,7 @@ test.each([
     projectRoot: dir,
     cwd: dir,
     home: join(dir, 'home'),
-    env: { ...process.env, STIM_HOME: join(dir, 'home'), HOME: dir, USERPROFILE: dir, STIM_MAINTENANCE: 'report' },
+    env: { ...process.env, STIM_HOME: join(dir, 'home'), HOME: dir, USERPROFILE: dir, STIM_DAEMON: 'report' },
     signal: controller.signal,
   });
   if (kind.startsWith('maintenance')) {
@@ -66,7 +66,7 @@ test.each([
         version: 2,
         repos: {},
         projects: { [dir]: { platforms: { ios: { owned: true, deviceUdid: 'fixture-sim' } } } },
-        maintenance: { mode: 'report' },
+        daemon: { mode: 'report' },
       }),
     );
   }

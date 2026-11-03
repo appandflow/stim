@@ -535,7 +535,7 @@ test.skipIf(process.platform === 'win32')(
     mkdirSync(join(distribution, 'bin'), { recursive: true });
     mkdirSync(gradleHome);
     writeFileSync(launcher, 'fixture launcher');
-    const context = testContext({ home, env: { ...process.env, STIM_HOME: undefined, STIM_MAINTENANCE: 'off' } });
+    const context = testContext({ home, env: { ...process.env, STIM_HOME: undefined, STIM_DAEMON: 'off' } });
     let pressured = false;
     let warning = false;
     let pressureReads = 0;
@@ -545,14 +545,13 @@ test.skipIf(process.platform === 'win32')(
     let replacedSecond = false;
     let present = true;
     let stops = 0;
-    const configure = (level = 'warning') =>
+    const configure = () =>
       withAmbientContext(context, () =>
         saveConfig({
           projects: {},
           repos: {},
           iosSimulatorApp: 'stim-desktop',
           androidEmulatorApp: 'stim-desktop',
-          maintenance: { memoryPressureLevel: level },
         }),
       );
     vi.spyOn(hostMemory, 'readHostMemoryPressureAsync').mockImplementation(async () => {
@@ -635,17 +634,6 @@ test.skipIf(process.platform === 'win32')(
     configure();
     writeSnapshot({ memory: 'critical', memoryWarningSince: null });
     expect((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable).toBe(true);
-    pressureReads = 0;
-    duringPressure = () => {
-      if (pressureReads === 2) configure('off');
-    };
-    const optedOut = await client.collectGarbage({ cache: 'gradle-daemons', delete: true });
-    expect(optedOut.report.results).toContainEqual(
-      expect.objectContaining({ status: 'kept', detail: expect.stringContaining('off') }),
-    );
-    expect(stops).toBe(0);
-
-    configure();
     pressureReads = 0;
     const lock = withAmbientContext(context, () => buildLockPath('ios', 'owned'));
     const birth = captureProcessIdentity(process.pid);
