@@ -9,6 +9,7 @@ import type { Methods, WebShareRow } from '@stim-cli/core/protocol';
 import { isJsonObject, serverLocalSocket } from '@stim-cli/core/state';
 import { canonicalPath } from './commands/gc/paths.ts';
 import { getExecutor } from './exec.ts';
+import { pidExists } from './metro.ts';
 
 export type ShareMethod = 'share.start' | 'share.stop' | 'share.list';
 
@@ -28,6 +29,8 @@ export class LocalServerUnavailable extends Error {}
 const TIMEOUT_MS = 120_000;
 const SHARE_LIST_TIMEOUT_MS = 5000;
 const START_WAIT_MS = 60_000;
+/** How long `stop` waits for the stim-server it stopped to exit, so a share started next never meets a stopping one. */
+const SERVER_EXIT_WAIT_MS = 15_000;
 const START_POLL_MS = 250;
 
 /**
@@ -246,7 +249,8 @@ export async function startShareServer(
 
 /**
  * Stops the stim-server `stim share` started for this Stim home, when it holds no share. A server started any other
- * way (Stim Desktop, the LaunchAgent, by hand) holds no such claim and is never stopped. Returns the stopped pid.
+ * way (Stim Desktop, the LaunchAgent, by hand) holds no such claim and is never stopped. Returns the stopped pid once the
+ * server has exited (waiting up to 15 seconds), so a share started next never meets a server that is stopping.
  */
 export async function stopIdleShareServer(version: string): Promise<number | null> {
   const holder = readClaimSet(shareServerPaths().claim).live[0];
@@ -258,5 +262,9 @@ export async function stopIdleShareServer(version: string): Promise<number | nul
     return null;
   }
   process.kill(holder.owner.pid, 'SIGTERM');
+  const deadline = Date.now() + SERVER_EXIT_WAIT_MS;
+  while (pidExists(holder.owner.pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   return holder.owner.pid;
 }

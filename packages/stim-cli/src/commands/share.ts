@@ -278,7 +278,8 @@ async function reuseShare(
     ok: true,
     output: { ...shared, ...passwords, reused: true },
     text: [
-      `Shared ${describeRow(shared)} again, with its saved link and password.`,
+      `Shared ${describeRow(shared)}.`,
+      'Started again with its saved link and password.',
       `URL:${shared.viewAuth ? '              ' : '      '}${shared.url}`,
       ...secretLines(shared, passwords, true),
       `Expires ${started.expiresAt}${minutes === null ? ' (the saved expiry)' : ''}.`,
@@ -345,7 +346,7 @@ export async function runShare(
       },
       text: [
         stopped.length
-          ? `Stopped ${plural(stopped.length)}; their links stop working${reusable.length && !opts.forget ? ' until you reuse them' : ''}.`
+          ? `Stopped ${plural(stopped.length)}; ${stopped.length === 1 ? 'its link stops' : 'their links stop'} working${reusable.length && !opts.forget ? ' until reused' : ''}.`
           : 'This workspace has no live web share.',
         ...(opts.forget
           ? [
