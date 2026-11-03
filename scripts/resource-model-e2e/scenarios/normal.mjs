@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { outcome, STATUS, judgeIdleTiming } from '../assertions.mjs';
 import {
   POLL_MS,
+  QUIET_TICK_MS,
   TICK_MS,
   assertIdleDown,
   launch,
@@ -36,7 +37,7 @@ async function dormantPhase(ctx, live, reviveEndMs) {
   ctx.emit('dormant', `waiting ${dormant.minutes} min for the dormant stage`);
   const owned = new Map(live.map((workspace) => [workspace.label, [...(ctx.record(workspace).udids ?? [])]]));
   const seen = new Map();
-  const end = reviveEndMs + windowMs + TICK_MS + 5 * 60_000;
+  const end = reviveEndMs + windowMs + QUIET_TICK_MS + 5 * 60_000;
   const previousPollStartMs = new Map(live.map((workspace) => [workspace.label, null]));
   while (Date.now() < end && seen.size < live.length && !ctx.signal.aborted) {
     const began = Date.now();
@@ -58,7 +59,7 @@ async function dormantPhase(ctx, live, reviveEndMs) {
   A.fromItems(
     SCENARIO,
     'dormant-devices-deleted',
-    `the dormant stage deletes the owned devices within ${dormant.minutes} min plus one tick`,
+    `the dormant stage deletes the owned devices within ${dormant.minutes} min plus one 5-minute quiet tick`,
     live.map((workspace) => {
       const hit = seen.get(workspace.label);
       if (!hit)
@@ -73,6 +74,7 @@ async function dormantPhase(ctx, live, reviveEndMs) {
         readAtMs: ctx.record(workspace).revivedAt ?? reviveEndMs,
         windowMs,
         tickMs: TICK_MS,
+        lateTickMs: QUIET_TICK_MS,
         previousPollStartMs: previousPollStartMs.get(workspace.label),
         idlePollStartMs: hit.startedAt,
         idlePollEndMs: hit.endedAt,
