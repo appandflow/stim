@@ -47,10 +47,10 @@ import {
   linkedWorktreesOnDisk,
   nativeCanonicalPath,
   repoRoot,
-  repoRootAsync,
 } from './workspace/worktree.ts';
 import { inPrivacyProtectedFolder, readWorktreeGit } from './workspace/git-summary.ts';
 import { readWorkspaceState, type WorkspaceState } from './workspace/workspace-state.ts';
+import { verifiedCheckoutRoots } from './checkout-roots.ts';
 import { readStats, statsProjectKey, type RunHistory } from './engine/stats.ts';
 import {
   ACTIVE_BUILD_KEY,
@@ -300,12 +300,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   const macosReads = projects.map(([path]) => probes.hostedMacos(readMacosRecord(path)));
   const cwdRoot = findServerWorkspace(cwd)?.root ?? null;
   const { worktrees, commonDirs, checkouts } = linkedWorktrees([cwd, ...projects.map(([path]) => path)]);
-  const checkoutRead = Promise.all(
-    [...new Set(checkouts.values())].map(async (path) => {
-      const root = await repoRootAsync(path);
-      return root && nativeCanonicalPath(root) === path ? path : null;
-    }),
-  );
+  const checkoutRead = verifiedCheckoutRoots([...new Set(checkouts.values())]);
   checkoutRead.catch(() => {});
   const orphanWorktrees = unprovisionedWorktrees(
     worktrees,
@@ -364,7 +359,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   }));
   await gitRead;
 
-  const verifiedCheckouts = new Set(await checkoutRead);
+  const verifiedCheckouts = await checkoutRead;
   const history = readStats().record?.history;
   const states: EnvironmentState[] = [];
   let mountedVolumes: string[] | undefined;

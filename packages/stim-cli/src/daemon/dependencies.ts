@@ -4,14 +4,14 @@ import { clearClaimChild, markClaimChildPending, releaseClaim } from '@stim-cli/
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { formatBytes } from '../fs-util.ts';
 import {
-  artifactWorktrees,
   artifactWorktreesAsync,
+  artifactWorktreesFor,
   clearArtifact,
   collectArtifactsAsync,
   type ArtifactCandidate,
   type ArtifactWorktree,
 } from '../maintenance/artifacts.ts';
-import { maintenancePinned } from '../maintenance/protect.ts';
+import { maintenancePinnedReader } from '../maintenance/protect.ts';
 import { knownPrivateBytes, measureTree, treeSignature } from '../private-size.ts';
 import { holdOn, takeWalkClaim, writeCacheFile } from '../status-measures.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
@@ -100,7 +100,7 @@ export async function rankDependencies(
   if (!rank.size) return [];
   const found = await collectArtifactsAsync(
     'dependencies',
-    { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinned },
+    { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinnedReader(operation) },
     operation?.signal ?? new AbortController().signal,
     operation,
   );
@@ -127,6 +127,7 @@ export async function clearDependency(
   protectedRoot: string,
   worktrees: readonly ArtifactWorktree[],
   reason: string,
+  operation?: StimContext,
 ): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
   try {
     return await clearArtifact(
@@ -141,10 +142,11 @@ export async function clearDependency(
       {
         windowMs: 0,
         protectedRoot,
-        pinned: maintenancePinned,
+        pinned: maintenancePinnedReader(operation),
         worktrees,
         requireRestorable: true,
-        recheck: async (key) => ((await stillIdle(key, idleMs)) ? null : 'it is no longer idle'),
+        recheck: async (key) => ((await stillIdle(key, idleMs, operation)) ? null : 'it is no longer idle'),
+        operation,
       },
     );
   } catch (error) {
@@ -168,15 +170,16 @@ export async function runDormantDependencies(
   dormantCheckedAt = Date.now();
   const idle = await idleStageCandidates(config, input, afterMs);
   if (!idle.length) return [];
-  const { take } = selectDependencies(await rankDependencies(idle, ''), 'keep');
-  const worktrees = take.length ? artifactWorktrees() : [];
+  const { operation } = input;
+  const { take } = selectDependencies(await rankDependencies(idle, '', operation), 'keep');
+  const worktrees = take.length ? await artifactWorktreesFor(operation) : [];
   const why = `idle.dormantDays is ${afterMs / (24 * HOUR_MS)}`;
   const actions: DaemonLadderAction[] = [];
   for (const dependency of take) {
     const target = dependency.candidate.path;
     const reason = `${why}; ${formatBytes(dependency.privateBytes ?? 0)} of it is its own`;
     const result: { status: DaemonLadderAction['outcome']; bytes: number; detail: string } = input.act
-      ? await clearDependency(dependency, afterMs, '', worktrees, reason)
+      ? await clearDependency(dependency, afterMs, '', worktrees, reason, operation)
       : { status: 'would', bytes: 0, detail: 'daemon.mode report acts on nothing' };
     const restore = result.status === 'done' ? { restore: RESTORE } : {};
     actions.push({

@@ -39,6 +39,13 @@ is not read as its value. The output then lists both passwords, and --json adds
 viewAuth (generated, set or null) and viewPassword, present only when it was
 generated.
 
+TAB TITLES
+
+The viewer tab is titled "<app name> \u00b7 <device model> \u00b7 Stim" (a simulator app's display name from its
+Info.plist, else "Live iOS app"; the model from the simulator name without the Stim label and runtime version), the
+login page "<app name> \u00b7 Stim", and an ended or unknown link "Share ended \u00b7 Stim". They never carry the
+project, workspace or branch name, and the viewer tab follows the app when it changes.
+
 VIEWERS SEE EACH OTHER
 
 Every viewer has a name (the optional name field on the login page, or on first
@@ -278,9 +285,16 @@ SECURITY MODEL
   Android phone only. A device an agent or another client drives answers
   busy instead of being taken over.
 - Clipboard, with --control on an iOS simulator, Android emulator or Android phone: Command-V or Control-V while
-  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field, and the
-  toolbar's Copy device clipboard button copies the device clipboard to the browser. Nothing syncs on its own. A
-  share without --control, a web page and a macOS app never read or set the device clipboard, and the text is never
+  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field. The
+  top bar's options menu has a Sync clipboard switch, on by default for control viewers and remembered in the
+  browser: while the page is focused and visible it polls the device clipboard every two seconds (slower after
+  failures) and writes new text to the browser clipboard, with a Copy from device chip when the browser refuses
+  the write, and where the browser allows reading its clipboard (Chromium, after one permission prompt) it sends
+  the browser's new text to the device when the page regains focus. The menu's Copy from device button copies
+  once. Sending the browser's new text to the device is an input: it starts the control session like a paste, and on an
+  Android phone takes its lease. The polling never starts the control session and never keeps it alive: it reads only while a session runs
+  (after a viewer's first tap, key or paste) and does not count as input for the 5 minute idle end. Text a control
+  viewer sends reaches the device clipboard and then every other control viewer's browser with sync on. A share without --control, a web page and a macOS app never read or set the device clipboard, and the text is never
   logged. The stim-server protocol methods are input.clipboard.set and input.clipboard.get, behind the hello
   feature device-clipboard.
 - Two-finger gestures on an iOS simulator, Android emulator or Android phone: two real

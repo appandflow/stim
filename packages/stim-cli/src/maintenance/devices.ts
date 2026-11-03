@@ -7,9 +7,10 @@ import { listAvds, ownedAvdDirectory } from '../devices/android.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
+import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { workspaceInUse } from '../workspace/in-use.ts';
+import { workspaceInUse, workspaceInUseAsync } from '../workspace/in-use.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
 import {
@@ -25,8 +26,8 @@ import type { MaintenancePlan } from './plan.ts';
 const AVD_SIZE_TIMEOUT_MS = 30_000;
 
 export interface OwnedDeviceReads {
-  sims?: () => IosSimRecord[];
-  avds?: () => string[];
+  sims?: () => IosSimRecord[] | Promise<IosSimRecord[]>;
+  avds?: () => string[] | Promise<string[]>;
   avdDirectory?: (name: string) => string | null;
   size?: (dir: string) => number | null | Promise<number | null>;
 }
@@ -60,17 +61,17 @@ export async function ownedDeviceUsage(
     }
   for (const record of readParked('ios', { config })) owned.push({ kind: 'ios', id: record.udid });
   for (const record of readParked('android', { config })) owned.push({ kind: 'android', id: record.name });
-  const listed = <T>(read: () => T[], label: string): T[] | null => {
+  const listed = async <T>(read: () => T[] | Promise<T[]>, label: string): Promise<T[] | null> => {
     if (!owned.length) return [];
     try {
-      return read();
+      return await read();
     } catch {
       failure(label);
       return null;
     }
   };
-  const iosRecords = owned.some((device) => device.kind === 'ios') ? listed(sims, 'the simulator list') : [];
-  const avdNames = owned.some((device) => device.kind === 'android') ? listed(avds, 'the emulator list') : [];
+  const iosRecords = owned.some((device) => device.kind === 'ios') ? await listed(sims, 'the simulator list') : [];
+  const avdNames = owned.some((device) => device.kind === 'android') ? await listed(avds, 'the emulator list') : [];
   const usage: OwnedDeviceUsage[] = [];
   for (const device of owned) {
     const workspace = device.workspace ? { workspace: device.workspace } : {};
@@ -98,8 +99,9 @@ export async function ownedDeviceUsage(
 export async function measureOwnedDevices(
   now: number,
   failure: (target: string, workspace?: string) => void,
+  reads?: OwnedDeviceReads,
 ): Promise<MaintenanceSize[]> {
-  return (await ownedDeviceUsage(failure)).map(({ kind, name, dir, bytes, workspace }) => {
+  return (await ownedDeviceUsage(failure, reads)).map(({ kind, name, dir, bytes, workspace }) => {
     const size: MaintenanceSize = {
       name: `${workspace ? 'owned' : 'parked'} ${kind === 'ios' ? 'simulator' : 'emulator'} ${name}`,
       category: 'owned-devices',
@@ -138,7 +140,7 @@ function* deviceDeletionChecks({
   now,
   extra,
   env = process.env,
-}: DeviceDeletionOptions): Generator<string, MaintenancePlan, string | null> {
+}: DeviceDeletionOptions): Generator<DeviceDeletionRead, MaintenancePlan, string | null> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
   if (deviceSweepIsScoped(env)) return plan;
   for (const entry of roots) {
@@ -148,7 +150,7 @@ function* deviceDeletionChecks({
       ? 'pinned by maintenance.keep'
       : now - workspaceLastUsed(root) < windowMs
         ? usedWithin(windowMs)
-        : (workspaceInUse(root).map((why) => `in use: ${why}`)[0] ?? (yield root));
+        : ((yield { inUse: root }) ?? (yield { active: root }));
     if (kept) {
       plan.skips.push({ target: root, reason: kept, workspace: root });
       continue;
@@ -167,11 +169,20 @@ function* deviceDeletionChecks({
   return plan;
 }
 
+type DeviceDeletionRead = { inUse: string } | { active: string };
+
+const firstInUse = (reasons: readonly string[]) => (reasons[0] === undefined ? null : `in use: ${reasons[0]}`);
+
 export function planDeviceDeletion(options: DeviceDeletionOptions): MaintenancePlan {
   const activity = cachedDeviceActivity(options.now);
   const checks = deviceDeletionChecks(options);
   let step = checks.next();
-  while (!step.done) step = checks.next(workspaceActiveReason(step.value, options.now, options.windowMs, activity));
+  while (!step.done)
+    step = checks.next(
+      'inUse' in step.value
+        ? firstInUse(workspaceInUse(step.value.inUse))
+        : workspaceActiveReason(step.value.active, options.now, options.windowMs, activity),
+    );
   return step.value;
 }
 
@@ -179,13 +190,22 @@ export async function planDeviceDeletionAsync(
   options: DeviceDeletionOptions,
   signal: AbortSignal,
   operation?: StimContext,
+  activity: (withSims: boolean) => Promise<OwnedDeviceActivity[]> = cachedDeviceActivityAsync(
+    options.now,
+    options.env ?? process.env,
+    signal,
+    operation,
+  ),
 ): Promise<MaintenancePlan> {
-  const activity = cachedDeviceActivityAsync(options.now, options.env ?? process.env, signal, operation);
   const checks = deviceDeletionChecks(options);
   let step = checks.next();
   while (!step.done) {
     signal.throwIfAborted();
-    step = checks.next(await workspaceActiveReasonAsync(step.value, options.now, options.windowMs, activity, signal));
+    step = checks.next(
+      'inUse' in step.value
+        ? firstInUse(await workspaceInUseAsync(step.value.inUse, {}, signal, operation))
+        : await workspaceActiveReasonAsync(step.value.active, options.now, options.windowMs, activity, signal),
+    );
   }
   return step.value;
 }

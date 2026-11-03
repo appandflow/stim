@@ -20,6 +20,7 @@ import {
 import { targetKey } from './recorder.ts';
 import { hostedOf, type HostedTarget, type ShareSource } from './share-hosted.ts';
 import { endedPage, loginPage, SHARE_ASSETS, viewerPage } from './share-page.ts';
+import { simulatorAppName, titleFacts, viewerTitle, type TitleFacts } from './share-title.ts';
 import { accessFor, cleanName, digest, guestName, viewerColor, type ShareAccess } from './share-identity.ts';
 import type { OpenedRoute } from './share-route.ts';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
@@ -117,6 +118,8 @@ export interface ShareDeps {
   };
   /** Frames and input for a device a host Mac runs for this machine; without it such a share is refused. */
   hosted?: (host: HostedTarget, request: ShareRequest) => ShareSource;
+  /** The display name of an app on a simulator, for the page titles; defaults to reading its Info.plist. */
+  appName?: (udid: string, bundleId: string) => Promise<string | null>;
   lookup?: LeaseLookup;
   limits?: Partial<ShareLimits>;
   /** Called when {@link ShareHub.unrecordedTargets} changed. */
@@ -291,6 +294,9 @@ interface Share {
   controlRetryAt: number;
   recordKey: string | null;
   latest: StatusPayload | null;
+  /** What the shared device's status says for the page titles, and the app's display name once read. */
+  facts: TitleFacts;
+  app: string | null;
   timer: NodeJS.Timeout;
   unwatch: () => void;
   ended: boolean;
@@ -486,6 +492,8 @@ export class ShareHub {
       controlRetryAt: 0,
       recordKey: null,
       latest: status,
+      facts: titleFacts(status, request),
+      app: null,
       timer: setTimeout(() => void this.end(share, 'This share expired.'), request.expiresMinutes * 60_000),
       unwatch: () => {},
       ended: false,
@@ -493,9 +501,11 @@ export class ShareHub {
     share.timer.unref?.();
     this.shares.set(share.key, share);
     const attached = device ? deviceKey(device) : null;
+    void this.readApp(share);
     share.unwatch = this.deps.subscribeStatus({
       item: (payload) => {
         share.latest = payload;
+        this.followTitle(share, payload);
         if (host) {
           const now = hostedOf(payload, request);
           if (now?.machine !== host.machine || now.session !== host.session) {
@@ -527,6 +537,40 @@ export class ShareHub {
       code: 'action-failed',
       message: `The slug ${slug} is in use by live share ${holder.id} of ${holder.request.workspace}. Stop that share or choose another slug.`,
     };
+  }
+
+  private titleOf(share: Share): string {
+    return viewerTitle(share.request.platform, share.app, share.facts.model);
+  }
+
+  private broadcastTitle(share: Share): void {
+    const message = JSON.stringify({ type: 'title', title: this.titleOf(share) });
+    for (const viewer of share.viewers) {
+      if (viewer.socket.readyState === viewer.socket.OPEN) viewer.socket.send(message);
+    }
+  }
+
+  /** Reads the display name of the app the status names, once per app, for the titles of a local simulator share. */
+  private async readApp(share: Share): Promise<void> {
+    const { appId } = share.facts;
+    const device = share.device;
+    if (!appId || device?.platform !== 'ios' || device.physical) return;
+    const name = await (this.deps.appName ?? simulatorAppName)(device.udid, appId).catch(() => null);
+    if (share.ended || share.facts.appId !== appId || name === share.app) return;
+    share.app = name;
+    this.broadcastTitle(share);
+  }
+
+  private followTitle(share: Share, payload: StatusPayload): void {
+    const next = titleFacts(payload, share.request);
+    const appChanged = next.appId !== share.facts.appId;
+    const changed = appChanged || next.model !== share.facts.model;
+    share.facts = next;
+    if (appChanged) {
+      share.app = null;
+      void this.readApp(share);
+    }
+    if (changed) this.broadcastTitle(share);
   }
 
   private localSource(device: Device, request: ShareRequest): ShareSource {
@@ -889,6 +933,7 @@ export class ShareHub {
           response,
           200,
           viewerPage({
+            title: this.titleOf(share),
             control: access === 'control',
             viewOnly: control && access === 'view',
             upgrade: control && access === 'view' && share.viewDigest !== null,
@@ -899,7 +944,7 @@ export class ShareHub {
           }),
         );
       }
-      return this.respond(response, 200, loginPage(null));
+      return this.respond(response, 200, loginPage(null, share.app));
     }
     if (rest !== 'login' || request.method !== 'POST' || share.passwordDigest === null) {
       request.resume();
@@ -935,13 +980,13 @@ export class ShareHub {
     if (share.failures.length >= this.limits.maxFailures) {
       return existing
         ? back('?upgrade=limited')
-        : this.respond(response, 429, loginPage('Too many wrong passwords. Try again later.'));
+        : this.respond(response, 429, loginPage('Too many wrong passwords. Try again later.', share.app));
     }
     const form = new URLSearchParams(body);
     const matched = accessFor(form.get('password') ?? '', share.passwordDigest, share.viewDigest);
     if (!matched) {
       share.failures.push(now);
-      return existing ? back('?upgrade=wrong') : this.respond(response, 401, loginPage('Wrong password.'));
+      return existing ? back('?upgrade=wrong') : this.respond(response, 401, loginPage('Wrong password.', share.app));
     }
     const access: ShareAccess = share.request.control ? matched : 'view';
     if (existing) {
@@ -951,11 +996,11 @@ export class ShareHub {
     if (access === 'view') {
       share.viewLogins = share.viewLogins.filter((at) => now - at < this.limits.failureWindowMs);
       if (share.viewLogins.length >= this.limits.maxViewLogins) {
-        return this.respond(response, 429, loginPage('Too many logins. Try again later.'));
+        return this.respond(response, 429, loginPage('Too many logins. Try again later.', share.app));
       }
     }
     if (!makeRoom(share.sessions, access)) {
-      return this.respond(response, 429, loginPage('Too many sessions are signed in. Try again later.'));
+      return this.respond(response, 429, loginPage('Too many sessions are signed in. Try again later.', share.app));
     }
     if (access === 'view') share.viewLogins.push(now);
     const session = token();
@@ -1042,7 +1087,7 @@ export class ShareHub {
       video ? VIDEO_HINT : VIEW_HINT,
     );
     if (video) share.source.keyframe();
-    json({ type: 'hello', expiresAt: new Date(share.expiresAt).toISOString() });
+    json({ type: 'hello', expiresAt: new Date(share.expiresAt).toISOString(), title: this.titleOf(share) });
     let stopPresence: (() => void) | null = null;
     const viewer: Viewer = {
       who: { id: `${share.id}-v${this.nextViewer++}`, kind: 'viewer', name: '', color: 0 },
@@ -1192,7 +1237,8 @@ export class ShareHub {
         viewer.socket.send(JSON.stringify({ type: 'clipboard', id: fields.id, error: VIEWER_TEXT.clipboardRefused }));
       }
     };
-    const session = await this.controlSession(share, viewer);
+    const polling = method === 'input.clipboard.get' && fields.poll === true;
+    const session = polling ? share.controlSession : await this.controlSession(share, viewer);
     if (!session || share.ended || !share.viewers.has(viewer)) return failRead();
     const parsed = parseInput(method, { ...params, session }, (name) => share.source.targetOf(share.owner, name));
     if ('code' in parsed) return failRead();
