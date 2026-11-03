@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { adbInputArgs, parseInput, type SessionTarget } from '../src/control.ts';
+import { MAX_CLIPBOARD_BYTES } from '../src/protocol.ts';
 
 const target = (platform: SessionTarget['platform']): SessionTarget => ({ platform, postures: [] });
 const parse = (platform: SessionTarget['platform'], params: Record<string, unknown>) =>
@@ -81,4 +82,55 @@ it('refuses a second finger where only one pointer exists', () => {
   expect(touch('macos', two)).toHaveProperty('code', 'bad-request');
   expect(touch('ios', two, { postures: ['folded', 'unfolded'] })).toHaveProperty('code', 'bad-request');
   expect(touch('android', two, { postures: ['folded', 'unfolded'] })).toHaveProperty('value');
+});
+
+const clipboardSet = (
+  platform: SessionTarget['platform'],
+  params: Record<string, unknown>,
+  extra?: Partial<SessionTarget>,
+) => parseInput('input.clipboard.set', { session: 's', ...params }, () => ({ ...target(platform), ...extra }));
+const clipboardGet = (
+  platform: SessionTarget['platform'],
+  params: Record<string, unknown> = {},
+  extra?: Partial<SessionTarget>,
+) => parseInput('input.clipboard.get', { session: 's', ...params }, () => ({ ...target(platform), ...extra }));
+
+it.each(['ios', 'android'] as const)('takes Unicode clipboard text with an optional paste flag on %s', (platform) => {
+  expect(clipboardSet(platform, { text: 'h\u00e9llo \u{1f600}\n"x"', paste: true })).toEqual({
+    value: { session: 's', command: { input: 'clipboard', text: 'h\u00e9llo \u{1f600}\n"x"', paste: true } },
+  });
+  expect(clipboardSet(platform, { text: 'abc' })).toEqual({
+    value: { session: 's', command: { input: 'clipboard', text: 'abc', paste: false } },
+  });
+  expect(clipboardGet(platform)).toEqual({ value: { session: 's', command: { input: 'clipboard-get' } } });
+});
+
+it('counts the clipboard limit in UTF-8 bytes, not characters', () => {
+  expect(clipboardSet('ios', { text: 'a'.repeat(MAX_CLIPBOARD_BYTES) })).toHaveProperty('value');
+  expect(clipboardSet('ios', { text: 'a'.repeat(MAX_CLIPBOARD_BYTES + 1) })).toHaveProperty('code', 'bad-request');
+  expect(clipboardSet('ios', { text: '\u00e9'.repeat(MAX_CLIPBOARD_BYTES / 2) })).toHaveProperty('value');
+  expect(clipboardSet('ios', { text: '\u00e9'.repeat(MAX_CLIPBOARD_BYTES / 2 + 1) })).toHaveProperty(
+    'code',
+    'bad-request',
+  );
+});
+
+it('takes text only: a missing or non-string text, a non-boolean paste and any text on a read are refused', () => {
+  for (const params of [{}, { text: 7 }, { text: null }, { text: ['a'] }, { text: 'a', paste: 'yes' }]) {
+    expect(clipboardSet('ios', params)).toHaveProperty('code', 'bad-request');
+  }
+  expect(clipboardGet('ios', { text: 'a' })).toHaveProperty('code', 'bad-request');
+  expect(clipboardGet('ios', { paste: true })).toHaveProperty('code', 'bad-request');
+});
+
+it('refuses the clipboard on a web page, a native macOS app and a physical iPhone', () => {
+  for (const [platform, extra] of [
+    ['web', undefined],
+    ['macos', undefined],
+    ['ios', { physical: true }],
+  ] as const) {
+    expect(clipboardSet(platform, { text: 'a' }, extra)).toHaveProperty('code', 'bad-request');
+    expect(clipboardGet(platform, {}, extra)).toHaveProperty('code', 'bad-request');
+  }
+  expect(clipboardSet('android', { text: 'a' }, { physical: true })).toHaveProperty('value');
 });

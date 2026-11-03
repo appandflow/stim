@@ -274,6 +274,9 @@ function showVideo(buffer) {
   }
 }
 
+/** Device clipboard reads waiting for their reply, by request id. */
+const copies = new Map();
+
 let me = null;
 let busy = false;
 let chosenName = '';
@@ -344,6 +347,11 @@ function connect(codec) {
     if (message.type === 'hello') {
       expiresAt = Date.parse(message.expiresAt);
       refreshStatus();
+    } else if (message.type === 'clipboard') {
+      const waiting = copies.get(message.id);
+      copies.delete(message.id);
+      if (waiting && typeof message.text === 'string') waiting.resolve(message.text);
+      else if (waiting) waiting.reject(new Error(message.error || 'The device did not return its clipboard.'));
     } else if (message.type === 'artwork') void setArtwork(message.artwork);
     else if (message.type === 'delayed') {
       live = !message.delayed && hasFrame;
@@ -391,6 +399,28 @@ for (const button of document.querySelectorAll('[data-button]')) {
 for (const button of document.querySelectorAll('[data-rotate]')) {
   if (!canRotate) button.remove();
   else button.addEventListener('click', () => send({ type: 'rotate', direction: button.dataset.rotate }));
+}
+
+const copyButton = document.getElementById('copy');
+if (!control || !['ios', 'android'].includes(body.dataset.platform)) copyButton.remove();
+else {
+  const { writeClipboard } = globalThis.stimClipboard;
+  let copyId = 0;
+  copyButton.addEventListener('click', () => {
+    if (!navigator.clipboard) return showNote('This browser gives the page no clipboard access.');
+    const id = ++copyId;
+    const text = new Promise((resolve, reject) => {
+      copies.set(id, { resolve, reject });
+      setTimeout(() => {
+        if (copies.delete(id)) reject(new Error('The device did not answer in time.'));
+      }, 15000);
+    });
+    send({ type: 'clipboard-get', id });
+    writeClipboard(navigator.clipboard, globalThis.ClipboardItem, Blob, text).then(
+      () => showNote('Copied the device clipboard.'),
+      (error) => showNote(error && error.message ? error.message : 'The browser did not allow copying.'),
+    );
+  });
 }
 
 const upgrade = document.getElementById('upgrade');
@@ -571,6 +601,13 @@ if (control) {
   window.addEventListener('blur', () => {
     emit(mirror.release());
     drawMarkers();
+  });
+  document.addEventListener('paste', (event) => {
+    if (document.activeElement !== screen || !['ios', 'android'].includes(body.dataset.platform)) return;
+    event.preventDefault();
+    const request = globalThis.stimClipboard.pasteRequest(event.clipboardData.getData('text/plain'));
+    if (request && request.message) send(request.message);
+    else if (request) showNote(request.note);
   });
   const keys = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Escape: 'escape' };
   const typed = { Enter: '\n', Tab: '\t', Backspace: '\b' };

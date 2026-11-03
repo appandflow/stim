@@ -102,6 +102,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
+ * `device-clipboard` is `input.clipboard.set` and `input.clipboard.get` (and `device-host.input.clipboard.*`): set the clipboard
+ * of an iOS simulator, an Android emulator or an Android phone, optionally pasting it, and read it back.
  */
 export const FEATURES = [
   'physical-ios',
@@ -169,6 +171,7 @@ export const FEATURES = [
   'desktop-plan',
   'share-stop-id',
   'presence',
+  'device-clipboard',
   'share-view-password',
 ] as const;
 
@@ -236,6 +239,8 @@ export const METHODS = [
   'input.scroll',
   'input.key',
   'input.window',
+  'input.clipboard.set',
+  'input.clipboard.get',
   'push.register',
   'push.unregister',
   'notifications.list',
@@ -277,6 +282,8 @@ export const METHODS = [
   'device-host.input.rotate',
   'device-host.input.posture',
   'device-host.input.window',
+  'device-host.input.clipboard.set',
+  'device-host.input.clipboard.get',
   'server.update.status',
   'server.update.start',
   'server.update.chunk',
@@ -340,6 +347,8 @@ export const DEVICE_HOST_METHODS = [
   'device-host.input.rotate',
   'device-host.input.posture',
   'device-host.input.window',
+  'device-host.input.clipboard.set',
+  'device-host.input.clipboard.get',
 ] as const;
 
 export type Method = (typeof METHODS)[number];
@@ -990,6 +999,37 @@ export interface InputTextParams {
 export const INPUT_BUTTONS = ['home', 'lock', 'back', 'app-switch'] as const;
 
 export type InputButton = (typeof INPUT_BUTTONS)[number];
+
+/**
+ * The most UTF-8 bytes of text `input.clipboard.set` takes. A request is one message of at most
+ * `MAX_CLIENT_MESSAGE_BYTES` (64 KiB), and JSON escapes a control character in up to six bytes.
+ */
+export const MAX_CLIPBOARD_BYTES = 8192;
+
+/** The most UTF-8 bytes of device clipboard text `input.clipboard.get` returns. */
+export const MAX_CLIPBOARD_READ_BYTES = 65536;
+
+/**
+ * Replaces the clipboard of an iOS simulator, an Android emulator or an Android phone with `text`, any Unicode text of
+ * at most {@link MAX_CLIPBOARD_BYTES} bytes of UTF-8. With `paste`, the device then pastes it into its focused field
+ * (Command-V on an iOS simulator, a paste key event on Android). A web page, a native macOS app and a physical iPhone
+ * refuse it. It takes ten inputs of a connection's input budget, not the characters of `input.text`. Stim never logs
+ * or records `text`.
+ */
+export interface InputClipboardSetParams {
+  session: string;
+  text: string;
+  paste?: boolean;
+}
+
+/** Reads the device clipboard's text; a clipboard over {@link MAX_CLIPBOARD_READ_BYTES} bytes of UTF-8 is refused, not cut. */
+export interface InputClipboardGetParams {
+  session: string;
+}
+
+export interface InputClipboardGetResult {
+  text: string;
+}
 
 export interface InputButtonParams {
   session: string;
@@ -1755,6 +1795,8 @@ export interface Methods {
   'device-host.input.rotate': Methods['input.rotate'];
   'device-host.input.posture': Methods['input.posture'];
   'device-host.input.window': Methods['input.window'];
+  'device-host.input.clipboard.set': Methods['input.clipboard.set'];
+  'device-host.input.clipboard.get': Methods['input.clipboard.get'];
   hello: { params: HelloParams; result: HelloResult };
   'desktop.authenticate': { params: { proof: string }; result: { authorized: true } };
   'desktop.reports.get': { params: DesktopReportTarget; result: DesktopReportSnapshot };
@@ -1847,6 +1889,8 @@ export interface Methods {
   'input.scroll': { params: InputScrollParams; result: Record<string, never> };
   'input.key': { params: InputKeyParams; result: Record<string, never> };
   'input.window': { params: InputWindowParams; result: Record<string, never> };
+  'input.clipboard.set': { params: InputClipboardSetParams; result: Record<string, never> };
+  'input.clipboard.get': { params: InputClipboardGetParams; result: InputClipboardGetResult };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
   'notifications.list': { params?: NotificationsListParams; result: NotificationsListResult };
