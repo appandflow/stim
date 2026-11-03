@@ -287,6 +287,7 @@ function renderRoster() {
     .map((entry) => {
       const item = document.createElement('li');
       item.style.background = window.PALETTE[entry.color % window.PALETTE.length];
+      item.style.color = window.PALETTE_TEXT[entry.color % window.PALETTE_TEXT.length];
       item.textContent = [...entry.name][0] ? [...entry.name][0].toUpperCase() : '?';
       item.title = entry.name + (entry.self ? ' (you)' : '') + (entry.viewOnly ? ', view only' : '');
       if (entry.self) item.classList.add('you');

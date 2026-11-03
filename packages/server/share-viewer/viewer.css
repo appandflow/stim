@@ -551,6 +551,17 @@ button.primary.small {
   }
 }
 @media (max-width: 480px) {
+  .upgrade {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+  .upgrade-fields {
+    flex: 1;
+  }
+  .upgrade input.field {
+    flex: 1;
+    min-width: 0;
+  }
   .topbar {
     flex-wrap: wrap;
     gap: 6px;

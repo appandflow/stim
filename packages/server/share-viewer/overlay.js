@@ -5,6 +5,11 @@
  * tap and an outline for the element an agent acted on. Points are fractions of the screen box the canvas covers.
  */
 const PALETTE = ['#ff9f0a', '#bf5af2', '#0a84ff', '#ff375f', '#30d158', '#ffd60a', '#64d2ff', '#ac8e68'];
+/** White text on a dark color, near-black on a light one. */
+const TEXT = PALETTE.map((hex) => {
+  const [r, g, b] = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.6 ? '#17151f' : '#fff';
+});
 const TRAIL_MS = 600;
 const FADE_MS = 300;
 const LABEL_MS = 1000;
@@ -138,7 +143,7 @@ function createOverlay(canvas, reduced) {
     ctx.roundRect(left, top, boxWidth, 20, 10);
     ctx.fillStyle = PALETTE[who.color % PALETTE.length];
     ctx.fill();
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = TEXT[who.color % TEXT.length];
     ctx.textBaseline = 'middle';
     ctx.fillText(text, left + 7, top + 10.5);
   }
@@ -268,3 +273,4 @@ function createOverlay(canvas, reduced) {
 
 window.createOverlay = createOverlay;
 window.PALETTE = PALETTE;
+window.PALETTE_TEXT = TEXT;
