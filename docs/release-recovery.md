@@ -61,8 +61,7 @@ and `npx stim@1.9.0` failed with E404 until then. The `smoke` job waits up to
 
 - A version or tarball that is still not visible, or an `npx` E404: the
   packages are published and npm is slow. Wait, then use "Re-run failed jobs"
-  on the run, or run RELEASE.md section 4 step 8 by hand. The re-run needs no
-  release approval because the `smoke` job has no environment. Do not
+  on the run, or run RELEASE.md section 4 step 8 by hand. Do not
   republish or bump the version.
 - A dist-tag that points elsewhere: see the section above and
   [Stale or wrong dist-tags](#stale-or-wrong-dist-tags).
