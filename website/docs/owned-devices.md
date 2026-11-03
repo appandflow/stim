@@ -660,7 +660,7 @@ back through it in the Stim phone app.
   pressure ladder does so at high disk pressure for a workspace idle 10
   minutes, and at critical for every idle workspace. Automatic maintenance deletes them after
   `gc.worktreeGraceMinutes` for a workspace whose worktree is finished but
-  kept. A workspace pinned with
+  kept, unless a [web share](./share.md) of it is live. A workspace pinned with
   `maintenance.keep` keeps its devices. `stim status` shows the disk they use.
   Its daily age sweep also deletes parked simulators and emulators parked for
   `maintenance.olderThanDays` (7 days; 0 never), through centralized teardown.
@@ -671,7 +671,8 @@ back through it in the Stim phone app.
   `--older-than <days>`, it removes only the devices parked at least that long.
   It also deletes the owned devices of a linked worktree whose branch is merged
   or whose pull request ended but that it keeps, for example because it is
-  dirty, under the same idle rules as automatic maintenance. It then runs the
+  dirty, under the same idle rules as automatic maintenance, a live web share
+  included. It then runs the
   `stim-daemon`'s pressure ladder at high, whatever the machine measures, which
   deletes parked devices and moves workspaces idle 10 minutes or more into the
   dormant stage, deleting their owned devices. `stim gc` prints

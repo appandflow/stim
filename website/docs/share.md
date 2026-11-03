@@ -107,8 +107,9 @@ the [pressure ladder](./build-caches.md#disk-pressure) and the
 [dormant stage](./owned-devices.md#cleanup-behavior) leave its workspace
 running, whether or not anyone is watching, and the `stim-daemon` never shuts
 its device down for another run waiting for a device slot; that run keeps
-waiting and its progress line names the share. Frames streamed to viewers are
-not activity, so the share alone holds it. `stim status` names the share on the
+waiting and its progress line names the share. Automatic maintenance and
+`stim gc --delete` keep the devices of its finished worktree too. Frames
+streamed to viewers are not activity, so the share alone holds it. `stim status` names the share on the
 workspace's stage line, and the `stim-daemon` logs it as `workspace_kept`.
 Run `stim share stop`, or let the share expire, and a workspace with no
 activity for `idle.minutes` goes idle on the daemon's next tick. When

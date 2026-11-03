@@ -34,6 +34,7 @@ import { listAvdsAsync } from '../devices/android.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSimsAsync } from '../devices/ios.ts';
+import { liveShareKeepReason } from '../local-server.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
@@ -272,7 +273,7 @@ async function deleteOwnedDevicesOf(
 
 /**
  * Deletes the owned simulators and emulators of a workspace that stays idle for `windowMs`, under its native-run
- * claim, without stopping anything: a running dev server, lease, lock or driver keeps every device.
+ * claim, without stopping anything: a running dev server, lease, lock, driver or live web share keeps every device.
  */
 export async function deleteIdleWorkspaceDevices(
   root: string,
@@ -303,15 +304,16 @@ export async function deleteIdleWorkspaceDevices(
     operation.signal.throwIfAborted();
     return reason;
   };
-  const active = await activeReason();
+  const active = (await activeReason()) ?? (await liveShareKeepReason(root));
   if (active) return kept(active);
   const before = lowestFree(operation ? await measureDiskAsync(operation) : measureDisk());
   const run = await withIdleWorkspace(
     root,
-    async (): Promise<ActionOutcome | null> =>
-      (await activeReason())
-        ? kept('it became active')
-        : deleteOwnedDevicesOf(root, { noneIsKept: true, operation, output }),
+    async (): Promise<ActionOutcome | null> => {
+      if (await activeReason()) return kept('it became active');
+      const share = await liveShareKeepReason(root);
+      return share ? kept(share) : deleteOwnedDevicesOf(root, { noneIsKept: true, operation, output });
+    },
     { purpose, operation },
   );
   if (!run.ran) return kept(`in use: ${run.reasons.join('; ')}`);

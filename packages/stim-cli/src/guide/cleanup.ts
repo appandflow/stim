@@ -141,8 +141,9 @@ In on mode a pass runs, cheapest to rebuild first:
      sweep, through centralized teardown with ownership checked again
   7. owned simulators and emulators of a finished worktree that is kept, such
      as a dirty one (not one locked with git worktree lock), once it finished
-     and was idle for gc.worktreeGraceMinutes (at least protectRecentHours).
-     Devices are recreated on the next run. The devices of any workspace
+     and was idle for gc.worktreeGraceMinutes (at least protectRecentHours),
+     and not while a web share of it is live (guide share), checked again
+     under its native-run claim. Devices are recreated on the next run. The devices of any workspace
      without activity for idle.dormantDays go with its dormant stage instead
      (stim guide lifecycle budget).
   8. the age sweep also runs pressure ladder rung 6: idle Gradle and Kotlin
@@ -262,7 +263,8 @@ WHAT RECLAIMS AN OWNED DEVICE
                             gc.worktreeGraceMinutes, and deletes the owned
                             devices of a finished worktree it keeps (dirty,
                             unpushed, locked) when its workspace is idle for
-                            that grace and not pinned by maintenance.keep
+                            that grace, not pinned by maintenance.keep and not
+                            shared with a live stim share
   the stim-daemon         shuts down the owned devices of a workspace idle
                             for idle.minutes and deletes them after
                             idle.dormantDays, sooner under pressure
