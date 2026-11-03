@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
-import type { Methods } from '@stim-cli/core/protocol';
+import type { Methods, WebShareRow } from '@stim-cli/core/protocol';
 import { isJsonObject, serverLocalSocket } from '@stim-cli/core/state';
 import { canonicalPath } from './commands/gc/paths.ts';
 import { getExecutor } from './exec.ts';
@@ -97,26 +97,32 @@ export async function endWorkspaceShares(workspace: string): Promise<void> {
   } catch {}
 }
 
-/**
- * Why the web shares of `workspace` keep it out of the idle stage, the pressure ladder and the dormant stage: each one
- * that has not ended or passed its expiry, or a share list this Stim home's stim-server cannot give. Null when none is
- * live, as when no stim-server runs, since a share lives only in its server's memory.
- */
-export async function liveShareKeepReason(workspace: string, now: number = Date.now()): Promise<string | null> {
+/** This Stim home's web shares: null when no stim-server runs, since a share lives only in its server's memory. */
+export type WebShareList = WebShareRow[] | null | { unreadable: string };
+
+/** Lists this Stim home's web shares through its stim-server's `share.list`. */
+export async function readWebShares(): Promise<WebShareList> {
   let answer: LocalServerAnswer<'share.list'>;
   try {
     answer = await requestLocalServer('share.list', {}, { version: 'stim', timeoutMs: SHARE_LIST_TIMEOUT_MS });
   } catch (error) {
     if (error instanceof LocalServerUnavailable) return null;
-    return `its web shares cannot be listed (${(error instanceof Error ? error.message : String(error)).replace(/\.+$/, '')})`;
+    return { unreadable: (error instanceof Error ? error.message : String(error)).replace(/\.+$/, '') };
   }
-  if ('error' in answer) {
-    return answer.error.code === 'unknown-method'
-      ? null
-      : `its web shares cannot be listed (${answer.error.message.replace(/\.+$/, '')})`;
-  }
+  if ('error' in answer)
+    return answer.error.code === 'unknown-method' ? null : { unreadable: answer.error.message.replace(/\.+$/, '') };
   const shares = answer.result?.shares;
-  if (!Array.isArray(shares)) return 'its web shares cannot be listed (stim-server sent no share list)';
+  return Array.isArray(shares) ? shares : { unreadable: 'stim-server sent no share list' };
+}
+
+/**
+ * Why `shares` keep `workspace` out of the idle stage, the pressure ladder, the dormant stage and the admission
+ * reclaim: each of its shares that has not ended or passed its expiry, or a list that cannot be read. Null when none
+ * is live.
+ */
+export function shareKeepReason(shares: WebShareList, workspace: string, now: number = Date.now()): string | null {
+  if (shares === null) return null;
+  if (!Array.isArray(shares)) return `its web shares cannot be listed (${shares.unreadable})`;
   const self = canonicalPath(workspace);
   const live = shares.filter(
     (share) => canonicalPath(share.workspace) === self && !(Date.parse(share.expiresAt) <= now),
@@ -129,6 +135,10 @@ export async function liveShareKeepReason(workspace: string, now: number = Date.
   return live.length === 1
     ? `it has a live web share (${targets[0]}); stim share stop ends it`
     : `it has live web shares (${targets.join(', ')}); stim share stop ends them`;
+}
+
+export async function liveShareKeepReason(workspace: string, now: number = Date.now()): Promise<string | null> {
+  return shareKeepReason(await readWebShares(), workspace, now);
 }
 
 /** Where a stim-server that `stim share` started holds its ownership claim and writes its log. */

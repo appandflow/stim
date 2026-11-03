@@ -2192,11 +2192,14 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   RECLAIM: while a run waits to boot because the booted devices fill a cap,
   the stim-daemon shuts down, once per tick, the longest-idle booted owned
   device of another workspace that has had no activity for 2 minutes and has
-  no blocker (driver, lock, lease, build, recent input or window use), then
-  wakes the waiter. It shuts down through centralized teardown and never
-  deletes; the device's workspace records "reclaimed for a waiting run".
-  daemon.mode report logs the device it would reclaim and acts on nothing.
-  With no daemon, waiters wait without reclaim.
+  no blocker (driver, lock, lease, build, live web share, recent input or
+  window use), then wakes the waiter. It shuts down through centralized
+  teardown and never deletes; the device's workspace records "reclaimed for
+  a waiting run". A device a live web share keeps booted is never reclaimed:
+  the waiter keeps waiting, and its progress line names the share
+  ("<workspace> stays booted: it has a live web share ..."). daemon.mode
+  report logs the device it would reclaim and acts on nothing. With no
+  daemon, waiters wait without reclaim.
 
   A listing failure under a set cap leaves the count unknown and admission
   refuses with STIM_NO_DEVICE; under the derived cap alone the boot goes ahead

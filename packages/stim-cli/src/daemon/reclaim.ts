@@ -6,6 +6,7 @@ import { idleShutdownDueMs, shutDownIdleDevices, writeIdleShutdownEvent } from '
 import type { IosSimRecord } from '../devices/ios.ts';
 import { countLiveOwnedDevicesByPlatform } from '../engine/device-capacity.ts';
 import { liveWaiters } from '../engine/wait-queue.ts';
+import { readWebShares, shareKeepReason } from '../local-server.ts';
 import { admissionLimits, getPlatformDeviceLimits } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { ownedHere, type IdlePassInput } from './idle.ts';
@@ -24,8 +25,8 @@ function safeCanonical(path: string): string | null {
 /**
  * The admission reclaim: while a run waits to boot because the booted devices fill a cap, counted as admission counts
  * them, shuts down the longest-idle booted device this home owns in another workspace that has been idle 2 minutes or
- * more and has no blocker, through teardown, one per tick. Returns the action, or null when nothing waits on a cap,
- * the devices cannot be counted, or no device qualifies.
+ * more and has no blocker, a live web share included, through teardown, one per tick. Returns the action, or null
+ * when nothing waits on a cap, the devices cannot be counted, or no device qualifies.
  */
 export async function reclaimForBootWaiters({
   devices,
@@ -84,7 +85,8 @@ export async function reclaimForBootWaiters({
       return idleMs === null ? [] : [{ device, idleMs }];
     })
     .toSorted((a, b) => b.idleMs - a.idleMs);
-  const chosen = candidates[0];
+  const shares = candidates.length ? await readWebShares() : null;
+  const chosen = candidates.find(({ device }) => shareKeepReason(shares, device.project, now) === null);
   if (!chosen) return null;
   const { device, idleMs } = chosen;
   const label = `${device.kind === 'ios' ? 'iOS simulator' : 'Android emulator'} ${device.name}`;

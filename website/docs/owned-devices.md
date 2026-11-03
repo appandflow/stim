@@ -475,7 +475,9 @@ stim-server input or use of its Simulator or emulator window; app and device
 logs do not count. Reclaim rechecks under the target workspace's native-run
 lock and re-resolves ownership through centralized teardown. It shuts down,
 never deletes, and excludes the waiting workspace, physical, hosted, remote,
-parked and other homes' devices. The reclaimed workspace's status and
+parked and other homes' devices, and the devices of a workspace with a live
+[web share](./share.md); the run keeps waiting and its progress line names the
+share. The reclaimed workspace's status and
 `device_idle_shutdown` log say `reclaimed for a waiting run`. With no daemon,
 waiters wait without reclaim. `devices.reclaimIdleMinutes` is no longer read.
 

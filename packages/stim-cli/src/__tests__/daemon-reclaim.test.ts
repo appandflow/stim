@@ -18,11 +18,12 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { tryAcquireClaim, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
-import { takeWaitTicket } from '../engine/wait-queue.ts';
+import { liveWaiters, takeWaitTicket } from '../engine/wait-queue.ts';
 import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { serveShareList, shareRow } from './_share-list-server.ts';
 
 vi.mock('../commands/gc/idle.ts', () => ({
   collectOwnedDeviceActivity: vi.fn<typeof import('../commands/gc/idle.ts').collectOwnedDeviceActivity>(),
@@ -159,6 +160,20 @@ test('a device of another Stim home counts toward the cap, and only a device thi
   add('mine-2', 30);
   await expect(reclaim()).resolves.toMatchObject({ target: 'mine-2', outcome: 'done' });
   expect(teardownOwnedIosSim).not.toHaveBeenCalledWith('unledgered-2', expect.anything());
+});
+
+test('a device whose workspace has a live web share is never reclaimed, and the waiting run stays queued', async () => {
+  const shared = add('shared', 30);
+  add('fresh', 1);
+  const server = await serveShareList(() => ({
+    shares: [shareRow(shared.project, new Date(NOW + 30 * MINUTE).toISOString())],
+  }));
+  onTestFinished(() => server.close());
+
+  await expect(reclaim()).resolves.toBeNull();
+  expect(teardownOwnedIosSim).not.toHaveBeenCalled();
+  expect(devices.map((device) => device.id)).toContain('shared');
+  expect(liveWaiters('boot').map((holder) => holder.claimId)).toEqual([ticket?.claimId]);
 });
 
 test('a failed simulator listing reclaims nothing', async () => {
