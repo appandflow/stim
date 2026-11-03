@@ -1180,16 +1180,19 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   server runs, so nothing is shared.`,
     },
     STIM_SHARE_REFUSED: {
-      summary: 'stim-server would not start, stop or list a web share; the message names why',
+      summary: 'stim-server, or stim on Windows, would not start, stop or list a web share; the message names why',
       body: () => `STIM_SHARE_REFUSED
-  stim-server refused the share. The message names the reason: the device is
+  The share was refused, by stim-server or by stim itself on Windows. The
+  message names the reason: the device is
   not booted or not owned by this workspace (run stim ios or stim android
   first), Tailscale is not running, Funnel is not enabled for this node (a
   tailnet admin enables it; Stim never changes tailnet settings), every Funnel
   port already serves something (free one, see tailscale serve status), a
   route claim left by a crash cannot be resolved (follow the claim remedy in
-  the message), or the running stim-server predates web shares (update it).
-  See stim guide share.`,
+  the message), the running stim-server predates web shares (update it), or
+  the machine runs Windows, which has no local stim-server socket (every
+  stim share action refuses at once, starting nothing; run it from the macOS
+  or Linux host that runs the device). See stim guide share.`,
     },
     STIM_RELOAD_STOPPED: {
       summary: 'the recorded app is gone, its device is not live and owned, or the process could not be proven',

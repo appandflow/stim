@@ -530,11 +530,11 @@ function runQuietly(
       reject(new Error(`${label} could not start (${error.message}).`));
     });
     child.on('close', finish);
-    if (claim) {
+    if (claim && child.pid !== undefined) {
       try {
-        const identity = child.pid ? captureProcessIdentity(child.pid) : null;
-        if (!identity?.ok) throw new Error(`${label} child identity could not be established.`);
-        setClaimChild(claim, { pid: child.pid!, processToken: identity.token });
+        const identity = captureProcessIdentity(child.pid);
+        if (!identity.ok) throw new Error(`${label} child identity could not be established.`);
+        setClaimChild(claim, { pid: child.pid, processToken: identity.token });
       } catch (error) {
         timedOut = true;
         clearTimeout(timer);

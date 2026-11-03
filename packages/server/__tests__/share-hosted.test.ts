@@ -1,12 +1,14 @@
 import type { AuditRecord } from '../src/actions.ts';
 import type { Controller } from '../src/control.ts';
+import type { PresenceParticipant } from '../src/protocol.ts';
 import type { HostConnections, Upstream } from '../src/hosted-relay.ts';
 import { HostedShareSource } from '../src/share-hosted.ts';
 import { videoPacket } from '../src/video.ts';
 
 type Route = Parameters<Upstream['route']>[1];
+type Presence = ConstructorParameters<typeof HostedShareSource>[4];
 
-function fixture(replies: Record<string, unknown> = {}, features: string[] = []) {
+function fixture(replies: Record<string, unknown> = {}, features: string[] = [], shown?: Presence) {
   const routes = new Map<string, Route>();
   const requests: { method: string; params: unknown }[] = [];
   const released = vi.fn<() => void>();
@@ -37,11 +39,13 @@ function fixture(replies: Record<string, unknown> = {}, features: string[] = [])
     { machine: 'mini', session: 'host-session', ready: true },
     { platform: 'ios' },
     (record) => audit.push(record),
+    shown,
   );
   return { source, routes, requests, released, audit, acquires: () => acquires };
 }
 
 const unusedCommand = {} as never;
+const viewer: PresenceParticipant = { id: 's1-v1', kind: 'viewer', name: 'Guest 1', color: 2 };
 const hint = { fps: 10, maxEdge: 1280 };
 const listener = () => ({
   frame: vi.fn<(frame: unknown) => void>(),
@@ -177,13 +181,13 @@ describe('a share of a hosted device', () => {
     expect(f.source.targetOf(owner, 'other')).toBeNull();
 
     expect(
-      await f.source.input(owner, 'hc1', 'input.touch', { phase: 'down', x: 0.5, y: 0.5 }, unusedCommand),
+      await f.source.input(owner, 'hc1', 'input.touch', { phase: 'down', x: 0.5, y: 0.5 }, unusedCommand, viewer),
     ).toBeNull();
     expect(f.requests.at(-1)).toEqual({
       method: 'device-host.input.touch',
       params: { phase: 'down', x: 0.5, y: 0.5, session: 'hc1' },
     });
-    expect(await f.source.input(owner, 'stale', 'input.touch', {}, unusedCommand)).toMatchObject({
+    expect(await f.source.input(owner, 'stale', 'input.touch', {}, unusedCommand, viewer)).toMatchObject({
       code: 'action-failed',
     });
 
@@ -205,13 +209,15 @@ describe('a share of a hosted device', () => {
     );
     await f.source.begin(owner, { workspace: '/w', platform: 'ios' }, '/w', () => true);
     expect(
-      await f.source.input(owner, 'hc1', 'input.clipboard.set', { text: 'abc', paste: true }, unusedCommand),
+      await f.source.input(owner, 'hc1', 'input.clipboard.set', { text: 'abc', paste: true }, unusedCommand, viewer),
     ).toBeNull();
     expect(f.requests.at(-1)).toEqual({
       method: 'device-host.input.clipboard.set',
       params: { text: 'abc', paste: true, session: 'hc1' },
     });
-    expect(await f.source.input(owner, 'hc1', 'input.clipboard.get', {}, unusedCommand)).toEqual({ text: 'host text' });
+    expect(await f.source.input(owner, 'hc1', 'input.clipboard.get', {}, unusedCommand, viewer)).toEqual({
+      text: 'host text',
+    });
   });
 
   it('refuses the clipboard calls for a host without device-clipboard, without sending them', async () => {
@@ -219,7 +225,7 @@ describe('a share of a hosted device', () => {
     await f.source.begin(owner, { workspace: '/w', platform: 'ios' }, '/w', () => true);
     const before = f.requests.length;
     for (const method of ['input.clipboard.set', 'input.clipboard.get']) {
-      expect(await f.source.input(owner, 'hc1', method, { text: 'abc' }, unusedCommand)).toMatchObject({
+      expect(await f.source.input(owner, 'hc1', method, { text: 'abc' }, unusedCommand, viewer)).toMatchObject({
         code: 'action-failed',
       });
     }
@@ -245,5 +251,99 @@ describe('a share of a hosted device', () => {
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ event: 'control-ended', session: 'hc1' }));
     expect(f.source.targetOf(watcher, 'hc1')).toBeNull();
     expect(f.released).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('presence on a share of a hosted device', () => {
+  const ann: PresenceParticipant = { id: 's1-v1', kind: 'viewer', name: 'Ann', color: 2 };
+  const bob: PresenceParticipant = { id: 's1-v2', kind: 'viewer', name: 'Bob', color: 3 };
+  const touch = (phase: 'down' | 'move' | 'up', x = 0.5) => ({ input: 'touch', phase, x, y: 0.25 }) as never;
+
+  async function shared() {
+    const hub = {
+      subscribe: vi.fn<(key: string, listener: unknown) => () => void>(() => vi.fn<() => void>()),
+      join: vi.fn<(key: string, who: unknown) => void>(),
+      leave: vi.fn<(key: string, id: string) => void>(),
+      touch: vi.fn<(key: string, who: unknown, touch: unknown) => void>(),
+    };
+    const unfollow = vi.fn<() => void>();
+    const follow = vi.fn<(key: string) => () => void>(() => unfollow);
+    const f = fixture({ 'device-host.control.begin': { session: 'hc1', postures: [] } }, [], {
+      hub,
+      key: 'device',
+      follow,
+    });
+    await f.source.begin(owner, { workspace: '/w', platform: 'ios' }, '/w', () => true);
+    const send = (who: PresenceParticipant, command: unknown) =>
+      f.source.input(owner, 'hc1', 'input.touch', { ...(command as object) }, command as never, who);
+    const lifts = () => f.requests.filter((request) => (request.params as { phase?: string }).phase === 'up');
+    return { ...f, hub, follow, unfollow, send, lifts };
+  }
+
+  it("follows the host's presence for the device while a viewer listens, and lists viewers on the device's roster", async () => {
+    const f = await shared();
+    const seen = vi.fn<(participants: PresenceParticipant[]) => void>();
+    const stop = f.source.presence!.subscribe(seen);
+    expect(f.follow).toHaveBeenCalledWith('device');
+    expect(f.hub.subscribe).toHaveBeenCalledWith('device', seen);
+    f.source.presence!.join(ann);
+    f.source.presence!.leave(ann.id);
+    expect(f.hub.join).toHaveBeenCalledWith('device', ann);
+    expect(f.hub.leave).toHaveBeenCalledWith('device', ann.id);
+    stop();
+    expect(f.unfollow).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a viewer touch and drops the other viewer touches until the holder lifts, naming the holder', async () => {
+    const f = await shared();
+    expect(await f.send(ann, touch('down'))).toBeNull();
+    expect(await f.send(bob, touch('down', 0.9))).toEqual({
+      code: 'device-busy',
+      message: 'Ann is using the screen.',
+      busy: 'Ann',
+    });
+    expect(await f.send(bob, touch('move', 0.8))).toBeNull();
+    expect(await f.send(ann, touch('move', 0.6))).toBeNull();
+    expect(await f.send(ann, touch('up', 0.6))).toBeNull();
+    expect(await f.send(bob, touch('down', 0.9))).toBeNull();
+    expect(
+      f.requests.filter((request) => request.method === 'device-host.input.touch').map((request) => request.params),
+    ).toEqual([
+      expect.objectContaining({ phase: 'down', x: 0.5 }),
+      expect.objectContaining({ phase: 'move', x: 0.6 }),
+      expect.objectContaining({ phase: 'up', x: 0.6 }),
+      expect.objectContaining({ phase: 'down', x: 0.9 }),
+    ]);
+    expect(
+      f.hub.touch.mock.calls.map(([, who, shown]) => [
+        (who as PresenceParticipant).name,
+        (shown as { phase: string }).phase,
+      ]),
+    ).toEqual([
+      ['Ann', 'down'],
+      ['Ann', 'move'],
+      ['Ann', 'up'],
+      ['Bob', 'down'],
+    ]);
+  });
+
+  it('lifts the pointer for a holder that went quiet for 10 s or left, so the device is not stuck pressed', async () => {
+    vi.useFakeTimers();
+    const f = await shared();
+    await f.send(ann, touch('down'));
+    await f.send(ann, touch('move', 0.7));
+    vi.advanceTimersByTime(9_999);
+    expect(f.lifts()).toHaveLength(0);
+    vi.advanceTimersByTime(1);
+    expect(f.lifts()).toEqual([
+      { method: 'device-host.input.touch', params: { session: 'hc1', phase: 'up', x: 0.7, y: 0.25 } },
+    ]);
+    expect(f.hub.touch.mock.calls.at(-1)?.[2]).toMatchObject({ phase: 'up', x: 0.7 });
+    expect(await f.send(bob, touch('down', 0.1))).toBeNull();
+
+    f.source.release(owner, 'hc1', bob);
+    expect(f.lifts()).toHaveLength(2);
+    f.source.release(owner, 'hc1', bob);
+    expect(f.lifts()).toHaveLength(2);
   });
 });

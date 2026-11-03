@@ -17,7 +17,15 @@ import {
 import type { AuditRecord } from './actions.ts';
 import type { SessionTarget } from './control.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
-import { FRAME_FPS, VIDEO_KEYFRAME, type ProtocolError, type RequestId, type ServerMessage } from './protocol.ts';
+import { presenceKey, type PresenceHub } from './presence.ts';
+import {
+  FRAME_FPS,
+  TOUCH_PHASES,
+  VIDEO_KEYFRAME,
+  type ProtocolError,
+  type RequestId,
+  type ServerMessage,
+} from './protocol.ts';
 import { DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, videoSubscription, VideoGate } from './video.ts';
 
 const TIMEOUT_MS = 10_000;
@@ -356,6 +364,8 @@ export class HostedRelay {
   private readonly openSubscription: (id: RequestId, result: { video?: 'h264' }) => string | null;
   private readonly dropSubscription: (subscription: string) => void;
   private readonly audit: (record: AuditRecord) => void;
+  /** Where this connection's own touches on a hosted device are shown, as the host's. */
+  private readonly shown: Pick<PresenceHub, 'touch' | 'leave'> | undefined;
 
   constructor(
     hosts: HostConnections,
@@ -364,7 +374,9 @@ export class HostedRelay {
     openSubscription: (id: RequestId, result: { video?: 'h264' }) => string | null,
     dropSubscription: (subscription: string) => void,
     audit: (record: AuditRecord) => void,
+    shown?: Pick<PresenceHub, 'touch' | 'leave'>,
   ) {
+    this.shown = shown;
     this.hosts = hosts;
     this.send = send;
     this.buffered = buffered;
@@ -395,6 +407,7 @@ export class HostedRelay {
     host: Placement,
     params: Record<string, unknown>,
     register: (id: string, stop: () => void) => void,
+    presence?: (subscription: string) => () => void,
   ): Promise<void> {
     let lease: Lease | undefined;
     const platform = params.platform === 'ios' || params.platform === 'android' ? params.platform : 'macos';
@@ -427,6 +440,7 @@ export class HostedRelay {
       let congestedAt = -Infinity;
       let keyframeRetry: NodeJS.Timeout | null = null;
       let unroute: (() => void) | null = null;
+      let stopPresence: (() => void) | undefined;
       const delivery = new LatestFrames<Record<string, unknown> & { data: string }>(
         Math.min(
           (params.fps as number | undefined) ?? FRAME_FPS.default,
@@ -455,6 +469,7 @@ export class HostedRelay {
         delivery.stop();
         if (keyframeRetry) clearTimeout(keyframeRetry);
         unroute?.();
+        stopPresence?.();
         this.dropSubscription(subscription);
         if (hostEnded) leased.release();
         else this.releaseAfter(leased, 'device-host.unsubscribe', { subscription: hostSubscription });
@@ -483,6 +498,7 @@ export class HostedRelay {
         },
       });
       register(subscription, stop);
+      stopPresence = presence?.(subscription);
       unroute = connection.route(`s:${hostSubscription}`, {
         event: (event) => {
           if (!this.frames.has(subscription)) return;
@@ -645,12 +661,39 @@ export class HostedRelay {
       });
       return true;
     }
+    if (method === 'input.touch') this.show(params.session, entry, params);
     const response = this.forward(id, entry.lease.connection, `device-host.${method}`, {
       ...params,
       session: entry.hostSession,
     });
     if (method === 'control.end') this.endControl(params.session, null, 'The client ended the session.', response);
     return true;
+  }
+
+  private deviceKey(entry: { workspace: string; target: RelayTarget }): string {
+    return presenceKey(entry.workspace, entry.target.platform, entry.target.slot, false);
+  }
+
+  private show(
+    session: string,
+    entry: { workspace: string; target: RelayTarget },
+    params: Record<string, unknown>,
+  ): void {
+    const { phase, x, y, x2, y2 } = params;
+    if (!this.shown || entry.target.platform === 'macos') return;
+    const shown = TOUCH_PHASES.find((each) => each === phase);
+    if (!shown || typeof x !== 'number' || typeof y !== 'number') return;
+    this.shown.touch(
+      this.deviceKey(entry),
+      { id: session, kind: 'host', name: 'Host', color: 0 },
+      {
+        phase: shown,
+        x,
+        y,
+        ...(typeof x2 === 'number' && typeof y2 === 'number' ? { second: { x: x2, y: y2 } } : {}),
+        at: Date.now(),
+      },
+    );
   }
 
   private endControl(
@@ -662,6 +705,7 @@ export class HostedRelay {
     const entry = this.controls.get(session);
     if (!entry) return;
     this.controls.delete(session);
+    if (entry.target.platform !== 'macos') this.shown?.leave(this.deviceKey(entry), session);
     entry.unroute();
     this.audit({
       at: new Date().toISOString(),

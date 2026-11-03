@@ -45,7 +45,10 @@ function treeOf(value: unknown): AgentSnapshotTree | null {
   };
 }
 
-/** Reads the tree from agent-device's `snapshot --json` output: `nodes[]` with `ref` and `rect`, and `viewport`. */
+/**
+ * Reads the tree from agent-device's `snapshot --json` output, or from the JSON-RPC answer to its command: `nodes[]`
+ * with `ref` and `rect`, and `viewport`.
+ */
 export function parseAgentSnapshot(text: string): AgentSnapshotTree | null {
   let parsed: unknown;
   try {
@@ -54,7 +57,12 @@ export function parseAgentSnapshot(text: string): AgentSnapshotTree | null {
     return null;
   }
   if (!isJsonObject(parsed)) return null;
-  return treeOf(parsed) ?? treeOf(parsed.data) ?? treeOf(parsed.result);
+  return (
+    treeOf(parsed) ??
+    treeOf(parsed.data) ??
+    treeOf(parsed.result) ??
+    (isJsonObject(parsed.result) ? treeOf(parsed.result.data) : null)
+  );
 }
 
 /** Where `stim agent-device` keeps the last snapshot tree of an agent-device session in this workspace. */

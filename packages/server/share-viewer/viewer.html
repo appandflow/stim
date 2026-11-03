@@ -26,7 +26,22 @@
       <span class="spacer"></span>
       <p class="pill" id="left"></p>
       <p class="pill mode"></p>
-      <ul class="roster" id="roster" aria-label="Who is here"></ul>
+      <div class="people" id="people" hidden>
+        <button
+          type="button"
+          class="people-button"
+          id="people-button"
+          aria-haspopup="dialog"
+          aria-expanded="false"
+          aria-controls="people-panel"
+        >
+          <span class="roster" id="roster" aria-hidden="true"></span>
+        </button>
+        <div class="people-panel" id="people-panel" role="dialog" aria-label="People" hidden>
+          <p class="people-title" id="people-title"></p>
+          <ul class="people-list" id="people-list"></ul>
+        </div>
+      </div>
       <form class="upgrade" id="upgrade" method="post" action="login" hidden>
         <button class="link" id="upgrade-open" type="button">Have the control password?</button>
         <span class="upgrade-fields" id="upgrade-fields" hidden>
@@ -44,6 +59,7 @@
             data-form-type="other"
             required
             maxlength="128"
+            placeholder="Control password"
             aria-label="Control password"
           />
           <button class="primary small" type="submit">Control</button>
@@ -132,6 +148,7 @@
     </template>
     <script src="/s/assets/overlay.js"></script>
     <script src="/s/assets/gestures.js"></script>
+    <script src="/s/assets/people.js"></script>
     <script src="/s/assets/viewer.js"></script>
   </body>
 </html>

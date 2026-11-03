@@ -104,14 +104,20 @@ its own Guest N. A viewer sees only the people of its own share, even when two
 share links point at the same device; every share also shows the agent's
 actions and the host's touches. Names are kept only
 in stim-server's memory while the share lives. A row of colored initials in the
-top bar lists who is here; an eye marks the view-only ones. Presence shows where
+top bar lists who is here; an eye marks the view-only ones. Click it to open a
+People list with each person's role (controlling, can control or view only), the
+host and the agent when they are on the device, and a Change name action on your own row.
+Presence shows where
 people tap, a PIN pad included. The screen is already shared, so this adds
 little, but keep it in mind when the device shows secrets.
 
 One viewer at a time holds the touch pointer: from finger down to finger up,
 or until ten seconds pass without input. A touch from another viewer in the
 meantime is dropped, and that viewer sees "Name is using the screen". A share
-of a hosted session shows each viewer only its own touches.
+of a hosted session works the same, and also shows what an agent does on the
+hosted device with `stim agent-device`: its command as "Agent", a ripple where
+it tapped or swiped and an outline of the element it pressed. The outline
+needs a `snapshot` of that session first.
 
 A watch-only share has no button groups. The page fits the window without
 scrolling. With `--control`, click the screen to tap and type with the keyboard. While the screen has focus,
@@ -159,6 +165,10 @@ about 50 ms; when it starts capture, the first frame takes several seconds.
 
 ## Requirements
 
+- **macOS or Linux.** `stim` reaches the stim-server through its local socket,
+  which Windows does not have. On Windows every `stim share` action refuses at
+  once with `STIM_SHARE_REFUSED` and starts no server; run `stim share` on the
+  macOS or Linux host that runs the device.
 - **stim-server** for this Stim home. When none runs (no Stim Desktop or
   background service), `stim share` starts one in the background as
   `stim-server --share`: loopback only, from the `@stim-cli/server` package of
@@ -275,7 +285,94 @@ It does not need to preserve the `Host` header or send `X-Forwarded-Host`: the
 frame socket accepts exactly the origin of `share.publicUrl` and ignores
 `Host` and `X-Forwarded-*`, so a request that does not come from the page at
 that address is refused. A setting changed while a share is live applies to
-the next listener, after the last share ends.
+the next listener, after the last share ends. With the background service and
+`share.publicUrl` set, the listener stays bound (see below), so a changed
+setting applies when the next share starts or the service restarts.
+
+### Links that ended or never existed
+
+When stim-server runs as the background service (`stim-server service install`)
+and `share.publicUrl` is set in proxy mode, the share listener binds
+`share.port` when the service starts and stays bound with no share live.
+Without that, a visitor to an expired link would reach a closed port and see
+your proxy's own empty 502 page. The listener answers every request that does
+not belong to a live share, whatever the path and method, with a "This share
+has ended or the link is wrong" page in the viewer's design and status 404.
+A link that ended and one that never existed get the same answer: the server
+keeps nothing about a share after it ends, not even the link's digest. The page
+carries no share data and no list of shares, and sets `Cache-Control: no-store`
+and a strict Content-Security-Policy.
+
+Nothing else changes. The listener still binds `127.0.0.1` only, takes no
+Tailscale route and no `server/share-route` claim, and closes when the service
+stops. The on-demand `stim-server --share` that `stim share` starts still exits
+after its last share, and Tailscale exposure is unchanged, so neither keeps a
+listener. A port that is already taken is logged once in the server log, and
+the next `stim share` refuses with the usual message that names `share.port`.
+
+### When stim-server is not running
+
+With nothing running, the proxy has no upstream to ask, so give it a page of its
+own. `@stim-cli/server` ships `dist/share-viewer/not-running.html`: one file in
+the same design, with its stylesheet inlined, no script and no link to the
+listener. Copy it next to your proxy config. This takes it from the package on
+a machine that has npm:
+
+```bash
+cd "$(mktemp -d)" && npm pack @stim-cli/server
+tar -xzf stim-cli-server-*.tgz package/dist/share-viewer/not-running.html
+sudo install -D -m 644 package/dist/share-viewer/not-running.html /var/www/stim-share/not-running.html
+```
+
+Answer 503, not 404: the demo is down for now and the same link works again
+once Stim runs, which is what 503 means to browsers, monitors and search
+engines. 404 is for a link that is gone, and the listener answers that itself.
+The proxy replaces only its own failures (502, 503 and 504, which Caddy and
+nginx produce when the upstream refuses the connection or times out), so the
+listener's 404 page passes through untouched.
+
+Caddy, with a `handle_errors` block:
+
+```text
+demo.example.com {
+	reverse_proxy 127.0.0.1:7790
+
+	handle_errors {
+		@down expression {http.error.status_code} in [502, 503, 504]
+		handle @down {
+			rewrite * /not-running.html
+			file_server {
+				root /var/www/stim-share
+				status 503
+			}
+		}
+	}
+}
+```
+
+`file_server` answers 200 unless `status` says otherwise. nginx, with
+`proxy_intercept_errors` so an upstream error response is replaced too; only the
+codes named in `error_page` are, so the listener's own 404 passes through:
+
+```text
+location / {
+	proxy_pass http://127.0.0.1:7790;
+	proxy_http_version 1.1;
+	proxy_set_header Upgrade $http_upgrade;
+	proxy_set_header Connection $connection_upgrade;
+	proxy_intercept_errors on;
+	error_page 502 503 504 =503 /not-running.html;
+}
+
+location = /not-running.html {
+	internal;
+	root /var/www/stim-share;
+}
+```
+
+`$connection_upgrade` comes from the usual `map $http_upgrade $connection_upgrade`
+block in the `http` context. Run `caddy validate` or `nginx -t` before you
+reload.
 
 ## Security model
 
@@ -288,7 +385,7 @@ the next listener, after the last share ends.
 - **Three routes per share.** The viewer page, the frame stream of the one
   shared device, and, with `--control`, input to that same device. The page's
   stylesheet and script are static files under `/s/assets/`; they hold no
-  share data. Anything else, including an unknown link, answers 404. No other device, log, file,
+  share data. Anything else, including an unknown or expired link, answers 404. No other device, log, file,
   command or stim-server method is reachable through it.
 - **Secrets.** The link carries 256 random bits. The generated password is 16
   random characters (about 79 bits); one you set is 8 to 128 characters.
@@ -317,7 +414,8 @@ the next listener, after the last share ends.
 --slot` ends a share of that slot), when the device's frames fail, and when
   stim-server stops or restarts.
   Ending closes its viewers' connections. The last share removes the Funnel
-  route first and only then closes the listener.
+  route first and only then closes the listener; the listener a background
+  service keeps in proxy mode stays bound until the service stops.
 - **Crash cleanup.** With Funnel, the route is recorded under an ownership claim in
   `$STIM_HOME/server/share-route`. When stim-server crashes, the next one
   removes the route on start, and only while the serve config still holds

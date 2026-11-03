@@ -638,12 +638,17 @@ async function execute(
       ? { root, session: run.session, sessionsDir, command, device: run.plan.device }
       : null;
   const cursor = tracked ? eventsCursor(tracked.sessionsDir) : {};
-  const target: Omit<PresencePublishParams, 'command' | 'phase'> | null = tracked
+  const hosted =
+    root && run?.plan.device.kind === 'hosted' && command && COMMAND_NAME.test(command)
+      ? { root, device: run.plan.device, command }
+      : null;
+  const shown = tracked ?? hosted;
+  const target: Omit<PresencePublishParams, 'command' | 'phase'> | null = shown
     ? {
-        workspace: tracked.root,
-        platform: tracked.device.platform,
-        ...(tracked.device.slot === 'default' ? {} : { slot: tracked.device.slot }),
-        ...(tracked.device.kind === 'physical' ? { physical: true } : {}),
+        workspace: shown.root,
+        platform: shown.device.platform,
+        ...(shown.device.slot === 'default' ? {} : { slot: shown.device.slot }),
+        ...(shown.device.kind === 'physical' ? { physical: true } : {}),
       }
     : null;
   const started = target && command ? publish(version, { ...target, command, phase: 'start' }) : null;
@@ -676,6 +681,10 @@ async function execute(
   });
   for (const [signal, handler] of handlers) process.off(signal, handler);
   process.exitCode = exit.signal ? 128 + (constants.signals[exit.signal] ?? 0) : (exit.code ?? 1);
+  if (hosted && target) {
+    await started;
+    return publish(version, { ...target, command: hosted.command, phase: 'end' });
+  }
   if (!tracked || !target || !run) return;
   if (tee && bytes <= MAX_SNAPSHOT_BYTES)
     writeSnapshot(tracked.root, tracked.session, Buffer.concat(chunks).toString('utf8'));

@@ -20,6 +20,15 @@ import { measureDisk, measureMemory, measureTick, type TickMeasurement } from '.
 import { classifyPressure, diskThresholds } from './pressure.ts';
 import { runDormantPass } from './stages.ts';
 
+interface HomePassPhases {
+  measureMs: number;
+  idleMs: number;
+  dormantMs: number;
+  dependenciesMs: number;
+  ladderMs: number;
+  maintenanceMs: number;
+}
+
 export interface HomePasses {
   config: Config | null;
   now: number;
@@ -27,6 +36,7 @@ export interface HomePasses {
   workspaces: DaemonWorkspaceDecision[];
   pressure: DaemonPressure;
   actions: DaemonLadderAction[];
+  phases: HomePassPhases;
 }
 
 /**
@@ -46,9 +56,17 @@ export async function runHomePasses({
   log: IdlePassInput['log'];
   memoryWarningSince?: string | null;
 }): Promise<HomePasses> {
+  let mark = performance.now();
+  const lap = () => {
+    const at = performance.now();
+    const ms = Math.round(at - mark);
+    mark = at;
+    return ms;
+  };
   const config = loadConfig();
   const now = Date.now();
   const measured = await measureTick(config, now);
+  const measureMs = lap();
   const { thresholds, error } = diskThresholds(config);
   if (error) log('warn', 'pressure_settings_invalid', `${error}; that disk threshold is off until it is fixed`);
   let warningSince = memoryWarningSince;
@@ -92,9 +110,12 @@ export async function runHomePasses({
               ]
             : [],
         );
+  const idleMs = lap();
   const reading = { devices: measured.devices, simsFailed: measured.sims === null };
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
+  const dormantMs = lap();
   actions.push(...(await runDormantDependencies({ config, act, log, ...reading })));
+  const dependenciesMs = lap();
   if (config && pressure.level !== 'normal') {
     const ladder = await runLadder(
       {
@@ -112,8 +133,18 @@ export async function runHomePasses({
     actions.push(...ladder.actions);
     pressure = ladder.pressure;
   }
+  const ladderMs = lap();
   await runMaintenance(trigger, { report: !act });
-  return { config, now, measured, workspaces, pressure, actions };
+  const maintenanceMs = lap();
+  return {
+    config,
+    now,
+    measured,
+    workspaces,
+    pressure,
+    actions,
+    phases: { measureMs, idleMs, dormantMs, dependenciesMs, ladderMs, maintenanceMs },
+  };
 }
 
 /**
