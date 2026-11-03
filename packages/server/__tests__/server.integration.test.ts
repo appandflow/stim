@@ -1336,6 +1336,7 @@ describe('pairing', () => {
           'build-reuse-artifact',
           'share-stop-id',
           'presence',
+          'device-clipboard',
           'share-view-password',
         ],
         actions: [],

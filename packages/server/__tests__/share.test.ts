@@ -15,6 +15,7 @@ import {
   type StartedShare,
   type StatusListener,
 } from '../src/share.ts';
+import { MAX_CLIPBOARD_BYTES } from '../src/protocol.ts';
 import { accessUnitOf, type AccessUnit } from '../src/video.ts';
 
 const WORKSPACE = '/work/app';
@@ -35,6 +36,7 @@ interface Fixture {
   congestions: number;
   begins: unknown[];
   inputs: unknown[];
+  inputResult: { text: string } | { code: 'action-failed'; message: string } | null;
   /** The viewer each input came from, by name. */
   inputBy: string[];
   /** Names of the viewers whose pointer the control hub was told to lift. */
@@ -71,6 +73,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
     congestions: 0,
     begins: [],
     inputs: [],
+    inputResult: null,
     inputBy: [],
     releases: [],
     busy: null,
@@ -117,7 +120,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
         f.inputs.push({ session, command });
         f.inputBy.push(participant?.name ?? '');
         if (f.busy !== null) return { code: 'device-busy', message: 'busy', busy: f.busy };
-        return null;
+        return f.inputResult;
       },
       release: (_owner, _session, participant) => {
         f.releases.push(participant.name);
@@ -506,6 +509,8 @@ describe('a web share', () => {
     socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.25, y: 0.5, x2: 0.75, y2: 0.5 }));
     socket.send(JSON.stringify({ type: 'text', text: 'hi' }));
     socket.send(JSON.stringify({ type: 'key', key: 'left' }));
+    socket.send(JSON.stringify({ type: 'clipboard-set', text: 'abc', paste: true }));
+    socket.send(JSON.stringify({ type: 'clipboard-get', id: 1 }));
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
     expect(f.begins).toEqual([]);
@@ -559,6 +564,86 @@ describe('a web share', () => {
     socket.close();
   });
 
+  it('with --control, sets and pastes clipboard text, and drops what the clipboard parser refuses', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    const text = 'h\u00e9llo \u{1f600}\n';
+    socket.send(JSON.stringify({ type: 'clipboard-set', text: 'a'.repeat(MAX_CLIPBOARD_BYTES + 1), paste: true }));
+    socket.send(JSON.stringify({ type: 'clipboard-set', text: 7 }));
+    socket.send(JSON.stringify({ type: 'clipboard-set', text, paste: true }));
+    socket.send(JSON.stringify({ type: 'clipboard-set', text: 'no paste' }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(2));
+    expect(f.inputs).toEqual([
+      { session: 'c1', command: { input: 'clipboard', text, paste: true } },
+      { session: 'c1', command: { input: 'clipboard', text: 'no paste', paste: false } },
+    ]);
+    socket.close();
+  });
+
+  it('with --control, returns the device clipboard to the viewer that asked and to no other', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const cookie = await login(url, share.password ?? '');
+    const asking = await connect(url, { origin: origin(url), cookie });
+    const other = await connect(url, { origin: origin(url), cookie });
+    const received = (socket: WebSocket) => {
+      const messages: unknown[] = [];
+      socket.on('message', (data, binary) => {
+        if (!binary) messages.push(JSON.parse(data.toString()));
+      });
+      return messages;
+    };
+    const mine = received(asking.socket);
+    const theirs = received(other.socket);
+    f.inputResult = { text: 'from the device' };
+    asking.socket.send(JSON.stringify({ type: 'clipboard-get', id: 41 }));
+    await vi.waitFor(() => expect(mine).toContainEqual({ type: 'clipboard', id: 41, text: 'from the device' }));
+    expect(f.inputs).toEqual([{ session: 'c1', command: { input: 'clipboard-get' } }]);
+    other.socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(2));
+    expect(JSON.stringify(theirs)).not.toContain('"clipboard"');
+    asking.socket.close();
+    other.socket.close();
+  });
+
+  it('answers a clipboard read at once when control cannot start', async () => {
+    f.refuseControl = true;
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    const messages: unknown[] = [];
+    socket.on('message', (data, binary) => {
+      if (!binary) messages.push(JSON.parse(data.toString()));
+    });
+    socket.send(JSON.stringify({ type: 'clipboard-get', id: 9 }));
+    await vi.waitFor(() => expect(messages).toContainEqual({ type: 'clipboard', id: 9, error: expect.any(String) }));
+    socket.close();
+  });
+
+  it('answers a refused clipboard read or set with a fixed message, never the internal reason', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    const messages: unknown[] = [];
+    socket.on('message', (data, binary) => {
+      if (!binary) messages.push(JSON.parse(data.toString()));
+    });
+    f.inputResult = { code: 'action-failed', message: 'simctl pbpaste failed in /Users/me/secret-app' };
+    socket.send(JSON.stringify({ type: 'clipboard-get', id: 5 }));
+    socket.send(JSON.stringify({ type: 'clipboard-set', text: 'abc' }));
+    await vi.waitFor(() =>
+      expect(messages).toEqual(
+        expect.arrayContaining([
+          { type: 'clipboard', id: 5, error: expect.any(String) },
+          { type: 'control', message: expect.any(String) },
+        ]),
+      ),
+    );
+    expect(JSON.stringify(messages)).not.toContain('secret-app');
+    socket.close();
+  });
+
   describe('with a view password next to the control one', () => {
     const touch = (x = 0.25) => JSON.stringify({ type: 'touch', phase: 'down', x, y: 0.75 });
     const signed = async (control = 'control pass', view = 'view password') => {
@@ -608,6 +693,23 @@ describe('a web share', () => {
       expect(f.inputs).toEqual([{ session: 'c1', command: { input: 'touch', phase: 'down', x: 0.25, y: 0.75 } }]);
       watcher.socket.close();
       driver.socket.close();
+    });
+
+    it('never sets or reads the device clipboard for a viewer that logged in with the view password', async () => {
+      const { url, headers } = await signed();
+      f.inputResult = { text: 'device secret' };
+      const watcher = await connect(url, { ...headers, cookie: await login(url, 'view%20password') });
+      const received: string[] = [];
+      watcher.socket.on('message', (data, binary) => {
+        if (!binary) received.push(data.toString());
+      });
+      watcher.socket.send(JSON.stringify({ type: 'clipboard-set', text: 'abc', paste: true }));
+      watcher.socket.send(JSON.stringify({ type: 'clipboard-get', id: 1 }));
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(f.inputs).toEqual([]);
+      expect(received.join('')).not.toContain('device secret');
+      watcher.socket.close();
     });
 
     it('serves a view session the view-only page with the upgrade offer, and a control session the controls', async () => {

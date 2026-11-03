@@ -2146,6 +2146,15 @@ Option-drag with a mouse or pen, where the second finger mirrors the first
 through the screen's center and Shift-Option-drag moves both together, as in
 Xcode's Simulator. A small circle marks each finger while Option is held. The
 presence `touch` carries the second finger as `second`.
+With `control` on an iOS simulator, an Android emulator or an Android phone, a
+`clipboard-set` message (`text`, optional `paste`) and a `clipboard-get` message
+(`id`) from a viewer go through `input.clipboard.set` and `input.clipboard.get`,
+each costing ten inputs. The viewer sends `clipboard-set` with `paste: true` on
+Command-V or Control-V while the screen has focus, from the browser's `paste`
+event, and `clipboard-get` from its "Copy device clipboard" toolbar button. The
+reply `{ "type": "clipboard", "id", "text" }`, or `error` with a fixed message,
+goes to the asking viewer only and the text is never logged. A share without
+`control` drops both messages, and so does a viewer that cannot control.
 
 ## Protocol
 
@@ -2941,7 +2950,22 @@ sends reaches any other device.
   simulator gets the hardware key, an emulator the key through its gRPC
   keyboard or `KEYCODE_DPAD_*` and `KEYCODE_ESCAPE` over `adb` without one,
   and a phone the same Android key events through scrcpy. A web page takes no
-  keys. `input.button` takes `home` or `lock`,
+  keys. When hello advertises `device-clipboard`, `input.clipboard.set` takes
+  `text`, any Unicode text of at most 8192 UTF-8 bytes (a request is one
+  message of at most 64 KiB, and JSON escapes a control character in up to six
+  bytes), and an optional `paste` that then pastes it into the focused field.
+  `input.clipboard.get` answers `{ "text" }`, refusing a clipboard over 65536
+  bytes. An iOS simulator's clipboard is `simctl pbcopy` and `pbpaste` and its
+  paste is Command-V through the HID connection; an Android emulator's is the
+  gRPC `setClipboard` and `getClipboard`, pasted with `KEYCODE_PASTE` over
+  `adb`; an Android phone's is scrcpy's `SET_CLIPBOARD` (with its paste flag)
+  and `GET_CLIPBOARD`. A web page, a native macOS window and a physical iPhone
+  refuse both as `bad-request`. Each call costs ten inputs of the budget, takes
+  no text from the characters budget, and the text never reaches a log, an
+  audit record or an error message. The hosted relay forwards them as
+  `device-host.input.clipboard.set` and `.get`, and answers `action-failed`
+  when the host's hello lacks `device-clipboard`. There is no automatic sync.
+  `input.button` takes `home` or `lock`,
   and on Android also `back` or `app-switch`. `input.rotate` takes
   `direction` (`left` or `right`) and turns the device a quarter turn. An
   iPhone Duo rotates through its Virtualization provider in folded, half-open

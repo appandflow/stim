@@ -635,6 +635,16 @@ export class HostedRelay {
     if (!isJsonObject(params) || typeof params.session !== 'string') return false;
     const entry = this.controls.get(params.session);
     if (!entry) return false;
+    if (method.startsWith('input.clipboard.') && !entry.lease.connection.supports('device-clipboard')) {
+      this.send({
+        id,
+        error: {
+          code: 'action-failed',
+          message: 'The Mac hosting this device cannot set or read a clipboard: update its Stim.',
+        },
+      });
+      return true;
+    }
     const response = this.forward(id, entry.lease.connection, `device-host.${method}`, {
       ...params,
       session: entry.hostSession,

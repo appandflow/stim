@@ -71,6 +71,19 @@ enum Scrcpy {
     return data
   }
 
+  /// The bytes of `SET_CLIPBOARD`: type 9, a sequence the server acknowledges (never 0), the paste flag and the text.
+  static func setClipboard(_ text: String, sequence: UInt64, paste: Bool) -> Data {
+    let bytes = Data(text.utf8)
+    var data = Data([9])
+    append(sequence, to: &data)
+    data.append(paste ? 1 : 0)
+    append(UInt32(bytes.count), to: &data)
+    return data + bytes
+  }
+
+  /// The bytes of `GET_CLIPBOARD` without a copy or cut key: type 8, copy key 0.
+  static let getClipboard = Data([8, 0])
+
   private static func append<T: FixedWidthInteger>(_ value: T, to data: inout Data) {
     withUnsafeBytes(of: value.bigEndian) { data.append(contentsOf: $0) }
   }
@@ -163,5 +176,46 @@ enum AnnexB {
       out += unit
     }
     return out
+  }
+}
+
+/// One message of the control socket's reverse direction. `uhid` and other kinds the server sends only for options
+/// Stim does not pass end the parse.
+enum ScrcpyDeviceMessage: Equatable {
+  case clipboard(String)
+  case clipboardAck(sequence: UInt64)
+}
+
+/// Splits the bytes the server writes to the control socket into messages, whatever the chunking of the reads.
+struct ScrcpyDeviceMessageDemuxer {
+  private static let maxClipboardBytes = 1 << 20
+  private var buffer = Data()
+
+  mutating func push(_ chunk: Data) throws -> [ScrcpyDeviceMessage] {
+    buffer += chunk
+    var messages: [ScrcpyDeviceMessage] = []
+    while let type = buffer.first {
+      let start = buffer.startIndex
+      switch type {
+      case 0:
+        guard buffer.count >= 5 else { return messages }
+        let length = Int(read(start + 1, 4))
+        guard length <= Self.maxClipboardBytes else { throw ScrcpyError.malformed("a \(length)-byte clipboard") }
+        guard buffer.count >= 5 + length else { return messages }
+        messages.append(.clipboard(String(decoding: buffer[(start + 5)..<(start + 5 + length)], as: UTF8.self)))
+        buffer.removeFirst(5 + length)
+      case 1:
+        guard buffer.count >= 9 else { return messages }
+        messages.append(.clipboardAck(sequence: read(start + 1, 8)))
+        buffer.removeFirst(9)
+      default:
+        throw ScrcpyError.malformed("a device message of type \(type)")
+      }
+    }
+    return messages
+  }
+
+  private func read(_ at: Int, _ count: Int) -> UInt64 {
+    buffer[at..<(at + count)].reduce(0) { $0 << 8 | UInt64($1) }
   }
 }

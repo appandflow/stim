@@ -191,8 +191,15 @@ SECURITY MODEL
   viewing is not written to disk.
 - Control goes through the same control session and device lease stim-server
   uses for Desktop and the phone app: taps, two-finger gestures, text, the arrow keys and Escape, rotation and the
-  hardware buttons of the shared device only. A device an agent or another client drives answers
+  hardware buttons of the shared device, plus the device clipboard on an iOS simulator, an Android emulator or an
+  Android phone only. A device an agent or another client drives answers
   busy instead of being taken over.
+- Clipboard, with --control on an iOS simulator, Android emulator or Android phone: Command-V or Control-V while
+  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field, and the
+  toolbar's Copy device clipboard button copies the device clipboard to the browser. Nothing syncs on its own. A
+  share without --control, a web page and a macOS app never read or set the device clipboard, and the text is never
+  logged. The stim-server protocol methods are input.clipboard.set and input.clipboard.get, behind the hello
+  feature device-clipboard.
 - Two-finger gestures on an iOS simulator, Android emulator or Android phone: two real
   fingers on a phone or tablet, Option-drag with a mouse for a pinch (the second finger mirrors
   the first through the screen center) and Shift-Option-drag to move both fingers together. A
