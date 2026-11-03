@@ -61,6 +61,13 @@ workspace, or one slot with --slot), stim worktree remove, Stop in Stim
 Desktop, or stim-server stopping. Tell the user a share survives a rebuild;
 never run stim share stop to "restart" one.
 
+TAB TITLES
+
+The viewer tab is titled "<app name> \u00b7 <device model> \u00b7 Stim" (a simulator app's display name from its
+Info.plist, else "Live iOS app"; the model from the simulator name without the Stim label and runtime version), the
+login page "<app name> \u00b7 Stim", and an ended or unknown link "Share ended \u00b7 Stim". They never carry the
+project, workspace or branch name, and the viewer tab follows the app when it changes.
+
 VIEWERS SEE EACH OTHER
 
 Every viewer has a name (the optional name field on the login page, or on first
@@ -71,13 +78,18 @@ N. Viewers of one share see each other's touches live, with the name, and never
 those of another share's viewers, even of the same device; every share also
 sees the agent's actions and the host's touches, shown as Host, when the device
 is controlled from Stim Desktop or the phone. The names live in stim-server's
-memory for the share and are never logged or written to disk. Presence shows where people tap, a PIN pad
+memory for the share and are never logged or written to disk. Clicking the row of colored initials in
+the top bar opens a People list: each person with a role (controlling, can control or view only), the
+host and the agent when they are on the device, and a Change name action on the viewer's own row. Presence shows where people tap, a PIN pad
 included; the screen is already shared, so it adds little, but say so when you
 share a device that shows secrets. One viewer at a time holds the touch
 pointer, from finger down to finger up or ten seconds without input: another
 viewer's touch meanwhile is dropped and that viewer sees who is using the
 screen. A view-only viewer sees the same and sends nothing. Hosted sessions
-(--remote) show a viewer only its own touches.
+(--remote) work the same: viewers, touches and the pointer grab live in this
+machine's stim-server, and the agent's actions on the hosted device come from
+the host Mac (a host on an older Stim shows none; stim agent-device still shows
+the agent's command).
 
 With --no-password, anyone with the link can watch, or control with
 --control; stim share warns about it on stderr, and share list shows such a
@@ -280,9 +292,16 @@ SECURITY MODEL
   Android phone only. A device an agent or another client drives answers
   busy instead of being taken over.
 - Clipboard, with --control on an iOS simulator, Android emulator or Android phone: Command-V or Control-V while
-  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field, and the
-  toolbar's Copy device clipboard button copies the device clipboard to the browser. Nothing syncs on its own. A
-  share without --control, a web page and a macOS app never read or set the device clipboard, and the text is never
+  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field. The
+  top bar's options menu has a Sync clipboard switch, on by default for control viewers and remembered in the
+  browser: while the page is focused and visible it polls the device clipboard every two seconds (slower after
+  failures) and writes new text to the browser clipboard, with a Copy from device chip when the browser refuses
+  the write, and where the browser allows reading its clipboard (Chromium, after one permission prompt) it sends
+  the browser's new text to the device when the page regains focus. The menu's Copy from device button copies
+  once. Sending the browser's new text to the device is an input: it starts the control session like a paste, and on an
+  Android phone takes its lease. The polling never starts the control session and never keeps it alive: it reads only while a session runs
+  (after a viewer's first tap, key or paste) and does not count as input for the 5 minute idle end. Text a control
+  viewer sends reaches the device clipboard and then every other control viewer's browser with sync on. A share without --control, a web page and a macOS app never read or set the device clipboard, and the text is never
   logged. The stim-server protocol methods are input.clipboard.set and input.clipboard.get, behind the hello
   feature device-clipboard.
 - Two-finger gestures on an iOS simulator, Android emulator or Android phone: two real

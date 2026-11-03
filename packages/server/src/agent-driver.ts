@@ -43,6 +43,10 @@ export interface HostedAgentHostOptions {
   maxRestarts?: number;
 }
 
+/** What agent-device shows for a command to a session with no live agent grant; it reads the JSON-RPC error body. */
+const UNKNOWN_SESSION =
+  'The hosting Mac has no agent control for this hosted session: the session ended, or its agent control restarted.';
+
 const digest = (token: string): Buffer => createHash('sha256').update(token).digest();
 
 const none = (notice?: string): AgentAccess => ({ grant: { driver: 'none' }, ...(notice ? { notice } : {}) });
@@ -277,6 +281,23 @@ export class HostedAgentHost {
     if (verdict === 'ok' && this.active) this.active.forward(session, request, response);
     else if (verdict === 'ok')
       response.writeHead(503, { 'content-type': 'text/plain' }).end('Agent control is not running.\n');
+    else if (verdict === 'unknown' && request.method === 'POST' && /\/rpc(?:\?|$)/.test(request.url ?? ''))
+      response.writeHead(404, { 'content-type': 'application/json' }).end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: null,
+          error: {
+            code: -32000,
+            message: UNKNOWN_SESSION,
+            data: {
+              code: 'SESSION_NOT_FOUND',
+              message: UNKNOWN_SESSION,
+              hint: 'Rerun `stim ios|android --remote <machine>` to start a hosted session, then use the remote config it prints.',
+              retriable: false,
+            },
+          },
+        }),
+      );
     else
       response
         .writeHead(verdict === 'unknown' ? 404 : 403, { 'content-type': 'text/plain' })

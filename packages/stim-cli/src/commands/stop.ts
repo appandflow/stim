@@ -384,7 +384,7 @@ export function runIdleStop({
   report: (line: string) => void;
 } & Pick<
   StopArgs,
-  'state' | 'isAlive' | 'inspectIdentity' | 'killGroup' | 'waitForDeath' | 'resolveMetro' | 'teardownIos'
+  'state' | 'isAlive' | 'inspectIdentity' | 'killGroup' | 'waitForDeath' | 'resolveMetro' | 'teardownIos' | 'operation'
 >): Promise<StopResult> {
   return stopWorkspace({
     ...processes,

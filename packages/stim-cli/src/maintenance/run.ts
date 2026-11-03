@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { withDirLock } from '@stim-cli/core';
+import { withDirLock, type StimContext } from '@stim-cli/core';
 import {
   maintenanceChildLogFile,
   maintenanceDir,
@@ -14,15 +14,19 @@ import {
   type MaintenanceRecord,
 } from '@stim-cli/core/state';
 import { tryAcquireClaim, releaseClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
+import { tickListsSims, type TickMeasurement } from '../daemon/measure.ts';
+import { listAvdsAsync } from '../devices/android.ts';
+import { listAllIosSimsAsync } from '../devices/ios.ts';
+import { loadConfig } from '../workspace/config.ts';
 import { formatBytes } from '../fs-util.ts';
 import { memoryCulpritsUnderAsync } from '../host-memory.ts';
 import { memoryCulpritAdvice } from '../memory-culprits.ts';
-import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
-import { measureOwnedDevices } from './devices.ts';
+import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devices.ts';
+import { measureOwnedDevices, type OwnedDeviceReads } from './devices.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
 import { capChildLog } from './attempt.ts';
-import { measurePressure, measureSizes, sizeScanDeferred } from './measure.ts';
+import { measurePressure, measureSizes, pressureFromMeasurement, sizeScanDeferred } from './measure.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
@@ -183,12 +187,42 @@ const sameSet = (before: Set<string>, after: Set<string>) =>
 
 const BACKGROUND_TRIGGERS = new Set(['daemon']);
 
+/** The daemon tick a pass runs in: its context, whose reads do not block the event loop, and its measurement. */
+export interface MaintenanceTick {
+  operation: StimContext;
+  measured: TickMeasurement;
+}
+
+function tickDeviceReads({ operation, measured }: MaintenanceTick): OwnedDeviceReads {
+  const { signal } = operation;
+  return {
+    sims: () => {
+      if (!tickListsSims(loadConfig()))
+        return listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, signal, operation });
+      if (measured.sims === null) throw new Error(measured.simsError ?? 'the simulator list failed');
+      return measured.sims;
+    },
+    avds: () => listAvdsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, signal, operation }),
+  };
+}
+
+function tickDeviceActivity({ measured }: MaintenanceTick) {
+  return async (withSims: boolean) => {
+    if (withSims && measured.sims === null) throw new Error(measured.simsError ?? 'the simulator list failed');
+    return measured.devices;
+  };
+}
+
 /**
  * One automatic maintenance pass in this process, when a check is due. Its idle check stops only workspaces with a
  * hosted device, after `maintenance.idleStopHours`; the activity pass decides idle for every other one. `report`
- * plans and logs without acting, whatever `daemon.mode` says.
+ * plans and logs without acting, whatever `daemon.mode` says. Within a daemon `tick`, the pass reuses the tick's
+ * measurement and runs no child process synchronously.
  */
-export async function runMaintenance(trigger: string, { report = false }: { report?: boolean } = {}): Promise<void> {
+export async function runMaintenance(
+  trigger: string,
+  { report = false, tick }: { report?: boolean; tick?: MaintenanceTick } = {},
+): Promise<void> {
   const startedAt = Date.now();
   let claim: ClaimHandle | undefined;
   try {
@@ -273,7 +307,10 @@ export async function runMaintenance(trigger: string, { report = false }: { repo
       try {
         if (check === 'worktree' || check === 'sweep' || check === 'idle') continue;
         if (check === 'pressure') {
-          state.pressure = measurePressure(state.pressure, state.lastAt[check]!);
+          const at = state.lastAt[check]!;
+          state.pressure = tick
+            ? pressureFromMeasurement(state.pressure, at, tick.measured.measurement)
+            : measurePressure(state.pressure, at);
           const culprits = await memoryCulpritsUnderAsync(state.pressure.memory.level);
           if (culprits) state.pressure.memory.culprits = culprits;
           for (const disk of state.pressure.disk)
@@ -303,8 +340,10 @@ export async function runMaintenance(trigger: string, { report = false }: { repo
             });
           };
           state.sizes = [
-            ...(await measureSizes(state.lastAt[check]!, measureFailed)),
-            ...(deviceSweepIsScoped() ? [] : await measureOwnedDevices(state.lastAt[check]!, measureFailed)),
+            ...(await measureSizes(state.lastAt[check]!, measureFailed, tick?.operation)),
+            ...(deviceSweepIsScoped()
+              ? []
+              : await measureOwnedDevices(state.lastAt[check]!, measureFailed, tick && tickDeviceReads(tick))),
           ];
           for (const size of state.sizes)
             record('maintenance_check', 'debug', `${size.name}: ${formatBytes(size.bytes)}`, {
@@ -331,6 +370,7 @@ export async function runMaintenance(trigger: string, { report = false }: { repo
         worktrees: plannedWorktrees,
         idle: ran.has('idle'),
         background,
+        ...(tick ? { operation: tick.operation, deviceActivity: tickDeviceActivity(tick) } : {}),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -350,6 +390,7 @@ export async function runMaintenance(trigger: string, { report = false }: { repo
         background,
         protectedRoot: triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
+        ...(tick ? { operation: tick.operation } : {}),
       };
       const results: { action: MaintenanceAction; outcome: ActionOutcome }[] = [];
       const ordered = actions.toSorted((a, b) => executionRank(a) - executionRank(b));

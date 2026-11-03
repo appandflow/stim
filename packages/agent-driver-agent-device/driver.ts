@@ -793,7 +793,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       response.writeHead(503, { 'content-type': 'text/plain' }).end('Agent control is not running.\n');
       return;
     }
-    const target = daemonPath(session, request.url ?? '', request.method);
+    const target = daemonPath(session, request.url ?? '', request.method, lease.scope.tenant);
     if (!target) {
       response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
       return;
@@ -1633,18 +1633,36 @@ function adminRequest(admin: DaemonAdmin, method: 'PUT' | 'DELETE', id: string, 
 }
 
 const DAEMON_PATHS = /^\/(?:rpc|health|artifacts)(?:\/[\w.~-]+)*\/?$/;
+const REQUEST_DIAGNOSTICS = /^\/sessions\/([^/]+)\/requests\/[\w.~-]+\/diagnostics$/;
 
 /**
- * The proxy path behind a session route, only for commands (`/rpc`), health and artifact downloads; null
- * otherwise. Uploads serve installs, which a macos-app lease refuses, and session diagnostics are not scoped
- * to one client.
+ * Whether `path` is agent-device's `GET /sessions/<session>/requests/<id>/diagnostics`, which a client fetches to
+ * name the record of a failed command, for a session under `tenant`. agent-device's own proxy confines the route
+ * the same way (`isTenantOwnedSessionName`), but only for callers it authenticated, which this host's is not.
  */
-function daemonPath(session: string, url: string, method: string | undefined): string | null {
+function isTenantDiagnostics(path: string, tenant: string): boolean {
+  const session = REQUEST_DIAGNOSTICS.exec(path)?.[1];
+  if (session === undefined) return false;
+  try {
+    return decodeURIComponent(session).startsWith(`${tenant}:`);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The proxy path behind a session route, only for commands (`/rpc`), health, artifact downloads and the failed
+ * command diagnostics of the lease's own tenant; null otherwise. Uploads serve installs, which a macos-app lease
+ * refuses, and the diagnostics of another tenant's sessions are not this client's.
+ */
+function daemonPath(session: string, url: string, method: string | undefined, tenant: string): string | null {
   const prefix = `${AGENT_ROUTE_PREFIX}${session}`;
   if (!url.startsWith(prefix)) return null;
   const rest = url.slice(prefix.length);
   const query = rest.indexOf('?');
   const path = query < 0 ? rest : rest.slice(0, query);
-  if (!DAEMON_PATHS.test(path) || path.includes('..')) return null;
+  if (path.includes('..')) return null;
+  if (isTenantDiagnostics(path, tenant)) return method === 'GET' ? rest : null;
+  if (!DAEMON_PATHS.test(path)) return null;
   return (path.startsWith('/rpc') ? method === 'POST' : method === 'GET') ? rest : null;
 }

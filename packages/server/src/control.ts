@@ -530,11 +530,11 @@ function runQuietly(
       reject(new Error(`${label} could not start (${error.message}).`));
     });
     child.on('close', finish);
-    if (claim) {
+    if (claim && child.pid !== undefined) {
       try {
-        const identity = child.pid ? captureProcessIdentity(child.pid) : null;
-        if (!identity?.ok) throw new Error(`${label} child identity could not be established.`);
-        setClaimChild(claim, { pid: child.pid!, processToken: identity.token });
+        const identity = captureProcessIdentity(child.pid);
+        if (!identity.ok) throw new Error(`${label} child identity could not be established.`);
+        setClaimChild(claim, { pid: child.pid, processToken: identity.token });
       } catch (error) {
         timedOut = true;
         clearTimeout(timer);
@@ -954,13 +954,14 @@ export class ControlHub {
       void this.end(session, 'device-gone', 'The hosted session is no longer available.');
       return Promise.resolve({ code: 'forbidden', message: 'The hosted session is no longer available.' });
     }
-    session.idle.refresh();
+    const reads = command.input === 'clipboard-get';
+    if (!reads) session.idle.refresh();
     if (session.target.physical && session.lease && Date.parse(session.lease.expiresAt) <= Date.now()) {
       const message = "The workspace's lease on this device expired.";
       void this.end(session, 'device-gone', message);
       return Promise.resolve({ code: 'unknown-session', message });
     }
-    this.options.onInput?.(session.device);
+    if (!reads) this.options.onInput?.(session.device);
     if (command.input === 'touch') {
       const dropped = this.touch(session, command, participant);
       if (dropped !== undefined) return Promise.resolve(dropped);
