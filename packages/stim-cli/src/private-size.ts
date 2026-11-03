@@ -33,7 +33,7 @@ function parseDu(output: string): TreeSize | null {
 /**
  * The size of the tree at `path` in one walk: on macOS with the Command Line Tools, `stim-privsize` gives the allocated
  * and private bytes; elsewhere, or when the helper fails, `du -sk` gives the allocated bytes and the private bytes stay
- * unknown. Null when neither could measure it. With an operation the walk is its declared child; without one it runs
+ * unknown. Null when neither could measure it, or when the helper was stopped at the timeout. With an operation the walk is its declared child; without one it runs
  * at low priority and `onSpawn` sees it.
  */
 export async function measureTree(
@@ -69,6 +69,7 @@ export async function measureTree(
       if (size) return size;
     } catch (error) {
       const { status, stdout } = failed(error);
+      if (error instanceof Error && 'signal' in error && error.signal) return null;
       const size = status === UNSUPPORTED_STATUS && typeof stdout === 'string' ? parseHelper(stdout) : null;
       if (size) return { bytes: size.bytes, privateBytes: null };
     }
