@@ -723,8 +723,8 @@ async function bootOwnedIosSim({
   const record = iosBootRecorder(projectPath, slot, udid);
   const onPhase = recordBootPhase(record, udid, origin ?? (device.adoptionPending ? 'adopted' : 'existing'));
   const openViewer = async () => {
-    await configuredIosSimulatorViewer(simulatorApp, ambientContext()?.env).open(udid);
-    onPhase({ phase: 'viewer_opened' });
+    if (await configuredIosSimulatorViewer(simulatorApp, ambientContext()?.env).open(udid))
+      onPhase({ phase: 'viewer_opened' });
   };
   const ready = async (): Promise<IosBootAttempt> => {
     try {

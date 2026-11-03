@@ -2371,7 +2371,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
-  ios             --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --install-runtime --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|local|auto|remote|remote-only|machine>
+  ios             --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --install-runtime --simulator-app <xcode|siniulator|stim-desktop|none> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|local|auto|remote|remote-only|machine>
   android         --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas|local|auto|remote|remote-only|machine>
   ios/android --wait bounds owned-device slot waits (default 600s), or physical
   leases with --device (default 60s). Remote targets do not join this local

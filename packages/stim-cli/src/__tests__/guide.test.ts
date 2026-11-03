@@ -478,7 +478,7 @@ test('native Gradle build-worker references route to the rendered native-android
 });
 
 test('the viewer override is discoverable beside the machine preference and boot guidance', () => {
-  expect(renderSection('lifecycle', 'options')).toContain('--simulator-app <xcode|siniulator|stim-desktop>');
+  expect(renderSection('lifecycle', 'options')).toContain('--simulator-app <xcode|siniulator|stim-desktop|none>');
   for (const guide of [renderTopic('settings'), renderSection('lifecycle', 'simslim')]) {
     expect(guide).toContain('iosSimulatorApp');
     expect(guide).toContain('--simulator-app siniulator');
