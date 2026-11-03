@@ -50,10 +50,16 @@ struct OverviewView: View {
       summaries: projects, environments: store.payload?.environments ?? [], project: store.project(ofPath:))
     let archived = store.newestArchives
     if running.isEmpty && idle.isEmpty && archived.isEmpty {
-      EmptyState(
-        title: "Nothing Here Yet",
-        message: "Projects appear here when an agent warms a worktree or runs stim ios or stim android.",
-        showsHero: true, showsPrompts: true)
+      VStack(spacing: 0) {
+        if !machines.isEmpty {
+          machinesSection(machines)
+            .padding(.horizontal, PageInset.horizontal).padding(.top, Space.xxxl)
+        }
+        EmptyState(
+          title: "Nothing Here Yet",
+          message: "Projects appear here when an agent warms a worktree or runs stim ios or stim android.",
+          showsHero: true, showsPrompts: true)
+      }
     } else {
       ScrollView {
         VStack(alignment: .leading, spacing: Space.xxl) {
@@ -242,7 +248,8 @@ private struct MachineTallyCard: View {
             Pill(tone: access == "View and Control" ? .brand : .neutral, size: .small) { Text(access) }
           }
         }
-        Text(verbatim: summary).font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
+        Text(verbatim: summary).font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(2)
+          .help("Active workspaces, builds running and devices running")
       }
       .padding(.horizontal, Space.lg)
       .padding(.vertical, Space.md)
@@ -254,8 +261,7 @@ private struct MachineTallyCard: View {
   private var summary: String {
     guard tally.isAvailable else { return "Unavailable" }
     return [
-      countLabel(tally.activeWorkspaces, "active workspace"), countLabel(tally.builds, "build"),
-      countLabel(tally.devices, "device"),
+      "\(tally.activeWorkspaces.formatted()) active", countLabel(tally.builds, "build"), countLabel(tally.devices, "device"),
     ].joined(separator: " \u{00B7} ")
   }
 }

@@ -313,7 +313,15 @@ with the same access checks and a confirmation naming the owning server before S
 **Machines** lists each paired server after the
 build machines, with its reported capacity, its hosted devices and its offloaded builds. A hosted session two
 servers report shows once, under the first. A pairing whose server says it is this Mac's own gets no section.
-With the flag off, or with no pairing, nothing connects and the sidebar and Machines page are unchanged.
+Active Workspaces, the Overview and Builds list paired machines' workspaces too. `PairedMachine.list` keeps a pairing's
+workspaces only while its connection is open and its status feed delivers, so an unreachable, refused or revoked pairing
+adds none, and a note names it. `WallCard.merged` puts this Mac's cards first, then one card per active workspace of each
+available machine, with the machine's name and **View Only** or **View and Control** on the card; a card opens that workspace's
+page, and its device streams through `PhysicalDeviceScreen` as the page's tile does, view only, with the tile's
+offscreen pause and Standard quality. The Overview adds a **Machines** row (`MachineTally`) counting each machine's active workspaces,
+running builds and running devices, and Builds adds **Running now** (`RunningBuild`) with each build's phases from `plannedPhases`.
+A **This Mac** / **All Machines** control (`machineScope` preference, default all) appears on each screen while a machine is available.
+With the flag off, or with no pairing, nothing connects and the sidebar, Machines page and these screens are unchanged.
 
 ## Hiding a workspace
 

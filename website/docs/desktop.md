@@ -810,6 +810,15 @@ capacity, its hosted devices and its offloaded builds. When the machine is
 offline, Desktop keeps showing its last status with "Offline since" and the
 time. Hiding a paired machine's workspace lasts until Desktop quits.
 
+**Active Workspaces** and the **Overview** list the machine's active workspaces next to this Mac's,
+each card marked with the machine's name and **View Only** or **View and Control**, and
+**Overview** counts each machine's active workspaces, running builds and devices. **Builds**
+shows **Running now** with the builds in progress on every machine and their phases. A card
+opens the same workspace page as the sidebar, and its device screen is live, view only.
+The **This Mac** and **All Machines** switch limits these screens to this Mac. A machine that is offline,
+or whose pairing was revoked, drops out of these lists, and a note names it, rather than
+showing its last status.
+
 Select an iOS or Android device on that page, including a hosted one, to open its
 screen in the viewer. Desktop streams it through the paired machine's server,
 which relays hosted devices from the Mac that runs them, so this Mac needs no
