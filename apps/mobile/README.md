@@ -714,6 +714,16 @@ to the inner panel the screen shows. The session ends when you turn
 Control off, leave the view, lose the connection, or after 5 minutes without
 input; the banner says why.
 
+On an iOS simulator, an Android emulator or an Android phone, when the server lists
+`device-clipboard`, **More** also has **Paste from Phone** and **Copy Device
+Clipboard** while Control is on. Paste reads the phone's clipboard when you tap it
+(iOS asks to allow the paste), sets the device clipboard to that text and pastes it
+into the focused field; text over 8 KiB is not sent, and a note says so. On iOS the
+note after a paste adds that the device may show a paste suggestion to tap, which
+simulators slimmed by `simslimProfile` cannot show. Copy reads the device clipboard
+into the phone's and a note confirms it. Text only; nothing syncs by itself, and the
+app never logs the text. A web page, a Mac app and a physical iPhone have neither action.
+
 After a rotate, a note over the screen says "Rotated to landscape" (or
 portrait) once the picture turns. When it has not turned after 2.5 seconds,
 the note says the screen stayed as it was and that the app in front may not
@@ -1057,6 +1067,8 @@ for a platform, and the mock server refuses a reload without one, like
 `stim reload`. Start it with
 `pnpm run mock-server --read` to see a read-only pairing, which gets no
 actions.
+It keeps one clipboard for `input.clipboard.set` and `input.clipboard.get`, so the
+paste and copy actions round-trip.
 
 A phone that asks iOS devices for H.264 gets video from
 `mock-server/fixtures/recording-ios.seg`. That is 60 seconds of an iOS
