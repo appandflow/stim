@@ -1,22 +1,25 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import { WebSocketServer } from 'ws';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readAgentSnapshot, workspaceAgentDeviceDir } from '@stim-cli/core/state';
+import { workspaceStateDir } from '@stim-cli/core';
+import { readAgentSnapshot, serverLocalSocket, workspaceAgentDeviceDir } from '@stim-cli/core/state';
 
 const cli = fileURLToPath(new URL('../../bin/cli.ts', import.meta.url));
 
 const FAKE_AGENT_DEVICE = `
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 const args = process.argv.slice(2);
 if (args[0] === 'snapshot') {
   process.stdout.write(JSON.stringify({ nodes: [{ ref: 'e2', rect: { x: 100, y: 200, width: 200, height: 100 } }], viewport: { width: 400, height: 800 } }) + '\\n');
   process.exit(0);
 }
 if (args[0] === 'die') process.kill(process.pid, 'SIGTERM');
-if (args[0] === 'press') {
+if (args[0] === 'press' && process.env.AGENT_DEVICE_STATE_DIR) {
   const session = args[args.indexOf('--session') + 1];
   const dir = join(process.env.AGENT_DEVICE_STATE_DIR, 'sessions', session);
   mkdirSync(dir, { recursive: true });
@@ -111,3 +114,47 @@ test.skipIf(process.platform === 'win32')(
     expect(run(['die']).status).toBe(143);
   },
 );
+
+test('a hosted session shows the agent to stim-server at once and ends it with no gesture, which its host sends', async () => {
+  const session = '4f88400a-48eb-4a07-ba6a-734c42768b2a';
+  const config = join(home, 'hosted', 'agent.json');
+  mkdirSync(workspaceStateDir(app), { recursive: true });
+  writeFileSync(
+    join(workspaceStateDir(app), 'state.json'),
+    JSON.stringify({
+      ios: {
+        host: { machine: 'local:mini', session, agent: { driver: 'agent-device', remoteConfig: config, command: 'x' } },
+      },
+    }),
+  );
+  const socket = serverLocalSocket();
+  mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
+  const published: unknown[] = [];
+  const listener = createServer();
+  const sockets = new WebSocketServer({ server: listener });
+  sockets.on('connection', (peer) =>
+    peer.on('message', (data) => {
+      const { id, method, params } = JSON.parse(data.toString());
+      if (method === 'presence.publish') published.push(params);
+      peer.send(JSON.stringify({ id, result: {} }));
+    }),
+  );
+  await new Promise<void>((resolve) => listener.listen(socket, resolve));
+  try {
+    const child = spawn(process.execPath, [cli, 'agent-device', 'press', '@e1', '--json'], {
+      cwd: app,
+      env: { ...process.env, STIM_HOME: home, STIM_AGENT_DEVICE_BIN: bin, STIM_DAEMON: 'off' },
+    });
+    let stdout = '';
+    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk));
+    await new Promise((resolve) => child.once('close', resolve));
+    expect(JSON.parse(stdout).argv).toEqual(['press', '@e1', '--json', '--remote-config', config]);
+    expect(published).toEqual([
+      { workspace: app, platform: 'ios', command: 'press', phase: 'start' },
+      { workspace: app, platform: 'ios', command: 'press', phase: 'end' },
+    ]);
+  } finally {
+    sockets.close();
+    await new Promise((resolve) => listener.close(resolve));
+  }
+}, 60_000);

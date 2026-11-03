@@ -101,6 +101,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
  * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
+ * `hosted-presence` is `device-host.presence.subscribe`: the `presence` events of a hosted session, which carry what the
+ * agent drives on it. A host lists it only with `presence`.
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
  * `device-clipboard` is `input.clipboard.set` and `input.clipboard.get` (and `device-host.input.clipboard.*`): set the clipboard
  * of an iOS simulator, an Android emulator or an Android phone, optionally pasting it, and read it back.
@@ -173,6 +175,7 @@ export const FEATURES = [
   'presence',
   'device-clipboard',
   'share-view-password',
+  'hosted-presence',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -271,6 +274,7 @@ export const METHODS = [
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
+  'device-host.presence.subscribe',
   'device-host.unsubscribe',
   'device-host.control.begin',
   'device-host.control.end',
@@ -336,6 +340,7 @@ export const DEVICE_HOST_METHODS = [
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
+  'device-host.presence.subscribe',
   'device-host.unsubscribe',
   'device-host.control.begin',
   'device-host.control.end',
@@ -1784,6 +1789,7 @@ export interface Methods {
   };
   'device-host.frames.keyframe': Methods['frames.keyframe'];
   'device-host.frames.congested': Methods['frames.keyframe'];
+  'device-host.presence.subscribe': { params: { session: string }; result: { subscription: string } };
   'device-host.unsubscribe': Methods['unsubscribe'];
   'device-host.control.begin': { params: { session: string; takeOver?: boolean }; result: ControlBeginResult };
   'device-host.control.end': Methods['control.end'];
