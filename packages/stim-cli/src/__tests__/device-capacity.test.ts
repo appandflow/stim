@@ -12,6 +12,8 @@ import {
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import * as client from '../daemon/client.ts';
+import { liveWaiters } from '../engine/wait-queue.ts';
 import { createRunRecorder, readStats, recordRunStats } from '../engine/stats.ts';
 import { makeIosSim, makeConfig, makeAdbDevices } from './_factories.ts';
 import { admissionLimits } from '../workspace/config.ts';
@@ -427,6 +429,42 @@ describe('boot admission beyond the device caps', () => {
     });
   const booting = (count: number) =>
     Array.from({ length: count }, (_, index) => ({ platform: 'ios', key: `b${index}`, displayName: `tree-${index}` }));
+
+  test('a freed device slot goes to the queued run, not a newcomer', async () => {
+    let full = true;
+    const sims = () => (full ? occupied : []);
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = withDeviceBootAdmission({ platform: 'ios', key: 'queued' }, async () => 'queued booted', {
+      root,
+      max: 1,
+      memory: calm,
+      sources: { ...empty, sims },
+      sleep: () => gate,
+    });
+    await vi.waitFor(() => expect(liveWaiters('boot')).toHaveLength(1));
+    full = false;
+    await expect(admit({ max: 1, sources: { ...empty, sims } })).rejects.toMatchObject({
+      code: 'STIM_AT_CAPACITY',
+      message: expect.stringContaining('its turn in the device queue'),
+    });
+    release();
+    await expect(queued).resolves.toBe('queued booted');
+  });
+
+  test('a finished boot tells the stim-daemon, which wakes the next waiter', async () => {
+    const released = vi.spyOn(client, 'notifyReleased');
+    await withDeviceBootAdmission(
+      { platform: 'ios', key: 'next' },
+      async () => {
+        expect(released).not.toHaveBeenCalled();
+      },
+      { root, max: 8, noWait: true, memory: calm, sources: empty },
+    );
+    expect(released).toHaveBeenCalledWith('boot');
+  });
 
   test('a third boot waits while two are in flight, even with device slots free', async () => {
     await expect(admit({ sources: { ...empty, booting: booting(2) } })).rejects.toMatchObject({
