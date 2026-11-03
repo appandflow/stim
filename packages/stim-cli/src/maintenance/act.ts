@@ -40,7 +40,7 @@ import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { cacheBlocked, lowestFree, measureDisk, measureDiskAsync } from './measure.ts';
 import {
-  cacheEntryProtection,
+  cacheEntryProtectionFor,
   maintenancePinned,
   maintenancePinnedAsync,
   maintenancePinnedReader,
@@ -133,7 +133,7 @@ function cacheOf(action: MaintenanceAction): CacheDescriptor | null {
   return discovered.find((cache) => cacheLabel(cache) === action.target) ?? null;
 }
 
-function trimCache(action: MaintenanceAction, context: ActContext): ActionOutcome {
+async function trimCache(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   const cache = cacheOf(action);
   if (!cache) return kept('it is no longer a cache Stim may trim');
   const [planned] = planCacheEmptying([cache], false);
@@ -142,7 +142,7 @@ function trimCache(action: MaintenanceAction, context: ActContext): ActionOutcom
   const result = pruneCache(cache, {
     olderThanDays: Math.max(action.olderThanDays ?? 0, context.settings.protectRecentHours / 24),
     byMtime: true,
-    protect: (context.protect ??= cacheEntryProtection()),
+    protect: (context.protect ??= await cacheEntryProtectionFor(loadConfig(), context.operation)),
     ...(aged ? {} : { evictBytes: action.bytes }),
   });
   if (result.skipped) return kept(result.skipped);

@@ -12,11 +12,11 @@ import {
 } from '../commands/gc/worktrees.ts';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { recentNativeUseReason, workspaceBuildReasons } from '../commands/gc/workspaces.ts';
+import { recentNativeUseReason, workspaceBuildReasons, workspaceBuildReasonsAsync } from '../commands/gc/workspaces.ts';
 import { reclaimKeys } from '../commands/worktree.ts';
 import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
 import { childEnvironment } from '../workspace/git-read.ts';
-import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
+import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../workspace/in-use.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   ARTIFACT_DIRS,
@@ -233,6 +233,35 @@ async function pinsOf(
   return (workspace) => pins.get(workspace) ?? true;
 }
 
+type InUseReader = (workspace: string) => string[];
+
+function inUseNow(kind: ArtifactKind, locked: string | undefined): InUseReader {
+  return (key) =>
+    kind === 'build'
+      ? workspaceBuildReasons(key, { nativeRun: key !== locked })
+      : workspaceInUse(key, { nativeRun: key !== locked });
+}
+
+async function inUseOf(
+  candidate: ArtifactCandidate,
+  kind: ArtifactKind,
+  signal: AbortSignal,
+  operation: StimContext | undefined,
+  locked?: string,
+): Promise<InUseReader> {
+  const reasons = new Map<string, string[]>();
+  for (const key of candidate.keys) {
+    const nativeRun = key !== locked;
+    reasons.set(
+      key,
+      kind === 'build'
+        ? await workspaceBuildReasonsAsync(key, signal, operation, { nativeRun })
+        : await workspaceInUseAsync(key, { nativeRun }, signal, operation),
+    );
+  }
+  return (key) => reasons.get(key) ?? [];
+}
+
 function keptReason(
   candidate: ArtifactCandidate,
   kind: ArtifactKind,
@@ -242,16 +271,18 @@ function keptReason(
     pinned,
     locked,
     running,
+    inUse,
   }: {
     now: number;
     windowMs: number;
     pinned: (workspace: string) => boolean;
     locked?: string;
     running?: RunningProcesses | null;
+    inUse?: InUseReader;
   },
   reads?: ArtifactReads,
 ): string | null {
-  const guarded = artifactGuard(candidate, kind, pinned, locked, running);
+  const guarded = artifactGuard(candidate, kind, pinned, locked, running, inUse);
   if (guarded) return guarded;
   const { worktree, path, keys } = candidate;
   const tracked = reads ? reads.tracked : gitQuiet(worktree, ['ls-files', '--', relative(worktree, path)]);
@@ -281,6 +312,7 @@ function artifactGuard(
   pinned: (workspace: string) => boolean,
   locked?: string,
   running?: RunningProcesses | null,
+  inUse: InUseReader = inUseNow(kind, locked),
 ): string | null {
   const { worktree, path, keys } = candidate;
   if (keys.some(pinned)) return 'pinned by maintenance.keep';
@@ -294,12 +326,8 @@ function artifactGuard(
   }
   if (!isDirectory(path) || real !== join(canonicalPath(worktree), relative(worktree, path)))
     return 'it or a directory above it is a link, or it lies outside its worktree';
-  const inUse = keys.flatMap((key) =>
-    kind === 'build'
-      ? workspaceBuildReasons(key, { nativeRun: key !== locked })
-      : workspaceInUse(key, { nativeRun: key !== locked }),
-  );
-  if (inUse.length) return `in use: ${inUse.join('; ')}`;
+  const reasons = keys.flatMap(inUse);
+  if (reasons.length) return `in use: ${reasons.join('; ')}`;
   if (kind === 'dependencies')
     return runningFromReason(worktree, running === undefined ? readRunningProcesses() : running);
   return null;
@@ -347,14 +375,15 @@ export async function collectArtifactsAsync(
           continue;
         }
         const candidate = { worktree: worktree.path, path, keys: worktree.keys, locked: worktree.locked };
-        let reason = protectedHere
+        const inUse = protectedHere ? null : await inUseOf(candidate, kind, signal, operation);
+        let reason = !inUse
           ? 'the command that started this pass runs inside its worktree'
-          : artifactGuard(candidate, kind, pinned, undefined, running);
+          : artifactGuard(candidate, kind, pinned, undefined, running, inUse);
         if (!reason)
           reason = keptReason(
             candidate,
             kind,
-            { ...options, pinned, running },
+            { ...options, pinned, running, ...(inUse ? { inUse } : {}) },
             await artifactReads(candidate, kind, signal, operation),
           );
         if (reason) skips.push({ target: path, reason });
@@ -431,7 +460,7 @@ export async function clearArtifact(
   const early = keptReason(
     candidate,
     kind,
-    { ...options, pinned, now: Date.now(), running },
+    { ...options, pinned, now: Date.now(), running, inUse: await inUseOf(candidate, kind, signal, operation) },
     await artifactReads(candidate, kind, signal, operation),
   );
   if (early) return { status: 'kept', bytes: 0, detail: early };
@@ -451,6 +480,7 @@ export async function clearArtifact(
         pinned: await pinsOf(candidate.keys, options.pinned),
         now: Date.now(),
         running: kind === 'dependencies' ? await readRunningProcessesAsync() : null,
+        inUse: await inUseOf(candidate, kind, signal, operation, key),
         ...(key ? { locked: key } : {}),
       },
       await artifactReads(candidate, kind, signal, operation),

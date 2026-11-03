@@ -22,7 +22,7 @@ import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { executeAction, type ActContext } from '../maintenance/act.ts';
 import { artifactWorktreesFor } from '../maintenance/artifacts.ts';
 import { cacheBlocked } from '../maintenance/measure.ts';
-import { cacheEntryProtection } from '../maintenance/protect.ts';
+import { cacheEntryProtectionFor } from '../maintenance/protect.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../maintenance/settings.ts';
 import { planRung6 } from '../maintenance/sweep.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
@@ -292,7 +292,7 @@ async function trim(
   const result = pruneCache(cache, {
     olderThanDays: recentDays,
     byMtime: true,
-    protect: cacheEntryProtection(context.config),
+    protect: await cacheEntryProtectionFor(context.config, context.operation),
     evictBytes,
   });
   if (result.skipped) return { outcome: 'kept', bytes: 0, detail: result.skipped };

@@ -21,6 +21,7 @@ import * as gcDevices from '../commands/gc/devices.ts';
 import * as measure from '../daemon/measure.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
 import { runHomePasses } from '../daemon/passes.ts';
+import { macosDir } from '../macos/state.ts';
 import { runDaemon } from '../daemon/run.ts';
 import * as maintenanceMeasure from '../maintenance/measure.ts';
 import * as maintenanceRun from '../maintenance/run.ts';
@@ -283,6 +284,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       runQuiet: (command: string) => refuse(command),
       runFile: (file: string, args: string[]) => refuse(file, args),
       runFileQuiet: (file: string, args: string[]) => refuse(file, args),
+      spawn: (file: string, args: readonly string[] = []) => refuse(file, args),
       runFileAsync: async (file: string, args: string[], options) => {
         calls.async.push([file, ...args].join(' '));
         return file === 'git' ? real.runFileAsync(file, args, options) : toolOutput(file, args);
@@ -317,7 +319,10 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
   }
 
   test('a tick with every maintenance check due, the dormant stage due and disk pressure high starts no child process synchronously', async () => {
-    idleWorkspaces();
+    for (const root of idleWorkspaces()) {
+      mkdirSync(macosDir(root), { recursive: true });
+      mkdirSync(join(root, 'node_modules'));
+    }
     const config = loadConfig();
     assert(config);
     saveConfig({ ...config, idle: { dormantDays: 0.000_001 } });

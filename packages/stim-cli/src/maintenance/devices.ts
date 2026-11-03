@@ -10,7 +10,7 @@ import { readParked } from '../devices/sim-pool.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { workspaceInUse } from '../workspace/in-use.ts';
+import { workspaceInUse, workspaceInUseAsync } from '../workspace/in-use.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
 import {
@@ -140,7 +140,7 @@ function* deviceDeletionChecks({
   now,
   extra,
   env = process.env,
-}: DeviceDeletionOptions): Generator<string, MaintenancePlan, string | null> {
+}: DeviceDeletionOptions): Generator<DeviceDeletionRead, MaintenancePlan, string | null> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
   if (deviceSweepIsScoped(env)) return plan;
   for (const entry of roots) {
@@ -150,7 +150,7 @@ function* deviceDeletionChecks({
       ? 'pinned by maintenance.keep'
       : now - workspaceLastUsed(root) < windowMs
         ? usedWithin(windowMs)
-        : (workspaceInUse(root).map((why) => `in use: ${why}`)[0] ?? (yield root));
+        : ((yield { inUse: root }) ?? (yield { active: root }));
     if (kept) {
       plan.skips.push({ target: root, reason: kept, workspace: root });
       continue;
@@ -169,11 +169,20 @@ function* deviceDeletionChecks({
   return plan;
 }
 
+type DeviceDeletionRead = { inUse: string } | { active: string };
+
+const firstInUse = (reasons: readonly string[]) => (reasons[0] === undefined ? null : `in use: ${reasons[0]}`);
+
 export function planDeviceDeletion(options: DeviceDeletionOptions): MaintenancePlan {
   const activity = cachedDeviceActivity(options.now);
   const checks = deviceDeletionChecks(options);
   let step = checks.next();
-  while (!step.done) step = checks.next(workspaceActiveReason(step.value, options.now, options.windowMs, activity));
+  while (!step.done)
+    step = checks.next(
+      'inUse' in step.value
+        ? firstInUse(workspaceInUse(step.value.inUse))
+        : workspaceActiveReason(step.value.active, options.now, options.windowMs, activity),
+    );
   return step.value;
 }
 
@@ -192,7 +201,11 @@ export async function planDeviceDeletionAsync(
   let step = checks.next();
   while (!step.done) {
     signal.throwIfAborted();
-    step = checks.next(await workspaceActiveReasonAsync(step.value, options.now, options.windowMs, activity, signal));
+    step = checks.next(
+      'inUse' in step.value
+        ? firstInUse(await workspaceInUseAsync(step.value.inUse, {}, signal, operation))
+        : await workspaceActiveReasonAsync(step.value.active, options.now, options.windowMs, activity, signal),
+    );
   }
   return step.value;
 }
