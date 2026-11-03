@@ -88,7 +88,7 @@ struct PairMachineSheet: View {
         .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
       if payload.network == .localNetwork {
         Text(
-          "This is a local network address, not a Tailscale one. Pair only if this fingerprint is the one stim-server prints on the machine."
+          "This is a local network address, not a Tailscale one. Pair only with a code you copied directly from the machine's own terminal."
         )
         .font(.stim(.footnote)).foregroundStyle(Palette.warning).fixedSize(horizontal: false, vertical: true)
       }

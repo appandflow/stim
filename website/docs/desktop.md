@@ -788,9 +788,11 @@ the **Paired machines** flag on:
    Desktop pairs only with the machine whose key has that fingerprint. It accepts a
    `wss://` endpoint on a `.ts.net` name, or `ws://` to a Tailscale or private network address
    (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, link-local or unique local), which is what
-   `stim-server pair` prints when Tailscale is off. For a local network address the sheet
-   asks you to check the fingerprint against the one on the machine. A loopback endpoint
-   (`127.0.0.1`) is refused, because it only works on the machine that printed it.
+   `stim-server pair` prints when Tailscale is off, but only when the machine's
+   `server.lanAddresses` setting lists an address (it is empty by default). For a local
+   network address the sheet asks you to paste a code copied directly from the machine's own
+   terminal. Without a listed address, `stim-server pair` prints a loopback endpoint
+   (`127.0.0.1`), which Desktop refuses because it only works on the machine that printed it.
 3. The code works once, for 5 minutes. A pairing made from `stim-server pair` can only read;
    one made from `stim-server pair --control` can also run actions and control devices.
 
