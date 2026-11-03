@@ -513,8 +513,9 @@ button.primary.small {
   display: none;
 }
 .people-button {
+  --ring: var(--bg);
   display: block;
-  padding: 3px 5px;
+  padding: 3px 6px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -522,11 +523,11 @@ button.primary.small {
 }
 .people-button:hover,
 .people-button[aria-expanded='true'] {
+  --ring: var(--raised);
   background: var(--raised);
 }
 .roster {
   display: flex;
-  gap: 4px;
   padding: 0 2px;
 }
 .avatar {
@@ -542,10 +543,39 @@ button.primary.small {
   font-weight: 700;
   line-height: 15px;
 }
+.roster .avatar {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.roster .avatar + .avatar {
+  margin-left: -4px;
+}
+.roster > :nth-child(1) {
+  z-index: 5;
+}
+.roster > :nth-child(2) {
+  z-index: 4;
+}
+.roster > :nth-child(3) {
+  z-index: 3;
+}
+.roster > :nth-child(4) {
+  z-index: 2;
+}
+.roster > :nth-child(5) {
+  z-index: 1;
+}
 .roster .avatar.you {
   box-shadow:
-    0 0 0 2px var(--bg),
-    0 0 0 4px var(--fg);
+    0 0 0 2px var(--ring),
+    0 0 0 3px var(--accent);
+}
+.roster .avatar.more {
+  background: var(--line);
+  color: var(--fg);
+  font-size: 10px;
 }
 .people-panel {
   position: absolute;

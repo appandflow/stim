@@ -292,6 +292,7 @@ const peopleList = document.getElementById('people-list');
 const people = globalThis.stimPeople;
 const shareControl = control || viewOnly;
 const RENAME_MS = 5000;
+const ROSTER_MAX = 5;
 const TOUCH_MS = 10000;
 const NAME_MAX = 24;
 let lastRenameAt = -Infinity;
@@ -412,12 +413,20 @@ function renderPeople() {
 }
 
 function renderRoster() {
-  const items = people.peopleRows([...roster.values()], shareControl).map((row) => {
+  const rows = people.peopleRows([...roster.values()], shareControl);
+  const hidden = rows.length > ROSTER_MAX ? rows.length - (ROSTER_MAX - 1) : 0;
+  const items = rows.slice(0, rows.length - hidden).map((row) => {
     const item = avatar(row);
     if (row.self) item.classList.add('you');
     if (row.viewOnly) item.append(eye.content.cloneNode(true));
     return item;
   });
+  if (hidden) {
+    const more = document.createElement('span');
+    more.className = 'avatar more';
+    more.textContent = `+${hidden}`;
+    items.push(more);
+  }
   rosterList.replaceChildren(...items);
   renderPeople();
 }
