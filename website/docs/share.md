@@ -24,6 +24,7 @@ stim share android --control    # viewers can tap, type and press buttons
 stim share ios --expires 15     # 1 to 480 minutes; every share expires
 stim share ios --password '<value>'  # your own password, 8 to 128 characters
 stim share ios --no-password    # no login: the link alone opens it
+stim share android --control --view-password  # a second, watch-only password
 stim share list                 # live shares
 stim share stop                 # end this workspace's shares now`}
 />
@@ -46,6 +47,31 @@ is safer. With `--no-password` there is no login: anyone with the link can
 watch, or control with `--control`. `stim share` warns about it on stderr and
 `stim share list` marks the share "no password".
 
+### A view password next to the control one
+
+With `--control`, `--view-password` adds a second password that only watches.
+`--password` (or the generated password) stays the control password, so you can
+hand a client the view password and keep the control one:
+
+```text
+Shared android of /Users/me/app: view and control, view password, 0 viewers, expires 2026-11-02T19:12:00.000Z.
+URL:              https://my-mac.tail1234.ts.net:10000/s/q3V...Yw/
+Control password: k7mfx2rbq9tnh4ze
+View password:    p2xqd8hs5nw3cvje
+Anyone with the link and a password can open it from the internet until it expires. Generated passwords are shown only now.
+Stop it with: stim share stop
+```
+
+Give `--view-password` a value (8 to 128 characters) to choose it, or leave the
+value out to have one generated, and put it last or write
+`--view-password=<value>`. It refuses without `--control`, with
+`--no-password`, and when it equals `--password`. A viewer that signed in with
+the view password sees "View only" in the bar and gets no device controls; the
+server drops every input it sends. It can enter the control password from the
+bar ("Have the control password?") to raise itself to control, and keeps its
+name and place. `--json` adds `viewAuth` and, when it was generated,
+`viewPassword`.
+
 ## The viewer
 
 The viewer draws the device inside its frame when Stim has artwork for it (an
@@ -60,6 +86,22 @@ holds:
   the app in front supports the new orientation (and, on an emulator, auto-rotate
   is on); a portrait-only app stays upright.
 - **Fullscreen.**
+
+Everyone watching sees who touches the screen: a colored dot with the person's
+name, a short trail while they drag, and a ripple for a tap, for every viewer
+with the share open and for the host when the device is controlled from Stim
+Desktop or the phone app. The login page has an optional name field; a share
+without a password asks for a name when you first open it, and you can skip.
+Without a name a viewer is "Guest 1", "Guest 2" and so on. Names are kept only
+in stim-server's memory while the share lives. A row of colored initials in the
+bar lists who is here; an eye marks the view-only ones. Presence shows where
+people tap, a PIN pad included. The screen is already shared, so this adds
+little, but keep it in mind when the device shows secrets.
+
+One viewer at a time holds the touch pointer: from finger down to finger up,
+or until ten seconds pass without input. A touch from another viewer in the
+meantime is dropped, and that viewer sees "Name is using the screen". A share
+of a hosted session shows each viewer only its own touches.
 
 The page fits the window without scrolling. The line under the toolbar shows
 Live or Waiting and the time left before the share expires. With `--control`,
@@ -143,16 +185,17 @@ stim-server cannot list its shares, Stim keeps the workspace running.
 
 ## Options
 
-| Option                | Meaning                                                                                           |
-| --------------------- | ------------------------------------------------------------------------------------------------- |
-| `ios` / `android`     | Which of the workspace's devices to share.                                                        |
-| `--control`           | Let viewers tap, type, rotate and press Home, Lock, Back or Apps.                                 |
-| `--expires <minutes>` | Minutes until the share ends, 1 to 480 (default 60). No "never".                                  |
-| `--password <value>`  | Use this password, 8 to 128 characters, instead of a generated one.                               |
-| `--no-password`       | No login: anyone with the link can open the share.                                                |
-| `--device`            | Share the physical device the workspace leases.                                                   |
-| `--slot <name>`       | Share the device of another [device slot](./commands.md#named-device-slots).                      |
-| `--json`              | Print one payload: `url`, `auth`, `expiresAt`, `control`, target; `password` only when generated. |
+| Option                | Meaning                                                                                                                          |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `ios` / `android`     | Which of the workspace's devices to share.                                                                                       |
+| `--control`           | Let viewers tap, type, rotate and press Home, Lock, Back or Apps.                                                                |
+| `--expires <minutes>` | Minutes until the share ends, 1 to 480 (default 60). No "never".                                                                 |
+| `--password <value>`  | Use this password, 8 to 128 characters, instead of a generated one.                                                              |
+| `--no-password`       | No login: anyone with the link can open the share.                                                                               |
+| `--view-password [v]` | With `--control`, a second password that only watches (generated without a value).                                               |
+| `--device`            | Share the physical device the workspace leases.                                                                                  |
+| `--slot <name>`       | Share the device of another [device slot](./commands.md#named-device-slots).                                                     |
+| `--json`              | Print one payload: `url`, `auth`, `viewAuth`, `expiresAt`, `control`, target; `password` and `viewPassword` only when generated. |
 
 `stim share list` lists the live shares of this Stim home with their target,
 control, viewer count and expiry, never their link or password.
@@ -223,8 +266,11 @@ the next listener, after the last share ends.
   command or stim-server method is reachable through it.
 - **Secrets.** The link carries 256 random bits. The generated password is 16
   random characters (about 79 bits); one you set is 8 to 128 characters.
-  Either is kept only as a SHA-256 digest and checked in constant time. A
-  share with `--no-password` has no login, so the link is its only secret. Ten wrong passwords in
+  Either is kept only as a SHA-256 digest and checked in constant time. With
+  `--view-password` a login is compared with both digests, always both, and the
+  matching one sets the session's access, kept in server memory and never in the
+  cookie: the server drops every input from a view session, whatever the page
+  sends. A share with `--no-password` has no login, so the link is its only secret. Ten wrong passwords in
   ten minutes lock that share's login for the rest of the window, whatever the
   source address: anyone with the link can lock it, but cannot guess their way
   in. A correct password sets an `HttpOnly`, `Secure`, `SameSite=Strict`

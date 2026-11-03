@@ -1075,7 +1075,7 @@ check stim logs --source agent.
 ## `share`
 
 ```text
-stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--device] [--slot <name>] [--json]
+stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--view-password [value]] [--device] [--slot <name>] [--json]
 stim share stop [--json]
 stim share list [--json]
 ```
@@ -1085,7 +1085,8 @@ running app, and with `--control` to tap, type and press its buttons. The share
 runs inside this Stim home's stim-server, which `stim share` starts in the
 background when none runs, and is served through Tailscale Funnel. The
 password is generated unless you set one with `--password` or drop it with
-`--no-password`. Every share expires (60 minutes by default, at most 480) and ends with
+`--no-password`. With `--control`, `--view-password` adds a second password that
+only watches. Viewers see each other's touches live. Every share expires (60 minutes by default, at most 480) and ends with
 `stim share stop`, `stim stop` (without `--slot`), `stim worktree remove`, its
 device, or stim-server. It refuses with `STIM_SERVER_NOT_RUNNING` when it cannot start a
 stim-server and `STIM_SHARE_REFUSED` with the reason otherwise. See

@@ -2065,16 +2065,22 @@ workspace device with three methods that only the local Unix socket may call
   `physical`, `control`, `expiresMinutes` (1 to 480, 60 by default), and
   either `password` (8 to 128 characters, kept only as its digest) or
   `passwordless: true` (no login; the URL token alone admits a viewer); with
-  neither, the server generates a password. It returns `auth` (`generated`,
-  `set` or `none`), and `password` only when it generated one, in
-  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, url, password }`.
+  neither, the server generates a password. `view` (the `share-view-password`
+  feature) is `{ password? }` and adds a second, view-only password, the given
+  one or a generated one; `password` stays the control password. It returns
+  `auth` (`generated`, `set` or `none`), `viewAuth` (`generated`, `set` or
+  `null`), and `password` and `viewPassword` only when it generated them, in
+  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, viewAuth, url, password, viewPassword }`.
   It refuses a device the workspace does not own or lease, a hosted device,
-  `control` on a physical iPhone, and `password` with `passwordless`.
+  `control` on a physical iPhone, `password` with `passwordless`, and `view`
+  without `control`, with `passwordless`, or with the same password as
+  `password`.
 - `share.stop` takes `workspace` and ends its shares, returning `stopped`. With
   `id` (the `share-stop-id` feature) it ends only that share of the workspace,
   and refuses an `id` the workspace does not have with `bad-request`. A server
   without the feature refuses `id`, so a client checks the feature first.
-- `share.list` returns `shares`, the same rows without `url` or `password`.
+- `share.list` returns `shares`, the same rows without `url`, `password` or
+  `viewPassword`.
 
 `stim-server --share [--port <n>]` is the server `stim share` starts when none
 answers on the local socket: loopback only, without a Desktop bootstrap. It
@@ -2108,17 +2114,30 @@ Per share the listener serves `GET /s/<token>/` (a password form, or the viewer
 once signed in), `POST /s/<token>/login` and the WebSocket `/s/<token>/ws`.
 Everything else is 404. The token is 32 random bytes; the password 16
 characters from a 31-letter alphabet, kept as a SHA-256 digest and compared
-with `timingSafeEqual`. Ten failures in ten minutes lock the share's login for
+with `timingSafeEqual`. A login is compared with both the control and the
+view digest, always both. Ten failures in ten minutes lock the share's login for
 the rest of that window. A correct password sets `stim_share`, `HttpOnly;
-Secure; SameSite=Strict`, scoped to the share's path, until it expires. The
+Secure; SameSite=Strict`, scoped to the share's path, until it expires; the
+server keeps that cookie's access, `control` or `view`, and its optional name
+in memory. A login that carries a valid cookie raises a `view` session to
+`control` on the control password and never lowers one; a wrong password there
+redirects back to the page with `?upgrade=wrong`. The
 WebSocket needs that cookie and an `Origin` matching the host, else the upgrade
 is refused before any capture starts; at most 5 viewers per share. Each viewer
 subscribes to the device's frames as a JPEG subscriber at 10 frames a second
 and 1280 pixels, as binary messages; the share never asks the recorder to
-record. With `control`, `touch`, `text` and `button` messages from a viewer go
-through `parseInput` and the control hub as the `Web share` controller, which
-begins one control session without takeover on the first input and ends it
-when the last viewer leaves.
+record. With `control`, `touch`, `text` and `button` messages from a `control`
+session go through `parseInput` and the control hub as the `Web share`
+controller, which begins one control session without takeover on the first
+input and ends it when the last viewer leaves; every input from a `view`
+session is dropped. Each viewer socket is a presence participant: the share
+sends `{ type: 'you', id, name, color, access }` once, then
+`{ type: 'presence', participants }` with the `presence` event's participants
+of the other people on the device (30 messages a second at most, moves
+coalesced), and `{ type: 'busy', name }` when another viewer holds the touch
+pointer. A viewer may send `{ type: 'name', name }`, once per 5 seconds; names
+are cleaned (NFC, no control or format characters, 24 code points), kept only
+in memory and never logged. A hosted share has no presence.
 
 ## Protocol
 

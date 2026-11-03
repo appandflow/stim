@@ -17,6 +17,8 @@ asks for it.
   stim share ios --slot tablet        # the device of another slot
   stim share ios --password '<value>' # a password you choose, 8 to 128 characters
   stim share ios --no-password        # no login: the link alone opens it
+  stim share android --control --view-password   # a second, watch-only password, generated
+  stim share android --control --view-password '<value>'   # or one you choose
   stim share list                     # live shares: target, control, viewers, expiry
   stim share stop                     # ends this workspace's shares now
 
@@ -26,6 +28,30 @@ payload with url, auth (generated, set or none), expiresAt, control and the
 target; password is in it only when it was generated. A password you set is
 never printed back. A value passed on the command line can land in your shell
 history and in ps output while stim share runs; prefer the generated one.
+
+--view-password is for --control shares: --password (or the generated one) stays
+the control password and --view-password adds a password that only watches. A
+value is 8 to 128 characters; without one a password is generated. It refuses
+with STIM_BAD_ARG without --control, with --no-password, and when it equals
+--password. Put it last, or write --view-password=<value>, so a following word
+is not read as its value. The output then lists both passwords, and --json adds
+viewAuth (generated, set or null) and viewPassword, present only when it was
+generated.
+
+VIEWERS SEE EACH OTHER
+
+Every viewer has a name (the optional name field on the login page, or on first
+load for a share without a password; empty means Guest 1, Guest 2 and so on)
+and a color. Viewers see each other's touches live, with the name, and the
+host's touches when the device is controlled from Stim Desktop or the phone,
+shown as Host. The names live in stim-server's memory for the share and are
+never logged or written to disk. Presence shows where people tap, a PIN pad
+included; the screen is already shared, so it adds little, but say so when you
+share a device that shows secrets. One viewer at a time holds the touch
+pointer, from finger down to finger up or ten seconds without input: another
+viewer's touch meanwhile is dropped and that viewer sees who is using the
+screen. A view-only viewer sees the same and sends nothing. Hosted sessions
+(--remote) show a viewer only its own touches.
 
 With --no-password, anyone with the link can watch, or control with
 --control; stim share warns about it on stderr, and share list shows such a
@@ -131,6 +157,15 @@ SECURITY MODEL
   Either is kept only as a SHA-256 digest and compared in constant time. Ten wrong passwords in ten
   minutes lock the share's login for the rest of that window, whatever the
   source address, so anyone with the link can lock it but not guess into it.
+- A share can have a view password next to its control password. Login
+  compares what was typed with both digests, always both, in constant time,
+  and the matching password sets the session's access: control or view. Wrong
+  passwords of either kind count against the one window. The server drops
+  every input from a view session whatever the page sends; the page then shows
+  "View only" and no device controls. A view session can raise itself to
+  control from the bar by entering the control password (same login, same
+  cookie); a session is never lowered. The access level is held in the server's
+  memory, never in the cookie.
 - A correct password sets an HttpOnly, Secure, SameSite=Strict cookie scoped
   to the share's path that ends with the share. The frame socket needs that
   cookie and a same-origin request. A share without a password needs no
