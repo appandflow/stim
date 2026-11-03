@@ -221,13 +221,19 @@ final class Pacer {
     guard dirty, !scheduled, config.fps > 0 else { return }
     let next = last + .nanoseconds(Int(1_000_000_000 / max(config.fps, 0.1)))
     scheduled = true
-    queue.asyncAfter(deadline: max(next, .now())) {
+    // A LaunchAgent with launchd.plist(5) ProcessType Standard, as `stim-server service install` writes, coalesces
+    // the timers a process sets with the default leeway: asyncAfter paced a simulator at 22 fps instead of 60.
+    let timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
+    timer.schedule(deadline: max(next, .now()), leeway: .nanoseconds(0))
+    timer.setEventHandler {
+      timer.cancel()
       self.scheduled = false
       guard self.dirty else { return }
       self.dirty = false
       self.last = .now()
       self.render(self.config)
     }
+    timer.resume()
   }
 }
 
