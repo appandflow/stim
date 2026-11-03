@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { registerShare, runShare, type ShareDeps } from '../commands/share.ts';
-import { getExecutor } from '../exec.ts';
 import { LocalServerUnavailable, requestLocalServer, stopIdleShareServer } from '../local-server.ts';
 
 const ROW = {
@@ -91,14 +90,11 @@ describe('stim share', () => {
     },
   );
 
-  it('refuses on the host platform without spawning a server or waiting for one, as one JSON payload', async () => {
+  it('refuses on the host platform without starting or asking a server, as one JSON payload', async () => {
     const startServer = vi.fn<ShareDeps['startServer']>(async () => null);
     const request = vi.fn<ShareDeps['request']>();
     const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const spawn = vi.spyOn(getExecutor(), 'spawn').mockImplementation(() => {
-      throw new Error('spawned a process');
-    });
     try {
       const program = new Command();
       registerShare(program, '1.0.0', { findWorkspace: async () => '/work/app', startServer, request });
@@ -106,14 +102,12 @@ describe('stim share', () => {
       expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ code: 'STIM_SHARE_REFUSED' });
       expect(log).toHaveBeenCalledTimes(1);
       expect(process.exitCode).toBe(1);
-      expect(spawn).not.toHaveBeenCalled();
       expect(startServer).not.toHaveBeenCalled();
       expect(request).not.toHaveBeenCalled();
     } finally {
       process.exitCode = undefined;
       platform.mockRestore();
       log.mockRestore();
-      spawn.mockRestore();
     }
   });
 

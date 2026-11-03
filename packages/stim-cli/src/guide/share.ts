@@ -66,7 +66,7 @@ WHAT IT NEEDS
 - macOS or Linux. stim talks to the stim-server through its local socket,
   which Windows does not have, so on Windows every stim share action refuses
   at once with STIM_SHARE_REFUSED and starts no server. Run stim share on the
-  macOS host that runs the device.
+  macOS or Linux host that runs the device.
 - A stim-server for this Stim home. The share lives inside it, and a server
   restart ends every share. When none runs, stim share starts one in the
   background (stim-server --share: loopback only, no Desktop bootstrap) from

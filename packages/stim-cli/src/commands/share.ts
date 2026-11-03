@@ -162,7 +162,7 @@ export async function runShare(
       error: failure(
         'STIM_SHARE_REFUSED',
         'Web shares need the local stim-server socket, which is not available on Windows.',
-        'Run stim share from the macOS host that runs the device.',
+        'Run stim share from the macOS or Linux host that runs the device.',
       ),
     };
   }
