@@ -1,11 +1,18 @@
 import { mkdirSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
-import { daemonClaimRoot, daemonDir, daemonSocket, SETTINGS, type DaemonMode } from '@stim-cli/core/state';
+import {
+  daemonClaimRoot,
+  daemonDir,
+  daemonSocket,
+  isJsonObject,
+  SETTINGS,
+  type DaemonMode,
+} from '@stim-cli/core/state';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { cancellableSleep } from '../cancellation.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { getExecutor } from '../exec.ts';
-import { spawnEntry } from '../spawn-entry.ts';
+import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, platformHasDaemon, spawnsDaemon } from './mode.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
@@ -32,25 +39,38 @@ function daemonLive(): boolean {
   }
 }
 
-function answersHello(timeoutMs: number): Promise<boolean> {
+/**
+ * Sends one op to this home's daemon and resolves with its first reply line, `{}` when that line is not a JSON
+ * object, or null when the daemon closes, fails or stays silent for `timeoutMs`.
+ */
+export function askDaemon(op: string, timeoutMs: number): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
     const socket = connect(daemonSocket());
     let done = false;
-    const finish = (answered: boolean) => {
+    let buffer = '';
+    const finish = (reply: Record<string, unknown> | null) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       socket.destroy();
-      resolve(answered);
+      resolve(reply);
     };
-    const timer = setTimeout(() => finish(false), timeoutMs);
+    const timer = setTimeout(() => finish(null), timeoutMs);
     socket.setEncoding('utf8');
-    socket.once('error', () => finish(false));
-    socket.once('connect', () => socket.write(`${JSON.stringify({ op: 'hello' })}\n`));
+    socket.once('error', () => finish(null));
+    socket.once('connect', () => socket.write(`${JSON.stringify({ op })}\n`));
     socket.on('data', (chunk: string) => {
-      if (chunk.includes('\n')) finish(true);
+      buffer += chunk;
+      const end = buffer.indexOf('\n');
+      if (end < 0) return;
+      try {
+        const reply: unknown = JSON.parse(buffer.slice(0, end));
+        finish(isJsonObject(reply) ? reply : {});
+      } catch {
+        finish({});
+      }
     });
-    socket.once('close', () => finish(false));
+    socket.once('close', () => finish(null));
   });
 }
 
@@ -93,10 +113,23 @@ function daemonEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return kept;
 }
 
-/** Starts a daemon; `settled` resolves once it has exited or failed to spawn. */
-function spawnDaemon(env: NodeJS.ProcessEnv, mode: DaemonMode): { settled: Promise<void>; exited: () => boolean } {
+/**
+ * Starts a daemon; `settled` resolves once it has exited or failed to spawn. With `replace`, the daemon first asks
+ * the running daemon with that pid to hand over after its current tick.
+ */
+function spawnDaemon(
+  env: NodeJS.ProcessEnv,
+  mode: DaemonMode,
+  replace?: number,
+): { settled: Promise<void>; exited: () => boolean } {
   mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
-  const child = getExecutor().spawn(process.execPath, [spawnEntry('daemon-run'), '--mode', mode], {
+  const args = [
+    spawnEntry('daemon-run'),
+    '--mode',
+    mode,
+    ...(replace === undefined ? [] : ['--replace', String(replace)]),
+  ];
+  const child = getExecutor().spawn(process.execPath, args, {
     cwd: daemonDir(),
     detached: true,
     stdio: 'ignore',
@@ -128,8 +161,9 @@ async function claimTaken({ settled, exited }: ReturnType<typeof spawnDaemon>): 
 /**
  * Makes sure this home's daemon runs before a command creates running state: tells a live one about the contact so
  * it does not exit under the command, or starts one in the mode this command resolves, `STIM_DAEMON` included, and
- * waits up to five seconds for it to take the claim. Returns whether a daemon holds the home; a claim Stim cannot
- * resolve is reported and counts as held.
+ * waits up to five seconds for it to take the claim. A live daemon started from another Stim build keeps serving
+ * the command while a new daemon from this build waits to take over after its current tick. Returns whether a daemon
+ * holds the home; a claim Stim cannot resolve is reported and counts as held.
  */
 export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
   if (!spawnsDaemon(env)) return false;
@@ -143,7 +177,12 @@ export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promis
       );
       return true;
     }
-    if (survey.live.length && (await answersHello(CONTACT_TIMEOUT_MS))) return true;
+    const running = survey.live.length ? await askDaemon('hello', CONTACT_TIMEOUT_MS) : null;
+    if (running) {
+      const own = stimBuild();
+      if (own !== null && running.build !== own && typeof running.pid === 'number') spawnDaemon(env, mode, running.pid);
+      return true;
+    }
     return await claimTaken(spawnDaemon(env, mode));
   } catch {
     return false;

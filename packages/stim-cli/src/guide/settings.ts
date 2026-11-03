@@ -682,7 +682,11 @@ run waiting to boot, and automatic maintenance.
           into the idle stage (idle.minutes) and dormant ones into the dormant
           stage (idle.dormantDays), runs the pressure ladder above normal,
           reclaims a device for a run waiting to boot, and runs automatic
-          maintenance.
+          maintenance. When one of those commands finds a daemon started
+          from another Stim build, the daemon keeps serving the command and
+          a new one from the command's build takes over once its current
+          tick finishes, so an upgrade reaches the daemon with the next
+          such command.
   report  the same passes log what they would do and act on nothing.
   off     no daemon and no pass: each dev server supervisor stops its own dev
           server and devices after idle.minutes, and nothing times a device

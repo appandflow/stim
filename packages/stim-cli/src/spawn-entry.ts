@@ -1,5 +1,6 @@
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stimBuildDigest } from '@stim-cli/core/state';
 
 export type SpawnEntryName =
   | 'cli'
@@ -26,4 +27,9 @@ export function spawnEntry(name: SpawnEntryName): string {
     return fileURLToPath(new URL(DEV_ENTRIES[name], import.meta.url));
   }
   return join(dirname(here), `${name}.mjs`);
+}
+
+/** The digest of the built Stim these entries belong to; null when Stim runs from source. */
+export function stimBuild(): string | null {
+  return stimBuildDigest(dirname(fileURLToPath(import.meta.url)));
 }

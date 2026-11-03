@@ -21,6 +21,7 @@ import {
 import {
   isClaimRefusal,
   isClaimUnavailable,
+  readClaimSet,
   releaseClaim,
   tryAcquireClaim,
   type ClaimHandle,
@@ -29,10 +30,12 @@ import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
+import { stimBuild } from '../spawn-entry.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
 import type { Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { askDaemon } from './client.ts';
 import { scheduleDependencyMeasures } from './dependencies.ts';
 import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from './mode.ts';
 import { ownedHere } from './idle.ts';
@@ -49,6 +52,9 @@ const CLAIM_RETRY_MS = 100;
 const EMPTY_TICKS_BEFORE_EXIT = 2;
 const RECENT_ACTIONS = 20;
 const WAKE_GRACE_MS = 2000;
+const HANDOVER_REPLY_MS = 5000;
+const HANDOVER_WAIT_MS = 10 * 60_000;
+const HANDOVER_POLL_MS = 250;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
@@ -60,19 +66,51 @@ const OPS: Record<Resource, { wait: string; waiting: string; released: string; c
   boot: { wait: 'boot.wait', waiting: 'boot.waiting', released: 'boot.released', changed: 'boot.changed' },
 };
 
-async function takeClaim(mode: DaemonMode): Promise<ClaimHandle | null> {
+async function takeClaim(mode: DaemonMode, build: string | null): Promise<ClaimHandle | null> {
   for (let tries = 0; ; tries++) {
     const attempt = tryAcquireClaim({
       root: daemonClaimRoot(),
       mode: 'exclusive',
       label: 'stim-daemon',
-      details: { socket: daemonSocket(), mode },
+      details: { socket: daemonSocket(), mode, build },
     });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) return attempt.acquired;
     if (tries >= CLAIM_TRIES) return null;
     await new Promise((done) => setTimeout(done, CLAIM_RETRY_MS));
   }
+}
+
+function holdsClaim(pid: number): boolean {
+  try {
+    return readClaimSet(daemonClaimRoot()).live.some((holder) => holder.owner.pid === pid);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Asks the running daemon `pid` to exit after its current tick and waits, up to ten minutes, for it to release its
+ * claim. A daemon from before handovers closes on the `handover` op; it is stopped right after it answers a tick.
+ */
+async function takeOverFrom(pid: number, log: (level: Level, event: string, msg: string) => void): Promise<void> {
+  if (!holdsClaim(pid)) return;
+  const reply = await askDaemon('handover', HANDOVER_REPLY_MS);
+  if (reply?.op === 'handover') log('info', 'daemon_handover', `asked stim-daemon pid ${pid} to exit after its tick`);
+  else {
+    // A tick another run requests between the `ticked` reply and the signal starts first, and the signal then
+    // interrupts that pass. Only a daemon from before handovers is stopped this way, once.
+    const ticked = await askDaemon('tick', HANDOVER_WAIT_MS);
+    if (ticked?.op !== 'ticked' || !holdsClaim(pid)) return;
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      return;
+    }
+    log('info', 'daemon_handover', `stopped stim-daemon pid ${pid}, which predates handovers, after its tick`);
+  }
+  const deadline = Date.now() + HANDOVER_WAIT_MS;
+  while (holdsClaim(pid) && Date.now() < deadline) await new Promise((done) => setTimeout(done, HANDOVER_POLL_MS));
 }
 
 function answers(path: string): Promise<boolean> {
@@ -166,19 +204,24 @@ function pendingWork(config: Config | null, measured: TickMeasurement, slowTickM
  * once, running the activity, dormant and pressure passes and automatic maintenance, and writing `snapshot.json`. A
  * command's contact brings it back to the minute. It exits after two ticks in a row with nothing running, no work
  * pending (`pendingWork`) and no contact, when `daemon.mode` turns off, or when a tick throws, releasing its claim so
- * each supervisor's own idle timer takes over.
+ * each supervisor's own idle timer takes over. Asked to hand over, by a daemon a command from another Stim build
+ * started, it exits at once between ticks, or after the tick in progress.
  */
 export async function runDaemon({
   tickMs = TICK_MS,
   slowTickMs = tickMs * SLOW_TICKS,
   mode: startMode = daemonMode({}),
+  replace,
 }: {
   tickMs?: number;
   /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
   slowTickMs?: number;
   /** The mode the starting command resolved; a later `daemon.mode` change in config can only make it stricter. */
   mode?: DaemonMode;
+  /** The pid of the running daemon this one asks to hand over before it takes the claim. */
+  replace?: number;
 } = {}): Promise<void> {
+  const build = stimBuild();
   const configAtStart = configuredDaemonMode();
   const started = performance.now();
   const startedAt = new Date().toISOString();
@@ -186,7 +229,8 @@ export async function runDaemon({
   const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
   const log = (level: Level, event: string, msg: string, fields: Record<string, unknown> = {}) =>
     writer.write({ src: 'daemon', level, event, msg, ...fields });
-  const claim = await takeClaim(startMode);
+  if (replace !== undefined) await takeOverFrom(replace, log);
+  const claim = await takeClaim(startMode, build);
   if (!claim) {
     log('debug', 'daemon_claim_held', 'another stim-daemon holds the claim; exiting');
     writer.close();
@@ -203,6 +247,7 @@ export async function runDaemon({
   let lastContact = Date.now();
   let closing = false;
   let tickRequested = false;
+  let handover = false;
   let interrupt: (() => void) | null = null;
   let hasten: (() => void) | null = null;
   const requestTick = () => {
@@ -245,7 +290,11 @@ export async function runDaemon({
         lastContact = Date.now();
         if (op === 'hello') {
           hasten?.();
-          socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid })}\n`);
+          socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid, build })}\n`);
+        } else if (op === 'handover') {
+          handover = true;
+          socket.end(`${JSON.stringify({ op: 'handover' })}\n`);
+          interrupt?.();
         } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'tick') {
           if (!tickReplies.includes(socket)) tickReplies.push(socket);
@@ -296,12 +345,13 @@ export async function runDaemon({
     'info',
     'daemon_started',
     `pid ${process.pid} listening on ${path} after ${Math.round(performance.now() - started)}ms`,
+    { build },
   );
   let emptyTicks = 0;
   let interval = tickMs;
   const kept = new Map<string, string>();
   for (;;) {
-    if (!tickRequested) {
+    if (!tickRequested && !handover) {
       await new Promise<void>((done) => {
         let timer = setTimeout(done, interval);
         interrupt = () => {
@@ -319,6 +369,10 @@ export async function runDaemon({
     interrupt = null;
     hasten = null;
     if (closing) break;
+    if (handover) {
+      shutdown('a stim-daemon from another Stim build takes over');
+      break;
+    }
     tickRequested = false;
     const configured = configuredDaemonMode();
     const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
@@ -445,20 +499,23 @@ export async function runDaemon({
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   process.title = 'stim-daemon';
   const at = process.argv.indexOf('--mode');
-  runDaemon({ mode: parseDaemonMode(at > 0 ? process.argv[at + 1] : undefined) ?? daemonMode({}) }).catch(
-    (error: unknown) => {
-      const message =
-        isClaimRefusal(error) || isClaimUnavailable(error)
-          ? error.message
-          : error instanceof Error
-            ? (error.stack ?? error.message)
-            : String(error);
-      try {
-        const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
-        writer.write({ src: 'daemon', level: 'error', event: 'daemon_failed', msg: message });
-        writer.close();
-      } catch {}
-      process.exitCode = 1;
-    },
-  );
+  const replaceAt = process.argv.indexOf('--replace');
+  const replace = replaceAt > 0 ? Number(process.argv[replaceAt + 1]) : Number.NaN;
+  runDaemon({
+    mode: parseDaemonMode(at > 0 ? process.argv[at + 1] : undefined) ?? daemonMode({}),
+    ...(Number.isInteger(replace) && replace > 0 ? { replace } : {}),
+  }).catch((error: unknown) => {
+    const message =
+      isClaimRefusal(error) || isClaimUnavailable(error)
+        ? error.message
+        : error instanceof Error
+          ? (error.stack ?? error.message)
+          : String(error);
+    try {
+      const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
+      writer.write({ src: 'daemon', level: 'error', event: 'daemon_failed', msg: message });
+      writer.close();
+    } catch {}
+    process.exitCode = 1;
+  });
 }
