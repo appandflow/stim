@@ -4,7 +4,7 @@ import type { Controller, InputCommand, SessionTarget } from './control.ts';
 import type { FrameHint } from './frame-helper.ts';
 import type { Frame, FrameListener } from './frames.ts';
 import type { HostConnections, Upstream } from './hosted-relay.ts';
-import type { ControlBeginParams, ErrorCode, ProtocolError, ServerMessage } from './protocol.ts';
+import type { ControlBeginParams, DeviceFrameArtwork, ErrorCode, ProtocolError, ServerMessage } from './protocol.ts';
 
 /** The device-host session a workspace slot runs in, as `stim status` reports it. */
 export interface HostedTarget {
@@ -15,7 +15,7 @@ export interface HostedTarget {
 }
 
 type Refusal = { code: ErrorCode; message: string };
-type ShareListener = Pick<FrameListener, 'frame' | 'delayed' | 'failed'>;
+type ShareListener = Pick<FrameListener, 'frame' | 'delayed' | 'failed' | 'artwork'>;
 type Lease = Awaited<ReturnType<HostConnections['acquire']>>;
 type PlatformSlot = { platform: 'ios' | 'android'; slot?: string };
 
@@ -68,6 +68,7 @@ export class HostedShareSource implements ShareSource {
   private frames: { lease: Lease; subscription: string; unroute: () => void } | null = null;
   private opening = false;
   private latest: Frame | null = null;
+  private artwork: DeviceFrameArtwork | null | undefined;
   private control: {
     lease: Lease;
     session: string;
@@ -94,6 +95,7 @@ export class HostedShareSource implements ShareSource {
   subscribe(listener: ShareListener, hint: FrameHint): () => void {
     this.listeners.add(listener);
     if (this.latest) listener.frame(this.latest);
+    if (this.artwork !== undefined) listener.artwork?.(this.artwork);
     if (!this.frames && !this.opening) void this.openFrames(hint);
     return () => {
       this.listeners.delete(listener);
@@ -111,6 +113,7 @@ export class HostedShareSource implements ShareSource {
         session: this.host.session,
         fps: hint.fps,
         maxEdge: hint.maxEdge,
+        ...(this.artworkWanted() ? { deviceFrame: true } : {}),
       });
       if ('error' in reply) throw new Error(reply.error.message);
       if (!isJsonObject(reply.result) || typeof reply.result.subscription !== 'string')
@@ -131,6 +134,10 @@ export class HostedShareSource implements ShareSource {
     }
   }
 
+  private artworkWanted(): boolean {
+    return [...this.listeners].some((listener) => listener.artwork);
+  }
+
   private frameEvent(event: Record<string, unknown> | Buffer): void {
     if (Buffer.isBuffer(event)) return;
     if (event.event === 'frame') {
@@ -143,6 +150,9 @@ export class HostedShareSource implements ShareSource {
       };
       this.latest = latest;
       for (const listener of this.listeners) listener.frame(latest);
+    } else if (event.event === 'device-frame') {
+      this.artwork = (event.artwork ?? null) as DeviceFrameArtwork | null;
+      for (const listener of this.listeners) listener.artwork?.(this.artwork);
     } else if (event.event === 'frame-delayed') {
       for (const listener of this.listeners) listener.delayed?.(event.delayed === true);
     } else if (event.event === 'error') {
@@ -154,6 +164,7 @@ export class HostedShareSource implements ShareSource {
     const frames = this.frames;
     this.frames = null;
     this.latest = null;
+    this.artwork = undefined;
     if (!frames) return;
     frames.unroute();
     release(frames.lease, 'device-host.unsubscribe', { subscription: frames.subscription });
@@ -163,6 +174,7 @@ export class HostedShareSource implements ShareSource {
     const frames = this.frames;
     this.frames = null;
     this.latest = null;
+    this.artwork = undefined;
     if (frames) {
       frames.unroute();
       frames.lease.release();
