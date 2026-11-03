@@ -505,6 +505,114 @@ function fastForward(root: string, upstream: string): { ok: boolean; lines: stri
   }
 }
 
+/**
+ * Starts an installer so the claim can follow it: it leads its own process group, and the claim records that
+ * group before anything else runs.
+ */
+export function installerSpawn(installer: InstallerClaim, spawnFn: SpawnFn | null): SpawnFn {
+  const spawnChild: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
+  return (cmd, args, opts) => {
+    installer.declare();
+    let child;
+    try {
+      // The claim resolves the install through its process group, so it has to lead one.
+      child = spawnChild(cmd, args, { ...opts, detached: true });
+    } catch (error) {
+      installer.record(null);
+      throw error;
+    }
+    installer.record(child.pid ?? null);
+    return child;
+  };
+}
+
+/**
+ * A package manager's own exit does not mean its install is over: `npm ci` spawns postinstall writers
+ * that outlive it, and one of those rewriting node_modules is exactly what the claim exists to keep a
+ * copy away from. So the group, not the direct child, decides when the install is done.
+ */
+export async function awaitInstallerSettled(
+  installer: InstallerClaim,
+  root: string,
+  what: string,
+  again: string,
+): Promise<RefreshFailure | null> {
+  const settled = await installer.settle();
+  if (settled.settled) return null;
+  return {
+    code: DEPS_ERROR,
+    message: `${what} exited but left a process group running (pid ${settled.pid}) in ${root} after ${formatElapsed(settled.waitedMs)}, so Stim cannot tell that it finished writing.`,
+    lines: [],
+    remedy: `Stop what pid ${settled.pid} leads (\`ps -g ${settled.pid}\`, then \`kill -TERM -${settled.pid}\`) and run ${again} again. The warm claim stays held until that group exits, so no copy reads a half-written tree in the meantime.`,
+  };
+}
+
+/** Installs one dependency tree with its lockfile's command, recording the install so a copy can tell it finished. */
+export async function runDependencyInstall({
+  dependencies,
+  subject,
+  installer,
+  spawn,
+  now = Date.now,
+  heartbeatMs = HEARTBEAT_INTERVAL_MS,
+  emit,
+  again,
+}: {
+  dependencies: DependencyState;
+  subject: string;
+  installer: InstallerClaim;
+  spawn: SpawnFn;
+  now?: () => number;
+  heartbeatMs?: number;
+  emit: (line: string) => void;
+  again: string;
+}): Promise<RefreshFailure | null> {
+  const consumed = pendingInstallEvidence(dependencies);
+  writeInstallEvidence(dependencies.root, consumed);
+  const runStep = async (command: string, stepSubject: string, remedy: string): Promise<RefreshFailure | null> => {
+    const install = await runInstallCommand({
+      command,
+      cwd: dependencies.root,
+      spawnFn: spawn,
+      now,
+      heartbeatMs,
+      onHeartbeat: emit,
+    });
+    emit(stepLine('deps', stepSubject, `${command} (${formatDuration(install.durationMs)})`));
+    const running = await awaitInstallerSettled(installer, dependencies.root, `\`${command}\``, again);
+    if (!install.ok) {
+      return {
+        code: DEPS_ERROR,
+        message: String(install.reason),
+        lines: install.lastLines,
+        remedy: `Run \`cd ${dependencies.root} && ${remedy}\` and fix what it reports, then run ${again} again.`,
+      };
+    }
+    return running;
+  };
+  const postinstall = skippedPostinstall(dependencies) ? 'npm run postinstall' : null;
+  const installFailure = await runStep(
+    dependencies.command,
+    subject,
+    postinstall ? `${dependencies.command} && ${postinstall}` : dependencies.command,
+  );
+  if (installFailure) return installFailure;
+  if (postinstall) {
+    const postinstallFailure = await runStep(
+      postinstall,
+      `source ${dependencies.root}: ignore-scripts skipped postinstall`,
+      postinstall,
+    );
+    if (postinstallFailure) return postinstallFailure;
+  }
+  writeInstallEvidence(dependencies.root, {
+    ...consumed,
+    completed: true,
+    treeProblems: dependencies.lock === 'package-lock.json' ? installedNpmTreeProblems(dependencies.root) : null,
+  });
+  return null;
+}
+
 export interface RefreshOptions {
   root: string;
   appDir: string;
@@ -542,35 +650,8 @@ export async function refreshMainCheckout({
   const refusal = mainCheckoutRefusal(root, state);
   if (refusal) return refusal;
   const branch = String(state.branch);
-  const spawnChild: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
-  const spawn: SpawnFn = (cmd, args, opts) => {
-    installer.declare();
-    let child;
-    try {
-      // The claim resolves the install through its process group, so it has to lead one.
-      child = spawnChild(cmd, args, { ...opts, detached: true });
-    } catch (error) {
-      installer.record(null);
-      throw error;
-    }
-    installer.record(child.pid ?? null);
-    return child;
-  };
-  /**
-   * A package manager's own exit does not mean its install is over: `npm ci` spawns postinstall writers
-   * that outlive it, and one of those rewriting node_modules is exactly what the claim exists to keep a
-   * copy away from. So the group, not the direct child, decides when the install is done.
-   */
-  const awaitSpawnedWork = async (what: string): Promise<RefreshFailure | null> => {
-    const settled = await installer.settle();
-    if (settled.settled) return null;
-    return {
-      code: DEPS_ERROR,
-      message: `${what} exited but left a process group running (pid ${settled.pid}) in ${root} after ${formatElapsed(settled.waitedMs)}, so Stim cannot tell that it finished writing.`,
-      lines: [],
-      remedy: `Stop what pid ${settled.pid} leads (\`ps -g ${settled.pid}\`, then \`kill -TERM -${settled.pid}\`) and run warm again. The warm claim stays held until that group exits, so no copy reads a half-written tree in the meantime.`,
-    };
-  };
+  const spawn = installerSpawn(installer, spawnFn);
+  const awaitSpawnedWork = (what: string) => awaitInstallerSettled(installer, root, what, 'warm');
 
   const before = resolveFullRef(root, 'HEAD') ?? '';
   if (inspectOnly) {
@@ -656,49 +737,17 @@ export async function refreshMainCheckout({
     emit(stepLine('deps', depsSubject, 'skipped'));
   }
   for (const { dependencies, subject: depsSubject } of owed) {
-    const consumed = pendingInstallEvidence(dependencies);
-    writeInstallEvidence(dependencies.root, consumed);
-    const runStep = async (command: string, subject: string, remedy: string): Promise<RefreshFailure | null> => {
-      const install = await runInstallCommand({
-        command,
-        cwd: dependencies.root,
-        spawnFn: spawn,
-        now,
-        heartbeatMs,
-        onHeartbeat: emit,
-      });
-      emit(stepLine('deps', subject, `${command} (${formatDuration(install.durationMs)})`));
-      const running = await awaitSpawnedWork(`\`${command}\``);
-      if (!install.ok) {
-        return {
-          code: DEPS_ERROR,
-          message: String(install.reason),
-          lines: install.lastLines,
-          remedy: `Run \`cd ${dependencies.root} && ${remedy}\` and fix what it reports, then run warm again.`,
-        };
-      }
-      return running;
-    };
-    const postinstall = skippedPostinstall(dependencies) ? 'npm run postinstall' : null;
-    const installFailure = await runStep(
-      dependencies.command,
-      depsSubject,
-      postinstall ? `${dependencies.command} && ${postinstall}` : dependencies.command,
-    );
-    if (installFailure) return installFailure;
-    if (postinstall) {
-      const postinstallFailure = await runStep(
-        postinstall,
-        `source ${dependencies.root}: ignore-scripts skipped postinstall`,
-        postinstall,
-      );
-      if (postinstallFailure) return postinstallFailure;
-    }
-    writeInstallEvidence(dependencies.root, {
-      ...consumed,
-      completed: true,
-      treeProblems: dependencies.lock === 'package-lock.json' ? installedNpmTreeProblems(dependencies.root) : null,
+    const installFailure = await runDependencyInstall({
+      dependencies,
+      subject: depsSubject,
+      installer,
+      spawn,
+      now,
+      heartbeatMs,
+      emit,
+      again: 'warm',
     });
+    if (installFailure) return installFailure;
   }
 
   const app = relative(root, appDir) || '.';

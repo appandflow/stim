@@ -211,7 +211,16 @@ export async function mainCheckoutProjectRoot(projectRoot: string): Promise<stri
   }
 }
 
-async function brokenPodLinks(podsRoot: string): Promise<string[]> {
+export function podsManifestState(podfileLock: string, podManifest: string): 'missing' | 'stale' | null {
+  if (!existsSync(podManifest)) return 'missing';
+  try {
+    return readFileSync(podfileLock, 'utf-8') === readFileSync(podManifest, 'utf-8') ? null : 'stale';
+  } catch {
+    return 'stale';
+  }
+}
+
+export async function brokenPodLinks(podsRoot: string): Promise<string[]> {
   try {
     const output = await getExecutor().runFileAsync('find', ['-L', podsRoot, '-type', 'l', '-print'], {
       timeoutMs: 10_000,
@@ -402,7 +411,7 @@ export async function checkMainCheckout(
           'cost',
           'The source checkout has no installed dependencies',
           `A worktree cannot carry dependencies from ${dependencies.root}, so its first build must install them from scratch.`,
-          `Run \`${installCommand}\` before creating native worktrees, or let \`stim worktree warm --refresh\` run it from a linked worktree.`,
+          `Run \`${installCommand}\` before creating native worktrees, let \`stim worktree warm --refresh\` run it from a linked worktree, or run \`stim doctor --fix\` in a terminal.`,
         ),
       );
     } else if (dependencies.lock === 'package-lock.json') {
@@ -413,7 +422,7 @@ export async function checkMainCheckout(
             'cost',
             'The source checkout dependency tree is stale',
             `npm reports that ${dependencies.root}/node_modules does not match the project dependency graph. Copying it makes each worktree start from the same invalid state.`,
-            `Run \`${installCommand}\` before creating native worktrees, or let \`stim worktree warm --refresh\` run it from a linked worktree.`,
+            `Run \`${installCommand}\` before creating native worktrees, let \`stim worktree warm --refresh\` run it from a linked worktree, or run \`stim doctor --fix\` in a terminal.`,
           ),
         );
       }
@@ -425,15 +434,7 @@ export async function checkMainCheckout(
   const podManifest = join(iosRoot, 'Pods', 'Manifest.lock');
   const podsRoot = join(iosRoot, 'Pods');
   if (localIos && existsSync(podfileLock)) {
-    let podsState: 'missing' | 'stale' | null = null;
-    if (!existsSync(podManifest)) podsState = 'missing';
-    else {
-      try {
-        if (readFileSync(podfileLock, 'utf-8') !== readFileSync(podManifest, 'utf-8')) podsState = 'stale';
-      } catch {
-        podsState = 'stale';
-      }
-    }
+    const podsState = podsManifestState(podfileLock, podManifest);
     if (podsState) {
       const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, iosRoot)}`;
       findings.push(
@@ -441,7 +442,7 @@ export async function checkMainCheckout(
           'cost',
           `The source checkout CocoaPods state is ${podsState}`,
           `ios/Pods cannot be reused safely because its Manifest.lock ${podsState === 'missing' ? 'is absent' : 'does not match ios/Podfile.lock'}.`,
-          `Run \`${podCommand}\` before creating native worktrees, or let \`stim worktree warm --refresh\` run it from a linked worktree.`,
+          `Run \`${podCommand}\` before creating native worktrees, let \`stim worktree warm --refresh\` run it from a linked worktree, or run \`stim doctor --fix\` in a terminal.`,
         ),
       );
     }
@@ -454,7 +455,7 @@ export async function checkMainCheckout(
           'cost',
           'The source checkout CocoaPods state has broken links',
           `${broken.length} symlink${broken.length === 1 ? '' : 's'} under ios/Pods point to missing files. Worktrees copy these broken links and can fail during compilation. First: ${broken[0]}.`,
-          `Run \`${podCommand}\` before creating native worktrees.`,
+          `Run \`${podCommand}\` before creating native worktrees, or run \`stim doctor --fix\` in a terminal.`,
         ),
       );
     }
