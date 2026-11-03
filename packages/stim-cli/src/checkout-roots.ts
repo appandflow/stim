@@ -6,7 +6,6 @@ import { nativeCanonicalPath, repoRootAsync } from './workspace/worktree.ts';
 
 const CACHE_SCHEMA = 1;
 
-/** Identity of the `.git` entry (type, inode, owner, ctime, mtime, size), or null when there is none to lstat. */
 function dotGitFingerprint(checkout: string): string | null {
   try {
     const stat = lstatSync(join(checkout, '.git'));
@@ -27,11 +26,9 @@ function readCache(): Record<string, string> {
 }
 
 /**
- * The canonical checkout paths among `checkouts` that Git reports as their own repository root. A path is trusted
- * without asking Git while the fingerprint of its `.git` entry is the one recorded when Git last confirmed it, so a
- * checkout that is moved or re-created is asked again. Only confirmations are recorded; a path Git refuses is asked
- * every time. A change that leaves the `.git` entry untouched, such as `safe.directory` in Git's config or a `HEAD`
- * removed from inside a linked worktree's administrative directory, is not noticed until that entry changes.
+ * The canonical checkout paths among `checkouts` that Git reports as their own repository root, asking Git only when
+ * the `.git` entry no longer matches the one it last confirmed. Not noticed until that entry changes: `safe.directory`
+ * in Git's config, or a `HEAD` removed from a linked worktree's administrative directory.
  */
 export async function verifiedCheckoutRoots(
   checkouts: readonly string[],

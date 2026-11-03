@@ -43,6 +43,15 @@ describe('verifiedCheckoutRoots', () => {
     expect(asked).toEqual([repo, repo, repo]);
   });
 
+  it('asks Git again when the .git entry changes while it still exists', async () => {
+    const repo = join(base, 'repo');
+    init(repo);
+    await verifiedCheckoutRoots([repo], rootOf);
+    writeFileSync(join(repo, '.git', 'touched'), '');
+    expect(await verifiedCheckoutRoots([repo], rootOf)).toEqual(new Set([repo]));
+    expect(asked).toEqual([repo, repo]);
+  });
+
   it('asks Git every time about a path it does not confirm as a repository root', async () => {
     const outer = join(base, 'outer');
     init(outer);
