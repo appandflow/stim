@@ -56,13 +56,14 @@ holds:
 - **Hardware buttons** (Home and Lock on iOS; Back, Home and Apps on Android),
   with `--control`.
 - **Rotate left and right**, with `--control`, for an owned simulator or
-  emulator. A physical device rotates only in hand.
-- **Screenshot**, which downloads the current frame as a PNG. It works without
-  `--control`.
+  emulator. A physical device rotates only in hand. The picture turns only when
+  the app in front supports the new orientation (and, on an emulator, auto-rotate
+  is on); a portrait-only app stays upright.
 - **Fullscreen.**
 
-The header shows Live or Waiting and the time left before the share expires.
-With `--control`, click the screen to tap and type with the keyboard.
+The page fits the window without scrolling. The line under the toolbar shows
+Live or Waiting and the time left before the share expires. With `--control`,
+click the screen to tap and type with the keyboard.
 
 ## Requirements
 
