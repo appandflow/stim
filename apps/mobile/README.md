@@ -1811,13 +1811,11 @@ Or go back to a specific update that worked:
 gh workflow run mobile-release.yml --ref main -f mode=republish -f group=<group>
 ```
 
-Both runs wait for approval in the `release` environment. They queue apart
-from the publishing modes, so a build in progress does not hold them up. A
-publishing run that is still in progress or waiting for approval can publish
-after the rollback and undo it, so cancel it first
-(`gh run cancel <run-id>`). Approve them as in
-step 7 of [RELEASE.md](../../RELEASE.md#4-cut-the-release), with the run id
-from `gh run list --workflow mobile-release.yml --limit 1`. The run log's
+Both runs use the `release` environment, which has no required reviewers for
+now. They queue apart from the publishing modes, so a build in progress does
+not hold them up. A publishing run that is still in progress can publish after
+the rollback and undo it, so cancel it first (`gh run cancel <run-id>`); find
+the run id with `gh run list --workflow mobile-release.yml --limit 1`. The run log's
 notice names the runtime and group it acted on. `republish` warns when the
 group's runtime is not the latest production build's, because only builds on
 that runtime get it. When the group is on a branch other than `production`,

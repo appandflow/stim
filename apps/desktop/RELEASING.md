@@ -24,8 +24,8 @@ tags are separate from the npm packages' `v*` tags, which follow
    git push origin desktop-v1.2.0
    ```
 
-4. Approve the `Desktop release` run in the `release` environment, as for the
-   npm release.
+4. The `Desktop release` run starts in the `release` environment. That
+   environment has no required reviewers for now, so it needs no approval.
 
 The app bundles the `stim` and `stim-server` packages packed from the tagged
 commit, and `scripts/server-runtime.mjs` only checks that the bundled
@@ -78,11 +78,10 @@ Run the workflow from the Actions tab or with:
 gh workflow run desktop-release.yml -f version=0.0.0
 ```
 
-A dispatched run needs the same `release` approval, builds with whatever
-secrets are set, uploads the artifact and publishes nothing. It runs the
-workflow and scripts of the branch it was dispatched on with the real secrets,
-so approve only branches you trust, or restrict the `release` environment's
-deployment branches to `main`, `v*` and `desktop-v*`. Without secrets,
+A dispatched run builds with whatever secrets are set, uploads the artifact
+and publishes nothing. It runs the workflow and scripts of the branch it was
+dispatched on with the real secrets, so the `release` environment's deployment
+branches stay restricted to `main` and the release tags. Without secrets,
 it produces an ad-hoc signed build and prints a notice for each skipped step.
 
 ## Build locally
@@ -155,7 +154,7 @@ keeps. Check the first notarization log for a complaint about this binary.
 ## Secrets and variables
 
 Set these on the `release` environment (Settings > Environments > release), so
-only approved runs can read them. Signing requires both certificate secrets
+only runs on its deployment branches and tags can read them. Signing requires both certificate secrets
 and `DESKTOP_PROVISIONING_PROFILE_BASE64`; without a certificate the build
 remains ad hoc. Other missing groups skip their step with a notice, and a
 partly set group fails the run. The Sentry dSYM
