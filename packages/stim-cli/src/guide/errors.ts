@@ -19,7 +19,8 @@ Branch on the code, never on the message.`,
     STIM_HOSTING_REFUSED: {
       summary: 'a hosting Mac refused or could not confirm its native session; no fallback after reservation',
       body: () => `STIM_HOSTING_REFUSED
-  The message names the hosting Mac and its reason: unreachable, a changed
+  The message names the hosting Mac and its reason: unreachable, a Stim home
+  it cannot read (retry once the disk that holds it answers), a changed
   server key, a stim-server too old to speak protocol 2 (stim doctor names
   the update command), no installed simulator or emulator choice, no capacity, elevated or unknown
   memory pressure, or an unresolved reservation or delivery. Stim boots nothing

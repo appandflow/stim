@@ -1,5 +1,14 @@
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { newSecret, secretValues } from '@stim-cli/core/noise-session';
@@ -11,6 +20,8 @@ import {
   readBuildClients,
   readDeviceHostClients,
   readDevices,
+  readRegistries,
+  RegistryUnavailable,
   revokeDevice,
   secretPsk,
   dropSetupSecret,
@@ -151,5 +162,36 @@ describe('registries', () => {
     expect(revokeDevice(phone.id)).toBe(true);
     expect(readDevices()).toEqual([]);
     expect(revokeDevice(phone.id)).toBe(false);
+  });
+});
+
+describe('a Stim home that does not answer', () => {
+  it('reads a server directory without registry files as no clients', () => {
+    mkdirSync(join(home, 'server'));
+    expect(readRegistries()).toEqual({ devices: [], build: [], deviceHost: [] });
+  });
+
+  it('refuses to read the registries or a secret through a home symlink whose target moved away', () => {
+    const target = join(home, 'volume');
+    mkdirSync(target);
+    process.env.STIM_HOME = join(home, 'linked');
+    symlinkSync(target, process.env.STIM_HOME);
+    pair();
+    const { token } = createPairingToken();
+    renameSync(target, join(home, 'unmounted'));
+    expect(() => readRegistries()).toThrow(RegistryUnavailable);
+    expect(() => secretPsk(lookupOf(token))).toThrow(RegistryUnavailable);
+    renameSync(join(home, 'unmounted'), target);
+    expect(readRegistries().devices).toHaveLength(1);
+    expect(secretPsk(lookupOf(token))).not.toBeNull();
+  });
+
+  it('keeps a registry file it cannot parse instead of overwriting it', () => {
+    const phone = pair();
+    const file = join(home, 'server', 'devices.json');
+    writeFileSync(file, '{"version": 2, "devices": [');
+    expect(() => readRegistries()).toThrow(RegistryUnavailable);
+    expect(() => revokeDevice(phone.id)).toThrow(RegistryUnavailable);
+    expect(readFileSync(file, 'utf8')).toBe('{"version": 2, "devices": [');
   });
 });

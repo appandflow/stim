@@ -344,14 +344,16 @@ export const PUSH_TOKEN_PATTERN = '^(Expo|Exponent)PushToken\\[[^\\]\\s]{1,256}\
 /**
  * `unauthorized`, `pairing-expired` and `protocol-unsupported` refuse the client until it pairs again or
  * updates; `unknown-secret` means the server does not hold the pairing token or setup ticket (yet), so a client with a
- * setup ticket retries until setup runs; clients retry the others. A network connection's refusals during the
- * handshake arrive as the WebSocket close reason.
+ * setup ticket retries until setup runs; `home-unavailable` means the server cannot read its Stim home, so it cannot
+ * tell whether it knows the client, and is never a revocation; clients retry the others. A network connection's
+ * refusals during the handshake arrive as the WebSocket close reason.
  */
 export const ERROR_CODES = [
   'unauthorized',
   'pairing-expired',
   'protocol-unsupported',
   'unknown-secret',
+  'home-unavailable',
   'bad-request',
   'unknown-method',
   'already-authenticated',

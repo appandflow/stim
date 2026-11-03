@@ -192,8 +192,16 @@ export class HandshakeRefusal extends Error {
   }
 }
 
+/**
+ * Why a server that cannot read its Stim home refuses with `home-unavailable`: it can tell neither a paired client nor
+ * a secret, so it serves none until the Stim home answers again. Clients retry; it never means revoked.
+ */
+export const HOME_UNAVAILABLE_MESSAGE: string =
+  'The machine cannot read its Stim home, usually because the disk that holds it is disconnected or not responding. It serves clients again once the Stim home answers.';
+
 const REFUSAL_MESSAGES: Record<string, string> = {
   'unknown-secret': 'The machine does not know this pairing token or setup ticket yet, or it expired.',
+  'home-unavailable': HOME_UNAVAILABLE_MESSAGE,
   unauthorized: 'The machine does not recognize this client. Pair again.',
   'protocol-unsupported':
     'The machine speaks another stim-server protocol. Update it and this client, then pair again.',
@@ -436,7 +444,10 @@ export interface AcceptedHandshake {
 
 export interface AcceptOptions {
   keyPair: NoiseKeyPair;
-  /** The PSK of the secret `lookup` (hex) names, or null when no valid secret matches. */
+  /**
+   * The PSK of the secret `lookup` (hex) names, or null when no valid secret matches. A {@link HandshakeRefusal} it
+   * throws refuses the client with that code.
+   */
   psk: (lookup: string) => Buffer | null;
   timeoutMs: number;
   /** X25519 in place of node:crypto's, as `HandshakeOptions.dh` takes it. */
@@ -522,8 +533,16 @@ export function acceptNoise(
     if ('error' in message)
       return refuse(message.error, message.error === 'protocol-unsupported' ? CLOSE_BAD_REQUEST : CLOSE_REFUSED);
     parsed = message;
-    const psk = message.mode === MODE_FIRST_CONTACT ? options.psk(message.lookup.toString('hex')) : null;
-    if (message.mode === MODE_FIRST_CONTACT && !psk) return refuse('unknown-secret');
+    let psk: Buffer | null = null;
+    if (message.mode === MODE_FIRST_CONTACT) {
+      try {
+        psk = options.psk(message.lookup.toString('hex'));
+      } catch (error) {
+        if (error instanceof HandshakeRefusal) return refuse(error.code);
+        throw error;
+      }
+      if (!psk) return refuse('unknown-secret');
+    }
     try {
       handshake = new HandshakeState({
         protocol: psk ? NOISE_XX_PSK2 : NOISE_XX,
