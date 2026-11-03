@@ -82,7 +82,9 @@ The viewer follows the layout of the device viewer in Stim Desktop and uses the
 same colors, in light or dark to match the browser. A bar across the top shows
 a status dot with the platform and Live or Waiting, the time left before the
 share expires, whether the share is Control or View only, and a Fullscreen
-button. The device sits below it inside its frame when Stim has artwork for it
+button. The browser tab is titled with the app and the device, for example
+"Pokedex Demo · iPhone 18 Pro · Stim", and never with the project or branch name.
+The device sits below it inside its frame when Stim has artwork for it
 (an iOS simulator today) and as a rounded screen otherwise, scaled to fit any
 window. With `--control`, button groups under the device hold:
 

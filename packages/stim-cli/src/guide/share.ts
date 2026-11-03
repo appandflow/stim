@@ -38,6 +38,13 @@ is not read as its value. The output then lists both passwords, and --json adds
 viewAuth (generated, set or null) and viewPassword, present only when it was
 generated.
 
+TAB TITLES
+
+The viewer tab is titled "<app name> \u00b7 <device model> \u00b7 Stim" (a simulator app's display name from its
+Info.plist, else "Live iOS app"; the model from the simulator name without the Stim label and runtime version), the
+login page "<app name> \u00b7 Stim", and an ended or unknown link "Share ended \u00b7 Stim". They never carry the
+project, workspace or branch name, and the viewer tab follows the app when it changes.
+
 VIEWERS SEE EACH OTHER
 
 Every viewer has a name (the optional name field on the login page, or on first

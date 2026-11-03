@@ -541,8 +541,11 @@ function connect(codec) {
     }
     const message = JSON.parse(event.data);
     if (message.type === 'hello') {
+      if (typeof message.title === 'string') document.title = message.title;
       expiresAt = Date.parse(message.expiresAt);
       refreshStatus();
+    } else if (message.type === 'title') {
+      if (typeof message.title === 'string') document.title = message.title;
     } else if (message.type === 'clipboard') {
       const waiting = copies.get(message.id);
       copies.delete(message.id);
