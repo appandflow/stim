@@ -171,7 +171,7 @@ and the hosted relay, which already forwards worker subscription events verbatim
 
 ```ts
 interface PresenceEvent {
-  event: "presence";
+  event: 'presence';
   subscription: string;
   /** Participants that changed since the last event, oldest change first. */
   participants: PresenceParticipant[];
@@ -179,12 +179,12 @@ interface PresenceEvent {
 
 interface PresenceParticipant {
   id: string;
-  kind: "viewer" | "host" | "agent";
+  kind: 'viewer' | 'host' | 'agent';
   name: string;
   color: number; // 0-7
   /** Absent when only the name, color or presence changed; null when the participant left. */
   touch?: {
-    phase: "down" | "move" | "up";
+    phase: 'down' | 'move' | 'up';
     x: number; // 0-1 of the upright screen, as InputTouchParams
     y: number;
     display?: number; // 0 is the main display; the Duo panel otherwise
@@ -192,7 +192,7 @@ interface PresenceParticipant {
   } | null;
   /** A completed agent gesture, replayed by the client over durationMs. */
   gesture?: {
-    kind: "tap" | "swipe";
+    kind: 'tap' | 'swipe';
     from: { x: number; y: number };
     to?: { x: number; y: number };
     durationMs: number;
