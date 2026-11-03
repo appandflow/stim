@@ -1,8 +1,8 @@
 import AppKit
 import StimKit
 
-/// The volumes Stim writes to, probed once for every reader: the machine metrics, the oversight notifications and
-/// the autopilot. A reader takes the last probe while it started within the reader's `maxAge`, and otherwise joins
+/// The volumes Stim writes to, probed once for every reader: the machine metrics and the oversight notifications. A
+/// reader takes the last probe while it started within the reader's `maxAge`, and otherwise joins
 /// or starts a probe.
 @MainActor
 public final class DiskVolumeStore {

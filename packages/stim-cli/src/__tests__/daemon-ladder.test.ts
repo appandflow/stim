@@ -3,22 +3,27 @@ import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonPressure } from '@stim-cli/core/state';
-import { IDLE_STOP_KEY, readDormantStage, readIdleStage } from '@stim-cli/core/state';
+import { diskUsageCacheFile, IDLE_STOP_KEY, readDormantStage, readIdleStage } from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
+import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependencies.ts';
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
 import { runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { parkSim } from '../devices/sim-pool.ts';
 import * as ios from '../devices/ios.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as fsUtil from '../fs-util.ts';
+import { treeSignature } from '../private-size.ts';
+import { writeCacheFile } from '../status-measures.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import * as lightened from '../workspace/lightened.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { serveShareList, shareRow } from './_share-list-server.ts';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -177,19 +182,26 @@ describe('the dormant stage', () => {
     expect(await dormant()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
   });
 
-  test('a booted device, maintenance.keep, or a failed simulator listing keeps a workspace out of it', async () => {
+  test('a booted device, maintenance.keep, a live web share, or a failed simulator listing keeps a workspace out of it', async () => {
     const booted = workspace('booted', 4 * DAY_MS, 'Booted');
     const pinned = workspace('pinned', 4 * DAY_MS, 'Shutdown');
     writeFileSync(join(pinned.root, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+    const shared = process.platform === 'win32' ? null : workspace('shared', 4 * DAY_MS, 'Shutdown');
+    if (shared) {
+      const server = await serveShareList(() => ({ shares: [shareRow(shared.root, '2099-01-01T00:00:00.000Z')] }));
+      onTestFinished(() => server.close());
+    }
     expect(
       await runDormantPass({ config: loadConfig(), act: true, log, devices: await devicesNow(), simsFailed: false }),
     ).toEqual([]);
     const listed = workspace('unlisted', 4 * DAY_MS, 'Shutdown');
     expect(await dormant(true)).toEqual([]);
     expect(deleted).toEqual([]);
-    expect([booted, pinned, listed].every(({ root }) => readDormantStage(readWorkspaceState(root)) === null)).toBe(
-      true,
-    );
+    expect(
+      [booted, pinned, ...(shared ? [shared] : []), listed].every(
+        ({ root }) => readDormantStage(readWorkspaceState(root)) === null,
+      ),
+    ).toBe(true);
   });
 
   test('idle.dormantDays 0 turns the dormant stage off, and idle.minutes 0 keeps a workspace out of it', async () => {
@@ -369,6 +381,52 @@ describe('the pressure ladder', () => {
   });
 });
 
+describe('the ladder stim gc forces', () => {
+  test('runs every rung at the forced level whatever the measured level, and gc --older-than limits rung 2 to devices parked that long', async () => {
+    vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+    for (const [udid, days] of [
+      ['OLD-PARKED', 10],
+      ['NEW-PARKED', 1],
+    ] as const) {
+      const source = join(projects, `source-${udid}`);
+      mkdirSync(source, { recursive: true });
+      upsertProject(source, { platforms: { ios: { deviceUdid: udid, deviceName: `stim-${udid}`, owned: true } } });
+      parkSim({
+        platform: 'ios',
+        projectPath: source,
+        max: 3,
+        record: {
+          udid,
+          name: `stim-${udid}`,
+          runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+          deviceTypeIdentifier: 'iphone',
+          simslimManaged: false,
+          parkedAt: new Date(Date.now() - days * DAY_MS).toISOString(),
+        },
+      });
+    }
+    const parkedTargets = async (parkedOlderThanDays?: number) =>
+      (
+        await runLadder(
+          {
+            config: loadConfig()!,
+            act: false,
+            log,
+            devices: [],
+            simsFailed: false,
+            remeasure: async () => pressure('normal'),
+            force: { level: 'high', why: 'stim gc --delete', ...(parkedOlderThanDays ? { parkedOlderThanDays } : {}) },
+            fromRung: 2,
+          },
+          pressure('normal'),
+        )
+      ).actions.flatMap((action) => (action.kind === 'delete-parked-device' ? [action.target] : []));
+
+    expect(await parkedTargets()).toEqual(['OLD-PARKED', 'NEW-PARKED']);
+    expect(await parkedTargets(5)).toEqual(['OLD-PARKED']);
+  });
+});
+
 describe('rung 5', () => {
   const HOUR_MS = 60 * MINUTE_MS;
 
@@ -443,44 +501,177 @@ describe('rung 5', () => {
       pressure(level),
     );
 
-  test('at critical it deletes node_modules and Pods of an idle linked worktree in one tick, and nothing at high', async () => {
+  test('at critical it keeps node_modules and Pods of an idle linked worktree while the running processes cannot be listed, as on win32', async () => {
+    const listed = getExecutor();
+    setExecutor({
+      ...listed,
+      runFileQuietAsync: async (file, args, opts) =>
+        file === 'ps' ? null : listed.runFileQuietAsync(file, args, opts),
+    });
     const { idle } = linkedWorktrees(['idle']);
     register(idle);
-    await ladder('high');
+    const { actions } = await ladder('critical');
     expect(existsSync(join(idle, 'node_modules'))).toBe(true);
-    const { actions } = await ladder('critical');
-    expect(existsSync(join(idle, 'node_modules'))).toBe(false);
-    expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(false);
-    expect(actions.filter((action) => action.rung === 5).map((action) => action.outcome)).toEqual(['done', 'done']);
-  });
-
-  test('it keeps a worktree used a minute ago, and one used between selection and deletion', async () => {
-    const { recent, late } = linkedWorktrees(['recent', 'late']);
-    register(recent);
-    recordWorkspaceUse(recent, new Date(Date.now() - MINUTE_MS));
-    register(late);
-    const restoreProblem = lightened.restoreProblem;
-    vi.spyOn(lightened, 'restoreProblem').mockImplementation(async (candidate, ...rest) => {
-      if (candidate.worktree === late) recordWorkspaceUse(late);
-      return restoreProblem(candidate, ...rest);
-    });
-    const { actions } = await ladder('critical');
-    for (const root of [recent, late]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
-    const rung5 = actions.filter((action) => action.rung === 5);
-    expect(rung5.filter((action) => action.workspace === recent)).toEqual([]);
-    expect(rung5.find((action) => action.workspace === late)).toMatchObject({
-      outcome: 'kept',
-      detail: 'it is no longer idle',
-    });
-  });
-
-  test("it skips a worktree with no workspace in this home, the command's own workspace and one whose dev server runs", async () => {
-    const { stranger, own, serving } = linkedWorktrees(['stranger', 'own', 'serving']);
-    register(realpathSync.native(join(projects, 'repo')));
-    register(own);
-    register(serving, { metroPort: 59125, supervisor: { pid: process.pid, port: 59999 } });
-    const { actions } = await ladder('critical', own);
-    for (const root of [stranger, own, serving]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
+    expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(true);
     expect(actions.filter((action) => action.rung === 5)).toEqual([]);
   });
+
+  describe.skipIf(process.platform === 'win32')(
+    'with the running processes listed (skipped on win32, where Stim cannot list them)',
+    () => {
+      test('at critical it deletes node_modules and Pods of an idle linked worktree in one tick, and nothing at high', async () => {
+        const { idle } = linkedWorktrees(['idle']);
+        register(idle);
+        await ladder('high');
+        expect(existsSync(join(idle, 'node_modules'))).toBe(true);
+        const { actions } = await ladder('critical');
+        expect(existsSync(join(idle, 'node_modules'))).toBe(false);
+        expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(false);
+        expect(actions.filter((action) => action.rung === 5).map((action) => action.outcome)).toEqual(['done', 'done']);
+      });
+
+      test('it keeps a worktree used a minute ago, and one used between selection and deletion', async () => {
+        const { recent, late } = linkedWorktrees(['recent', 'late']);
+        register(recent);
+        recordWorkspaceUse(recent, new Date(Date.now() - MINUTE_MS));
+        register(late);
+        const restoreProblem = lightened.restoreProblem;
+        vi.spyOn(lightened, 'restoreProblem').mockImplementation(async (candidate, ...rest) => {
+          if (candidate.worktree === late) recordWorkspaceUse(late);
+          return restoreProblem(candidate, ...rest);
+        });
+        const { actions } = await ladder('critical');
+        for (const root of [recent, late]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
+        const rung5 = actions.filter((action) => action.rung === 5);
+        expect(rung5.filter((action) => action.workspace === recent)).toEqual([]);
+        expect(rung5.find((action) => action.workspace === late)).toMatchObject({
+          outcome: 'kept',
+          detail: 'it is no longer idle',
+        });
+      });
+
+      function measured(path: string, privateBytes: number, signature = treeSignature(path)) {
+        writeCacheFile(diskUsageCacheFile(path), {
+          path,
+          measuredAt: new Date().toISOString(),
+          bytes: 2 * 1024 ** 3,
+          privateBytes,
+          signature,
+        });
+      }
+
+      test('at critical it keeps a clone under the private-bytes threshold and deletes the rest, most private first, unknown last', async () => {
+        const { clone, reinstalled, unknown } = linkedWorktrees(['clone', 'reinstalled', 'unknown']);
+        for (const root of [clone, reinstalled, unknown]) register(root);
+        measured(join(clone, 'node_modules'), REAL_BYTES_THRESHOLD - 1);
+        measured(join(clone, 'ios', 'Pods'), REAL_BYTES_THRESHOLD);
+        measured(join(reinstalled, 'node_modules'), 2 * REAL_BYTES_THRESHOLD);
+        measured(join(reinstalled, 'ios', 'Pods'), 3 * REAL_BYTES_THRESHOLD, 'an older install');
+
+        const rung5 = (await ladder('critical')).actions.filter((action) => action.rung === 5);
+
+        expect(existsSync(join(clone, 'node_modules'))).toBe(true);
+        const outcomes = rung5.map(({ target, outcome }) => [target, outcome]);
+        expect(outcomes.slice(0, 3)).toEqual([
+          [join(clone, 'node_modules'), 'kept'],
+          [join(reinstalled, 'node_modules'), 'done'],
+          [join(clone, 'ios', 'Pods'), 'done'],
+        ]);
+        expect(outcomes.slice(3).toSorted()).toEqual(
+          [join(reinstalled, 'ios', 'Pods'), join(unknown, 'ios', 'Pods'), join(unknown, 'node_modules')].map(
+            (target) => [target, 'done'],
+          ),
+        );
+      }, 20_000);
+
+      test("it skips a worktree with no workspace in this home, the command's own workspace and one whose dev server runs", async () => {
+        const { stranger, own, serving } = linkedWorktrees(['stranger', 'own', 'serving']);
+        register(realpathSync.native(join(projects, 'repo')));
+        register(own);
+        register(serving, { metroPort: 59125, supervisor: { pid: process.pid, port: 59999 } });
+        const { actions } = await ladder('critical', own);
+        for (const root of [stranger, own, serving]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
+        expect(actions.filter((action) => action.rung === 5)).toEqual([]);
+      });
+    },
+  );
 });
+
+describe.skipIf(process.platform === 'win32')(
+  'the dormant stage for dependencies (skipped on win32, where Stim cannot list the running processes)',
+  () => {
+    test('after idle.dormantDays it deletes a tree holding its own bytes and keeps a tree of unknown size and a workspace idle less long', async () => {
+      vi.setSystemTime(Date.now() + 2 * DAY_MS);
+      resetExecutor();
+      const real = getExecutor();
+      setExecutor({
+        ...real,
+        runFileQuiet: (file, args, opts) =>
+          file === 'git' ? real.runFileQuiet(file, args, opts) : file === 'ps' ? '' : null,
+        runFileQuietAsync: async (file, args, opts) =>
+          file === 'ps' ? `${process.pid} node\n` : real.runFileQuietAsync(file, args, opts),
+      });
+      const repo = join(projects, 'repo');
+      mkdirSync(join(repo, 'ios'), { recursive: true });
+      const git = (args: string) => execSync(`git ${args}`, { cwd: repo, encoding: 'utf-8', timeout: 15_000 });
+      git('init -q -b main');
+      git('config user.email test@example.com');
+      git('config user.name test');
+      writeFileSync(join(repo, '.gitignore'), 'node_modules/\nios/Pods/\n');
+      writeFileSync(join(repo, 'package.json'), '{}');
+      writeFileSync(join(repo, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+      writeFileSync(join(repo, 'ios', 'Podfile.lock'), 'PODFILE CHECKSUM: 1\n');
+      git('add -A');
+      git('commit -q -m init');
+      const trees = (root: string) => [join(root, 'node_modules'), join(root, 'ios', 'Pods')];
+      for (const tree of trees(repo)) mkdirSync(join(tree, 'pkg'), { recursive: true });
+      writeFileSync(join(repo, 'node_modules', 'pkg', 'file'), 'x');
+      writeFileSync(join(repo, 'ios', 'Pods', 'Manifest.lock'), 'PODFILE CHECKSUM: 1\n');
+      const worktree = (name: string) => {
+        git(`worktree add -q "${join(projects, name)}" -b ${name}`);
+        const root = realpathSync.native(join(projects, name));
+        for (const tree of trees(root)) mkdirSync(join(tree, 'pkg'), { recursive: true });
+        writeFileSync(join(root, 'node_modules', 'pkg', 'file'), 'x');
+        writeFileSync(join(root, 'ios', 'Pods', 'Manifest.lock'), 'PODFILE CHECKSUM: 1\n');
+        upsertProject(root, { metroPort: null });
+        ensureWorkspaceStorage(root);
+        return root;
+      };
+      const old = worktree('old');
+      const recent = worktree('recent');
+      recordWorkspaceUse(old, new Date(Date.now() - 4 * DAY_MS));
+      recordWorkspaceUse(recent, new Date(Date.now() - DAY_MS));
+      const cache = (path: string, privateBytes: number) =>
+        writeCacheFile(diskUsageCacheFile(path), {
+          path,
+          measuredAt: new Date().toISOString(),
+          bytes: 2 * 1024 ** 3,
+          privateBytes,
+          signature: treeSignature(path),
+        });
+      cache(join(old, 'node_modules'), 2 * REAL_BYTES_THRESHOLD);
+      cache(join(recent, 'node_modules'), 2 * REAL_BYTES_THRESHOLD);
+
+      const actions = await runDormantDependencies({
+        config: loadConfig(),
+        act: true,
+        log,
+        devices: [],
+        simsFailed: false,
+      });
+
+      expect(actions).toEqual([
+        expect.objectContaining({
+          rung: 4,
+          kind: 'delete-dependencies',
+          target: join(old, 'node_modules'),
+          outcome: 'done',
+          restore: 'stim worktree warm',
+        }),
+      ]);
+      expect(existsSync(join(old, 'node_modules'))).toBe(false);
+      expect(existsSync(join(old, 'ios', 'Pods'))).toBe(true);
+      expect(existsSync(join(recent, 'node_modules'))).toBe(true);
+    }, 20_000);
+  },
+);

@@ -125,13 +125,11 @@ export function gcOptionsOf(opts: {
   worktrees?: boolean;
   olderThan?: number;
   cache?: string;
-  idle?: number;
 }): GcLogOptions {
   return {
     ...(opts.delete ? { delete: true } : {}),
     ...(opts.worktrees ? { worktrees: true } : {}),
     ...(opts.olderThan === undefined ? {} : { olderThan: opts.olderThan }),
     ...(opts.cache === undefined ? {} : { cache: opts.cache }),
-    ...(opts.idle === undefined ? {} : { idleMs: opts.idle }),
   };
 }

@@ -108,12 +108,11 @@ test('available memory is the free, inactive and speculative pages of vm_stat', 
 test.each([
   ['the default', {}, 15],
   [
-    'the smaller of the two older settings',
-    { metro: { idleStopMinutes: 60 }, devices: { idleShutdownMinutes: 30 } },
-    30,
+    'the default, whatever the removed settings say',
+    { metro: { idleStopMinutes: 0 }, devices: { idleShutdownMinutes: 5 } },
+    15,
   ],
-  ['a 0 in either older setting', { metro: { idleStopMinutes: 0 } }, 0],
-  ['idle.minutes over both older settings', { idle: { minutes: 45 }, metro: { idleStopMinutes: 5 } }, 45],
+  ['idle.minutes', { idle: { minutes: 45 }, metro: { idleStopMinutes: 5 } }, 45],
 ])('idle.minutes resolves to %s', (_, settings, minutes) => {
   expect(idleMinutesSetting(settings)).toBe(minutes);
 });

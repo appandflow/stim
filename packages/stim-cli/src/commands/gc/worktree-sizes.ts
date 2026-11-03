@@ -6,6 +6,7 @@ import { diskUsageCacheFile, readDiskUsage } from '@stim-cli/core/state';
 import { getExecutor } from '../../exec.ts';
 import { writeCacheFile } from '../../status-measures.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
+import { knownPrivateBytes, measureTree, treeSignature } from '../../private-size.ts';
 import { appRoots } from '../../maintenance/artifacts.ts';
 import { ARTIFACT_DIRS } from '../../workspace/regenerable-dirs.ts';
 import { listWorktreesAsync, matchWorktreeEntry, resolveSourceCheckoutAsync } from '../../workspace/worktree.ts';
@@ -56,13 +57,26 @@ async function buildStateDirs(path: string, keys: readonly string[], operation?:
   return [...dirs.keys()];
 }
 
-function cachedSize(dir: string, now: number): number | null {
+interface DirSize {
+  bytes: number;
+  privateBytes: number | null;
+}
+
+function isDependencyTree(dir: string): boolean {
+  return ARTIFACT_DIRS.dependencies.some((name) => dir.endsWith(`${sep}${name.split('/').join(sep)}`));
+}
+
+function cachedSize(dir: string, now: number): DirSize | null {
   const cached = readDiskUsage(dir);
   if (!cached) return null;
   const at = Date.parse(cached.measuredAt);
   if (now - at >= BUILD_STATE_MAX_AGE_MS) return null;
+  if (isDependencyTree(dir))
+    return cached.signature === treeSignature(dir)
+      ? { bytes: cached.bytes, privateBytes: knownPrivateBytes(dir) }
+      : null;
   try {
-    return statSync(dir).mtimeMs > at ? null : cached.bytes;
+    return statSync(dir).mtimeMs > at ? null : { bytes: cached.bytes, privateBytes: null };
   } catch {
     return null;
   }
@@ -92,13 +106,14 @@ interface PendingWorktree {
   candidate: WorktreeSweep['worktrees'][number];
   root: string;
   dirs: string[];
-  sizes: Map<string, number | null>;
+  sizes: Map<string, DirSize | null>;
 }
 
 /**
  * Sizes the regenerable directories maintenance clears and a project-local `.pnpm-store` in each worktree of the
  * sweep, from the disk-usage cache while an entry is under an hour old and no entry was added to or removed from the
- * directory since. Stale directories are measured with one `du` each, at most 4 at once, one at a time while the
+ * directory since (for node_modules and Pods, while their install signature is unchanged). Stale directories are
+ * measured with one `du` each, node_modules and Pods with the private-size walk of `measureTree`, at most 4 at once, one at a time while the
  * operation declares its children on a claim, with 10 seconds each, so a
  * slow tree delays only itself; a directory du could not measure in time is reported unmeasured (null). Without
  * `measure`, stale directories are reported unmeasured without a `du`. Also lists
@@ -131,16 +146,32 @@ export async function measureWorktreeSweep(
   await eachLimited(due, sizeConcurrency(operation), async ({ dir, sizes }) => {
     operation?.signal.throwIfAborted();
     const measuredAt = new Date().toISOString();
+    if (isDependencyTree(dir)) {
+      const signature = treeSignature(dir);
+      const size = await measureTree(dir, { timeoutMs: BUILD_STATE_TIMEOUT_MS, operation });
+      if (!size) return;
+      sizes.set(dir, size);
+      operation?.signal.throwIfAborted();
+      writeCacheFile(diskUsageCacheFile(dir), {
+        path: dir,
+        measuredAt,
+        bytes: size.bytes,
+        ...(size.privateBytes !== null ? { privateBytes: size.privateBytes } : {}),
+        ...(signature ? { signature } : {}),
+      });
+      return;
+    }
     const bytes = await duSize(dir, operation);
     if (bytes === null) return;
-    sizes.set(dir, bytes);
+    sizes.set(dir, { bytes, privateBytes: null });
     operation?.signal.throwIfAborted();
     writeCacheFile(diskUsageCacheFile(dir), { path: dir, measuredAt, bytes });
   });
   for (const { candidate, root, dirs, sizes } of pending) {
     const entries = dirs.map((dir) => ({
       path: relative(root, dir).split(sep).join('/'),
-      bytes: sizes.get(dir) ?? null,
+      bytes: sizes.get(dir)?.bytes ?? null,
+      privateBytes: sizes.get(dir)?.privateBytes ?? null,
     }));
     candidate.buildState = {
       bytes: entries.every((dir) => dir.bytes !== null)

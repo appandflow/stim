@@ -68,7 +68,6 @@ const env = {
   CI: '1',
   STIM_HOME: home,
   STIM_DEBUG: '1',
-  STIM_MAINTENANCE: 'off',
   STIM_DAEMON: 'off',
   STIM_TEST_GUARD_NO_HOME_PASSES: '1',
   STIM_POOL_IOS_PARKED_MAX: '0',

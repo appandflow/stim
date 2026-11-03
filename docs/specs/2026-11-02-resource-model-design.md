@@ -75,8 +75,19 @@ A workspace's last activity is the newest of:
 Never activity: device logs, in-app console logs (`client.ndjson`), Metro and Expo stdout, collector events, log mtimes.
 
 Blockers keep a workspace in its stage: a build in progress, a live driver (agent-device claim or lease, driver
-process, Android instrumentation), a held device lease, a hosted placement, unreadable evidence (fail closed), and
-`maintenance.keep`.
+process, Android instrumentation), a held device lease, a live web share, a hosted placement, unreadable evidence (fail
+closed), and `maintenance.keep`.
+
+Amended 2026-11-02 (approved): a web share (`stim share`) that has started, not ended and not passed its expiry is a
+blocker, whether or not a viewer is connected, for every automatic path that would shut down or delete its workspace's
+devices: the idle stage, every pressure rung, the dormant stage, the admission reclaim (4.3) and the deletion of a
+finished worktree's devices by automatic maintenance and `gc --delete`. The activity reader asks this home's stim-server
+for `share.list`. No running stim-server, or one without `share.list` (a server before 1.39), means no share, since a
+share lives only in its server's memory; a list a running server cannot give keeps the workspace. Each path reads it
+again under the workspace's native-run claim before it acts. `share.start` takes no workspace lock, so a share started
+during that locked shutdown can still lose its device (#4863). With no daemon, the supervisor fallback reads it before
+its own idle stop and device shutdown, and logs nothing new: the share blocks the idle probe as a driver does. `stim
+share stop` or the expiry lets the idle stage proceed.
 
 Per-slot exceptions: none. Release and native-process slots use signals 1 and 3 to 6; their app has no Metro, so 2
 never fires. This replaces the #4799 rule that device logs count for those slots.
@@ -87,7 +98,7 @@ never fires. This replaces the #4799 rule that device logs count for those slots
 | ------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | running | activity                                                                 |                                                                                                                                                                                                                                                                                                                                                                                     |                                                                       |
 | idle    | `idle.minutes` (15) without activity and no blocker                      | the idle stop: Metro stopped with the port reservation and launch records kept and `IDLE_STOP_KEY` written; owned devices shut down through teardown with the idle reason; the collector ends with its device; workspace `derived-data/`, the Metro store and the regenerable in-tree dirs (`android/app/build`, `android/build`, `android/.gradle`, `ios/build`, `.build`) deleted | any activity, `stim revive`, `stim ios`, `stim android`, `stim start` |
-| dormant | `idle.dormantDays` (3) without activity                                  | owned devices deleted through ledger teardown (the parked pool untouched); workspace logs archived; node_modules and Pods untouched                                                                                                                                                                                                                                                 | a Stim command                                                        |
+| dormant | `idle.dormantDays` (3) without activity                                  | owned devices deleted through ledger teardown (the parked pool untouched); workspace logs archived; node_modules and Pods holding 256 MB of their own deleted, clones kept                                                                                                                                                                                                          | a Stim command                                                        |
 | removed | a finished worktree (merged or closed PR) plus `gc.worktreeGraceMinutes` | today's removal; devices parked when the pool has room                                                                                                                                                                                                                                                                                                                              |                                                                       |
 
 Amended 2026-11-02 (approved): the dormant stage needs a running daemon, so a quiet home keeps it alive at the 5-minute
@@ -134,11 +145,17 @@ workspace with a blocker, and takes the longest-idle workspace first.
 | 2. parked devices                                                                     | kept to the pool caps                          | delete the oldest until the level clears   | delete all                                                                                                                    |
 | 3. shared caches (build cache, Metro cache, compilation cache, fingerprint memo)      | LRU trim to their caps on the hourly size scan | LRU trim to half their caps                | Metro and compilation caches emptied; build cache trimmed to protected entries                                                |
 | 4. dormant stage                                                                      | at 3 days                                      | now for workspaces idle 10 min or more     | now for every idle workspace                                                                                                  |
-| 5. node_modules and Pods of idle workspaces                                           | never                                          | never                                      | deleted, recorded with the `stim worktree warm` restore                                                                       |
+| 5. node_modules and Pods of idle workspaces                                           | never                                          | never                                      | those holding 256 MB of their own deleted, most first, recorded with the `stim worktree warm` restore; clones kept            |
 | 6. Gradle daemons, unpinned Gradle versions idle 7 days, TMPDIR leftovers 24 h, trash | daily sweep                                    | now                                        | now                                                                                                                           |
 | 7. refuse                                                                             | never                                          | never                                      | `start`, `ios` and `android` refuse `STIM_LOW_DISK` only while free disk is under `disk.hardFloorGb` (5) after the ladder ran |
 
 Memory never refuses: it holds admission (section 4) and the ladder reclaims idle devices first.
+
+"Their own" is a tree's private bytes: the blocks APFS reports no copy-on-write clone or outside hard link shares
+(`ATTR_CMNEXT_PRIVATESIZE`). `stim worktree warm` clones node_modules and Pods from the source checkout, so a fresh
+clone frees almost nothing when deleted and costs a re-warm; a reinstalled tree holds 1 to 2 GB of its own. 256 MB is
+about 4% of `disk.criticalFreeGb`. The daemon measures each tree in the background after its install changes. Rung 5
+deletes a tree of unknown size after the measured ones; the dormant stage keeps it.
 
 Removed: the per-command budget gate (`budget.ts` enforce and reclaim), maintenance levels 1 to 3, the memory
 daemon-stop plan, the 15-minute "lighten" rule, and Desktop's own autopilot thresholds (Desktop reads the snapshot
@@ -169,6 +186,10 @@ arrival order per resource.
 
 While a run waits for a device slot, the daemon shuts down the longest-idle booted device of another workspace that has
 been idle 2 min or more and has no blocker, one per tick, and wakes the waiter.
+
+Amended 2026-11-02 (approved): a device whose workspace has a live web share (section 2) is never reclaimed. The
+waiter keeps waiting, since the shared device is a live holder, and its progress line names the share as what keeps
+that holder booted. The daemon and the waiter read shares through the same reader.
 
 Build slots: `acquireBuildSlot` subscribes through the daemon and keeps the 1 s poll as the fallback when no daemon
 runs.

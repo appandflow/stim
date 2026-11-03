@@ -30,7 +30,6 @@ import { phase } from './progress.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { readHostMemoryPressureAsync } from '../../host-memory.ts';
 import { memoryPressure } from '../../daemon/pressure.ts';
-import { resolveMaintenanceSettings } from '../../maintenance/settings.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from '../../process-identity.ts';
 
 export const WATCHMAN_KIND = 'watchman';
@@ -835,8 +834,6 @@ async function manualDaemonsKept(
   if (entry && !sameProcess(entry, await hostRows(operation))) return 'the process changed or exited since the check';
   const birth = entry ? captureProcessIdentity(entry.pid) : null;
   if (entry && !birth?.ok) return 'the process identity could not be verified';
-  const settings = resolveMaintenanceSettings(undefined, env);
-  if (settings.memoryPressureLevel === 'off') return 'maintenance.memoryPressureLevel is off';
   const level = await readHostMemoryPressureAsync(undefined, undefined, operation?.signal, operation);
   const snapshot = readDaemonSnapshot();
   const now = Date.now();

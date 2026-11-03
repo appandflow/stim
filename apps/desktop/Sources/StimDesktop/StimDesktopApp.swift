@@ -202,7 +202,7 @@ struct StimDesktopApp: App {
   private let tips: TipCoordinator
   private let discovery: DiscoveryCoordinator
   private let actions: ActionCenter
-  private let autopilot: AutopilotRunner
+  private let pressure: DaemonPressureMonitor
   private let onboarding: Onboarding
   private let gc: GcReportStore
   private let machineSettings: MachineSettingsStore
@@ -307,10 +307,10 @@ struct StimDesktopApp: App {
     self.machineSettings = machineSettings
     let buildMachines = BuildMachinesModel(environment: environment, settings: machineSettings, statsReader: statsReader)
     self.buildMachines = buildMachines
-    let autopilot = AutopilotRunner(status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings)
-    self.autopilot = autopilot
+    let pressure = DaemonPressureMonitor(status: store, actions: actions)
+    self.pressure = pressure
     let discovery = DiscoveryCoordinator(
-      status: store, machines: buildMachines, stats: statsReader, autopilot: autopilot, gc: gc, environment: environment)
+      status: store, machines: buildMachines, stats: statsReader, pressure: pressure, gc: gc, environment: environment)
     self.discovery = discovery
     let tips = TipCoordinator(status: store, machines: buildMachines)
     self.tips = tips
@@ -322,7 +322,7 @@ struct StimDesktopApp: App {
       discovery.start(actions: actions)
       tips.start()
       metrics.start()
-      autopilot.start()
+      pressure.start()
       buildMachines.keepMachinesCurrent(status: store)
       onboarding.check()
     }
@@ -334,7 +334,7 @@ struct StimDesktopApp: App {
   var body: some Scene {
     Window(Self.windowTitle, id: "main") {
       RootView(
-        environment: environment, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding, gc: gc,
+        environment: environment, store: store, actions: actions, pressure: pressure, onboarding: onboarding, gc: gc,
         buildMachines: buildMachines, metrics: metrics, storage: storage, planChecks: planChecks, statsReader: statsReader,
         tips: tips
       )
@@ -379,7 +379,7 @@ struct StimDesktopApp: App {
       SettingsView(
         environment: environment, store: store, machine: machineSettings, buildMachines: buildMachines, actions: actions
       )
-      .environmentObject(autopilot)
+      .environmentObject(pressure)
       .environmentObject(onboarding)
     }
 

@@ -52,7 +52,7 @@ beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-maintenance-actions-')));
   projects = realpathSync(mkdtempSync(join(tmpdir(), 'stim-maintenance-projects-')));
   process.env.STIM_HOME = home;
-  process.env.STIM_MAINTENANCE = 'on';
+  process.env.STIM_DAEMON = 'on';
   process.env.STIM_GC_WORKTREE_GRACE_MINUTES = '0';
   vi.stubEnv('HOME', home);
   vi.stubEnv('USERPROFILE', home);
@@ -85,10 +85,11 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
   rmSync(projects, { recursive: true, force: true });
   for (const key of Object.keys(process.env))
-    if (key.startsWith('STIM_MAINTENANCE') || key.startsWith('STIM_CACHES_') || key.startsWith('STIM_BUDGET_'))
+    if (key.startsWith('STIM_MAINTENANCE') || key.startsWith('STIM_CACHES_') || key.startsWith('STIM_DISK_'))
       delete process.env[key];
   delete process.env.STIM_HOME;
   delete process.env.STIM_GC_WORKTREE_GRACE_MINUTES;
+  process.env.STIM_DAEMON = 'off';
   process.exitCode = 0;
 });
 
@@ -211,7 +212,7 @@ test('on mode trims over-cap caches oldest first and clears only idle, unpinned,
 });
 
 test('report mode plans the same actions and deletes nothing', async () => {
-  process.env.STIM_MAINTENANCE = 'report';
+  process.env.STIM_DAEMON = 'report';
   const { entries, spaces } = capFixture();
 
   await runMaintenance('test');
@@ -538,7 +539,6 @@ test('the age sweep deletes a parked simulator unused for olderThanDays through 
   vi.spyOn(ios, 'deleteParkedIosSim').mockImplementation(async (udid) => {
     deleted.push(udid);
   });
-  process.env.STIM_MAINTENANCE_DEVICE_IDLE_DAYS = '0';
   process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
 
   await runMaintenance('test');
@@ -549,7 +549,7 @@ test('the age sweep deletes a parked simulator unused for olderThanDays through 
 });
 
 test('report mode lists a worktree once when the worktree check plans one the last sweep already planned', async () => {
-  process.env.STIM_MAINTENANCE = 'report';
+  process.env.STIM_DAEMON = 'report';
   const { repo, worktrees, heads } = gitRepoWithWorktrees(['shipped']);
   const shipped = worktrees.shipped ?? '';
   const merged = {

@@ -617,21 +617,15 @@ export interface BudgetRow {
 
 const budgets = (): { key: string; label: string; describe: (value: number | null) => string }[] => [
   {
-    key: 'budget.minFreeDiskGb',
+    key: 'disk.minFreeGb',
     label: t`Reclaims Disk`,
     describe: (v) => (v ? t`below ${v} GB free` : t`only below the hard floor`),
   },
   {
-    key: 'budget.hardFloorDiskGb',
+    key: 'disk.hardFloorGb',
     label: t`Refuses to Run`,
     describe: (v) => (v ? t`below ${v} GB free` : t`never`),
   },
-  {
-    key: 'budget.maxCommittedMemoryGb',
-    label: t`Memory Budget`,
-    describe: (v) => (v === null ? t`60% of memory` : v === 0 ? t`off` : t`${v} GB`),
-  },
-  { key: 'budget.maxLiveWorkspaces', label: t`Active Workspaces`, describe: (v) => (v ? String(v) : t`no limit`) },
 ];
 
 function settingNumbers(settings: Record<string, unknown> | null): Map<string, number | null> {
@@ -645,9 +639,9 @@ function settingNumbers(settings: Record<string, unknown> | null): Map<string, n
   return values;
 }
 
-/** The Mac's `budget.minFreeDiskGb`, or null when the payload omits it or sets no positive floor. */
+/** The Mac's `disk.minFreeGb`, or null when the payload omits it or sets no positive floor. */
 export function minFreeDiskGb(settings: Record<string, unknown> | null): number | null {
-  const value = settingNumbers(settings).get('budget.minFreeDiskGb');
+  const value = settingNumbers(settings).get('disk.minFreeGb');
   return value != null && value > 0 ? value : null;
 }
 

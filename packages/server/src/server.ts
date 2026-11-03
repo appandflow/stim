@@ -3355,9 +3355,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (
         !isJsonObject(params) ||
-        Object.keys(params).some(
-          (key) => !['cwd', 'cache', 'olderThan', 'worktrees', 'delete', 'idleMs'].includes(key),
-        ) ||
+        Object.keys(params).some((key) => !['cwd', 'cache', 'olderThan', 'worktrees', 'delete'].includes(key)) ||
         typeof params.cwd !== 'string' ||
         params.cwd.length > 4096 ||
         params.cwd.includes('\0') ||
@@ -3367,21 +3365,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         (params.olderThan !== undefined &&
           (typeof params.olderThan !== 'number' || !Number.isSafeInteger(params.olderThan))) ||
         (params.worktrees !== undefined && typeof params.worktrees !== 'boolean') ||
-        (params.delete !== undefined && typeof params.delete !== 'boolean') ||
-        (params.idleMs !== undefined &&
-          (typeof params.idleMs !== 'number' || !Number.isSafeInteger(params.idleMs) || params.idleMs <= 0))
+        (params.delete !== undefined && typeof params.delete !== 'boolean')
       )
         return error(
           id,
           'bad-request',
-          'GC requires an absolute cwd and valid cache, age, worktree, delete and idle selectors.',
+          'GC requires an absolute cwd and valid cache, age, worktree and delete selectors.',
         );
       const request = {
         cache: typeof params.cache === 'string' ? params.cache : undefined,
         olderThan: typeof params.olderThan === 'number' ? params.olderThan : undefined,
         worktrees: typeof params.worktrees === 'boolean' ? params.worktrees : undefined,
         delete: typeof params.delete === 'boolean' ? params.delete : undefined,
-        idleMs: typeof params.idleMs === 'number' ? params.idleMs : undefined,
       };
       subscribeLifecycle(id, params.cwd, owner, 'gc', (cwd, _admit, onProgress) =>
         gcAction(cwd, options.env, actionLimits, request, onProgress),

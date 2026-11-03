@@ -237,14 +237,14 @@ test.skipIf(process.platform === 'win32')(
   120_000,
 );
 
-test('nothing is archived when writing it would cross budget.hardFloorDiskGb', async () => {
-  process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = String(1024 ** 3);
+test('nothing is archived when writing it would cross disk.hardFloorGb', async () => {
+  process.env.STIM_DISK_HARD_FLOOR_GB = String(1024 ** 3);
   onTestFinished(() => {
-    delete process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB;
+    delete process.env.STIM_DISK_HARD_FLOOR_GB;
   });
   dirtyTheWorktree();
 
-  await expect(archive()).rejects.toThrow(/budget\.hardFloorDiskGb/);
+  await expect(archive()).rejects.toThrow(/disk\.hardFloorGb/);
   expect(existsSync(worktreeArchiveRoot())).toBe(false);
 }, 60_000);
 

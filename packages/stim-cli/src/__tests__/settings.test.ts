@@ -218,9 +218,6 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   },
   'maintenance.keep': { valid: true, invalid: 'yes', expected: 'true or false' },
   'maintenance.idleStopHours': { valid: 0.5, invalid: -1, expected: 'a number, 0 or more' },
-  'metro.idleStopMinutes': { valid: 30, invalid: '30', expected: 'a whole number, 0 or more' },
-  'devices.reclaimIdleMinutes': { valid: 10, invalid: 1.5, expected: 'a whole number, 0 or more' },
-  'devices.idleShutdownMinutes': { valid: 30, invalid: 1.5, expected: 'a whole number, 0 or more' },
   'idle.minutes': { valid: 15, invalid: 1.5, expected: 'a whole number, 0 or more' },
   'metro.command': {
     valid: ['npx', 'react-native', 'start', '--port', '{port}'],

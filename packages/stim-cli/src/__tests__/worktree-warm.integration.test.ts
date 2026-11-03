@@ -342,6 +342,24 @@ test('warm reports carried dependency and Pods lockfile mismatches against the l
   expect(readFileSync(join(target, 'ios/Podfile.lock'), 'utf-8')).toBe('branch pods\n');
 }, 30_000);
 
+test('warm notes on stderr when carried prebuilt React Native frameworks are another flavor than the build', async () => {
+  write(root, 'ios/Pods/Manifest.lock', 'branch pods\n');
+  write(root, 'ios/Pods/React-Core-prebuilt/.last_build_configuration', 'Release');
+  write(target, 'ios/Podfile.lock', 'branch pods\n');
+  const mismatched = await runWarm(target);
+  expect(mismatched.code).toBe(0);
+  expect(mismatched.stdout).toEqual([]);
+  expect(mismatched.stderr).toMatch(/carried ios\/Pods: .*React-Core-prebuilt \(Release\).*builds Debug.*`stim ios`/);
+}, 30_000);
+
+test('warm does not note carried prebuilt frameworks that match the build configuration', async () => {
+  write(root, 'ios/Pods/Manifest.lock', 'branch pods\n');
+  write(root, 'ios/Pods/React-Core-prebuilt/.last_build_configuration', 'Debug');
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(result.stderr).not.toMatch(/prebuilt|Release/);
+}, 30_000);
+
 test('warm reports carried node_modules installed from an older lockfile that both checkouts have moved past', async () => {
   const fixture = (name: string) =>
     readFileSync(join(import.meta.dirname, 'fixtures', 'installed-deps', 'npm', name), 'utf-8');

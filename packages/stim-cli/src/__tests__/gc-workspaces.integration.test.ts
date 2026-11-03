@@ -494,8 +494,39 @@ test('gc --delete --json reports what it removed apart from what it kept', async
   const stale = builtWorkspace('stale', { usedDaysAgo: 10 });
   const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
   holdNativeRun(busy.root);
+  const claims = join(tmpHome, 'build-claims');
+  plantClaim(claims, 'exclusive', liveClaimOwner(), { claimId: 'build-1' });
+  const at = new Date().toISOString();
+  writeWorkspaceState(busy.root, {
+    activeBuild: {
+      platform: 'ios',
+      phase: 'compile',
+      startedAt: at,
+      phaseStartedAt: at,
+      claim: { root: claims, claimId: 'build-1' },
+    },
+  });
 
-  expect((await gcJson({ olderThan: 3 })).payload.results).toEqual([]);
+  const preview = (await gcJson({ olderThan: 3 })).payload;
+  expect(preview.results).toEqual([]);
+  for (const level of preview.ladder.levels)
+    expect(level.actions).toContainEqual(
+      expect.objectContaining({
+        rung: 1,
+        kind: 'delete-build-outputs',
+        target: stale.root,
+        outcome: 'would',
+        bytes: expect.any(Number),
+      }),
+    );
+  expect(
+    preview.ladder.levels[0].actions.find((action: { target: string }) => action.target === stale.root).bytes,
+  ).toBeGreaterThan(0);
+  expect(preview.ladder.workspaces).toContainEqual(
+    expect.objectContaining({ path: stale.root, stage: 'stopped', since: expect.any(String) }),
+  );
+  expect(preview.ladder.workspaces).toContainEqual(expect.objectContaining({ path: busy.root, stage: 'running' }));
+  for (const output of OUTPUTS) expect(existsSync(join(stale.dir, output))).toBe(true);
   const { payload } = await gcJson({ olderThan: 3, delete: true });
 
   expect(payload.results).toEqual(
@@ -512,15 +543,11 @@ test('gc --delete --json reports what it removed apart from what it kept', async
         label: stale.root,
         bytes: expect.any(Number),
       }),
-      expect.objectContaining({
-        kind: 'workspaceOutputs',
-        status: 'kept',
-        label: busy.root,
-        detail: expect.stringMatching(/^in use: /),
-      }),
     ]),
   );
   expect(payload.results.filter((r: { status: string }) => r.status === 'failed')).toEqual([]);
+  expect(payload.results.filter((r: { label: string }) => r.label === busy.root)).toEqual([]);
+  for (const output of OUTPUTS) expect(existsSync(join(busy.dir, output))).toBe(true);
   expect(existsSync(orphan.dir)).toBe(false);
 });
 
@@ -830,13 +857,13 @@ test('gc --cache workspaces lists and clears a workspace with only macOS outputs
   expect(existsSync(join(dir, 'workspace.json'))).toBe(true);
 });
 
-test('plain gc --delete clears idle workspaces, and --older-than limits it by last use', async () => {
+test('gc --delete --cache workspaces clears idle workspaces, and --older-than limits it by last use', async () => {
   const recent = builtWorkspace('recent', { usedDaysAgo: 1 });
   const stale = builtWorkspace('stale', { usedDaysAgo: 10 });
   const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
   holdNativeRun(busy.root);
 
-  const report = await captureLog(() => runGc({ delete: true, olderThan: 3 }));
+  const report = await captureLog(() => runGc({ delete: true, cache: 'workspaces', olderThan: 3 }));
   for (const output of OUTPUTS) {
     expect(existsSync(join(stale.dir, output))).toBe(false);
     expect(existsSync(join(recent.dir, output))).toBe(true);
@@ -844,14 +871,14 @@ test('plain gc --delete clears idle workspaces, and --older-than limits it by la
   }
   expect(report).toMatch(/Kept the build outputs of .*busy: in use/);
 
-  await captureLog(() => runGc({ delete: true }));
+  await captureLog(() => runGc({ delete: true, cache: 'workspaces' }));
   for (const output of OUTPUTS) {
     expect(existsSync(join(recent.dir, output))).toBe(false);
     expect(existsSync(join(busy.dir, output))).toBe(true);
   }
 });
 
-test('plain gc --delete lightens a workspace whose dev server runs, but never a building or just-built one, or the build cache', async () => {
+test('plain gc --delete leaves a workspace whose dev server runs, and --cache workspaces lightens it, but never a building or just-built one, or the build cache', async () => {
   const iosBuild = (minutesAgo: number) => ({
     lastIosBuild: {
       platform: 'ios',
@@ -887,7 +914,11 @@ test('plain gc --delete lightens a workspace whose dev server runs, but never a 
     payload.sections.workspaceBuildOutputs.find((w: { projectRoot: string }) => w.projectRoot === active.root),
   ).toMatchObject({ willClear: true, inTreeDirs: [join(active.root, 'android', 'app', 'build')] });
 
-  const report = await captureLog(() => runGc({ delete: true }));
+  await captureLog(() => runGc({ delete: true }));
+  for (const output of OUTPUTS) expect(existsSync(join(active.dir, output))).toBe(true);
+  expect(existsSync(join(active.root, 'android', 'app', 'build'))).toBe(true);
+
+  const report = await captureLog(() => runGc({ delete: true, cache: 'workspaces' }));
   for (const output of OUTPUTS) {
     expect(existsSync(join(active.dir, output))).toBe(false);
     expect(existsSync(join(building.dir, output))).toBe(true);
@@ -1751,7 +1782,9 @@ test('gc reports the in-tree build state of each worktree with its size', async 
   for (const dir of dirs) expect(dir.bytes).toBeGreaterThan(0);
   expect(entry.buildState.bytes).toBe(dirs.reduce((sum, dir) => sum + dir.bytes, 0));
   const report = await captureLog(() => runGc({ worktrees: true }));
-  expect(report).toMatch(/in-tree build state \S+: node_modules \S+, \.pnpm-store \S+, android\/app\/build \S+/);
+  expect(report).toMatch(
+    /in-tree build state \S+: node_modules \S+(?: \(\S+ its own\))?, \.pnpm-store \S+, android\/app\/build \S+/,
+  );
 }, 30_000);
 
 function builtWorktree(dirs: readonly string[]) {
@@ -1789,7 +1822,7 @@ async function buildStateOf(built: string) {
 }
 
 test('gc reuses cached build-state sizes and measures again only a directory that changed', async () => {
-  const built = builtWorktree(['node_modules', 'ios/Pods']);
+  const built = builtWorktree(['android/app/build', '.build']);
   const calls: string[][] = [];
   countDu(calls);
 
@@ -1800,31 +1833,31 @@ test('gc reuses cached build-state sizes and measures again only a directory tha
   expect(second).toEqual(first);
 
   const later = new Date(Date.now() + 5000);
-  writeFileSync(join(built, 'node_modules', 'added'), Buffer.alloc(200_000));
-  utimesSync(join(built, 'node_modules'), later, later);
+  writeFileSync(join(built, 'android', 'app', 'build', 'added'), Buffer.alloc(200_000));
+  utimesSync(join(built, 'android', 'app', 'build'), later, later);
   const third = await buildStateOf(built);
   expect(calls).toHaveLength(3);
-  expect(calls[2]).toEqual(['-sk', join(built, 'node_modules')]);
+  expect(calls[2]).toEqual(['-sk', join(built, 'android', 'app', 'build')]);
   expect(third.bytes).toBeGreaterThan(first.bytes);
 }, 30_000);
 
 test('a du that times out leaves only its own directory unmeasured, and gc measures it again next time', async () => {
-  const built = builtWorktree(['node_modules', 'ios/Pods']);
+  const built = builtWorktree(['android/app/build', '.build']);
   const calls: string[][] = [];
-  countDu(calls, (args) => (args.includes(join(built, 'ios', 'Pods')) ? '' : null));
+  countDu(calls, (args) => (args.includes(join(built, '.build')) ? '' : null));
 
   const state = await buildStateOf(built);
 
   expect(state.bytes).toBe(null);
   expect(state.dirs).toEqual([
-    { path: 'node_modules', bytes: expect.any(Number) },
-    { path: 'ios/Pods', bytes: null },
+    { path: 'android/app/build', bytes: expect.any(Number), privateBytes: null },
+    { path: '.build', bytes: null, privateBytes: null },
   ]);
   expect(state.dirs[0].bytes).toBeGreaterThan(0);
   const report = await captureLog(() => runGc({}));
-  expect(report).toMatch(/in-tree build state size unknown: node_modules \S+, ios\/Pods size unknown/);
-  expect(calls.filter((args) => args.includes(join(built, 'ios', 'Pods')))).toHaveLength(2);
-  expect(calls.filter((args) => args.includes(join(built, 'node_modules')))).toHaveLength(1);
+  expect(report).toMatch(/in-tree build state size unknown: android\/app\/build \S+, \.build size unknown/);
+  expect(calls.filter((args) => args.includes(join(built, '.build')))).toHaveLength(2);
+  expect(calls.filter((args) => args.includes(join(built, 'android', 'app', 'build')))).toHaveLength(1);
 }, 30_000);
 
 test('gc reports a directory under .worktrees that git does not list, and never removes it', async () => {
@@ -2078,7 +2111,7 @@ test('gc asks GitHub once per repository, and a repository whose query fails lea
   expect(byName.gamma).toMatchObject({ pullRequest: null, pullRequestUnknown: 'gh api graphql failed: HTTP 502' });
 }, 60_000);
 
-test('one gc report lists simulators and AVDs once, however many worktrees own devices', async () => {
+test('one gc report lists simulators and AVDs once for its report and once more for its ladder preview, which lists simulators only on macOS, however many worktrees own devices', async () => {
   const { worktrees } = gitRepoWithWorktrees(['one', 'two', 'three']);
   for (const path of Object.values(worktrees)) upsertProject(path, { metroPort: null });
   const real = getExecutor();
@@ -2131,7 +2164,10 @@ test('one gc report lists simulators and AVDs once, however many worktrees own d
 
   const payload = await baseline();
 
-  expect(lists).toEqual({ sims: without.sims + 1, avds: without.avds + 1 });
+  expect(lists).toEqual({
+    sims: without.sims + (process.platform === 'darwin' ? 2 : 1),
+    avds: without.avds + 2,
+  });
   const byName = Object.fromEntries(
     payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
   );

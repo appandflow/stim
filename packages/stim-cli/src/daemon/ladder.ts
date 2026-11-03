@@ -1,5 +1,5 @@
 import { existsSync, rmSync } from 'node:fs';
-import { buildCacheRoot, metroCacheRoot, withDirLock } from '@stim-cli/core';
+import { buildCacheRoot, metroCacheRoot, withDirLock, type StimContext } from '@stim-cli/core';
 import {
   fingerprintMemoDir,
   fingerprintMemoLock,
@@ -13,24 +13,27 @@ import { pruneCache, type CacheDescriptor } from '../cache/caches.ts';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
+import { ownedAvdDirectory } from '../devices/android.ts';
+import { projectDeviceSlots } from '../devices/device-slots.ts';
+import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
-import { workspaceKeys } from '../workspace/lightened.ts';
+import { restoreProblem } from '../workspace/lightened.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { executeAction, type ActContext } from '../maintenance/act.ts';
-import { artifactWorktrees, clearArtifact, collectArtifactsAsync } from '../maintenance/artifacts.ts';
+import { artifactWorktrees } from '../maintenance/artifacts.ts';
 import { cacheBlocked } from '../maintenance/measure.ts';
-import { cacheEntryProtection, maintenancePinned } from '../maintenance/protect.ts';
+import { cacheEntryProtection } from '../maintenance/protect.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../maintenance/settings.ts';
 import { planRung6 } from '../maintenance/sweep.ts';
-import type { Config } from '../workspace/config.ts';
-import { PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
+import type { Config, ProjectRecord } from '../workspace/config.ts';
+import { clearDependency, rankDependencies, selectDependencies } from './dependencies.ts';
+import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
   clearStoppedOutputs,
   dormantAfterMs,
   dormantCandidates,
   enterDormantStage,
   idleStageCandidates,
-  stillIdle,
   stoppedOutputCandidates,
 } from './stages.ts';
 
@@ -54,6 +57,17 @@ export interface LadderInput {
   remeasure: () => Promise<DaemonPressure>;
   /** The first rung to run; a command with no daemon starts at 2, since rung 1 belongs to the activity pass. */
   fromRung?: number;
+  /**
+   * Runs every rung at this level whatever the machine measures, without stopping once the level clears: what
+   * `stim gc --delete` runs, and what `stim gc` previews at each level.
+   */
+  force?: { level: 'high' | 'critical'; why: string; parkedOlderThanDays?: number };
+  /** Measures what each action would free when it does not act, for `stim gc`'s preview. */
+  measure?: boolean;
+  /** The tick's `simctl list`, whose data path sizes the preview reports for simulators. */
+  sims?: readonly IosSimRecord[] | null;
+  /** The command running the ladder in its own process, whose environment and cancellation its reads use. */
+  operation?: StimContext;
   /** The workspace of the command that runs the ladder, which no rung takes. */
   protectedRoot?: string;
 }
@@ -70,7 +84,11 @@ interface RungContext extends LadderInput {
 }
 
 /** Logs one ladder action to `daemon.ndjson` and the workspace's `metro.ndjson`, and keeps it for the snapshot. */
-function recordAction(context: Pick<RungContext, 'log' | 'actions'>, action: DaemonLadderAction, reason: string): void {
+function recordAction(
+  context: Pick<RungContext, 'log' | 'actions' | 'force'>,
+  action: DaemonLadderAction,
+  reason: string,
+): void {
   context.actions.push(action);
   const verb =
     action.outcome === 'would'
@@ -93,10 +111,44 @@ function recordAction(context: Pick<RungContext, 'log' | 'actions'>, action: Dae
     ...(action.workspace ? { workspace: action.workspace } : {}),
   };
   context.log(level, 'pressure_action', msg, fields);
-  if (action.workspace && action.outcome !== 'kept')
+  if (action.workspace && action.outcome !== 'kept' && !(context.force && action.outcome === 'would'))
     try {
       writeWorkspaceEvent(action.workspace, level, 'pressure_action', msg, fields);
     } catch {}
+}
+
+/** The bytes of the regenerable build outputs the idle stage would delete in a workspace. */
+export async function idleOutputBytes(path: string, config: Config): Promise<number> {
+  return pathsBytes((await idleOutputs(path, config)).paths);
+}
+
+async function pathsBytes(paths: readonly string[]): Promise<number> {
+  let total = 0;
+  for (const path of paths) total += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
+  return total;
+}
+
+/** The disk an owned simulator or AVD takes, from `simctl list`'s data path size or the AVD directory. */
+async function deviceBytes(
+  context: Pick<LadderInput, 'sims'>,
+  platform: 'ios' | 'android',
+  id: string,
+): Promise<number> {
+  if (platform === 'ios') return context.sims?.find((sim) => sim.udid === id)?.dataPathSize ?? 0;
+  const dir = ownedAvdDirectory(id);
+  return dir ? await pathsBytes([dir]) : 0;
+}
+
+/** The disk a workspace's owned simulators and emulators take. */
+async function workspaceDeviceBytes(context: Pick<LadderInput, 'sims'>, project: ProjectRecord): Promise<number> {
+  let total = 0;
+  for (const { platforms } of projectDeviceSlots(project)) {
+    if (platforms.ios?.owned && platforms.ios.deviceUdid)
+      total += await deviceBytes(context, 'ios', platforms.ios.deviceUdid);
+    if (platforms.android?.owned && platforms.android.avdName)
+      total += await deviceBytes(context, 'android', platforms.android.avdName);
+  }
+  return total;
 }
 
 const actContext = (settings: MaintenanceSettings): ActContext => ({
@@ -108,7 +160,7 @@ const actContext = (settings: MaintenanceSettings): ActContext => ({
 async function run(
   context: RungContext,
   plan: MaintenanceAction,
-  { restore }: { restore?: string } = {},
+  { restore, bytes }: { restore?: string; bytes?: () => Promise<number> } = {},
 ): Promise<void> {
   if (!context.act) {
     recordAction(
@@ -119,8 +171,8 @@ async function run(
         target: plan.target,
         ...(plan.workspace ? { workspace: plan.workspace } : {}),
         outcome: 'would',
-        bytes: plan.bytes,
-        detail: 'daemon.mode report acts on nothing',
+        bytes: context.measure && bytes ? await bytes() : plan.bytes,
+        detail: wouldDetail(context),
         ...(restore ? { restore } : {}),
       },
       context.why,
@@ -149,13 +201,21 @@ async function run(
   );
 }
 
+function wouldDetail(context: Pick<RungContext, 'force'>): string {
+  return context.force ? 'stim gc --delete would do this' : 'daemon.mode report acts on nothing';
+}
+
 /** Rung 1's disk half: the regenerable outputs of workspaces with nothing running, idle 2 minutes or more. */
 async function idleOutputsRung(context: RungContext): Promise<void> {
   for (const candidate of await stoppedOutputCandidates(context.config, context, PRESSURE_IDLE_MS)) {
     if (!(await context.stillShort())) return;
     const result = context.act
       ? await clearStoppedOutputs(candidate, context.config, PRESSURE_IDLE_MS)
-      : { outcome: 'would' as const, bytes: 0, detail: 'daemon.mode report acts on nothing' };
+      : {
+          outcome: 'would' as const,
+          bytes: context.measure ? await idleOutputBytes(candidate.path, context.config) : 0,
+          detail: wouldDetail(context),
+        };
     if (!result) continue;
     recordAction(
       context,
@@ -176,19 +236,35 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
 
 /** Rung 2: parked devices, oldest first; at high until the level clears, at critical all of them. */
 async function parkedRung(context: RungContext): Promise<void> {
-  if (deviceSweepIsScoped()) return;
+  if (deviceSweepIsScoped(context.operation?.env)) return;
   const parked = [
-    ...readParked('ios').map((record) => ({ id: record.udid, name: record.name, at: record.parkedAt })),
-    ...readParked('android').map((record) => ({ id: record.name, name: record.name, at: record.parkedAt })),
+    ...readParked('ios').map((record) => ({
+      platform: 'ios' as const,
+      id: record.udid,
+      name: record.name,
+      at: record.parkedAt,
+    })),
+    ...readParked('android').map((record) => ({
+      platform: 'android' as const,
+      id: record.name,
+      name: record.name,
+      at: record.parkedAt,
+    })),
   ].toSorted((a, b) => String(a.at).localeCompare(String(b.at)));
-  for (const device of parked) {
+  const days = context.force?.parkedOlderThanDays;
+  const cutoff = days === undefined ? Infinity : Date.now() - days * 86_400_000;
+  for (const device of parked.filter((entry) => !(Date.parse(String(entry.at)) > cutoff))) {
     if (context.level === 'high' && !(await context.stillShort())) return;
-    await run(context, {
-      kind: 'would-delete-parked-device',
-      target: device.id,
-      bytes: 0,
-      reason: `parked device ${device.name}, parked ${device.at}`,
-    });
+    await run(
+      context,
+      {
+        kind: 'would-delete-parked-device',
+        target: device.id,
+        bytes: 0,
+        reason: `parked device ${device.name}, parked ${device.at}`,
+      },
+      { bytes: () => deviceBytes(context, device.platform, device.id) },
+    );
   }
 }
 
@@ -197,13 +273,22 @@ function rootCache(name: string, dir: string, entriesDepth: number): CacheDescri
 }
 
 /** Evicts unprotected entries, least recently written first, until `evictBytes` are gone. */
-function trim(
+async function trim(
   context: RungContext,
   cache: CacheDescriptor,
   evictBytes: number,
   recentDays: number,
-): { outcome: DaemonLadderAction['outcome']; bytes: number; detail: string } {
-  if (!context.act) return { outcome: 'would', bytes: 0, detail: 'daemon.mode report acts on nothing' };
+): Promise<{ outcome: DaemonLadderAction['outcome']; bytes: number; detail: string }> {
+  if (!context.act)
+    return {
+      outcome: 'would',
+      bytes: !context.measure
+        ? 0
+        : Number.isFinite(evictBytes)
+          ? evictBytes
+          : ((await measuredDirectorySizeAsync(cache.dir, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0),
+      detail: wouldDetail(context),
+    };
   const result = pruneCache(cache, {
     olderThanDays: recentDays,
     byMtime: true,
@@ -240,7 +325,7 @@ async function cachesRung(context: RungContext): Promise<void> {
       if (capGb === 0 || bytes === null || bytes <= target) continue;
       evict = bytes - target;
     }
-    const result = trim(context, cache, evict, recentDays);
+    const result = await trim(context, cache, evict, recentDays);
     recordAction(
       context,
       { rung: 3, kind: critical ? 'empty-cache' : 'trim-cache', target: cache.dir, ...result },
@@ -286,7 +371,7 @@ async function cachesRung(context: RungContext): Promise<void> {
         kind: 'empty-cache',
         target: memo,
         outcome: context.act ? 'done' : 'would',
-        bytes: context.act ? bytes : 0,
+        bytes: context.act || context.measure ? bytes : 0,
         detail: 'the next build fingerprints its tree in full',
       },
       context.why,
@@ -302,7 +387,13 @@ async function dormantRung(context: RungContext): Promise<void> {
     if (!(await context.stillShort())) return;
     const result = context.act
       ? await enterDormantStage(candidate, context.config, idleMs, context.why)
-      : { outcome: 'would' as const, bytes: 0, detail: 'daemon.mode report acts on nothing', deleted: [], restore: '' };
+      : {
+          outcome: 'would' as const,
+          bytes: context.measure ? await workspaceDeviceBytes(context, candidate.project) : 0,
+          detail: wouldDetail(context),
+          deleted: [],
+          restore: '',
+        };
     recordAction(
       context,
       {
@@ -330,69 +421,81 @@ function canonicalOrNull(path: string): string | null {
 
 /**
  * Rung 5, at critical only: node_modules and Pods of linked worktrees whose workspace in this Stim home is idle 2
- * minutes by the activity definition with nothing running, longest-idle first, each recorded for `stim worktree warm`.
+ * minutes by the activity definition with nothing running, each recorded for `stim worktree warm`: those holding
+ * REAL_BYTES_THRESHOLD or more private bytes, most first, then those of unknown size, longest-idle first. A
+ * copy-on-write clone below the threshold is kept.
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
   if (context.level !== 'critical') return;
   const idle = await idleStageCandidates(context.config, context, PRESSURE_IDLE_MS);
-  const rank = new Map(
-    idle.flatMap((candidate, index) => {
-      const key = canonicalOrNull(candidate.path);
-      return key ? [[key, index] as const] : [];
-    }),
-  );
-  if (!rank.size) return;
-  const options = {
-    now: Date.now(),
-    windowMs: 0,
-    protectedRoot: context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '',
-    pinned: maintenancePinned,
-  };
-  const found = await collectArtifactsAsync('dependencies', options, new AbortController().signal);
-  const worktrees = artifactWorktrees();
-  const ranked = found.candidates
-    .flatMap((candidate) => {
-      const workspace = workspaceKeys(candidate.keys).find((key) => rank.has(canonicalOrNull(key) ?? ''));
-      return workspace ? [{ candidate, workspace, order: rank.get(canonicalOrNull(workspace) ?? '') ?? 0 }] : [];
-    })
-    .toSorted((a, b) => a.order - b.order);
-  for (const { candidate, workspace } of ranked) {
-    if (!(await context.stillShort())) return;
-    const plan: MaintenanceAction = {
-      kind: 'would-delete-dependencies',
-      target: candidate.path,
-      bytes: 0,
-      reason: context.why,
-      workspace,
-    };
-    if (!context.act) {
-      await run(context, plan, { restore: 'stim worktree warm' });
-      continue;
-    }
-    let result;
-    try {
-      result = await clearArtifact(plan, 'dependencies', {
-        ...options,
-        worktrees,
-        requireRestorable: true,
-        recheck: async (key) => ((await stillIdle(key, PRESSURE_IDLE_MS)) ? null : 'it is no longer idle'),
-      });
-    } catch (error) {
-      result = { status: 'failed' as const, bytes: 0, detail: error instanceof Error ? error.message : String(error) };
-    }
+  const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
+  const { take, kept } = selectDependencies(await rankDependencies(idle, protectedRoot, context.operation), 'take');
+  for (const { dependency, detail } of kept)
     recordAction(
       context,
       {
         rung: 5,
         kind: 'delete-dependencies',
-        target: candidate.path,
-        workspace,
+        target: dependency.candidate.path,
+        workspace: dependency.workspace,
+        outcome: 'kept',
+        bytes: 0,
+        detail,
+      },
+      context.why,
+    );
+  const worktrees = take.length ? artifactWorktrees() : [];
+  const restoreCache: Parameters<typeof restoreProblem>[1] = new Map();
+  for (const dependency of take) {
+    if (!(await context.stillShort())) return;
+    const why =
+      dependency.privateBytes === null
+        ? `${context.why}; its real size is unknown`
+        : `${context.why}; ${formatBytes(dependency.privateBytes)} of it is its own`;
+    const plan: MaintenanceAction = {
+      kind: 'would-delete-dependencies',
+      target: dependency.candidate.path,
+      bytes: dependency.privateBytes ?? 0,
+      reason: why,
+      workspace: dependency.workspace,
+    };
+    if (!context.act) {
+      const unrestorable = await restoreProblem(dependency.candidate, restoreCache, context.operation);
+      if (unrestorable)
+        recordAction(
+          context,
+          {
+            rung: 5,
+            kind: 'delete-dependencies',
+            target: dependency.candidate.path,
+            workspace: dependency.workspace,
+            outcome: 'kept',
+            bytes: 0,
+            detail: unrestorable,
+          },
+          why,
+        );
+      else
+        await run({ ...context, why }, plan, {
+          restore: 'stim worktree warm',
+          bytes: async () => dependency.privateBytes ?? (await pathsBytes([dependency.candidate.path])),
+        });
+      continue;
+    }
+    const result = await clearDependency(dependency, PRESSURE_IDLE_MS, protectedRoot, worktrees, why);
+    recordAction(
+      context,
+      {
+        rung: 5,
+        kind: 'delete-dependencies',
+        target: dependency.candidate.path,
+        workspace: dependency.workspace,
         outcome: result.status,
         bytes: result.bytes,
         detail: result.detail,
         ...(result.status === 'done' ? { restore: 'stim worktree warm' } : {}),
       },
-      context.why,
+      why,
     );
   }
 }
@@ -402,7 +505,7 @@ async function dependenciesRung(context: RungContext): Promise<void> {
  * worktree trash. At normal the daily sweep runs the same plan.
  */
 async function sweepRung(context: RungContext, causes: readonly Cause[]): Promise<void> {
-  const plan = await planRung6(context.settings, { disk: causes.includes('disk') });
+  const plan = await planRung6(context.settings, { disk: causes.includes('disk'), operation: context.operation });
   for (const action of plan.actions) {
     if (!(await context.stillShort())) return;
     await run(context, action);
@@ -441,8 +544,34 @@ export async function runLadder(
   pressure: DaemonPressure,
 ): Promise<{ actions: DaemonLadderAction[]; pressure: DaemonPressure }> {
   const actions: DaemonLadderAction[] = [];
-  if (pressure.level === 'normal') return { actions, pressure };
   const settings = resolveMaintenanceSettings(input.config);
+  const { force } = input;
+  if (force) {
+    for (const { rung, act } of RUNGS) {
+      if (rung < (input.fromRung ?? 1)) continue;
+      const context: RungContext = {
+        ...input,
+        rung,
+        level: force.level,
+        pressure,
+        settings,
+        actions,
+        stillShort: async () => true,
+        why: force.why,
+      };
+      try {
+        await act(context, ['disk', 'memory']);
+      } catch (error) {
+        input.log(
+          'warn',
+          'pressure_rung_failed',
+          `rung ${rung} failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    return { actions, pressure };
+  }
+  if (pressure.level === 'normal') return { actions, pressure };
   let current = pressure;
   for (const { rung, relieves, act } of RUNGS) {
     if (rung < (input.fromRung ?? 1)) continue;

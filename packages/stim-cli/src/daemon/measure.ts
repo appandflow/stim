@@ -101,10 +101,14 @@ async function recordFocusedUse(slots: ReturnType<typeof focusedSlots>, at: stri
 
 /**
  * One tick's measurement: free disk on the volumes Stim writes to, memory, load, one `simctl list` when a workspace
- * owns a simulator, the owned devices' activity (with one `adb devices` when a workspace owns an emulator), and the
- * focused Simulator or emulator window a person is using.
+ * owns a simulator, the owned devices' activity (with one `adb devices` when a workspace owns an emulator), and,
+ * unless `probe` is false, the focused Simulator or emulator window a person is using.
  */
-export async function measureTick(config: Config | null, now: number): Promise<TickMeasurement> {
+export async function measureTick(
+  config: Config | null,
+  now: number,
+  { probe = true }: { probe?: boolean } = {},
+): Promise<TickMeasurement> {
   const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
   let sims: IosSimRecord[] | null = [];
   let simsError: string | null = null;
@@ -117,7 +121,7 @@ export async function measureTick(config: Config | null, now: number): Promise<T
     }
   }
   const devices = await collectOwnedDeviceActivityAsync(config, sims ?? [], now);
-  const use = await probeFocusedDeviceUse();
+  const use = probe ? await probeFocusedDeviceUse() : null;
   const used = use ? focusedSlots(use, config, devices) : [];
   const usedAt = use ? new Date(now - use.idleMs).toISOString() : '';
   await recordFocusedUse(used, usedAt);

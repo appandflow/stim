@@ -1,5 +1,6 @@
 import { existsSync, readdirSync } from 'node:fs';
 import {
+  currentStage,
   DORMANT_STAGE_KEY,
   readDormantStage,
   readIdleStage,
@@ -228,8 +229,7 @@ function hasLogs(path: string): boolean {
 
 function alreadyDormant(path: string): boolean {
   const state = readWorkspaceState(path);
-  const stage = readDormantStage(state);
-  return stage !== null && !(Date.parse(String(state?.lastUsedAt ?? '')) > Date.parse(stage.at));
+  return currentStage(state, readDormantStage(state)) !== null;
 }
 
 /** The newest activity `state.json` records: a Stim command, the end of a native run, a window interaction, the idle stage. */
@@ -307,7 +307,8 @@ function dormantRestore(path: string, deleted: readonly string[]): string {
 
 /**
  * The dormant stage, under the workspace's native-run lock after deciding again: its owned simulators and emulators
- * deleted through ledger teardown (the parked pool is untouched), then its logs archived. node_modules and Pods stay.
+ * deleted through ledger teardown (the parked pool is untouched), then its logs archived. node_modules and Pods stay;
+ * `runDormantDependencies` takes those holding their own bytes.
  */
 export async function enterDormantStage(
   candidate: StageCandidate,
@@ -368,7 +369,7 @@ export async function enterDormantStage(
       };
       await updateWorkspaceStateAsync(path, (state) => ({ ...state, [DORMANT_STAGE_KEY]: record }));
       const restore = dormantRestore(path, deleted);
-      const detail = `no activity for ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes (${why}): ${deleted.length ? `deleted ${deleted.join(', ')}` : 'no owned device to delete'}${failures ? `; ${failures} could not be deleted and stay recorded` : ''}; ${archived ? 'archived its logs' : 'kept its logs (archive.enabled is off or nothing to archive)'}; node_modules and Pods stay. ${deleted.length ? 'The next stim ios or stim android creates a device.' : `${restore} resumes it.`}`;
+      const detail = `no activity for ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes (${why}): ${deleted.length ? `deleted ${deleted.join(', ')}` : 'no owned device to delete'}${failures ? `; ${failures} could not be deleted and stay recorded` : ''}; ${archived ? 'archived its logs' : 'kept its logs (archive.enabled is off or nothing to archive)'}; node_modules and Pods that are copy-on-write clones stay. ${deleted.length ? 'The next stim ios or stim android creates a device.' : `${restore} resumes it.`}`;
       writeWorkspaceEvent(path, failures ? 'warn' : 'info', 'workspace_dormant', detail, {
         bytes,
         deletedDevices: deleted,

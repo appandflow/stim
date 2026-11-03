@@ -165,6 +165,65 @@ test.each([
   },
 );
 
+test.each([
+  ['metro.idleStopMinutes', '30', 'idle.minutes', 'stim settings set idle.minutes 30 --scope machine'],
+  ['devices.idleShutdownMinutes', '30', 'idle.minutes', 'stim settings set idle.minutes 30'],
+  ['maintenance.deviceIdleDays', '2', 'idle.dormantDays', 'stim settings set idle.dormantDays 2'],
+  ['budget.minFreeDiskGb', '12', 'disk.minFreeGb', 'stim settings set disk.minFreeGb 12'],
+  ['budget.hardFloorDiskGb', '3', 'disk.hardFloorGb', 'stim settings set disk.hardFloorGb 3'],
+  ['maintenance.criticalFreeDiskGb', '4', 'disk.criticalFreeGb', 'stim settings set disk.criticalFreeGb 4'],
+  ['maintenance.mode', 'report', 'daemon.mode', 'stim settings set daemon.mode report'],
+  ['daemon.enabled', 'false', 'daemon.mode', 'stim settings set daemon.mode off'],
+])('set of the removed %s names %s and writes nothing', async (key, value, replacement, remedy) => {
+  const file = join(home, 'config.json');
+  const before = JSON.stringify({ version: 2, projects: {}, repos: {} });
+  writeFileSync(file, before);
+  const { note, exitCode } = await settings(['set', key, value, '--scope', 'machine']);
+  expect(exitCode).toBe(1);
+  expect(note.join('\n')).toContain(`STIM_BAD_ARG: "${key}" was replaced by ${replacement}`);
+  expect(note.join('\n')).toContain(remedy);
+  expect(readFileSync(file, 'utf-8')).toBe(before);
+});
+
+test.each([
+  'devices.reclaimIdleMinutes',
+  'budget.maxCommittedMemoryGb',
+  'budget.maxLiveWorkspaces',
+  'maintenance.pressureCheckMinutes',
+  'maintenance.sizeCheckMinutes',
+  'maintenance.maxLoadPerCore',
+  'maintenance.memoryPressureLevel',
+  'maintenance.memoryWarningMinutes',
+  'maintenance.minAvailableMemoryGb',
+  'maintenance.capTargetPercent',
+  'maintenance.idleCheckMinutes',
+  'maintenance.urgentFreeDiskGb',
+  'maintenance.pressureProtectMinutes',
+])('set of the removed %s says what replaced it and writes nothing', async (key) => {
+  const { note, exitCode } = await settings(['set', key, '1', '--scope', 'machine']);
+  expect(exitCode).toBe(1);
+  expect(note.join('\n')).toContain(`STIM_BAD_ARG: "${key}" is no longer read by Stim: `);
+  expect(note.join('\n')).toMatch(/reclaim rule replaced it|nothing replaced it; the pressure ladder has fixed rules/);
+  expect(existsSync(join(home, 'config.json'))).toBe(false);
+});
+
+test('a removed setting left in the project config names its replacement with the layer it lives in', async () => {
+  writeFileSync(
+    join(app, '.stim.json'),
+    JSON.stringify({
+      metro: { idleStopMinutes: 30 },
+      maintenance: { capTargetPercent: 50 },
+      budget: { hardFloorDiskGb: 4 },
+    }),
+  );
+  const { note, exitCode } = await settings([]);
+  expect(exitCode).toBe(0);
+  expect(note.join('\n')).toContain('Run `stim settings set idle.minutes 30 --scope committed` instead.');
+  expect(note.join('\n')).toContain('Run `stim settings set disk.hardFloorGb 4` instead.');
+  expect(note.join('\n')).toContain('maintenance.capTargetPercent in');
+  expect(note.join('\n')).toContain('Nothing replaced it; the pressure ladder has fixed rules.');
+});
+
 test('get of the removed remote.buildMode points at remote.build', async () => {
   const { note, exitCode } = await settings(['get', 'remote.buildMode']);
   expect(exitCode).toBe(1);
@@ -387,31 +446,31 @@ test('a sensitive value is masked in every output while the layer keeps the real
 });
 
 test('an environment-provided value is reported through the registry type, not as the raw string', async () => {
-  const env = { STIM_HOME: home, STIM_BUDGET_MIN_FREE_DISK_GB: '40' };
+  const env = { STIM_HOME: home, STIM_DISK_MIN_FREE_GB: '40' };
 
   const json = await settings(['--json'], env);
-  const get = await settings(['get', 'budget.minFreeDiskGb', '--json'], env);
+  const get = await settings(['get', 'disk.minFreeGb', '--json'], env);
 
-  expect(entry(JSON.parse(json.out[0]!), 'budget.minFreeDiskGb')).toMatchObject({
+  expect(entry(JSON.parse(json.out[0]!), 'disk.minFreeGb')).toMatchObject({
     value: 40,
     origin: 'env',
-    env: { name: 'STIM_BUDGET_MIN_FREE_DISK_GB', value: '40' },
+    env: { name: 'STIM_DISK_MIN_FREE_GB', value: '40' },
   });
   expect(JSON.parse(get.out[0]!)).toMatchObject({ value: 40, origin: 'env' });
 });
 
 test('an invalid environment value refuses with STIM_BAD_ARG, like an invalid `settings set` value', async () => {
-  const env = { STIM_HOME: home, STIM_BUDGET_MIN_FREE_DISK_GB: 'lots' };
+  const env = { STIM_HOME: home, STIM_DISK_MIN_FREE_GB: 'lots' };
 
   const json = await settings(['--json'], env);
-  const get = await settings(['get', 'budget.minFreeDiskGb', '--json'], env);
+  const get = await settings(['get', 'disk.minFreeGb', '--json'], env);
 
   for (const { exitCode, out } of [json, get]) {
     expect(exitCode).toBe(1);
     expect(out).toHaveLength(1);
     const failure = JSON.parse(out[0]!);
     expect(failure.code).toBe('STIM_BAD_ARG');
-    expect(failure.message).toBe('Invalid STIM_BUDGET_MIN_FREE_DISK_GB value "lots". Expected a number, 0 or more.');
+    expect(failure.message).toBe('Invalid STIM_DISK_MIN_FREE_GB value "lots". Expected a number, 0 or more.');
   }
 });
 

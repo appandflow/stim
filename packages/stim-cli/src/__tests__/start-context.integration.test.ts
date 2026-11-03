@@ -415,7 +415,7 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned startup ownership',
       );
       const runner = getExecutor().spawn(process.execPath, [script], {
         cwd: root,
-        env: { ...process.env, STIM_MAINTENANCE: 'off' },
+        env: { ...process.env, STIM_DAEMON: 'off' },
         stdio: 'ignore',
       });
       const exited = once(runner, 'exit');

@@ -138,7 +138,8 @@ interface WorktreeSkip {
 
 export interface WorktreeBuildState {
   bytes: number | null;
-  dirs: { path: string; bytes: number | null }[];
+  /** `privateBytes` is what deleting the directory would free, for node_modules and Pods on APFS; else null. */
+  dirs: { path: string; bytes: number | null; privateBytes: number | null }[];
 }
 
 export interface UnlistedWorktreeDir {

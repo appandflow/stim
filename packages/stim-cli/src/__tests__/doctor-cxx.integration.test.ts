@@ -216,7 +216,7 @@ test.skipIf(process.platform === 'win32')(
       USERPROFILE: home,
       ANDROID_HOME: join(home, 'missing-sdk'),
       ANDROID_SDK_ROOT: join(home, 'missing-sdk'),
-      STIM_MAINTENANCE: 'off',
+      STIM_DAEMON: 'off',
     };
     for (const key of Object.keys(env)) if (key.startsWith('CODEX_') || key.startsWith('CLAUDE')) delete env[key];
     const progress: string[] = [];
@@ -248,7 +248,7 @@ test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
       USERPROFILE: home,
       ANDROID_HOME: join(home, 'missing-sdk'),
       ANDROID_SDK_ROOT: join(home, 'missing-sdk'),
-      STIM_MAINTENANCE: 'off',
+      STIM_DAEMON: 'off',
     };
     for (const key of Object.keys(env)) if (key.startsWith('CODEX_') || key.startsWith('CLAUDE')) delete env[key];
     const progress: string[] = [];

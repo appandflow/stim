@@ -17,8 +17,6 @@ import * as hostedClient from '../device-host/hosted-client.ts';
 import * as stopCommand from '../commands/stop.ts';
 import * as ios from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
-import { stopIdleWorkspaces } from '../commands/gc/idle-workspaces.ts';
-import type { GcOutput } from '../commands/gc/results.ts';
 import { executeAction } from '../maintenance/act.ts';
 import * as measurements from '../maintenance/measure.ts';
 import { previewMaintenance } from '../maintenance/preview.ts';
@@ -381,21 +379,6 @@ test.skipIf(!posixModes)('an unreadable Metro log keeps the workspace', async ()
   ]);
 });
 
-test('gc --delete stops idle workspaces only while maintenance is not off, and counts a failed stop', async () => {
-  const { root } = bootedWorkspace('failing', 7 * HOUR_MS);
-  vi.spyOn(teardown, 'teardownOwnedIosSim').mockRejectedValue(new Error('simctl refused'));
-  vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
-  const record = vi.fn<GcOutput['record']>();
-  const output = { log: () => {}, error: () => {}, record, fail: () => {} };
-
-  expect(await stopIdleWorkspaces(output)).toBe(0);
-  expect(record).not.toHaveBeenCalled();
-
-  vi.stubEnv('STIM_MAINTENANCE', 'on');
-  expect(await stopIdleWorkspaces(output)).toBe(1);
-  expect(record).toHaveBeenCalledWith('devServer', 'failed', root, expect.anything());
-});
-
 test.each([
   ['a running dev server', 'emulator-5554\tdevice', true],
   ['a booted simulator with no dev server', 'emulator-5556\toffline', false],
@@ -529,24 +512,19 @@ test('a stray file in the agent-device sessions directory does not keep the work
   expect((await plan()).actions.map((action) => action.target)).toEqual([root]);
 });
 
-test('an automatic maintenance pass plans the idle stop of a hosted workspace only, the gc dry run of both', async () => {
-  const { root: local } = bootedWorkspace('local', 7 * HOUR_MS);
+test('an automatic maintenance pass plans the idle stop of a hosted workspace only, and the gc dry run, whose --delete stops none, lists no idle stop', async () => {
+  bootedWorkspace('local', 7 * HOUR_MS);
   const hosted = hostedWorkspace('hosted', 7 * HOUR_MS);
   vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
   vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
-  vi.stubEnv('STIM_MAINTENANCE', 'report');
+  vi.stubEnv('STIM_DAEMON', 'report');
 
   await runMaintenance('daemon');
 
   const planned = (readMaintenanceState()?.plan ?? []).filter((action) => action.check === 'idle');
   expect(planned.map((action) => action.target)).toEqual([hosted]);
   const preview = await previewMaintenance();
-  expect(
-    preview.actions
-      .filter((action) => action.check === 'idle')
-      .map((action) => action.target)
-      .toSorted(),
-  ).toEqual([hosted, local].toSorted());
+  expect(preview.actions.filter((action) => action.check === 'idle')).toEqual([]);
 });
 
 test('a daemon pass may stop the hosted workspace a command runs in, a command-started one may not', async () => {

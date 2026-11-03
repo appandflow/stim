@@ -400,6 +400,7 @@ export async function bootIosSim(
     label = udid,
     out = () => {},
     onPhase,
+    beforeBoot,
   }: {
     timeoutMs?: number;
     attemptMs?: number;
@@ -409,12 +410,13 @@ export async function bootIosSim(
     label?: string;
     out?: (message: string) => void;
     onPhase?: (event: IosBootEvent) => void;
+    beforeBoot?: (onLine: (line: string) => void) => Promise<void>;
   } = {},
 ): Promise<void> {
   const exec = getExecutor();
   const viewer = configuredIosSimulatorViewer(simulatorApp, env);
   const started = Date.now();
-  const deadline = started + timeoutMs;
+  let deadline = started + timeoutMs;
   let worst: HostMemoryPressure | null = null;
   let unknown = 0;
   let sampledAt = started;
@@ -451,9 +453,17 @@ export async function bootIosSim(
   sample();
   const monitor = setInterval(report, 15000);
   monitor.unref();
+  let hookError: unknown;
   try {
+    onPhase?.({ phase: 'boot_requested' });
+    if (beforeBoot) {
+      await beforeBoot(onLine).catch((error: unknown) => {
+        hookError = error;
+        throw error;
+      });
+      deadline = Date.now() + timeoutMs;
+    }
     try {
-      onPhase?.({ phase: 'boot_requested' });
       await awaitBootCommand(['simctl', 'boot', udid], Math.max(1, deadline - Date.now()), onLine);
       phase = 'waiting for boot completion';
     } catch (e) {
@@ -500,6 +510,7 @@ export async function bootIosSim(
     }
     if (springBoard.state === 'started') onPhase?.({ phase: 'springboard_started', pid: springBoard.pid });
   } catch (error) {
+    if (error === hookError) throw error;
     const named = memoryCulpritAdvice(await memoryCulpritsUnderAsync(sample(), exec));
     throw new Error(
       `${(error as Error)?.message || error} Last boot output: ${phase}. Highest observed memory pressure: ${worst ?? 'unknown'}; unavailable samples: ${unknown}.${coverage()}${named ? ` ${named}` : ''} ${recovery} These observations do not establish an OOM crash.`,

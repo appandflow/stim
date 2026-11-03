@@ -6,6 +6,7 @@ import { idleShutdownDueMs, shutDownIdleDevices, writeIdleShutdownEvent } from '
 import type { IosSimRecord } from '../devices/ios.ts';
 import { countLiveOwnedDevicesByPlatform } from '../engine/device-capacity.ts';
 import { liveWaiters } from '../engine/wait-queue.ts';
+import { liveShareKeepReason, readWebShares, shareKeepReason } from '../local-server.ts';
 import { admissionLimits, getPlatformDeviceLimits } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { ownedHere, type IdlePassInput } from './idle.ts';
@@ -24,8 +25,8 @@ function safeCanonical(path: string): string | null {
 /**
  * The admission reclaim: while a run waits to boot because the booted devices fill a cap, counted as admission counts
  * them, shuts down the longest-idle booted device this home owns in another workspace that has been idle 2 minutes or
- * more and has no blocker, through teardown, one per tick. Returns the action, or null when nothing waits on a cap,
- * the devices cannot be counted, or no device qualifies.
+ * more and has no blocker, a live web share included, through teardown, one per tick. Returns the action, or null
+ * when nothing waits on a cap, the devices cannot be counted, or no device qualifies.
  */
 export async function reclaimForBootWaiters({
   devices,
@@ -84,7 +85,16 @@ export async function reclaimForBootWaiters({
       return idleMs === null ? [] : [{ device, idleMs }];
     })
     .toSorted((a, b) => b.idleMs - a.idleMs);
-  const chosen = candidates[0];
+  const shares = candidates.length ? await readWebShares() : null;
+  if (shares !== null && !Array.isArray(shares)) {
+    log(
+      'warn',
+      'device_reclaim_kept',
+      `no device reclaimed for a waiting run: this home's web shares cannot be listed (${shares.unreadable})`,
+    );
+    return null;
+  }
+  const chosen = candidates.find(({ device }) => shareKeepReason(shares, device.project, now) === null);
   if (!chosen) return null;
   const { device, idleMs } = chosen;
   const label = `${device.kind === 'ios' ? 'iOS simulator' : 'Android emulator'} ${device.name}`;
@@ -105,7 +115,8 @@ export async function reclaimForBootWaiters({
   }
   const run = await withIdleWorkspace(
     device.project,
-    () =>
+    async () =>
+      (await liveShareKeepReason(device.project)) ??
       shutDownIdleDevices(
         device.project,
         RECLAIM_IDLE_MS,
@@ -115,10 +126,10 @@ export async function reclaimForBootWaiters({
       ),
     { purpose: 'device queue reclaim', supervisor: false, managedLocks: false },
   );
-  const done = run.ran && run.value > 0;
+  const done = run.ran && typeof run.value === 'number' && run.value > 0;
   const detail = done
     ? `shut down ${label} for a waiting run: ${reason}`
-    : `kept ${label}: ${run.ran ? 'it is no longer idle' : `in use: ${run.reasons.join('; ')}`}`;
+    : `kept ${label}: ${run.ran ? (typeof run.value === 'string' ? run.value : 'it is no longer idle') : `in use: ${run.reasons.join('; ')}`}`;
   log(done ? 'info' : 'warn', done ? 'device_reclaimed' : 'device_reclaim_kept', `${device.project}: ${detail}`, {
     workspace: device.project,
     restore: 'stim revive, or the next stim ios or stim android',

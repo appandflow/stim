@@ -343,13 +343,15 @@ and profile setup; `doctor` recommends it without applying it automatically.
 
 To slim every Stim-owned simulator on a Mac without a profile per app, run
 `stim settings set ios.simslim on --scope machine`. A project profile still wins,
-and `ios.simslim` set to `off` in a project opts that app out. The first slim of
-a simulator reboots it once; an already slim simulator is left alone, and a
-rerun on the same boot with an unchanged profile skips SimSlim entirely. A manual
-`simslim off` on a running simulator is not noticed until it reboots or the
-profile changes. A running
-simulator is slimmed on the next `stim ios`, without a boot first, and Stim mutes
-it again after that reboot. A parked simulator is slimmed when Stim adopts it.
+and `ios.simslim` set to `off` in a project opts that app out. A shut-down
+simulator (new, stopped, or parked and adopted) is slimmed as part of its boot:
+SimSlim writes its settings while the simulator is shut down and boots it once,
+already slim, alongside the app build. An already slim simulator is left alone,
+and a rerun on the same boot with an unchanged profile skips SimSlim entirely. A
+manual `simslim off` on a running simulator is not noticed until it reboots or
+the profile changes. A running simulator is slimmed on the next `stim ios`,
+without a boot first, which reboots it, and Stim mutes it again after that
+reboot.
 Hosted simulators on a named Mac are muted like local ones but never slimmed.
 If `simslim` is not installed, `doctor` reports it and `stim ios` boots without
 it.
@@ -475,7 +477,9 @@ stim-server input or use of its Simulator or emulator window; app and device
 logs do not count. Reclaim rechecks under the target workspace's native-run
 lock and re-resolves ownership through centralized teardown. It shuts down,
 never deletes, and excludes the waiting workspace, physical, hosted, remote,
-parked and other homes' devices. The reclaimed workspace's status and
+parked and other homes' devices, and the devices of a workspace with a live
+[web share](./share.md); the run keeps waiting and its progress line names the
+share. The reclaimed workspace's status and
 `device_idle_shutdown` log say `reclaimed for a waiting run`. With no daemon,
 waiters wait without reclaim. `devices.reclaimIdleMinutes` is no longer read.
 
@@ -655,10 +659,10 @@ back through it in the Stim phone app.
   recreates them. The `stim-daemon`'s dormant stage deletes the owned devices
   of a workspace with nothing running and no activity for `idle.dormantDays`
   (3 days; fractions allowed; `0` never), the parked pool untouched; its
-  pressure ladder does so after 10 minutes at high disk pressure and for every
-  idle workspace at critical. Automatic maintenance deletes them after
+  pressure ladder does so at high disk pressure for a workspace idle 10
+  minutes, and at critical for every idle workspace. Automatic maintenance deletes them after
   `gc.worktreeGraceMinutes` for a workspace whose worktree is finished but
-  kept. A workspace pinned with
+  kept, unless a [web share](./share.md) of it is live. A workspace pinned with
   `maintenance.keep` keeps its devices. `stim status` shows the disk they use.
   Its daily age sweep also deletes parked simulators and emulators parked for
   `maintenance.olderThanDays` (7 days; 0 never), through centralized teardown.
@@ -669,7 +673,11 @@ back through it in the Stim phone app.
   `--older-than <days>`, it removes only the devices parked at least that long.
   It also deletes the owned devices of a linked worktree whose branch is merged
   or whose pull request ended but that it keeps, for example because it is
-  dirty, under the same idle rules as automatic maintenance. `stim gc` prints
+  dirty, under the same idle rules as automatic maintenance, a live web share
+  included. It then runs the
+  `stim-daemon`'s pressure ladder at high, whatever the machine measures, which
+  deletes parked devices and moves workspaces idle 10 minutes or more into the
+  dormant stage, deleting their owned devices. `stim gc` prints
   the disk owned devices use as `Owned device disk`.
 - `stim gc --cache parked` lists only the parked devices, with the app each
   one holds and its size. With `--delete` it erases each verified parked
