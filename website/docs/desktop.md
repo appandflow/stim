@@ -422,7 +422,10 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   control, an expiry from 15 minutes to 8 hours, and a generated, chosen or no
   password. The link and a generated password appear once, each with a Copy button;
   Desktop does not keep them. **Settings > Web Shares** lists the live shares with
-  their viewers and time left, and **Stop** ends a workspace's shares. Quitting
+  their viewers and time left. **Stop** on a row ends that one share; a workspace with
+  several shares also has **Stop All**. A stim-server older than this (without the
+  `share-stop-id` feature) has only the workspace-wide **Stop**, which ends every share of
+  the workspace. Quitting
   Desktop asks first while the server it started holds live shares, since quitting ends them.
 - **Cleanup history.** **Settings > App > Cleanup History** lists every run that deleted
   or changed something, newest first: `stim gc` from this app, an agent or a terminal,

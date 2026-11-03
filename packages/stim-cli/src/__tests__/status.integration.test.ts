@@ -161,14 +161,16 @@ test('status says nothing extra for a project that has only a Metro port', async
 
 test('each workspace says its stage and how long it has been in it, and the idle stage names stim revive only after an idle stop', async () => {
   const project = join(tmpHome, 'proj-idle');
+  const revivable = join(tmpHome, 'proj-revivable');
   const dormant = join(tmpHome, 'proj-dormant');
   const stopped = join(tmpHome, 'proj-stopped');
-  for (const dir of [project, dormant, stopped]) mkdirSync(dir);
+  for (const dir of [project, revivable, dormant, stopped]) mkdirSync(dir);
   saveConfig(
     makeConfig({
       version: 2,
       projects: {
         [project]: { label: 'idle', metroPort: 8083, platforms: {} },
+        [revivable]: { label: 'revivable', metroPort: 8086, platforms: {} },
         [dormant]: { label: 'dormant', metroPort: 8084, platforms: {} },
         [stopped]: { label: 'stopped', metroPort: 8085, platforms: {} },
       },
@@ -180,6 +182,7 @@ test('each workspace says its stage and how long it has been in it, and the idle
     freedBytes: 1024,
   };
   writeWorkspaceState(project, { idleStage });
+  writeWorkspaceState(revivable, { idleStage, devServerStop: { reason: 'idle', at: idleStage.at, idleMinutes: 15 } });
   writeWorkspaceState(dormant, {
     dormantStage: {
       at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
@@ -189,14 +192,17 @@ test('each workspace says its stage and how long it has been in it, and the idle
     },
   });
 
-  const text = (await runStatus()).join('\n');
-  expect(text).toMatch(/stage: idle for 2h\b.*`stim ios` or `stim android` resumes it/);
+  const lines = await runStatus();
+  const text = lines.join('\n');
+  const stages = lines.filter((line) => line.includes('stage: idle'));
+  expect(stages).toHaveLength(2);
+  expect(
+    stages.filter((line) => /stage: idle for 2h\b.*`stim ios` or `stim android` resumes it/.test(line)),
+  ).toHaveLength(1);
+  expect(stages.filter((line) => line.includes('`stim revive` resumes it'))).toHaveLength(1);
   expect(text).toMatch(/stage: dormant for 72h\b/);
   expect(text).toContain('stage: stopped');
   expect(text).not.toContain('[idle]');
-
-  writeWorkspaceState(project, { idleStage, devServerStop: { reason: 'idle', at: idleStage.at, idleMinutes: 15 } });
-  expect((await runStatus()).join('\n')).toContain('`stim revive` resumes it');
 });
 
 test('status detects the framework of an app registered only through a named port', async () => {

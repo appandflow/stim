@@ -7359,7 +7359,7 @@ describe('ios --device: the lease on the phone', () => {
 });
 
 describe('--simulator-app', () => {
-  test.each(['xcode', 'siniulator', 'stim-desktop'])(
+  test.each(['xcode', 'siniulator', 'stim-desktop', 'none'])(
     'parses %s and passes it to preparation and boot',
     async (simulatorApp) => {
       reserve();
@@ -7380,7 +7380,7 @@ describe('--simulator-app', () => {
     expect(exitCode).toBe(1);
     expect(parseFirst(logs)).toMatchObject({
       code: 'STIM_BAD_ARG',
-      message: 'Invalid --simulator-app. Use "xcode", "siniulator", or "stim-desktop".',
+      message: 'Invalid --simulator-app. Use "xcode", "siniulator", "stim-desktop", or "none".',
     });
     expect(calls.order).not.toContain('ensureOwnedDevice');
     expect(calls.order).not.toContain('buildIos');

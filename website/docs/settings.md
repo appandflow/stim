@@ -368,13 +368,16 @@ agents are using; never quit it to free memory or clean up. Set
 `"siniulator"` to use an installed
 [Siniulator](https://github.com/kmagiera/Siniulator) instead. Set
 `"stim-desktop"` to open no simulator window and show a launch card in Stim
-Desktop. Clicking **Show** opens the workspace that owns the device. This is a
+Desktop. Clicking **Show** opens the workspace that owns the device. Set
+`"none"` to boot the simulator with no viewer, for agents and other headless
+runs. This is a
 machine-wide preference, not a project setting; Stim still creates, boots, and
 owns the simulator. An invalid value refuses before boot. Opening the chosen
 app is best effort, so install Siniulator or Stim Desktop before selecting it.
 
 Override it for one launch with `stim ios --simulator-app siniulator`,
-`stim ios --simulator-app stim-desktop`, or `stim ios --simulator-app xcode`. The flag also opens an already running owned
+`stim ios --simulator-app stim-desktop`, `stim ios --simulator-app xcode`, or
+`stim ios --simulator-app none`. The flag also opens an already running owned
 simulator without rebooting it and leaves the saved preference unchanged. It
 only applies to local simulators.
 

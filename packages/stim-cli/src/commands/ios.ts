@@ -186,7 +186,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--simulator-app <app>',
-      'Open the owned simulator in xcode, siniulator, or stim-desktop for this run, overriding the machine iosSimulatorApp setting. Also opens an already running simulator; local simulators only.',
+      'Open the owned simulator in xcode, siniulator, or stim-desktop for this run, or none to open no viewer, overriding the machine iosSimulatorApp setting. Also opens an already running simulator; local simulators only.',
     )
     .option(
       '--device [udid]',
