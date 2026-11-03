@@ -10,6 +10,7 @@ import {
   dependencyState,
   hasInstalledDependencies,
   installedNpmTreeProblems,
+  installedNpmTreeProblemsAsync,
 } from '../dependency-state.ts';
 import { DEPS_ERROR, podsAreStale, readPodState, runCaptured, runPodInstall } from '../engine/deps.ts';
 import { NO_INSTALLER_CLAIM, type InstallerClaim } from '../engine/warm-claim.ts';
@@ -611,6 +612,16 @@ export async function runDependencyInstall({
     treeProblems: dependencies.lock === 'package-lock.json' ? installedNpmTreeProblems(dependencies.root) : null,
   });
   return null;
+}
+
+/**
+ * Whether `npm ls` rejects the installed tree in a way another install is expected to fix: a tree it rejected with the
+ * same problems right after the last completed install is what that lockfile installs, and reinstalling it changes nothing.
+ */
+export async function installedTreeIsStaleAsync(dependencies: DependencyState): Promise<boolean> {
+  if (dependencies.lock !== 'package-lock.json') return false;
+  const problems = await installedNpmTreeProblemsAsync(dependencies.root);
+  return problems !== '' && readInstallEvidence(dependencies.root)?.treeProblems !== problems;
 }
 
 export interface RefreshOptions {

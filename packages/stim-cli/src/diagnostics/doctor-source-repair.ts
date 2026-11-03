@@ -54,14 +54,17 @@ function podFailure(result: PodInstallResult): RefreshFailure {
   };
 }
 
+/** CocoaPods names one conflicting pod per run, and a pod that depends on another can name it next. */
+const MAX_CONFLICT_UPDATES = 5;
+
 interface RunContext extends SourceRepairOptions {
   hold: WarmClaimHold;
 }
 
 /**
  * `pod install`, with `--clean-install` when Pods hold broken links. When CocoaPods reports that Podfile.lock pins a
- * version a pod in the Podfile no longer allows, only the pods it names are updated, and the clean install is
- * retried once when the update left broken links.
+ * version a pod in the Podfile no longer allows, only the pods it names are updated, again for each further pod it
+ * names, and the clean install is retried once when the update left broken links.
  */
 async function installPods(
   context: RunContext,
@@ -91,24 +94,26 @@ async function installPods(
   };
 
   let result = await run(cleanPods ? ['install', '--clean-install'] : ['install']);
-  const conflicts = result.failed ? (result.conflictPods ?? []) : [];
-  if (conflicts.length) {
-    const update = `pod update ${conflicts.join(' ')}`;
+  const updated: string[] = [];
+  for (let round = 0; round < MAX_CONFLICT_UPDATES && result.failed; round += 1) {
+    const named = (result.conflictPods ?? []).filter((pod) => !updated.includes(pod));
+    if (!named.length) break;
+    updated.push(...named);
     if (!mayUpdatePods)
       return {
         ...podFailure(result),
-        remedy: `ios/ is tracked by git, so Stim does not edit its Podfile.lock. Run \`cd ${quotedPath(iosDir)} && ${update}\` yourself.`,
+        remedy: `ios/ is tracked by git, so Stim does not edit its Podfile.lock. Run \`cd ${quotedPath(iosDir)} && pod update ${updated.join(' ')}\` yourself.`,
       };
     note(
       phaseLine(
         'pods',
-        `Podfile.lock pins a version of ${conflicts.join(', ')} that the Podfile no longer allows; updating only ${conflicts.length === 1 ? 'that pod' : 'those pods'}`,
+        `Podfile.lock pins a version of ${named.join(', ')} that the Podfile no longer allows; updating only ${updated.length === 1 ? 'that pod' : 'the pods named so far'}`,
       ),
     );
-    result = await run(['update', ...conflicts]);
-    if (result.ok && cleanPods && (await brokenPodLinks(join(iosDir, 'Pods'))).length > 0)
-      result = await run(['install', '--clean-install']);
+    result = await run(['update', ...updated]);
   }
+  if (updated.length && result.ok && cleanPods && (await brokenPodLinks(join(iosDir, 'Pods'))).length > 0)
+    result = await run(['install', '--clean-install']);
   return result.ok ? null : podFailure(result);
 }
 
@@ -127,7 +132,7 @@ async function repairPrebuild(context: RunContext, platform: NativePlatform, ste
   try {
     before = await fingerprintProject(root, options);
   } catch (error) {
-    return fail(`could not fingerprint ${root}: ${(error as Error).message}`);
+    return fail(`could not fingerprint ${root}: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!before?.hash) return fail(`could not fingerprint ${root}: @expo/fingerprint produced no hash for it`);
 
@@ -225,7 +230,7 @@ const LABELS: Record<SourceRepairStep['id'], string> = {
 /**
  * Brings the source checkout `facts` describes to a state worktrees can clone: each step is announced with its cost and
  * confirmed on its own, then run under the checkout workspace's native-run lock and the repository's exclusive warm claim.
- * Returns 1 when a step was refused or failed, or could not be confirmed without a terminal.
+ * Returns 1 when a step was refused or failed; a step that cannot be confirmed without a terminal is announced and left to the person.
  */
 export async function repairSourceCheckout(options: SourceRepairOptions): Promise<0 | 1> {
   const { facts, confirm, note, operation } = options;
@@ -251,7 +256,6 @@ export async function repairSourceCheckout(options: SourceRepairOptions): Promis
     note(phaseLine(label, step.announce));
     if (!confirm) {
       note(phaseLine(label, `not run without a terminal to confirm it; run \`${step.manual}\` yourself`));
-      exitCode = 1;
     } else if (await confirm('Run this step? [y/N] ')) approved.push(step);
     else note(phaseLine(label, 'skipped'));
   }
@@ -281,7 +285,7 @@ export async function repairSourceCheckout(options: SourceRepairOptions): Promis
     );
     return 1;
   } catch (error) {
-    if ((error as { code?: string }).code !== 'STIM_LOCK_TIMEOUT') throw error;
+    if (!(error instanceof Error && 'code' in error && error.code === 'STIM_LOCK_TIMEOUT')) throw error;
     note(
       phaseLine(
         'source',

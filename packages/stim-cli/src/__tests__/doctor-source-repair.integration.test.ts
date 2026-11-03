@@ -44,7 +44,7 @@ function mockChildren(outcomes: Record<string, { code: number; out?: string }>):
       });
       return child;
     },
-  } as Parameters<typeof setExecutor>[0]);
+  });
 }
 
 function facts(overrides: Partial<SourceCheckoutFacts> = {}): SourceCheckoutFacts {
@@ -109,6 +109,19 @@ test('a conflict the update resolves is not retried when no link is broken', asy
   expect(podCommands()).toEqual(['install', 'update FirebaseCoreExtension']);
 });
 
+test('a pod the update then names is updated together with the first, and a repeated name stops the loop', async () => {
+  const conflict = (pod: string) => `[!] CocoaPods could not find compatible versions for pod "${pod}":`;
+  mockChildren({
+    'pod install': { code: 1, out: conflict('FirebaseCoreExtension') },
+    'pod update FirebaseCoreExtension': { code: 1, out: conflict('Firebase/CoreOnly') },
+    'pod update FirebaseCoreExtension Firebase': { code: 1, out: conflict('Firebase/CoreOnly') },
+  });
+  expect(
+    await repair(facts({ pods: { iosDir: join(app, 'ios'), broken: false, state: 'stale', iosTracked: false } })),
+  ).toBe(1);
+  expect(podCommands()).toEqual(['install', 'update FirebaseCoreExtension', 'update FirebaseCoreExtension Firebase']);
+});
+
 test('a conflict in a git-tracked ios/ is refused with the manual command and nothing is updated', async () => {
   mockChildren({ 'pod install --clean-install': { code: 1, out: CONFLICT } });
   const sourceFacts = facts({ pods: { iosDir: join(app, 'ios'), broken: true, state: null, iosTracked: true } });
@@ -119,7 +132,7 @@ test('a conflict in a git-tracked ios/ is refused with the manual command and no
 
 test('without a terminal every step is announced with its manual command and none runs', async () => {
   mockChildren({});
-  expect(await repair(facts(), null)).toBe(1);
+  expect(await repair(facts(), null)).toBe(0);
   expect(spawned).toEqual([]);
   expect(notes.join('\n')).toContain('pod install --clean-install');
   expect(notes.join('\n')).toContain('not run without a terminal');

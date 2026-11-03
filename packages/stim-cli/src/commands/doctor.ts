@@ -474,7 +474,9 @@ async function repairDoctorProject(
       )
         throw error;
       signal?.throwIfAborted();
-      note(phaseLine('source', `Source checkout repair failed: ${(error as Error).message}`));
+      note(
+        phaseLine('source', `Source checkout repair failed: ${error instanceof Error ? error.message : String(error)}`),
+      );
       exitCode = 1;
     }
   }

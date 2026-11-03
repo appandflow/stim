@@ -5,7 +5,7 @@ import type { SettingsObject } from '../workspace/settings.ts';
 
 type RepairResult = { removed: string[]; refused: { path: string; reason: string }[] };
 
-export interface SourceRepairRequest {
+interface SourceRepairRequest {
   platform: DoctorPlatform | undefined;
   settings: SettingsObject | null;
   host: NodeJS.Platform;

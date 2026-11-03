@@ -1,11 +1,12 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { quotedPath } from '../command-output.ts';
-import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValidAsync } from '../dependency-state.ts';
+import { dependencyState, hasInstalledDependencies } from '../dependency-state.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { prebuildRecordStatus, readPrebuildRecord, type PrebuildRecordStatus } from '../engine/prebuild.ts';
 import { gitQuietAsync } from '../workspace/git.ts';
 import { detectIsExpo } from '../workspace/project.ts';
+import { installedTreeIsStaleAsync } from '../workspace/worktree-refresh.ts';
 import { brokenPodLinks, podsManifestState, type DoctorPlatform, type Finding } from './doctor.ts';
 
 export type NativePlatform = 'ios' | 'android';
@@ -25,7 +26,7 @@ export interface SourceCheckoutFacts {
   prebuild: PrebuildRecordProblem[];
 }
 
-export type SourceRepairId = 'deps' | 'pods' | 'prebuild:ios' | 'prebuild:android';
+type SourceRepairId = 'deps' | 'pods' | 'prebuild:ios' | 'prebuild:android';
 
 export interface SourceRepairStep {
   id: SourceRepairId;
@@ -116,7 +117,7 @@ export async function inspectSourceFacts({
   if (dependencies) {
     const installed = hasInstalledDependencies(dependencies.root, dependencies.installed);
     if (!installed) deps = { root: dependencies.root, command: dependencies.command, reason: 'missing' };
-    else if (dependencies.lock === 'package-lock.json' && !(await installedNpmTreeIsValidAsync(dependencies.root)))
+    else if (await installedTreeIsStaleAsync(dependencies))
       deps = { root: dependencies.root, command: dependencies.command, reason: 'stale' };
   }
 

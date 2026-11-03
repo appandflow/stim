@@ -40,7 +40,8 @@ import {
   repoRootAsync,
   type UpstreamState,
 } from '../workspace/worktree.ts';
-import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValidAsync } from '../dependency-state.ts';
+import { dependencyState, hasInstalledDependencies } from '../dependency-state.ts';
+import { installedTreeIsStaleAsync } from '../workspace/worktree-refresh.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import {
   type ConcurrencyLimits,
@@ -415,8 +416,8 @@ export async function checkMainCheckout(
         ),
       );
     } else if (dependencies.lock === 'package-lock.json') {
-      const valid = npmTreeValid === undefined ? await installedNpmTreeIsValidAsync(dependencies.root) : npmTreeValid;
-      if (valid === false) {
+      const stale = npmTreeValid === undefined ? await installedTreeIsStaleAsync(dependencies) : npmTreeValid === false;
+      if (stale) {
         findings.push(
           finding(
             'cost',

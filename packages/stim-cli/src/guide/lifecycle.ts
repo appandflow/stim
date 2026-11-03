@@ -1767,8 +1767,8 @@ cause this even when the app target already uses ONLY_ACTIVE_ARCH=YES.
 Review that override for local Debug builds; preserve intentional Release and
 distribution settings. Regenerate Pods through the project's normal workflow
 after changing a helper, then rerun \`stim doctor --platform ios\`.
-Doctor never evaluates Podfile Ruby, installs Pods, or changes architecture
-settings, including under --fix. This inspection runs only in doctor, with
+Doctor never evaluates Podfile Ruby or changes architecture settings, including
+under --fix, which installs Pods only for the source checkout repairs below. This inspection runs only in doctor, with
 30 seconds per Xcode query and 60 seconds total. Missing generated projects,
 failed metadata queries, and unresolved settings produce an unverified note
 rather than an architecture warning or a verified clean result.
@@ -1786,7 +1786,41 @@ Build the source checkout once in the configuration the worktrees build
 (\`stim ios\` there, or with --configuration) before warming more worktrees.
 Projects without these markers, other configuration names, and the source
 checkout itself are not flagged. \`worktree warm\` prints the same advice as one
-"carry" line on stderr. Doctor changes nothing, including under --fix.
+"carry" line on stderr. --fix does not build the source checkout: a build needs a
+simulator, a build slot and several minutes, so it prints one \`flavor\` line saying
+it did not repair this and leaves \`stim ios\` to you.
+
+SOURCE CHECKOUT REPAIR (doctor --fix)
+Worktrees clone node_modules, ios/ and ios/Pods from the source checkout only
+while it is in a state Stim recorded. Doctor reports four problems there, and
+--fix in a terminal repairs each after printing its cost and asking [y/N], one
+step at a time (no new flag):
+  1. A stale or missing dependency tree: the lockfile's install command, the one
+     \`worktree warm --refresh\` runs (\`npm ci\` deletes node_modules first).
+  2. Broken links under ios/Pods, or Pods that do not match Podfile.lock:
+     \`pod install --clean-install\` (plain \`pod install\` when nothing is
+     broken). On CocoaPods's "could not find compatible versions" conflict with
+     Podfile.lock it runs \`pod update <names>\` for only the named pods, then retries
+     the clean install once if links stay broken. It never edits a Podfile.lock
+     that git tracks: when git tracks ios/ it stops and prints the manual command.
+  3. \`source-prebuild-record-ios\` or \`source-prebuild-record-android\` (costs
+     time): an Expo app's gitignored ios/ or android/ has no finished Stim
+     prebuild record, or one that no longer matches the current fingerprint, so
+     \`worktree warm\` leaves the directory out and every worktree generates it
+     again (on iOS with its own Pods, about 1.5 to 2 GB each). The repair runs the
+     same prebuild step, then on iOS the same pod install, that \`stim ios\` runs,
+     without compiling, then fingerprints again and records it under the rule a
+     build uses: never when a config input changed while it ran, which it says. A
+     tracked native directory is part of the fingerprint and needs no record.
+  4. The prebuilt React Native flavor note above, which only a build changes.
+Later steps skip when the dependency step is declined or fails. Without a terminal
+(--json, a pipe, Desktop, the API) every step is announced with its manual command
+and none runs. Steps refuse while a \`stim ios\`, \`android\`, \`start\` or other
+run holds the source checkout's workspace (its native-run.lock and in-use checks),
+and while a \`worktree warm\` holds the repository's warm claim. Doctor never
+switches a branch or edits a tracked file; the install commands write only what
+the project's own install writes. Progress goes to stderr, so \`--json --fix\`
+still prints one payload.
 
 WHY ANDROID NEEDS CCACHE, AND WHAT IT COSTS
 Every AGP CMake task is uncacheable by Gradle, so --build-cache serves not one
