@@ -289,14 +289,31 @@ stop` and `worktree remove` close the route (open question 5). With `daemon.mode
 - **Ownership.** The route's policy pins the lease to this workspace's owned simulator or emulator, or the physical
   device the workspace leases, and refuses device selection flags and host paths as the hosted policy does. It never
   reaches another workspace's device.
-- **What Stim sees.** Each request's command before it runs, and its result after. Presence shows `Agent · press` at
-  request start and the point when the result arrives, with no file-follow delay. Whether results carry the resolved
-  coordinates is to verify; if not, the proxy reads them from the action record, as 6.1. Live drag points still need
-  agent-device to stream them, which it does not.
+- **What Stim sees.** Each request's command and positionals before it runs, and its JSON-RPC result after. In
+  agent-device 0.21.35, `action.recorded` details are built from the command result's `x`, `y`, `x2`, `y2` and
+  `durationMs`, so the result carries the resolved point even for `@ref` and selector targets; no snapshot lookup and
+  no upstream change is needed for them. Presence shows `Agent · press` at request start and the point when the
+  result arrives, with no file-follow delay. Per command:
+
+  | Command                                                        | Before it runs (request)        | After it runs (result)                  | Drawn as                        |
+  | -------------------------------------------------------------- | ------------------------------- | --------------------------------------- | ------------------------------- |
+  | `press`, `click`, `fill`, `longpress` with `x y`               | the point                       | the point, `durationMs` for `longpress` | tap or hold                     |
+  | the same with `@ref` or a selector                             | the ref only                    | the resolved point                      | tap or hold at completion       |
+  | `scroll`, `swipe`                                              | direction and amount, or points | `x1,y1,x2,y2`, `durationMs`             | trail from start to end         |
+  | `gesture pan`, `fling`, `transform`                            | `x y dx dy`                     | kind, `durationMs`, pointer count       | trail from the request's points |
+  | `gesture drag` with refs, `pinch`, `rotate`, multi-point `tap` | refs or a scale                 | kind and `durationMs` only              | label without a point           |
+
+  Trails are straight lines animated over `durationMs`: agent-device synthesizes the finger path inside the runner
+  and reports only its ends, so there are no intermediate points. The last row needs agent-device to return the
+  resolved points; no callstack/agent-device issue or pull request asks for that yet, and phase 3 files one if it is
+  wanted.
+
 - **Revive on first action.** A request for an idle-stopped workspace runs the `stim revive` path first (Metro, the
   owned device through admission, the app relaunched), then forwards the request. Revive takes seconds: Metro 2 to
   5 s, a cold simulator boot 10 to 30 s. The proxy holds the request open, single-flight, so concurrent requests wait
-  for the same revive. It holds up to a bound below agent-device's client request timeout (to verify), and past it or
+  for the same revive. The HTTP request stays open with no response bytes until revive finishes, then the proxy
+  forwards it and streams the daemon's answer. It holds up to a bound below agent-device's client request timeout
+  (not documented in 0.21.35; measure it before phase 3), and past that bound or
   on a revive refusal answers a JSON-RPC error carrying revive's code and remedy (`STIM_NO_METRO`,
   `STIM_DEVICE_LOST`).
 - **Activity and admission.** Every proxied request records workspace activity, a direct form of the "agent-device
@@ -304,6 +321,12 @@ stop` and `worktree remove` close the route (open question 5). With `daemon.mode
   proxy revives first and its policy pins the lease, so `concurrency.maxDevices` cannot be bypassed.
 - **Boot hook.** The `boot-hook.json` path from #4791 depends on callstack/agent-device#4153, which is still open.
   Agents on the proxy do not need it. Agents that use only `AGENT_DEVICE_STATE_DIR` still would.
+- **Reuse.** The daemon side is the hosted code as it is: `AgentDeviceDriver` with a device policy, `pinLease` and
+  `device-policy.ts`. The relay is `agent-relay.ts` with its transport swapped from a `device-host.agent.link` over a
+  remote machine connection to `agent.link` over the local Unix socket. The remote-config shape is the one
+  `stim macos --remote` already hands out. What changes is the lease source: the workspace's owned or leased device
+  instead of a hosted session's claim. agent-device's own `agent-device proxy --port` mode would also serve a
+  remote-config, but Stim would not see the requests, so it is not used.
 - **Failure.** Fail closed: when the relay or stim-server is down, agent-device reports the connection failure, and
   the guide's remedy restarts it. There is no silent bypass inside the config path. An agent
   that ignores the config bypasses Stim as today and gets only 6.1 presence.
