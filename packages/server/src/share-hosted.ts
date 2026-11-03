@@ -3,8 +3,9 @@ import type { AuditRecord } from './actions.ts';
 import type { Controller, InputCommand, SessionTarget } from './control.ts';
 import type { FrameHint } from './frame-helper.ts';
 import type { Frame, FrameListener } from './frames.ts';
-import type { HostConnections, Upstream } from './hosted-relay.ts';
+import { CONGESTION_NOTICE_MS, type HostConnections, type Upstream } from './hosted-relay.ts';
 import type { ControlBeginParams, DeviceFrameArtwork, ErrorCode, ProtocolError, ServerMessage } from './protocol.ts';
+import { accessUnitOf } from './video.ts';
 
 /** The device-host session a workspace slot runs in, as `stim status` reports it. */
 export interface HostedTarget {
@@ -15,14 +16,21 @@ export interface HostedTarget {
 }
 
 type Refusal = { code: ErrorCode; message: string };
-type ShareListener = Pick<FrameListener, 'frame' | 'delayed' | 'failed' | 'artwork'>;
+type ShareListener = Pick<FrameListener, 'frame' | 'video' | 'delayed' | 'failed' | 'artwork'>;
 type Lease = Awaited<ReturnType<HostConnections['acquire']>>;
 type PlatformSlot = { platform: 'ios' | 'android'; slot?: string };
 
 /** The frames of a shared device and the input to it, wherever the device runs. */
 export interface ShareSource {
-  /** Starts capture for the first listener; the returned function stops it with the last. */
+  /**
+   * Starts capture for the first listener; the returned function stops it with the last. A listener with `video` gets
+   * H.264 access units when the device streams them, and JPEG frames otherwise.
+   */
   subscribe: (listener: ShareListener, hint: FrameHint) => () => void;
+  /** Makes the next access unit the video listeners get a keyframe. */
+  keyframe: () => void;
+  /** A video listener is behind; called until its socket drains, it lowers the bitrate. */
+  congested: () => void;
   begin: (
     owner: Controller,
     target: ControlBeginParams,
@@ -75,10 +83,8 @@ export class HostedShareSource implements ShareSource {
   private readonly host: HostedTarget;
   private readonly target: Required<PlatformSlot>;
   private readonly audit: (record: AuditRecord) => void;
-  private readonly listeners = new Set<ShareListener>();
-  private frames: { lease: Lease; subscription: string; unroute: () => void } | null = null;
-  private opening = false;
-  private latest: Frame | null = null;
+  private readonly streams: Record<'jpeg' | 'h264', Stream> = { jpeg: newStream(), h264: newStream() };
+  private congestedAt = -Infinity;
   private artwork: DeviceFrameArtwork | null | undefined;
   private control: {
     lease: Lease;
@@ -104,18 +110,37 @@ export class HostedShareSource implements ShareSource {
   }
 
   subscribe(listener: ShareListener, hint: FrameHint): () => void {
-    this.listeners.add(listener);
-    if (this.latest) listener.frame(this.latest);
+    const stream = this.streams[listener.video ? 'h264' : 'jpeg'];
+    stream.listeners.add(listener);
+    if (stream.latest) listener.frame(stream.latest);
     if (this.artwork !== undefined) listener.artwork?.(this.artwork);
-    if (!this.frames && !this.opening) void this.openFrames(hint);
+    if (!stream.open && !stream.opening) void this.openFrames(stream, hint, listener.video !== undefined);
     return () => {
-      this.listeners.delete(listener);
-      if (!this.listeners.size) this.stopFrames();
+      stream.listeners.delete(listener);
+      if (!stream.listeners.size) this.stopFrames(stream);
     };
   }
 
-  private async openFrames(hint: FrameHint): Promise<void> {
-    this.opening = true;
+  keyframe(): void {
+    const open = this.streams.h264.open;
+    if (!open) return;
+    void open.lease.connection
+      .request('device-host.frames.keyframe', { subscription: open.subscription })
+      .catch(() => {});
+  }
+
+  congested(): void {
+    const open = this.streams.h264.open;
+    if (!open?.lease.connection.supports('hosted-congestion') || Date.now() - this.congestedAt < CONGESTION_NOTICE_MS)
+      return;
+    this.congestedAt = Date.now();
+    void open.lease.connection
+      .request('device-host.frames.congested', { subscription: open.subscription })
+      .catch(() => {});
+  }
+
+  private async openFrames(stream: Stream, hint: FrameHint, video: boolean): Promise<void> {
+    stream.opening = true;
     let lease: Lease | undefined;
     let subscription: string | undefined;
     try {
@@ -124,33 +149,34 @@ export class HostedShareSource implements ShareSource {
         session: this.host.session,
         fps: hint.fps,
         maxEdge: hint.maxEdge,
-        ...(this.artworkWanted() ? { deviceFrame: true } : {}),
+        ...(video ? { video: ['h264'] } : {}),
+        ...([...stream.listeners].some((listener) => listener.artwork) ? { deviceFrame: true } : {}),
       });
       if ('error' in reply) throw new Error(reply.error.message);
       if (!isJsonObject(reply.result) || typeof reply.result.subscription !== 'string')
         throw new Error('the host sent no subscription');
       subscription = reply.result.subscription;
       const unroute = lease.connection.route(`s:${subscription}`, {
-        event: (event) => this.frameEvent(event),
+        event: (event) => this.frameEvent(stream, event),
         closed: (error) => this.fail(error.message),
       });
-      this.frames = { lease, subscription, unroute };
-      this.opening = false;
-      if (this.closed || !this.listeners.size) this.stopFrames();
+      stream.open = { lease, subscription, unroute };
+      stream.opening = false;
+      if (this.closed || !stream.listeners.size) this.stopFrames(stream);
     } catch (cause) {
-      this.opening = false;
+      stream.opening = false;
       if (lease && subscription) release(lease, 'device-host.unsubscribe', { subscription });
       else lease?.release();
       this.fail(messageOf(cause));
     }
   }
 
-  private artworkWanted(): boolean {
-    return [...this.listeners].some((listener) => listener.artwork);
-  }
-
-  private frameEvent(event: Record<string, unknown> | Buffer): void {
-    if (Buffer.isBuffer(event)) return;
+  private frameEvent(stream: Stream, event: Record<string, unknown> | Buffer): void {
+    if (Buffer.isBuffer(event)) {
+      const unit = accessUnitOf(event);
+      if (unit) for (const listener of stream.listeners) listener.video?.(unit);
+      return;
+    }
     if (event.event === 'frame') {
       if (typeof event.data !== 'string') return this.fail('the host sent an invalid JPEG frame');
       const latest: Frame = {
@@ -159,39 +185,45 @@ export class HostedShareSource implements ShareSource {
         capturedAt: String(event.capturedAt),
         data: event.data,
       };
-      this.latest = latest;
-      for (const listener of this.listeners) listener.frame(latest);
+      stream.latest = latest;
+      for (const listener of stream.listeners) listener.frame(latest);
     } else if (event.event === 'device-frame') {
       this.artwork = isArtwork(event.artwork) ? event.artwork : null;
-      for (const listener of this.listeners) listener.artwork?.(this.artwork);
+      for (const listener of this.listeners()) listener.artwork?.(this.artwork);
     } else if (event.event === 'frame-delayed') {
-      for (const listener of this.listeners) listener.delayed?.(event.delayed === true);
+      for (const listener of stream.listeners) listener.delayed?.(event.delayed === true);
     } else if (event.event === 'error') {
       this.fail(isJsonObject(event.error) ? String(event.error.message) : 'host frames failed');
     }
   }
 
-  private stopFrames(): void {
-    const frames = this.frames;
-    this.frames = null;
-    this.latest = null;
-    this.artwork = undefined;
-    if (!frames) return;
-    frames.unroute();
-    release(frames.lease, 'device-host.unsubscribe', { subscription: frames.subscription });
+  private listeners(): ShareListener[] {
+    return [...this.streams.jpeg.listeners, ...this.streams.h264.listeners];
+  }
+
+  private stopFrames(stream: Stream): void {
+    const open = stream.open;
+    stream.open = null;
+    stream.latest = null;
+    if (!this.streams.jpeg.open && !this.streams.h264.open) this.artwork = undefined;
+    if (!open) return;
+    open.unroute();
+    release(open.lease, 'device-host.unsubscribe', { subscription: open.subscription });
   }
 
   private fail(message: string): void {
-    const frames = this.frames;
-    this.frames = null;
-    this.latest = null;
-    this.artwork = undefined;
-    if (frames) {
-      frames.unroute();
-      frames.lease.release();
+    const listeners = this.listeners();
+    for (const stream of Object.values(this.streams)) {
+      const open = stream.open;
+      stream.open = null;
+      stream.latest = null;
+      stream.listeners.clear();
+      if (open) {
+        open.unroute();
+        open.lease.release();
+      }
     }
-    const listeners = [...this.listeners];
-    this.listeners.clear();
+    this.artwork = undefined;
     for (const listener of listeners) listener.failed?.(`${this.host.machine}: ${message}`);
   }
 
@@ -310,10 +342,23 @@ export class HostedShareSource implements ShareSource {
 
   close(): void {
     this.closed = true;
-    this.listeners.clear();
-    this.stopFrames();
+    for (const stream of Object.values(this.streams)) {
+      stream.listeners.clear();
+      this.stopFrames(stream);
+    }
     this.endControl(null, 'The share ended.', 'end');
   }
+}
+
+interface Stream {
+  listeners: Set<ShareListener>;
+  open: { lease: Lease; subscription: string; unroute: () => void } | null;
+  opening: boolean;
+  latest: Frame | null;
+}
+
+function newStream(): Stream {
+  return { listeners: new Set(), open: null, opening: false, latest: null };
 }
 
 function release(lease: Lease, method: string, params: unknown): void {

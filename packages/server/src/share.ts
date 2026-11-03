@@ -5,14 +5,15 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { isJsonObject, type StatusPayload } from '@stim-cli/core/state';
 import type { ControlHub, Controller, InputCommand } from './control.ts';
 import { parseInput } from './control.ts';
-import { LatestFrames } from './frame-delivery.ts';
+import { FRAME_RETRY_MS, LatestFrames } from './frame-delivery.ts';
 import type { FrameHint } from './frame-helper.ts';
 import { deviceKey, ownedDevice, type Device, type Frame, type FramePool, type LeaseLookup } from './frames.ts';
-import type { DeviceFrameArtwork, ServerMessage } from './protocol.ts';
+import { FRAME_FPS, type DeviceFrameArtwork, type ServerMessage } from './protocol.ts';
 import { targetKey } from './recorder.ts';
 import { hostedOf, type HostedTarget, type ShareSource } from './share-hosted.ts';
 import { endedPage, loginPage, SHARE_ASSETS, viewerPage } from './share-page.ts';
 import type { OpenedRoute } from './share-route.ts';
+import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 
 type SharePlatform = 'ios' | 'android';
 
@@ -77,7 +78,7 @@ export const SHARE_EXPIRY = { default: 60, max: 480 } as const;
 
 /** What the share hub needs of the rest of stim-server. */
 export interface ShareDeps {
-  frames: Pick<FramePool, 'subscribe'>;
+  frames: Pick<FramePool, 'subscribe' | 'keyframe' | 'congested'>;
   control: Pick<ControlHub, 'begin' | 'input' | 'targetOf' | 'endFor'>;
   subscribeStatus: (listener: StatusListener) => () => void;
   route: {
@@ -138,6 +139,9 @@ const INPUT_METHODS = new Map<string, Parameters<typeof parseInput>[0]>([
   ['rotate', 'input.rotate'],
 ]);
 const VIEW_HINT: FrameHint = { fps: 10, maxEdge: 1280 };
+const VIDEO_HINT: FrameHint = { fps: FRAME_FPS.video, maxEdge: VIEW_HINT.maxEdge };
+const VIDEO_SUBSCRIPTION = 'share';
+const KEYFRAME_REQUEST = '{"type":"keyframe"}';
 const BUTTONS: Record<SharePlatform, readonly string[]> = {
   ios: ['home', 'lock'],
   android: ['back', 'home', 'app-switch'],
@@ -413,6 +417,8 @@ export class ShareHub {
     const { frames, control } = this.deps;
     return {
       subscribe: (listener, hint) => frames.subscribe(device, listener, hint),
+      keyframe: () => frames.keyframe(device),
+      congested: () => frames.congested(device),
       begin: (owner, target, workspace, allowed) => control.begin(owner, target, workspace, allowed),
       targetOf: (owner, session) => control.targetOf(owner, session),
       input: (owner, session, _method, _params, command) => control.input(owner, session, command),
@@ -778,10 +784,11 @@ export class ShareHub {
     if (!sameOrigin) return refuse(403, 'Forbidden');
     if (!this.signedIn(share, request)) return refuse(401, 'Unauthorized');
     if (share.viewers.size >= this.limits.maxViewers) return refuse(503, 'Service Unavailable');
-    this.wss.handleUpgrade(request, socket, head, (ws) => this.watch(share, ws));
+    const video = new URL(request.url ?? '', 'http://share.invalid').searchParams.get('codec') === 'h264';
+    this.wss.handleUpgrade(request, socket, head, (ws) => this.watch(share, ws, video));
   }
 
-  private watch(share: Share, socket: WebSocket): void {
+  private watch(share: Share, socket: WebSocket, video: boolean): void {
     if (share.ended) {
       socket.close(1000, 'share ended');
       return;
@@ -796,17 +803,39 @@ export class ShareHub {
     const json = (message: Record<string, unknown>) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
     };
+    let stopped = false;
+    const gate = new VideoGate(DEFAULT_VIDEO_LIMITS.congestedBytes);
+    let sequence = 0;
+    let draining: NodeJS.Timeout | null = null;
+    const drain = () => {
+      draining = null;
+      if (stopped) return;
+      if (socket.bufferedAmount <= DEFAULT_VIDEO_LIMITS.congestedBytes) return share.source.keyframe();
+      share.source.congested();
+      draining = setTimeout(drain, FRAME_RETRY_MS);
+    };
     const unsubscribe = share.source.subscribe(
       {
         frame: (frame) => delivery.push(frame),
+        ...(video
+          ? {
+              video: (unit: AccessUnit) => {
+                if (socket.readyState !== socket.OPEN) return;
+                const verdict = gate.admit(unit, socket.bufferedAmount);
+                if (verdict === 'send')
+                  socket.send(videoPacket(VIDEO_SUBSCRIPTION, sequence++, unit), { binary: true });
+                else if (verdict === 'congested' && !draining) drain();
+              },
+            }
+          : {}),
         delayed: (delayed) => json({ type: 'delayed', delayed }),
         artwork: (artwork) => json({ type: 'artwork', artwork: artwork && viewerArtwork(artwork) }),
         failed: (message) => queueMicrotask(() => void this.end(share, message)),
       },
-      VIEW_HINT,
+      video ? VIDEO_HINT : VIEW_HINT,
     );
+    if (video) share.source.keyframe();
     json({ type: 'hello', expiresAt: new Date(share.expiresAt).toISOString() });
-    let stopped = false;
     const viewer: Viewer = {
       socket,
       inputs: { tokens: this.limits.inputPerSecond, at: Date.now() },
@@ -814,6 +843,7 @@ export class ShareHub {
       stop: () => {
         if (stopped) return;
         stopped = true;
+        if (draining) clearTimeout(draining);
         delivery.stop();
         unsubscribe();
       },
@@ -830,8 +860,15 @@ export class ShareHub {
     }, PING_MS);
     ping.unref?.();
     socket.on('message', (data, binary) => {
-      if (binary || !share.request.control) return;
-      void this.input(share, viewer, data.toString());
+      if (binary) return;
+      const text = data.toString();
+      if (text === KEYFRAME_REQUEST) {
+        if (!video || !take(viewer.inputs, 1, this.limits.inputPerSecond, this.limits.inputPerSecond)) return;
+        gate.reset();
+        share.source.keyframe();
+        return;
+      }
+      if (share.request.control) void this.input(share, viewer, text);
     });
     socket.on('close', () => {
       clearInterval(ping);

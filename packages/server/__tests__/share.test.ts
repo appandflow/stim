@@ -1,9 +1,11 @@
 import { request } from 'node:http';
 import { connect as tcpConnect } from 'node:net';
 import { WebSocket } from 'ws';
+import type { FrameHint } from '../src/frame-helper.ts';
 import type { Device, FrameListener } from '../src/frames.ts';
 import type { ShareSource } from '../src/share-hosted.ts';
 import { ShareHub, type ShareRequest, type StartedShare, type StatusListener } from '../src/share.ts';
+import { accessUnitOf, type AccessUnit } from '../src/video.ts';
 
 const WORKSPACE = '/work/app';
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
@@ -18,7 +20,8 @@ function payload(state: 'Booted' | 'Shutdown' = 'Booted', activity?: Record<stri
 
 interface Fixture {
   hub: ShareHub;
-  subscribed: { device: Device; listener: FrameListener; unsubscribed: boolean }[];
+  subscribed: { device: Device; listener: FrameListener; hint: FrameHint | undefined; unsubscribed: boolean }[];
+  keyframes: number;
   begins: unknown[];
   inputs: unknown[];
   routeOpens: number[];
@@ -30,7 +33,13 @@ interface Fixture {
   failRoute: { open: boolean; close: boolean };
   listenerBoundAtRouteClose: boolean[];
   status: (value: ReturnType<typeof payload>) => void;
-  hostedSources: { subscribed: FrameListener[]; unsubscribed: number; inputs: unknown[]; closed: number }[];
+  hostedSources: {
+    subscribed: FrameListener[];
+    unsubscribed: number;
+    inputs: unknown[];
+    closed: number;
+    keyframes: number;
+  }[];
 }
 
 function fixture(): Fixture {
@@ -38,6 +47,7 @@ function fixture(): Fixture {
   let latest = payload();
   const f: Fixture = {
     subscribed: [],
+    keyframes: 0,
     begins: [],
     inputs: [],
     routeOpens: [],
@@ -57,8 +67,10 @@ function fixture(): Fixture {
   };
   f.hub = new ShareHub({
     frames: {
-      subscribe: (device, listener) => {
-        const entry = { device, listener, unsubscribed: false };
+      keyframe: () => f.keyframes++,
+      congested: () => {},
+      subscribe: (device, listener, hint) => {
+        const entry = { device, listener, hint, unsubscribed: false };
         f.subscribed.push(entry);
         return () => {
           entry.unsubscribed = true;
@@ -115,7 +127,13 @@ function fixture(): Fixture {
       },
     },
     hosted: () => {
-      const record = { subscribed: [] as FrameListener[], unsubscribed: 0, inputs: [] as unknown[], closed: 0 };
+      const record = {
+        subscribed: [] as FrameListener[],
+        unsubscribed: 0,
+        inputs: [] as unknown[],
+        closed: 0,
+        keyframes: 0,
+      };
       f.hostedSources.push(record);
       const source: ShareSource = {
         subscribe: (listener) => {
@@ -124,6 +142,8 @@ function fixture(): Fixture {
             record.unsubscribed++;
           };
         },
+        keyframe: () => record.keyframes++,
+        congested: () => {},
         begin: async () => ({ session: 'h1', platform: 'ios', lease: { grantedAt: 'l', expiresAt: '' }, postures: [] }),
         targetOf: (_owner, session) => (session === 'h1' ? { platform: 'ios', postures: [] } : null),
         input: async (_owner, session, method, params) => {
@@ -203,13 +223,34 @@ async function login(url: string, password: string): Promise<string> {
   return String(answer.headers['set-cookie']).split(';')[0]!;
 }
 
-function connect(url: string, headers: Record<string, string>): Promise<{ socket: WebSocket; status: number | null }> {
+function connect(
+  url: string,
+  headers: Record<string, string>,
+  query = '',
+): Promise<{ socket: WebSocket; status: number | null }> {
   return new Promise((resolve) => {
-    const socket = new WebSocket(`${url.replace(/^http/, 'ws')}ws`, { headers });
+    const socket = new WebSocket(`${url.replace(/^http/, 'ws')}ws${query}`, { headers });
     socket.once('open', () => resolve({ socket, status: null }));
     socket.once('unexpected-response', (_request, response) => resolve({ socket, status: response.statusCode! }));
     socket.once('error', () => {});
   });
+}
+
+function unit(keyframe: boolean, capturedAt: number): AccessUnit {
+  return { keyframe, capturedAt, width: 590, height: 1280, data: Buffer.from([0, 0, 0, 1, keyframe ? 0x65 : 0x41]) };
+}
+
+function videoOf(listener: FrameListener): NonNullable<FrameListener['video']> {
+  if (!listener.video) throw new Error('the viewer was not subscribed for video');
+  return listener.video;
+}
+
+function binaryMessages(socket: WebSocket): Buffer[] {
+  const received: Buffer[] = [];
+  socket.on('message', (data, binary) => {
+    if (binary) received.push(data as Buffer);
+  });
+  return received;
 }
 
 function origin(url: string): string {
@@ -335,6 +376,51 @@ describe('a web share', () => {
     socket.close();
     await vi.waitFor(() => expect(f.subscribed[0]!.unsubscribed).toBe(true));
     expect(f.hub.list()[0]!.viewers).toBe(0);
+  });
+
+  it('streams H.264 at 60 fps to a viewer that asks for it, from a keyframe it requests on join, and JPEG at 10 fps otherwise', async () => {
+    const share = await started(f);
+    const url = local(share, f.hub.port!);
+    const cookie = await login(url, share.password!);
+    await connect(url, { origin: origin(url), cookie });
+    expect(f.subscribed.map(({ hint, listener }) => [hint, listener.video])).toEqual([
+      [{ fps: 10, maxEdge: 1280 }, undefined],
+    ]);
+    expect(f.keyframes).toBe(0);
+
+    const { socket } = await connect(url, { origin: origin(url), cookie }, '?codec=h264');
+    const viewer = f.subscribed[1]!;
+    const video = videoOf(viewer.listener);
+    expect(viewer.hint).toEqual({ fps: 60, maxEdge: 1280 });
+    expect(f.keyframes).toBe(1);
+    const received = binaryMessages(socket);
+    video(unit(false, 1));
+    video(unit(true, 2));
+    video(unit(false, 3));
+    viewer.listener.frame({ width: 1, height: 1, capturedAt: '', data: JPEG.toString('base64') });
+    await vi.waitFor(() => expect(received).toHaveLength(3));
+    expect(received.slice(0, 2).map((packet) => accessUnitOf(packet))).toEqual([unit(true, 2), unit(false, 3)]);
+    expect(received[2]).toEqual(JPEG);
+  });
+
+  it('drops a video viewer to the next keyframe when it asks for one, even on a share without control', async () => {
+    const share = await started(f);
+    const url = local(share, f.hub.port!);
+    const cookie = await login(url, share.password!);
+    const { socket } = await connect(url, { origin: origin(url), cookie }, '?codec=h264');
+    const received = binaryMessages(socket);
+    const video = videoOf(f.subscribed[0]!.listener);
+    video(unit(true, 1));
+    await vi.waitFor(() => expect(received).toHaveLength(1));
+
+    socket.send(JSON.stringify({ type: 'keyframe' }));
+    await vi.waitFor(() => expect(f.keyframes).toBe(2));
+    video(unit(false, 2));
+    video(unit(true, 3));
+    video(unit(false, 4));
+    await vi.waitFor(() => expect(received).toHaveLength(3));
+    expect(received.slice(1).map((packet) => accessUnitOf(packet))).toEqual([unit(true, 3), unit(false, 4)]);
+    expect(f.inputs).toEqual([]);
   });
 
   it('drops input without --control and never begins a control session', async () => {
