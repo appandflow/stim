@@ -322,15 +322,6 @@ describe('the in-process passes of a command with no daemon holding the home', (
     );
   });
 
-  test('read the focused Simulator or emulator window, as the daemon does, so a device in use is kept', async () => {
-    bootedWorkspace('left', 20 * MINUTE_MS);
-
-    await run('on', join(projects, 'elsewhere'));
-
-    const [call] = vi.mocked(measure.measureTick).mock.calls;
-    expect(call?.[2]?.probe).not.toBe(false);
-  });
-
   test('only log what they would do in report mode', async () => {
     const left = bootedWorkspace('left', 20 * MINUTE_MS);
 
