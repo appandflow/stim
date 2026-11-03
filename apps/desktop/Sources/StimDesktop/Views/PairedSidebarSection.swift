@@ -106,10 +106,11 @@ private struct PairedServerHeader: View {
     Button(action: toggle) {
       HStack(spacing: Space.sm) {
         StatusDot(color: Color(entry.status.tone), size: 6, label: entry.status.title)
-        (Text(verbatim: (name.isEmpty ? "Machine" : name).uppercased()).font(.stim(.caption, weight: .bold)).tracking(0.6)
-          .foregroundStyle(Palette.secondary)
-          + Text(verbatim: " (viewing)").font(.stim(.caption)).foregroundStyle(Palette.tertiary))
-          .lineLimit(1).truncationMode(.middle)
+        HStack(spacing: Space.xs) {
+          Text(verbatim: (name.isEmpty ? "Machine" : name).uppercased()).font(.stim(.caption, weight: .bold)).tracking(0.6)
+            .foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+          Text(verbatim: "(viewing)").font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
+        }
         Pill(tone: .neutral, size: .small) { Text(accessLabel) }
         Spacer(minLength: 0)
         if !expanded, active > 0 {
