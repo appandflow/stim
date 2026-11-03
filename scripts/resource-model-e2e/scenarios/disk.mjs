@@ -1,10 +1,10 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { clock, outcome, STATUS } from '../assertions.mjs';
 import { createBallast, gib } from '../ballast.mjs';
-import { checkLadderOrder, diffState, ladderActions } from '../ladder.mjs';
+import { checkLadderOrder, diffState } from '../ladder.mjs';
 import { HarnessError } from '../workspaces.mjs';
-import { hasEntries, launch, loadGate, setup, startPoller } from '../phases.mjs';
+import { hasEntries, launch, loadGate, readLadder, setup, startPoller } from '../phases.mjs';
 import { readSimulators } from '../platform.mjs';
 import { run, sleep } from '../shell.mjs';
 
@@ -110,24 +110,6 @@ async function waitForCompile(ctx, workspace, cold) {
     await sleep(5000, ctx.signal);
   }
   return false;
-}
-
-const readOrEmpty = (file) => {
-  try {
-    return readFileSync(file, 'utf8');
-  } catch {
-    return '';
-  }
-};
-
-function readLadder(ctx, workspaces) {
-  return ladderActions({
-    daemonText: readOrEmpty(join(ctx.home, 'daemon', 'daemon.ndjson')),
-    workspaceLogs: workspaces.flatMap((workspace) => {
-      const dir = ctx.record(workspace).workspaceDir;
-      return dir ? [{ workspace: workspace.path, text: readOrEmpty(join(dir, 'logs', 'metro.ndjson')) }] : [];
-    }),
-  });
 }
 
 function startHeartbeat(ctx, workspace) {
