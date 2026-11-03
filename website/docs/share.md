@@ -88,7 +88,9 @@ The viewer follows the layout of the device viewer in Stim Desktop and uses the
 same colors, in light or dark to match the browser. A bar across the top shows
 a status dot with the platform and Live or Waiting, the time left before the
 share expires, whether the share is Control or View only, and a Fullscreen
-button. The device sits below it inside its frame when Stim has artwork for it
+button. The browser tab is titled with the app and the device, for example
+"Pokedex Demo · iPhone 18 Pro · Stim", and never with the project or branch name.
+The device sits below it inside its frame when Stim has artwork for it
 (an iOS simulator today) and as a rounded screen otherwise, scaled to fit any
 window. With `--control`, button groups under the device hold:
 
@@ -110,14 +112,20 @@ its own Guest N. A viewer sees only the people of its own share, even when two
 share links point at the same device; every share also shows the agent's
 actions and the host's touches. Names are kept only
 in stim-server's memory while the share lives. A row of colored initials in the
-top bar lists who is here; an eye marks the view-only ones. Presence shows where
+top bar lists who is here; an eye marks the view-only ones. Click it to open a
+People list with each person's role (controlling, can control or view only), the
+host and the agent when they are on the device, and a Change name action on your own row.
+Presence shows where
 people tap, a PIN pad included. The screen is already shared, so this adds
 little, but keep it in mind when the device shows secrets.
 
 One viewer at a time holds the touch pointer: from finger down to finger up,
 or until ten seconds pass without input. A touch from another viewer in the
 meantime is dropped, and that viewer sees "Name is using the screen". A share
-of a hosted session shows each viewer only its own touches.
+of a hosted session works the same, and also shows what an agent does on the
+hosted device with `stim agent-device`: its command as "Agent", a ripple where
+it tapped or swiped and an outline of the element it pressed. The outline
+needs a `snapshot` of that session first.
 
 A watch-only share has no button groups. The page fits the window without
 scrolling. With `--control`, click the screen to tap and type with the keyboard. While the screen has focus,
@@ -127,10 +135,19 @@ on Android, the hardware arrow and Escape keys on iOS).
 With `--control` on an iOS simulator, an Android emulator or an Android phone,
 Command-V (Control-V on Windows and Linux) while the screen has focus pastes the
 text on your computer's clipboard into the focused field on the device. The
-"Copy device clipboard" button in the toolbar copies the device's clipboard to
-your computer. Nothing syncs on its own, text only, up to 8 KiB for a paste. A
-web page and a native macOS app have no clipboard action, and a share without
-`--control` never reads the device clipboard.
+options menu in the top bar has a "Sync clipboard" switch, on by default and
+remembered by your browser. While the page is focused it copies new text from
+the device to your computer's clipboard (a "Copy from device" chip appears when
+the browser refuses), and in Chrome and Edge, after a one-time permission
+prompt, it sends text you copied on your computer to the device when you return
+to the page. In other browsers press Command-V on the device screen. The menu's
+"Copy from device" button copies once. Sending your copied text to the device counts as input and starts the share's
+control session like a paste. Syncing from the device starts after
+someone has tapped, typed or pasted, and does not keep an idle share's control
+session alive. Everyone who controls the share with sync on shares the device
+clipboard, so text one of them copies reaches the others. Text only, up to 8 KiB
+sent to the device. A web page and a native macOS app have no clipboard action, and a share
+without `--control` never reads the device clipboard.
 
 Two-finger gestures work on iOS simulators and on Android emulators and
 phones, with `--control`. On a phone or tablet, use two fingers on the screen
@@ -486,7 +503,7 @@ reload.
   costs only its listener and route. A share never records anything to disk.
 - **Control is the existing control path.** Input goes through the same
   control session and device lease Stim Desktop and the phone app use, limited
-  to taps, two-finger gestures, text, the arrow keys and Escape, pasting your clipboard into the device and copying the device's clipboard to your computer, rotation and the hardware buttons of the shared device. A device an
+  to taps, two-finger gestures, text, the arrow keys and Escape, pasting and syncing the clipboard with your computer, rotation and the hardware buttons of the shared device. A device an
   agent or another client is driving answers busy; a share never takes it over.
 - **Saved link.** A share lives in stim-server's memory, but `stim share` also
   writes its URL token and passwords to `share-links.json` in the workspace's

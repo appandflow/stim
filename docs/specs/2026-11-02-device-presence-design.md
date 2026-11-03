@@ -218,13 +218,19 @@ The first event after subscribing lists every present participant. The web share
 
 ### 4.4 Hosted devices
 
-The worker's `ControlHub` is the authority, so the worker publishes. `device-host.input.touch` takes an optional
-`participant: {id, kind, name}` from clients that see the worker's `presence` feature. The worker prefixes the id with
-the client's key and the host control session so clients cannot impersonate each other's participants, applies the same name cleanup, and assigns
-colors itself. Presence events reach the client on its existing `device-host.frames.subscribe` subscription; the
-client server passes them to its share sockets and relayed subscribers. Worker-side inputs (a person on the worker's
-Desktop, the worker's hosted agent) appear too. A worker without the feature yields no presence; viewers still see
-their own touches.
+A hosted device's agent runs on the host Mac, so the host publishes what the agent does. The client asks for it with
+`device-host.presence.subscribe {session}` (feature `hosted-presence`, a dedicated subscription so that one request
+serves every consumer and the host captures no frames for it). The host follows the session's agent-device records
+from the subscription on and sends `presence` events with the `agent` participant and its gesture, measured in the
+viewport of the latest snapshot the session's agent route answered. Only the session's own client may subscribe. The
+client keeps just the validated agent participant and puts it into its own `PresenceHub` under the hosted workspace
+device's key, so shares, relayed Desktop and phone subscribers and the wrapper's own events meet in one place.
+
+Everything about people stays on the client: all viewers of a share connect to the client's share server, so viewer
+participants, their touches and the pointer grab live in its hub (`HostedShareSource` applies the same `PointerGrab`
+as `ControlHub` before it forwards `device-host.input.*`), and the touches of the client's own Desktop or phone on the
+hosted device show as `Host`. The host publishes no human touches; a person on the host cannot touch a hosted device.
+A host without the feature yields no agent presence from the host.
 
 ## 5. Web overlay
 
@@ -482,7 +488,7 @@ pressed, and the label.
    with it.
 2. **Share presence and view/control passwords** (server, web viewer, CLI, Desktop share sheet and list). Pointer
    grab, participants and names, `ControlHub.input` publishing to the hub, the share socket messages, the overlay,
-   view and control passwords with upgrade. Local devices only; hosted shares show only a viewer's own touches. Waits
+   view and control passwords with upgrade. Local devices; hosted shares follow in phase 4. Waits
    on open questions 1 to 3.
 3. **Agent presence from direct calls** (server, core). 6.1: follow agent records per subscribed device for agents
    that bypass the wrapper, normalize, publish `gesture`.

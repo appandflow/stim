@@ -158,7 +158,7 @@ export function workspaceUsage(env: EnvironmentState, machine: MachineUsageState
 function workspaceDiskBytes(env: EnvironmentState): number | null {
   const disk = env.disk;
   if (!disk || (disk.worktreeBytes === null && disk.buildBytes === null)) return null;
-  return (disk.worktreeBytes ?? 0) + (disk.buildBytes ?? 0);
+  return (disk.worktreeBytes ?? 0) + (disk.buildBytes ?? 0) - (diskSharedBytes(env) ?? 0);
 }
 
 export interface DiskPart {
@@ -167,15 +167,38 @@ export interface DiskPart {
   bytes: number;
 }
 
+type EnvironmentDisk = NonNullable<EnvironmentState['disk']>;
+
+/**
+ * node_modules measured inside the worktree. A linked worktree counts its private size when Stim reported one that
+ * fits, and `shared` is the part clones or hard links share with other folders. A primary checkout (no `worktree`)
+ * counts all of it, so the shared bytes are counted once, under the source.
+ */
+function splitNodeModules(
+  env: EnvironmentState,
+  disk: EnvironmentDisk,
+): { bytes: number; own: number; shared: number | null } | null {
+  const { worktreeBytes, nodeModulesBytes: bytes, nodeModulesPrivateBytes: own } = disk;
+  if (worktreeBytes === null || bytes == null || bytes <= 0 || bytes > worktreeBytes) return null;
+  if (!env.worktree || own == null || own < 0 || own > bytes) return { bytes, own: bytes, shared: null };
+  return { bytes, own, shared: bytes - own };
+}
+
+/** The part of node_modules that is on disk once for several folders; it is not in `diskParts` or the disk figure. */
+export function diskSharedBytes(env: EnvironmentState): number | null {
+  return env.disk ? (splitNodeModules(env, env.disk)?.shared ?? null) : null;
+}
+
 export function diskParts(env: EnvironmentState): DiskPart[] | null {
   const disk = env.disk;
   if (!disk) return null;
   const parts: Omit<DiskPart, 'label'>[] = [];
-  const { worktreeBytes, nodeModulesBytes, buildBytes } = disk;
+  const { worktreeBytes, buildBytes } = disk;
+  const modules = splitNodeModules(env, disk);
   if (worktreeBytes !== null) {
-    if (nodeModulesBytes !== null && nodeModulesBytes > 0 && nodeModulesBytes <= worktreeBytes) {
-      parts.push({ kind: 'nodeModules', bytes: nodeModulesBytes });
-      if (worktreeBytes > nodeModulesBytes) parts.push({ kind: 'worktree', bytes: worktreeBytes - nodeModulesBytes });
+    if (modules) {
+      parts.push({ kind: 'nodeModules', bytes: modules.own });
+      if (worktreeBytes > modules.bytes) parts.push({ kind: 'worktree', bytes: worktreeBytes - modules.bytes });
     } else {
       parts.push({ kind: 'worktree', bytes: worktreeBytes });
     }

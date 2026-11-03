@@ -295,46 +295,241 @@ const roster = new Map();
 const rosterList = document.getElementById('roster');
 const eye = document.getElementById('eye');
 
-function renderRoster() {
-  const items = [...roster.values()]
-    .toSorted((a, b) => Number(Boolean(b.self)) - Number(Boolean(a.self)))
-    .map((entry) => {
+const peopleBox = document.getElementById('people');
+const peopleButton = document.getElementById('people-button');
+const peoplePanel = document.getElementById('people-panel');
+const peopleTitle = document.getElementById('people-title');
+const peopleList = document.getElementById('people-list');
+const people = globalThis.stimPeople;
+const shareControl = control || viewOnly;
+const RENAME_MS = 5000;
+const ROSTER_MAX = 5;
+const TOUCH_MS = 10000;
+const NAME_MAX = 24;
+let lastRenameAt = -Infinity;
+const touchTimers = new Map();
+
+function paint(element, color) {
+  element.style.background = window.PALETTE[color % window.PALETTE.length];
+  element.style.color = window.PALETTE_TEXT[color % window.PALETTE_TEXT.length];
+}
+
+function avatar(row) {
+  const item = document.createElement('span');
+  item.className = 'avatar';
+  paint(item, row.color);
+  item.textContent = row.initial;
+  return item;
+}
+
+const selfRow = document.createElement('li');
+const selfAvatar = document.createElement('span');
+selfAvatar.className = 'avatar';
+const selfInfo = document.createElement('span');
+selfInfo.className = 'person';
+const selfName = document.createElement('span');
+selfName.className = 'person-name';
+const selfRole = document.createElement('span');
+selfRole.className = 'person-role';
+selfInfo.append(selfName, selfRole);
+const changeName = document.createElement('button');
+changeName.type = 'button';
+changeName.className = 'link';
+changeName.textContent = 'Change name';
+const nameEdit = document.createElement('form');
+nameEdit.className = 'person-edit';
+nameEdit.hidden = true;
+const editInput = document.createElement('input');
+editInput.className = 'field';
+editInput.maxLength = NAME_MAX;
+editInput.autocomplete = 'nickname';
+editInput.setAttribute('aria-label', 'Your name');
+const editSave = document.createElement('button');
+editSave.type = 'submit';
+editSave.className = 'primary small';
+editSave.textContent = 'Save';
+const editCancel = document.createElement('button');
+editCancel.type = 'button';
+editCancel.className = 'link';
+editCancel.textContent = 'Cancel';
+const editNote = document.createElement('p');
+editNote.className = 'person-note';
+editNote.setAttribute('role', 'status');
+nameEdit.append(editInput, editSave, editCancel, editNote);
+selfRow.append(selfAvatar, selfInfo, changeName, nameEdit);
+
+function editing(on) {
+  selfInfo.hidden = on;
+  changeName.hidden = on;
+  nameEdit.hidden = !on;
+  editNote.textContent = '';
+  if (on) {
+    editInput.value = me ? me.name : '';
+    editInput.focus();
+    editInput.select();
+  } else if (peoplePanel.contains(document.activeElement) || document.activeElement === document.body) {
+    changeName.focus();
+  }
+}
+
+function describe(row) {
+  const name = document.createElement('span');
+  name.className = 'person-name';
+  if (row.kind === 'viewer') name.textContent = row.name;
+  else {
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    paint(tag, row.color);
+    tag.textContent = row.name;
+    name.append(tag);
+  }
+  if (row.self) {
+    const mark = document.createElement('span');
+    mark.className = 'you-mark';
+    mark.textContent = ' (you)';
+    name.append(mark);
+  }
+  return name;
+}
+
+function renderPeople() {
+  const rows = people.peopleRows([...roster.values()], shareControl);
+  peopleBox.hidden = rows.length === 0;
+  peopleTitle.textContent = people.peopleCount(rows.length);
+  peopleButton.setAttribute('aria-label', `People: ${peopleTitle.textContent}`);
+  const own = rows.find((row) => row.self);
+  const items = rows
+    .filter((row) => !row.self)
+    .map((row) => {
       const item = document.createElement('li');
-      item.style.background = window.PALETTE[entry.color % window.PALETTE.length];
-      item.style.color = window.PALETTE_TEXT[entry.color % window.PALETTE_TEXT.length];
-      item.textContent = [...entry.name][0] ? [...entry.name][0].toUpperCase() : '?';
-      item.title = entry.name + (entry.self ? ' (you)' : '') + (entry.viewOnly ? ', view only' : '');
-      if (entry.self) item.classList.add('you');
-      if (entry.viewOnly) item.append(eye.content.cloneNode(true));
+      const info = document.createElement('span');
+      info.className = 'person';
+      const role = document.createElement('span');
+      role.className = 'person-role';
+      role.textContent = row.role;
+      info.append(describe(row), role);
+      item.append(avatar(row), info);
       return item;
     });
+  if (own) {
+    paint(selfAvatar, own.color);
+    selfAvatar.textContent = own.initial;
+    selfName.replaceChildren(...describe(own).childNodes);
+    selfRole.textContent = own.role;
+  }
+  for (const child of peopleList.querySelectorAll(':scope > li')) if (child !== selfRow) child.remove();
+  if (!own) selfRow.remove();
+  else if (peopleList.firstChild !== selfRow) peopleList.prepend(selfRow);
+  peopleList.append(...items);
+}
+
+function renderRoster() {
+  const rows = people.peopleRows([...roster.values()], shareControl);
+  const hidden = rows.length > ROSTER_MAX ? rows.length - (ROSTER_MAX - 1) : 0;
+  const items = rows.slice(0, rows.length - hidden).map((row) => {
+    const item = avatar(row);
+    if (row.self) item.classList.add('you');
+    if (row.viewOnly) item.append(eye.content.cloneNode(true));
+    return item;
+  });
+  if (hidden) {
+    const more = document.createElement('span');
+    more.className = 'avatar more';
+    more.textContent = `+${hidden}`;
+    items.push(more);
+  }
   rosterList.replaceChildren(...items);
+  renderPeople();
 }
 
 function showPresence(participants) {
   for (const participant of participants) {
-    if (participant.touch === null) roster.delete(participant.id);
-    else {
+    if (participant.touch === null) {
+      roster.delete(participant.id);
+      clearTimeout(touchTimers.get(participant.id));
+      touchTimers.delete(participant.id);
+    } else {
+      const known = roster.get(participant.id);
+      const phase = participant.touch ? participant.touch.phase : null;
       roster.set(participant.id, {
         name: participant.name,
         color: participant.color,
+        kind: participant.kind,
         viewOnly: participant.viewOnly === true,
+        touching: phase === null ? known?.touching === true : phase !== 'up',
       });
+      if (phase !== null) {
+        clearTimeout(touchTimers.get(participant.id));
+        if (phase !== 'up') {
+          touchTimers.set(
+            participant.id,
+            setTimeout(() => {
+              const entry = roster.get(participant.id);
+              if (entry) roster.set(participant.id, { ...entry, touching: false });
+              renderRoster();
+            }, TOUCH_MS),
+          );
+        }
+      }
     }
   }
   renderRoster();
   overlay.presence(participants);
 }
 
+function setPeopleOpen(open, restoreFocus) {
+  peoplePanel.hidden = !open;
+  peopleButton.setAttribute('aria-expanded', String(open));
+  if (!open) {
+    editing(false);
+    if (restoreFocus) peopleButton.focus();
+  }
+}
+
+peopleButton.addEventListener('click', () => {
+  if (peoplePanel.hidden) setOptionsOpen(false, false);
+  setPeopleOpen(peoplePanel.hidden, false);
+});
+peopleBox.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !peoplePanel.hidden) {
+    event.stopPropagation();
+    setPeopleOpen(false, true);
+  }
+});
+document.addEventListener('pointerdown', (event) => {
+  if (!peoplePanel.hidden && !peopleBox.contains(event.target)) setPeopleOpen(false, false);
+});
+changeName.addEventListener('click', () => editing(true));
+editCancel.addEventListener('click', () => editing(false));
+nameEdit.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const name = editInput.value.trim();
+  if (!name || (me && name === me.name)) return editing(false);
+  if (Date.now() - lastRenameAt < RENAME_MS) {
+    editNote.textContent = 'You can change your name again in a few seconds.';
+    return;
+  }
+  chooseName(name);
+  editing(false);
+});
+
 const socketUrl = location.href
   .replace(/#.*$/, '')
   .replace(/^http/, 'ws')
   .replace(/\/[^/]*$/, '/ws');
 let socket = null;
+let kickClipboard = () => {};
 let pending = Promise.resolve();
+
+function sendName(name) {
+  lastRenameAt = Date.now();
+  send({ type: 'name', name });
+}
 
 function connect(codec) {
   roster.clear();
+  for (const timer of touchTimers.values()) clearTimeout(timer);
+  touchTimers.clear();
   me = null;
   overlay.clear();
   renderRoster();
@@ -343,7 +538,8 @@ function connect(codec) {
   body.dataset.codec = codec;
   current.binaryType = 'arraybuffer';
   current.addEventListener('open', () => {
-    if (chosenName) send({ type: 'name', name: chosenName });
+    kickClipboard();
+    if (chosenName) sendName(chosenName);
   });
   current.addEventListener('message', (event) => {
     if (current !== socket) return;
@@ -356,8 +552,11 @@ function connect(codec) {
     }
     const message = JSON.parse(event.data);
     if (message.type === 'hello') {
+      if (typeof message.title === 'string') document.title = message.title;
       expiresAt = Date.parse(message.expiresAt);
       refreshStatus();
+    } else if (message.type === 'title') {
+      if (typeof message.title === 'string') document.title = message.title;
     } else if (message.type === 'clipboard') {
       const waiting = copies.get(message.id);
       copies.delete(message.id);
@@ -411,7 +610,9 @@ function useJpeg() {
 }
 
 const send = (message) => {
-  if (socket && socket.readyState === 1) socket.send(JSON.stringify(message));
+  if (!socket || socket.readyState !== 1) return false;
+  socket.send(JSON.stringify(message));
+  return true;
 };
 
 void canDecodeVideo().then((supported) => connect(supported ? 'h264' : 'jpeg'));
@@ -425,26 +626,225 @@ for (const button of document.querySelectorAll('[data-rotate]')) {
   else button.addEventListener('click', () => send({ type: 'rotate', direction: button.dataset.rotate }));
 }
 
-const copyButton = document.getElementById('copy');
-if (!control || !['ios', 'android'].includes(body.dataset.platform)) copyButton.remove();
+const options = document.getElementById('options');
+const optionsButton = document.getElementById('options-button');
+const optionsPanel = document.getElementById('options-panel');
+const syncSwitch = document.getElementById('sync-clipboard');
+const syncNote = document.getElementById('sync-note');
+const copyDevice = document.getElementById('copy-device');
+const copyChip = document.getElementById('copy-chip');
+const SYNC_KEY = 'stim-share-clipboard-sync';
+const COPY_TIMEOUT_MS = 15000;
+
+function setOptionsOpen(open, restoreFocus) {
+  optionsPanel.hidden = !open;
+  optionsButton.setAttribute('aria-expanded', String(open));
+  if (open) setPeopleOpen(false, false);
+  else if (restoreFocus) optionsButton.focus();
+}
+
+if (!control || !['ios', 'android'].includes(body.dataset.platform)) options.remove();
 else {
-  const { writeClipboard } = globalThis.stimClipboard;
+  const { writeClipboard, nextPollDelay, createClipboardSync } = globalThis.stimClipboard;
+  const sync = createClipboardSync();
+  const pasteKey = /Mac/.test(navigator.userAgent) ? 'Command' : 'Control';
+  let syncOn = true;
+  let readPermission = 'unknown';
+  let asked = false;
   let copyId = 0;
-  copyButton.addEventListener('click', () => {
-    if (!navigator.clipboard) return showNote('This browser gives the page no clipboard access.');
+  let delay = nextPollDelay(0, true);
+  let pollTimer = null;
+  let polling = false;
+  let chipText = null;
+
+  try {
+    syncOn = localStorage.getItem(SYNC_KEY) !== 'off';
+  } catch {
+    syncOn = true;
+  }
+  const remember = () => {
+    try {
+      localStorage.setItem(SYNC_KEY, syncOn ? 'on' : 'off');
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  options.hidden = false;
+  syncSwitch.checked = syncOn;
+
+  const active = () =>
+    syncOn &&
+    document.visibilityState === 'visible' &&
+    document.hasFocus() &&
+    socket !== null &&
+    socket.readyState === WebSocket.OPEN;
+
+  function requestDeviceText(poll) {
     const id = ++copyId;
-    const text = new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       copies.set(id, { resolve, reject });
       setTimeout(() => {
         if (copies.delete(id)) reject(new Error('The device did not answer in time.'));
-      }, 15000);
+      }, COPY_TIMEOUT_MS);
+      send({ type: 'clipboard-get', id, ...(poll ? { poll: true } : {}) });
     });
-    send({ type: 'clipboard-get', id });
-    writeClipboard(navigator.clipboard, globalThis.ClipboardItem, Blob, text).then(
-      () => showNote('Copied the device clipboard.'),
-      (error) => showNote(error && error.message ? error.message : 'The browser did not allow copying.'),
-    );
+  }
+
+  function showChip(text) {
+    chipText = text;
+    copyChip.hidden = text === null;
+  }
+
+  function refreshNote() {
+    syncNote.hidden = syncOn && readPermission === 'granted';
+    syncNote.textContent = `Press ${pasteKey}-V on the device screen to paste.`;
+  }
+
+  async function writeToBrowser(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      sync.wrote(text);
+      showChip(null);
+    } catch {
+      showChip(text);
+    }
+  }
+
+  function schedule() {
+    clearTimeout(pollTimer);
+    pollTimer = active() ? setTimeout(pollOnce, delay) : null;
+  }
+
+  async function pollOnce() {
+    pollTimer = null;
+    if (polling || !active()) return;
+    polling = true;
+    let ok = true;
+    try {
+      const text = await requestDeviceText(true);
+      if (active() && sync.deviceRead(text)) await writeToBrowser(text);
+    } catch {
+      ok = false;
+    }
+    polling = false;
+    delay = nextPollDelay(delay, ok);
+    schedule();
+  }
+
+  async function readBrowser() {
+    if (!active() || readPermission !== 'granted') return;
+    try {
+      const request = sync.browserRead(await navigator.clipboard.readText());
+      if (request && request.message) {
+        // A send the server then drops is recorded as sent; the next poll may replace the browser text.
+        if (send(request.message)) sync.sent(request.message.text);
+      } else if (request) showNote(request.note);
+    } catch (error) {
+      if (error && error.name === 'NotAllowedError') readPermission = 'denied';
+      refreshNote();
+    }
+  }
+
+  function returned() {
+    delay = nextPollDelay(0, true);
+    schedule();
+    void readBrowser();
+  }
+
+  async function askToRead() {
+    if (asked || !syncOn || readPermission !== 'prompt') return;
+    asked = true;
+    try {
+      await navigator.clipboard.readText();
+      readPermission = 'granted';
+    } catch (error) {
+      if (error && error.name === 'NotAllowedError') readPermission = 'denied';
+    }
+    refreshNote();
+    void readBrowser();
+  }
+
+  async function queryRead() {
+    if (!navigator.permissions || !navigator.clipboard || !navigator.clipboard.readText) {
+      readPermission = 'unsupported';
+    } else {
+      try {
+        const status = await navigator.permissions.query({ name: 'clipboard-read' });
+        readPermission = status.state;
+        status.addEventListener('change', () => {
+          readPermission = status.state;
+          refreshNote();
+          void readBrowser();
+        });
+      } catch {
+        readPermission = 'unsupported';
+      }
+    }
+    refreshNote();
+    void readBrowser();
+  }
+
+  syncSwitch.addEventListener('change', () => {
+    syncOn = syncSwitch.checked;
+    remember();
+    if (syncOn) {
+      returned();
+      void askToRead();
+    } else {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+      showChip(null);
+    }
+    refreshNote();
   });
+  copyChip.addEventListener('click', async () => {
+    const text = chipText;
+    if (text === null) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      sync.wrote(text);
+      showChip(null);
+      showNote('Copied the device clipboard.');
+    } catch {
+      showNote('The browser did not allow copying.');
+    }
+  });
+  copyDevice.addEventListener('click', async () => {
+    if (!navigator.clipboard) return showNote('This browser gives the page no clipboard access.');
+    const text = requestDeviceText().then((value) => {
+      sync.deviceRead(value);
+      return value;
+    });
+    try {
+      await writeClipboard(navigator.clipboard, globalThis.ClipboardItem, Blob, text);
+      sync.wrote(await text);
+      showChip(null);
+      showNote('Copied the device clipboard.');
+    } catch (error) {
+      showNote(error && error.message ? error.message : 'The browser did not allow copying.');
+    }
+  });
+  optionsButton.addEventListener('click', () => setOptionsOpen(optionsPanel.hidden, false));
+  options.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !optionsPanel.hidden) {
+      event.stopPropagation();
+      setOptionsOpen(false, true);
+    }
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (!optionsPanel.hidden && !options.contains(event.target)) setOptionsOpen(false, false);
+    void askToRead();
+  });
+  document.addEventListener('keydown', () => void askToRead());
+  window.addEventListener('focus', returned);
+  window.addEventListener('blur', schedule);
+  document.addEventListener('visibilitychange', () =>
+    document.visibilityState === 'visible' ? returned() : schedule(),
+  );
+  kickClipboard = returned;
+  refreshNote();
+  void queryRead();
 }
 
 const upgrade = document.getElementById('upgrade');
@@ -477,7 +877,7 @@ function chooseName(name) {
     /* the name is still used for this page */
   }
   nameForm.hidden = true;
-  if (name) send({ type: 'name', name });
+  if (name) sendName(name);
 }
 if (body.dataset.askName === 'true') {
   const remembered = rememberedName();

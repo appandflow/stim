@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,16 +11,23 @@ import {
   daemonSocket,
   maintenanceNdjsonFile,
   readDaemonSnapshot,
+  readMaintenanceState,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { beforeCommand, ensureDaemon, passPlacement, requestDaemonTick } from '../daemon/client.ts';
+import * as gcDevices from '../commands/gc/devices.ts';
 import * as measure from '../daemon/measure.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
+import { runHomePasses } from '../daemon/passes.ts';
+import { macosDir } from '../macos/state.ts';
 import { runDaemon } from '../daemon/run.ts';
+import * as maintenanceMeasure from '../maintenance/measure.ts';
 import * as maintenanceRun from '../maintenance/run.ts';
-import { saveConfig } from '../workspace/config.ts';
+import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
+import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
 const entry = fileURLToPath(new URL('../daemon/run.ts', import.meta.url));
 let home: string;
@@ -176,7 +183,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     expect(readDaemonSnapshot()).toMatchObject({ mode: 'on', intervalMs: 250, workspaces: [] });
   }, 20_000);
 
-  function normalMeasurement(): void {
+  function normalMeasurement(level: 'normal' | 'warning' = 'normal'): void {
     const measureTick = measure.measureTick;
     const normal = vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {
       const measured = await measureTick(...args);
@@ -185,7 +192,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
         measurement: {
           ...measured.measurement,
           disk: [{ volume: '/', freeMb: 500_000 }],
-          memory: { level: 'normal', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
+          memory: { level, availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
         },
       };
     });
@@ -215,16 +222,11 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
   test.skipIf(process.platform !== 'darwin')(
     "under memory pressure, the tick's maintenance pass names memory culprits from a slow top without blocking the event loop",
     async () => {
-      normalMeasurement();
+      normalMeasurement('warning');
       const real = getExecutor();
       const slowTop = ['-e', `setTimeout(() => process.stdout.write('PID MEM COMMAND\\n123 80G fseventsd\\n'), 600)`];
       setExecutor({
         ...real,
-        runFile: (file, args, options) => (file === '/usr/sbin/sysctl' ? '2\n' : real.runFile(file, args, options)),
-        runFileQuiet: (file, args, options) =>
-          file === '/usr/bin/top'
-            ? real.runFileQuiet(process.execPath, slowTop, options)
-            : real.runFileQuiet(file, args, options),
         runFileQuietAsync: (file, args, options) =>
           file === '/usr/bin/top'
             ? real.runFileQuietAsync(process.execPath, slowTop, options)
@@ -241,6 +243,150 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       expect(firstTick()?.eventLoopDelay.maxMs).toBeLessThan(500);
     },
     20_000,
+  );
+
+  const SIM_LIST = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-18-0': [
+        {
+          udid: 'UDID-1',
+          name: 'stim-app (iPhone 16 18.0)',
+          state: 'Shutdown',
+          isAvailable: true,
+          deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16',
+          dataPathSize: 1,
+        },
+      ],
+    },
+  });
+
+  function toolOutput(file: string, args: readonly string[]): string {
+    const name = file.split('/').at(-1);
+    if (name === 'xcrun' && args.includes('list')) return SIM_LIST;
+    if (name === 'sysctl') return '1\n';
+    if (name === 'adb' && args[0] === 'devices') return 'List of devices attached\nemulator-5554\tdevice\n';
+    if (name === 'adb') return 'stim-other\nOK\n';
+    if (name === 'vm_stat')
+      return 'page size of 16384 bytes\nPages free: 1.\nPages inactive: 1.\nPages speculative: 1.\n';
+    return '';
+  }
+
+  function asyncOnlyTools(): { sync: string[]; async: string[] } {
+    const real = getExecutor();
+    const calls: { sync: string[]; async: string[] } = { sync: [], async: [] };
+    const refuse = (file: string, args: readonly string[] = []): never => {
+      calls.sync.push([file, ...args].join(' '));
+      throw new Error(`synchronous ${file} in a daemon tick`);
+    };
+    setExecutor({
+      ...real,
+      run: (command: string) => refuse(command),
+      runQuiet: (command: string) => refuse(command),
+      runFile: (file: string, args: string[]) => refuse(file, args),
+      runFileQuiet: (file: string, args: string[]) => refuse(file, args),
+      spawn: (file: string, args: readonly string[] = []) => refuse(file, args),
+      runFileAsync: async (file: string, args: string[], options) => {
+        calls.async.push([file, ...args].join(' '));
+        return file === 'git' ? real.runFileAsync(file, args, options) : toolOutput(file, args);
+      },
+      runFileQuietAsync: async (file: string, args: string[], options) => {
+        calls.async.push([file, ...args].join(' '));
+        return file === 'git' ? real.runFileQuietAsync(file, args, options) : toolOutput(file, args);
+      },
+    });
+    onTestFinished(() => resetExecutor());
+    return calls;
+  }
+
+  function idleWorkspaces(): string[] {
+    const git = (cwd: string, ...args: string[]) =>
+      getExecutor().runFile('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, timeoutMs: 10_000 });
+    const repo = join(home, 'repo');
+    const linked = join(home, 'linked');
+    mkdirSync(repo);
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+    git(repo, 'worktree', 'add', '-q', '-b', 'feature', linked);
+    for (const root of [repo, linked]) {
+      writeFileSync(join(root, 'package.json'), '{"name":"app"}');
+      ensureWorkspaceStorage(root);
+      upsertProject(root, {
+        platforms: { ios: { deviceUdid: 'UDID-1', owned: true }, android: { avdName: 'stim-app', owned: true } },
+      });
+      recordWorkspaceUse(root, new Date(Date.now() - 30 * 86_400_000));
+    }
+    return [repo, linked];
+  }
+
+  test('a tick with every maintenance check due, the dormant stage due and disk pressure high starts no child process synchronously', async () => {
+    for (const root of idleWorkspaces()) {
+      mkdirSync(macosDir(root), { recursive: true });
+      mkdirSync(join(root, 'node_modules'));
+    }
+    const config = loadConfig();
+    assert(config);
+    saveConfig({ ...config, idle: { dormantDays: 0.000_001 } });
+    process.env.STIM_DAEMON = 'on';
+    process.env.STIM_DISK_MIN_FREE_GB = '100000000';
+    onTestFinished(() => {
+      delete process.env.STIM_DAEMON;
+      delete process.env.STIM_DISK_MIN_FREE_GB;
+    });
+    vi.spyOn(maintenanceMeasure, 'sizeScanDeferred').mockReturnValue(false);
+    vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    const calls = asyncOnlyTools();
+
+    const passes = await runHomePasses({ act: true, trigger: 'daemon', log: () => {} });
+
+    expect(passes.pressure.level).not.toBe('normal');
+    expect(readMaintenanceState()?.lastPass?.trigger).toBe('daemon');
+    expect(calls.sync).toEqual([]);
+  }, 60_000);
+
+  test.skipIf(process.platform !== 'darwin')(
+    "a tick's maintenance pass takes memory pressure and simulator sizes from the tick's measurement instead of reading them again",
+    async () => {
+      idleWorkspaces();
+      process.env.STIM_DAEMON = 'on';
+      onTestFinished(() => {
+        delete process.env.STIM_DAEMON;
+      });
+      vi.spyOn(maintenanceMeasure, 'sizeScanDeferred').mockReturnValue(false);
+      vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+      onTestFinished(() => {
+        vi.restoreAllMocks();
+      });
+      const measureTick = measure.measureTick;
+      vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {
+        const measured = await measureTick(...args);
+        return {
+          ...measured,
+          sims: measured.sims?.map((sim) => ({ ...sim, dataPathSize: 4096 })) ?? null,
+          measurement: {
+            ...measured.measurement,
+            memory: { level: 'warning', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
+          },
+        };
+      });
+      const calls = asyncOnlyTools();
+
+      await runHomePasses({ act: false, trigger: 'daemon', log: () => {} });
+
+      const state = readMaintenanceState();
+      expect(state?.pressure?.memory.level).toBe('warning');
+      expect(state?.sizes).toContainEqual(
+        expect.objectContaining({
+          category: 'owned-devices',
+          name: 'owned simulator stim-app (iPhone 16 18.0)',
+          bytes: 4096,
+        }),
+      );
+      expect(calls.async.filter((call) => call.includes('kern.memorystatus_vm_pressure_level'))).toHaveLength(1);
+    },
+    60_000,
   );
 
   test('a tick that fails hands the timers back: the daemon releases its claim and exits instead of holding it idle', async () => {

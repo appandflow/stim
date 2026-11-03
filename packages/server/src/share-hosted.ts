@@ -3,6 +3,8 @@ import type { AuditRecord } from './actions.ts';
 import type { Controller, InputCommand, SessionTarget } from './control.ts';
 import type { FrameHint } from './frame-helper.ts';
 import type { Frame, FrameListener } from './frames.ts';
+import { GRAB_IDLE_MS, PointerGrab } from './pointer-grab.ts';
+import type { PresenceHub } from './presence.ts';
 import { CONGESTION_NOTICE_MS, type HostConnections, type Upstream } from './hosted-relay.ts';
 import type {
   ControlBeginParams,
@@ -25,6 +27,7 @@ export interface HostedTarget {
 type Refusal = { code: ErrorCode; message: string };
 type ShareListener = Pick<FrameListener, 'frame' | 'video' | 'delayed' | 'failed' | 'artwork'>;
 type Lease = Awaited<ReturnType<HostConnections['acquire']>>;
+type TouchCommand = Extract<InputCommand, { input: 'touch' }>;
 type PlatformSlot = { platform: 'ios' | 'android'; slot?: string };
 
 /** The frames of a shared device and the input to it, wherever the device runs. */
@@ -98,6 +101,10 @@ export function hostedOf(
  * device-host connection. One host subscription serves every viewer, and none exists while nobody watches.
  */
 export class HostedShareSource implements ShareSource {
+  readonly presence?: NonNullable<ShareSource['presence']>;
+  private readonly hub?: { hub: Pick<PresenceHub, 'touch'>; key: string };
+  private readonly grab = new PointerGrab<PresenceParticipant, TouchCommand>();
+  private grabIdle: NodeJS.Timeout | null = null;
   private readonly hosts: Pick<HostConnections, 'acquire'>;
   private readonly host: HostedTarget;
   private readonly target: Required<PlatformSlot>;
@@ -121,8 +128,31 @@ export class HostedShareSource implements ShareSource {
     host: HostedTarget,
     target: PlatformSlot,
     audit: (record: AuditRecord) => void,
+    presence?: {
+      hub: Pick<PresenceHub, 'subscribe' | 'join' | 'leave' | 'touch'>;
+      /** The hub key of the shared device. */
+      key: string;
+      /** Brings what the host publishes about the session into the hub under `key`; returns how to stop. */
+      follow: (key: string) => () => void;
+    },
   ) {
     this.hosts = hosts;
+    if (presence) {
+      const { hub, key, follow } = presence;
+      this.hub = { hub, key };
+      this.presence = {
+        subscribe: (listener) => {
+          const unfollow = follow(key);
+          const unsubscribe = hub.subscribe(key, listener);
+          return () => {
+            unsubscribe();
+            unfollow();
+          };
+        },
+        join: (who) => hub.join(key, who),
+        leave: (id) => hub.leave(key, id),
+      };
+    }
     this.host = host;
     this.target = { platform: target.platform, slot: target.slot ?? 'default' };
     this.audit = audit;
@@ -323,10 +353,23 @@ export class HostedShareSource implements ShareSource {
     session: string,
     method: string,
     params: Record<string, unknown>,
-    _command: InputCommand,
+    command: InputCommand,
+    participant: PresenceParticipant,
   ): Promise<Refusal | object | null> {
     const control = this.control;
     if (control?.session !== session) return { code: 'action-failed', message: 'The hosted control session ended.' };
+    if (command.input === 'touch') {
+      const verdict = this.grab.admit(participant, command);
+      if (!verdict.admit) {
+        return verdict.busy === undefined
+          ? null
+          : { code: 'device-busy', message: `${verdict.busy} is using the screen.`, busy: verdict.busy };
+      }
+      if (this.grabIdle) clearTimeout(this.grabIdle);
+      this.grabIdle = command.phase === 'up' ? null : setTimeout(() => this.lift(this.grab.expire()), GRAB_IDLE_MS);
+      this.grabIdle?.unref();
+      this.show(participant, command);
+    }
     if (method.startsWith('input.clipboard.') && !control.lease.connection.supports('device-clipboard')) {
       return {
         code: 'action-failed',
@@ -342,6 +385,39 @@ export class HostedShareSource implements ShareSource {
     }
   }
 
+  release(_owner: Controller, session: string, participant: PresenceParticipant): void {
+    if (this.control?.session === session) this.lift(this.grab.release(participant.id));
+  }
+
+  private show(who: PresenceParticipant, command: TouchCommand): void {
+    this.hub?.hub.touch(this.hub.key, who, {
+      phase: command.phase,
+      x: command.x,
+      y: command.y,
+      ...(command.x2 !== undefined && command.y2 !== undefined ? { second: { x: command.x2, y: command.y2 } } : {}),
+      at: Date.now(),
+    });
+  }
+
+  /** Lets go of the device's pointer for a viewer that held it and left or went quiet. */
+  private lift(lifted: { holder: PresenceParticipant; up: TouchCommand } | null): void {
+    if (this.grabIdle) clearTimeout(this.grabIdle);
+    this.grabIdle = null;
+    const control = this.control;
+    if (!lifted || !control) return;
+    const { up } = lifted;
+    void control.lease.connection
+      .request('device-host.input.touch', {
+        session: control.session,
+        phase: up.phase,
+        x: up.x,
+        y: up.y,
+        ...(up.x2 !== undefined && up.y2 !== undefined ? { x2: up.x2, y2: up.y2 } : {}),
+      })
+      .catch(() => {});
+    this.show(lifted.holder, up);
+  }
+
   endFor(_owner: Controller, message: string): void {
     this.endControl(null, message, 'end');
   }
@@ -350,6 +426,9 @@ export class HostedShareSource implements ShareSource {
     const control = this.control;
     if (!control) return;
     this.control = null;
+    if (this.grabIdle) clearTimeout(this.grabIdle);
+    this.grabIdle = null;
+    this.grab.expire();
     control.unroute();
     this.audit({
       at: new Date().toISOString(),

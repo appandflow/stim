@@ -120,6 +120,11 @@ export function deviceListingCacheFile(): string {
   return join(configDir(), 'device-listing.json');
 }
 
+/** The checkouts `status` confirmed as repository roots. */
+export function checkoutRootsCacheFile(): string {
+  return join(configDir(), 'checkout-roots.json');
+}
+
 export function diskUsageCacheDir(): string {
   return join(configDir(), 'disk-usage');
 }

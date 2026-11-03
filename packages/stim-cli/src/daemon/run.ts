@@ -155,8 +155,12 @@ function homeAlive(config: Config | null, measured: TickMeasurement): string | n
  * Work the daemon still has to do in a quiet home, which keeps it alive at the slow cadence: a workspace the dormant
  * stage will take, until its due time plus one slow tick.
  */
-function pendingWork(config: Config | null, measured: TickMeasurement, slowTickMs: number): string | null {
-  const dormant = pendingDormant(config, { simsFailed: measured.sims === null }, { graceMs: slowTickMs });
+async function pendingWork(
+  config: Config | null,
+  measured: TickMeasurement,
+  slowTickMs: number,
+): Promise<string | null> {
+  const dormant = await pendingDormant(config, { simsFailed: measured.sims === null }, { graceMs: slowTickMs });
   return dormant ? `${dormant} is not dormant yet` : null;
 }
 
@@ -360,7 +364,7 @@ export async function runDaemon({
         waiters.build.length || waiters.boot.length || waiting.length
           ? 'a run waits for a build slot or a device boot'
           : homeAlive(config, measured);
-      pending = alive ? null : pendingWork(config, measured, slowTickMs);
+      pending = alive ? null : await pendingWork(config, measured, slowTickMs);
       wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
       interval = alive || pressure.level !== 'normal' ? tickMs : slowTickMs;
       for (const { path: workspace, outcome, detail } of workspaces) {

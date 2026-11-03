@@ -22,6 +22,7 @@ import { collectTempLeftovers } from '../commands/gc/temp-leftovers.ts';
 import { collectTrash } from '../commands/gc/trash.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
+import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { finishedWorkspaces, planDeviceDeletion, planDeviceDeletionAsync } from './devices.ts';
 import type { MaintenancePlan } from './plan.ts';
 import type { MaintenanceSettings } from './settings.ts';
@@ -273,6 +274,7 @@ export async function planWorktrees({
   refresh,
   idleDays = null,
   operation,
+  deviceActivity,
 }: {
   protectedRoot: string;
   pinned: (workspace: string) => boolean;
@@ -283,6 +285,8 @@ export async function planWorktrees({
   protectRecentMs?: number;
   refresh?: boolean;
   operation?: StimContext;
+  /** Reads owned device activity for an operation; a new listing when absent. */
+  deviceActivity?: (withSims: boolean) => Promise<OwnedDeviceActivity[]>;
 }): Promise<WorktreePlan> {
   const sweep = await collectWorktreeSweep({
     idle: idleDays !== null,
@@ -331,7 +335,7 @@ export async function planWorktrees({
       env: operation?.env,
     };
     const devices = operation
-      ? await planDeviceDeletionAsync(options, operation.signal, operation)
+      ? await planDeviceDeletionAsync(options, operation.signal, operation, deviceActivity)
       : planDeviceDeletion(options);
     actions.push(...devices.actions);
     skips.push(...devices.skips);

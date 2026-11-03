@@ -14,6 +14,7 @@ import { FRAME_FPS, type DeviceFrameArtwork, type PresenceParticipant, type Serv
 import { targetKey } from './recorder.ts';
 import { hostedOf, type HostedTarget, type ShareSource } from './share-hosted.ts';
 import { endedPage, loginPage, SHARE_ASSETS, viewerPage } from './share-page.ts';
+import { simulatorAppName, titleFacts, viewerTitle, type TitleFacts } from './share-title.ts';
 import { accessFor, cleanName, digest, guestName, viewerColor, type ShareAccess } from './share-identity.ts';
 import type { OpenedRoute } from './share-route.ts';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
@@ -119,6 +120,8 @@ export interface ShareDeps {
   };
   /** Frames and input for a device a host Mac runs for this machine; without it such a share is refused. */
   hosted?: (host: HostedTarget, request: ShareTarget) => ShareSource;
+  /** The display name of an app on a simulator, for the page titles; defaults to reading its Info.plist. */
+  appName?: (udid: string, bundleId: string) => Promise<string | null>;
   lookup?: LeaseLookup;
   limits?: Partial<ShareLimits>;
   /** Called when {@link ShareHub.unrecordedTargets} changed. */
@@ -282,6 +285,8 @@ interface Viewer {
 interface Bound {
   key: string;
   hosted: boolean;
+  /** The local device behind `open`; null for a hosted session. */
+  device: Device | null;
   open: (request: ShareTarget) => ShareSource;
 }
 
@@ -299,6 +304,8 @@ interface Share {
   bound: string | null;
   /** Whether the share was last fed by a hosted session, which a waiting share keeps for its page. */
   hosted: boolean;
+  /** The local device the share is fed by; null for a hosted session and while the share waits. */
+  device: Device | null;
   /** The source of the device now fed from; null while the share waits. */
   source: ShareSource | null;
   /** Not before this time (epoch ms) does a share that lost its stream look for its device again. */
@@ -316,6 +323,9 @@ interface Share {
   controlRetryAt: number;
   recordKey: string | null;
   latest: StatusPayload | null;
+  /** What the shared device's status says for the page titles, and the app's display name once read. */
+  facts: TitleFacts;
+  app: string | null;
   timer: NodeJS.Timeout;
   unwatch: () => void;
   ended: boolean;
@@ -486,6 +496,7 @@ export class ShareHub {
       state: 'live',
       bound: bound.key,
       hosted: bound.hosted,
+      device: bound.device,
       source,
       resumeAt: 0,
       backoff: RESUME_MIN_MS,
@@ -503,12 +514,15 @@ export class ShareHub {
       controlRetryAt: 0,
       recordKey: null,
       latest: status,
+      facts: titleFacts(status, request),
+      app: null,
       timer: setTimeout(() => void this.end(share, 'This share expired.'), expiresAt - Date.now()),
       unwatch: () => {},
       ended: false,
     };
     share.timer.unref?.();
     this.shares.set(share.key, share);
+    void this.readApp(share);
     share.unwatch = this.deps.subscribeStatus({
       item: (payload) => this.reconcile(share, payload),
       failed: () => {},
@@ -536,12 +550,47 @@ export class ShareHub {
       return {
         key: `host:${host.machine}/${host.session}`,
         hosted: true,
+        device: null,
         open: (target) => hosted(host, target),
       };
     }
     const owned = ownedDevice(payload, request, attached, this.deps.lookup);
     if (typeof owned === 'string') return owned;
-    return { key: deviceKey(owned), hosted: false, open: (target) => this.localSource(owned, target) };
+    return { key: deviceKey(owned), hosted: false, device: owned, open: (target) => this.localSource(owned, target) };
+  }
+
+  private titleOf(share: Share): string {
+    return viewerTitle(share.request.platform, share.app, share.facts.model);
+  }
+
+  private broadcastTitle(share: Share): void {
+    const message = JSON.stringify({ type: 'title', title: this.titleOf(share) });
+    for (const viewer of share.viewers) {
+      if (viewer.socket.readyState === viewer.socket.OPEN) viewer.socket.send(message);
+    }
+  }
+
+  /** Reads the display name of the app the status names, once per app, for the titles of a local simulator share. */
+  private async readApp(share: Share): Promise<void> {
+    const { appId } = share.facts;
+    const device = share.device;
+    if (!appId || device?.platform !== 'ios' || device.physical) return;
+    const name = await (this.deps.appName ?? simulatorAppName)(device.udid, appId).catch(() => null);
+    if (share.ended || share.facts.appId !== appId || name === share.app) return;
+    share.app = name;
+    this.broadcastTitle(share);
+  }
+
+  private followTitle(share: Share, payload: StatusPayload): void {
+    const next = titleFacts(payload, share.request);
+    const appChanged = next.appId !== share.facts.appId;
+    const changed = appChanged || next.model !== share.facts.model;
+    share.facts = next;
+    if (appChanged) {
+      share.app = null;
+      void this.readApp(share);
+    }
+    if (changed) this.broadcastTitle(share);
   }
 
   private localSource(device: Device, request: ShareTarget): ShareSource {
@@ -770,6 +819,7 @@ export class ShareHub {
   private reconcile(share: Share, payload: StatusPayload): void {
     share.latest = payload;
     if (share.ended) return;
+    this.followTitle(share, payload);
     const bound = this.resolve(payload, share.request, share.state === 'live' ? share.bound : null);
     if (typeof bound === 'string') return this.suspend(share, bound);
     if (share.state === 'waiting') {
@@ -799,6 +849,7 @@ export class ShareHub {
     }
     share.source = null;
     share.bound = null;
+    share.device = null;
     share.controlSession = null;
     share.controlStarting = null;
     share.controlRetryAt = 0;
@@ -816,6 +867,8 @@ export class ShareHub {
     share.source = bound.open(share.request);
     share.bound = bound.key;
     share.hosted = bound.hosted;
+    share.device = bound.device;
+    void this.readApp(share);
     console.error(`stim-server: web share ${share.id} resumed on ${bound.key}`);
     for (const viewer of share.viewers) {
       if (viewer.socket.readyState === viewer.socket.OPEN) viewer.socket.send('{"type":"resumed"}');
@@ -986,6 +1039,7 @@ export class ShareHub {
           response,
           200,
           viewerPage({
+            title: this.titleOf(share),
             control: access === 'control',
             viewOnly: control && access === 'view',
             upgrade: control && access === 'view' && share.viewDigest !== null,
@@ -996,7 +1050,7 @@ export class ShareHub {
           }),
         );
       }
-      return this.respond(response, 200, loginPage(null));
+      return this.respond(response, 200, loginPage(null, share.app));
     }
     if (rest !== 'login' || request.method !== 'POST' || share.passwordDigest === null) {
       request.resume();
@@ -1032,13 +1086,13 @@ export class ShareHub {
     if (share.failures.length >= this.limits.maxFailures) {
       return existing
         ? back('?upgrade=limited')
-        : this.respond(response, 429, loginPage('Too many wrong passwords. Try again later.'));
+        : this.respond(response, 429, loginPage('Too many wrong passwords. Try again later.', share.app));
     }
     const form = new URLSearchParams(body);
     const matched = accessFor(form.get('password') ?? '', share.passwordDigest, share.viewDigest);
     if (!matched) {
       share.failures.push(now);
-      return existing ? back('?upgrade=wrong') : this.respond(response, 401, loginPage('Wrong password.'));
+      return existing ? back('?upgrade=wrong') : this.respond(response, 401, loginPage('Wrong password.', share.app));
     }
     const access: ShareAccess = share.request.control ? matched : 'view';
     if (existing) {
@@ -1048,11 +1102,11 @@ export class ShareHub {
     if (access === 'view') {
       share.viewLogins = share.viewLogins.filter((at) => now - at < this.limits.failureWindowMs);
       if (share.viewLogins.length >= this.limits.maxViewLogins) {
-        return this.respond(response, 429, loginPage('Too many logins. Try again later.'));
+        return this.respond(response, 429, loginPage('Too many logins. Try again later.', share.app));
       }
     }
     if (!makeRoom(share.sessions, access)) {
-      return this.respond(response, 429, loginPage('Too many sessions are signed in. Try again later.'));
+      return this.respond(response, 429, loginPage('Too many sessions are signed in. Try again later.', share.app));
     }
     if (access === 'view') share.viewLogins.push(now);
     const session = token();
@@ -1114,7 +1168,7 @@ export class ShareHub {
     const json = (message: Record<string, unknown>) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
     };
-    json({ type: 'hello', expiresAt: new Date(share.expiresAt).toISOString() });
+    json({ type: 'hello', expiresAt: new Date(share.expiresAt).toISOString(), title: this.titleOf(share) });
     if (share.state === 'waiting') json({ type: 'waiting', message: VIEWER_TEXT.waiting });
     this.identify(share, viewer);
     share.viewers.add(viewer);
@@ -1332,7 +1386,8 @@ export class ShareHub {
       }
     };
     const { source } = share;
-    const session = await this.controlSession(share, viewer);
+    const polling = method === 'input.clipboard.get' && fields.poll === true;
+    const session = polling ? share.controlSession : await this.controlSession(share, viewer);
     if (!source || !session || share.ended || share.source !== source || !share.viewers.has(viewer)) return failRead();
     const parsed = parseInput(method, { ...params, session }, (name) => source.targetOf(share.owner, name));
     if ('code' in parsed) return failRead();

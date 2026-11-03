@@ -39,8 +39,14 @@ import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { cacheBlocked, lowestFree, measureDisk, measureDiskAsync } from './measure.ts';
-import { cacheEntryProtection, maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
-import { artifactWorktrees, clearArtifact, type ArtifactWorktree } from './artifacts.ts';
+import {
+  cacheEntryProtectionFor,
+  maintenancePinned,
+  maintenancePinnedAsync,
+  maintenancePinnedReader,
+  recentUse,
+} from './protect.ts';
+import { artifactWorktreesFor, clearArtifact, type ArtifactWorktree } from './artifacts.ts';
 import {
   cachedDeviceActivity,
   cachedDeviceActivityAsync,
@@ -64,6 +70,8 @@ export interface ActContext {
   worktreeSweep?: WorktreeSweep;
   protect?: (entry: string) => string | null;
   worktrees?: ArtifactWorktree[];
+  /** The daemon tick's context, whose reads run without blocking its event loop. */
+  operation?: StimContext;
 }
 
 const protectWindowMs = (settings: Pick<MaintenanceSettings, 'protectRecentHours'>) =>
@@ -125,7 +133,7 @@ function cacheOf(action: MaintenanceAction): CacheDescriptor | null {
   return discovered.find((cache) => cacheLabel(cache) === action.target) ?? null;
 }
 
-function trimCache(action: MaintenanceAction, context: ActContext): ActionOutcome {
+async function trimCache(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   const cache = cacheOf(action);
   if (!cache) return kept('it is no longer a cache Stim may trim');
   const [planned] = planCacheEmptying([cache], false);
@@ -134,7 +142,7 @@ function trimCache(action: MaintenanceAction, context: ActContext): ActionOutcom
   const result = pruneCache(cache, {
     olderThanDays: Math.max(action.olderThanDays ?? 0, context.settings.protectRecentHours / 24),
     byMtime: true,
-    protect: (context.protect ??= cacheEntryProtection()),
+    protect: (context.protect ??= await cacheEntryProtectionFor(loadConfig(), context.operation)),
     ...(aged ? {} : { evictBytes: action.bytes }),
   });
   if (result.skipped) return kept(result.skipped);
@@ -167,18 +175,21 @@ async function clearOutputs(action: MaintenanceAction, context: ActContext): Pro
   const root = action.workspace;
   if (!root) return kept('the action names no workspace');
   if (root === context.protectedRoot) return kept('the command that started this pass runs in it');
-  if (maintenancePinned(root)) return kept('pinned by maintenance.keep');
+  if (await maintenancePinnedReader(context.operation)(root)) return kept('pinned by maintenance.keep');
   const recent = recentUse(root, context.settings, protectWindowMs(context.settings));
   if (recent) return kept(recent);
   const olderThan = action.olderThanDays ?? null;
   const now = Date.now();
-  const report = collectWorkspaceOutputs({ olderThan, now, measure: false, only: root });
+  const { operation } = context;
+  const report = operation
+    ? await collectWorkspaceOutputs({ olderThan, now, measure: false, only: root, signal: operation.signal, operation })
+    : collectWorkspaceOutputs({ olderThan, now, measure: false, only: root });
   const entry = report.workspaces.find(
     (candidate) => candidate.projectRoot && canonicalPath(candidate.projectRoot) === root,
   );
   if (!entry) return kept('it has no build outputs any more');
   const { results } = await quietly(() =>
-    clearWorkspaceOutputs({ ...report, workspaces: [entry] }, { olderThan, now }),
+    clearWorkspaceOutputs({ ...report, workspaces: [entry] }, { olderThan, now, operation }),
   );
   return outcomeOf(results, action.bytes);
 }
@@ -190,7 +201,8 @@ async function removeWorktree(action: MaintenanceAction, context: ActContext): P
   const path = canonicalPath(worktree.path);
   if (context.protectedRoot === path || context.protectedRoot.startsWith(`${path}${sep}`))
     return kept('the command that started this pass runs inside it');
-  if (worktree.keys.some(maintenancePinned)) return kept('pinned by maintenance.keep');
+  const pinned = maintenancePinnedReader(context.operation);
+  for (const key of worktree.keys) if (await pinned(key)) return kept('pinned by maintenance.keep');
   const before = lowestFree(measureDisk());
   const { results } = await quietly(() => removeWorktrees({ ...sweep, worktrees: [worktree] }));
   const outcome = outcomeOf(results, freedSince(before));
@@ -332,6 +344,7 @@ async function deleteDevices(action: MaintenanceAction, context: ActContext): Pr
       windowMs: deviceWindowMs(action, context),
       protectedRoot: context.protectedRoot,
       purpose: 'automatic maintenance',
+      operation: context.operation,
     }),
   );
   return value;
@@ -341,8 +354,9 @@ async function clearArtifacts(action: MaintenanceAction, context: ActContext): P
   return clearArtifact(action, action.kind === 'would-delete-dependencies' ? 'dependencies' : 'build', {
     windowMs: protectWindowMs(context.settings),
     protectedRoot: context.protectedRoot,
-    pinned: maintenancePinned,
-    worktrees: (context.worktrees ??= artifactWorktrees()),
+    pinned: maintenancePinnedReader(context.operation),
+    worktrees: (context.worktrees ??= await artifactWorktreesFor(context.operation)),
+    operation: context.operation,
   });
 }
 
@@ -430,7 +444,13 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
       return action.check === 'idle'
         ? stopIdleWorkspace(action, {
             protectedRoot: context.background ? '' : context.protectedRoot,
-            devices: () => cachedDeviceActivity(Date.now()),
+            devices: () => {
+              const { operation } = context;
+              return operation
+                ? cachedDeviceActivityAsync(Date.now(), operation.env, operation.signal, operation)
+                : cachedDeviceActivity(Date.now());
+            },
+            operation: context.operation,
             hostedOnly: true,
           })
         : kept(

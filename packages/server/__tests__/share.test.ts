@@ -21,10 +21,14 @@ import { accessUnitOf, type AccessUnit } from '../src/video.ts';
 const WORKSPACE = '/work/app';
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 
-function payload(state: 'Booted' | 'Shutdown' = 'Booted', activity?: Record<string, unknown>) {
+function payload(
+  state: 'Booted' | 'Shutdown' = 'Booted',
+  activity?: Record<string, unknown>,
+  app?: { id: string; state: string },
+) {
   return {
     environments: [
-      { path: WORKSPACE, ios: { udid: 'SIM-1', owned: true, state, name: 'stim-app (iPhone 17)', activity } },
+      { path: WORKSPACE, ios: { udid: 'SIM-1', owned: true, state, name: 'stim-app (iPhone 17)', activity, app } },
     ],
   };
 }
@@ -52,6 +56,8 @@ interface Fixture {
   /** A frame the fake frame pool hands every new subscriber at once, as the real one replays its latest frame. */
   replay: Frame | null;
   presence: PresenceHub;
+  /** The display names the fake simulator reports, by bundle id. */
+  appNames: Record<string, string | null>;
   routeOpens: number[];
   routeCloses: number;
   idle: number;
@@ -88,6 +94,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
     beginCalls: 0,
     replay: null,
     presence: new PresenceHub(),
+    appNames: {},
     routeOpens: [],
     routeCloses: 0,
     idle: 0,
@@ -105,6 +112,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
   };
   f.hub = new ShareHub({
     presence: f.presence,
+    appName: async (_udid, bundleId) => f.appNames[bundleId] ?? null,
     frames: {
       keyframe: () => f.keyframes++,
       congested: () => f.congestions++,
@@ -623,6 +631,26 @@ describe('a web share', () => {
     other.socket.close();
   });
 
+  it('answers a polling clipboard read without starting control, and serves it once control runs', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    const messages: unknown[] = [];
+    socket.on('message', (data, binary) => {
+      if (!binary) messages.push(JSON.parse(data.toString()));
+    });
+    f.inputResult = { text: 'from the device' };
+    socket.send(JSON.stringify({ type: 'clipboard-get', id: 1, poll: true }));
+    await vi.waitFor(() => expect(messages).toContainEqual({ type: 'clipboard', id: 1, error: expect.any(String) }));
+    expect(f.begins).toEqual([]);
+    expect(f.inputs).toEqual([]);
+    socket.send(JSON.stringify({ type: 'key', key: 'left' }));
+    await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+    socket.send(JSON.stringify({ type: 'clipboard-get', id: 2, poll: true }));
+    await vi.waitFor(() => expect(messages).toContainEqual({ type: 'clipboard', id: 2, text: 'from the device' }));
+    socket.close();
+  });
+
   it('answers a clipboard read at once when control cannot start', async () => {
     f.refuseControl = true;
     const share = await started(f, { control: true });
@@ -658,6 +686,59 @@ describe('a web share', () => {
     );
     expect(JSON.stringify(messages)).not.toContain('secret-app');
     socket.close();
+  });
+
+  describe('page titles', () => {
+    const running = (id: string) => payload('Booted', undefined, { id, state: 'running' });
+    const title = (body: string) => /<title>(.*)<\/title>/u.exec(body)?.[1];
+
+    it('names the app and device on the viewer and login pages and never the workspace, escaping the app name', async () => {
+      f.appNames['dev.pokedex'] = 'Pokedex <b>Demo & Co';
+      f.status(running('dev.pokedex'));
+      const share = await started(f, { control: true });
+      const url = local(share, f.hub.port ?? 0);
+      await vi.waitFor(async () => expect(title((await http(url)).body)).toContain('Pokedex'));
+      expect(title((await http(url)).body)).toBe('Pokedex &#60;b&#62;Demo &#38; Co \u00b7 Stim');
+      const cookie = await login(url, share.password ?? '');
+      const page = await http(url, { cookie });
+      expect(title(page.body)).toBe('Pokedex &#60;b&#62;Demo &#38; Co \u00b7 iPhone 17 \u00b7 Stim');
+      expect(page.body).not.toContain(WORKSPACE);
+      expect(page.body).not.toContain('stim-app');
+    });
+
+    it('falls back to a generic title when the app name cannot be read', async () => {
+      f.status(running('dev.unknown'));
+      const share = await started(f, { control: true });
+      const url = local(share, f.hub.port ?? 0);
+      const page = await http(url, { cookie: await login(url, share.password ?? '') });
+      expect(title(page.body)).toBe('Live iOS app \u00b7 iPhone 17 \u00b7 Stim');
+      expect(title((await http(url)).body)).toBe('Shared app \u00b7 Stim');
+    });
+
+    it('sends the title to a viewer and again when the app changes', async () => {
+      f.appNames['dev.one'] = 'One';
+      f.appNames['dev.two'] = 'Two';
+      f.status(running('dev.one'));
+      const share = await started(f, { control: true });
+      const url = local(share, f.hub.port ?? 0);
+      const { socket, messages } = await connect(url, {
+        origin: origin(url),
+        cookie: await login(url, share.password ?? ''),
+      });
+      const titles = () => messages.filter((m) => m.type === 'title' || m.type === 'hello').map((m) => m.title);
+      await vi.waitFor(() => expect(titles().at(-1)).toBe('One \u00b7 iPhone 17 \u00b7 Stim'));
+      f.status(running('dev.two'));
+      await vi.waitFor(() => expect(titles().at(-1)).toBe('Two \u00b7 iPhone 17 \u00b7 Stim'));
+      socket.close();
+    });
+
+    it('titles the page of an ended or unknown link "Share ended"', async () => {
+      const share = await started(f);
+      const url = local(share, f.hub.port ?? 0);
+      const unknown = await http(url.replace(/\/s\/[^/]+\//, '/s/' + 'x'.repeat(43) + '/'));
+      expect(unknown.status).toBe(404);
+      expect(title(unknown.body)).toBe('Share ended &middot; Stim');
+    });
   });
 
   describe('with a view password next to the control one', () => {
@@ -996,6 +1077,7 @@ describe('a web share', () => {
   it('gives the viewer a toolbar control for every button the server accepts and for both rotations', () => {
     for (const platform of ['ios', 'android'] as const) {
       const page = viewerPage({
+        title: 'Test',
         control: true,
         viewOnly: false,
         upgrade: false,
@@ -1081,7 +1163,11 @@ describe('a web share', () => {
       foreground: 'Rkc=',
     });
     await vi.waitFor(() => expect(messages).toHaveLength(3));
-    expect(messages[0]).toEqual({ type: 'hello', expiresAt: share.expiresAt });
+    expect(messages[0]).toEqual({
+      type: 'hello',
+      expiresAt: share.expiresAt,
+      title: 'Live iOS app \u00b7 iPhone 17 \u00b7 Stim',
+    });
     expect(messages[1]).toMatchObject({ type: 'you', name: 'Guest 1', access: 'view' });
     expect(messages[2]).toMatchObject({
       type: 'artwork',

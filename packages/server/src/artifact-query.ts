@@ -12,6 +12,7 @@ import {
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '@stim-cli/core/process-identity';
 import { isJsonObject } from '@stim-cli/core/state';
 import type { BuildArtifactIdentity, BuildGradleArtifactQuery, BuildSwiftpmArtifactQuery } from './protocol.ts';
+import { signalChild } from './stim-command.ts';
 
 export interface ArtifactQueryResult {
   identity: BuildArtifactIdentity | null;
@@ -170,7 +171,7 @@ export function runArtifactQuery({
   signal.addEventListener('abort', cancel, { once: true });
   const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
   if (!captured?.ok || child.pid === undefined) {
-    child.kill('SIGKILL');
+    signalChild(child, 'SIGKILL');
     cancel();
   } else {
     identity = { pid: child.pid, processToken: captured.token };

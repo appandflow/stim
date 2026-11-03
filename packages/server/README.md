@@ -1389,6 +1389,22 @@ subscription ID as `params.subscription`. `device-host.frames.congested`
 (feature `hosted-congestion`) reports that a client further downstream is
 behind on that H.264 subscription; it lowers the bitrate the same way a backed-up
 socket does.
+`device-host.presence.subscribe` (feature `hosted-presence`, with `presence`)
+takes `{ "session": "<hosted-session-id>" }` and answers with a subscription
+ID, from which the host sends `presence` events for that session: the agent
+that drives it with agent-device, as an `agent` participant named
+`Agent · <command>` whose `gesture` carries the point or swipe of the action
+and, for a tap on an element, its rect (`target`). The host follows the
+session's agent-device records while a client subscribes, starting from the
+subscription, and measures points in the viewport of the latest `snapshot`
+answered on the session's agent route; an action with no snapshot shows its
+label only. The method takes only the session's own client, and no other
+client or capability receives the events; `device-host.unsubscribe` ends the
+subscription. The client's stim-server takes the agent participants of such an
+event, and nothing else in it, into its `PresenceHub` under the hosted
+workspace device's key, and drops a host's event that is not one. A host
+without the feature gets no request and publishes nothing; shares and relayed
+subscribers of its sessions then show what this machine publishes itself.
 Hosted capture requires the compiled `stim-frames` helper and does not support
 replay or screenshot fallback. iOS supports device artwork. macOS frames show only the one
 window of the hosted app. Viewing is refused before launch and after the app
@@ -2163,7 +2179,13 @@ of the other people on the device (30 messages a second at most, moves
 coalesced), and `{ type: 'busy', name }` when another viewer holds the touch
 pointer. A viewer may send `{ type: 'name', name }`, once per 5 seconds; names
 are cleaned (NFC, no control or format characters, 24 code points), kept only
-in memory and never logged. A hosted share has no presence. A `touch` message may carry `x2` and `y2` for a
+in memory and never logged. A share of a hosted device has the same presence:
+its viewers, their touches and the pointer grab live in this machine's
+stim-server, which holds the pointer for one viewer before it forwards a
+`device-host.input.touch` and lifts it with an `up` when the holder leaves or
+is quiet for 10 seconds; the host's agent comes from `device-host.presence.subscribe`,
+and the Desktop or phone of this machine controlling the device shows as `Host`.
+A `touch` message may carry `x2` and `y2` for a
 second finger and costs one input like any other. The viewer sends them for two
 real fingers on a touch screen, which wait 40 ms after the first finger lands
 so a second one starts a two-finger gesture instead of a tap, and for
@@ -2176,7 +2198,13 @@ With `control` on an iOS simulator, an Android emulator or an Android phone, a
 (`id`) from a viewer go through `input.clipboard.set` and `input.clipboard.get`,
 each costing ten inputs. The viewer sends `clipboard-set` with `paste: true` on
 Command-V or Control-V while the screen has focus, from the browser's `paste`
-event, and `clipboard-get` from its "Copy device clipboard" toolbar button. The
+event. With its options menu's Sync clipboard switch on (the default) and the
+page focused, it sends `clipboard-get` with `poll: true` every 2 seconds, backing
+off to 30 seconds after failures, and `clipboard-set` without `paste` when the
+browser clipboard it may read changed on focus. A `poll: true` read is answered
+only while the share's control session runs: it starts no session, and no
+`clipboard-get` counts as input for the 5 minute idle end. The menu's "Copy from
+device" button sends `clipboard-get` without `poll`. The
 reply `{ "type": "clipboard", "id", "text" }`, or `error` with a fixed message,
 goes to the asking viewer only and the text is never logged. A share without
 `control` drops both messages, and so does a viewer that cannot control.

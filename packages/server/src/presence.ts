@@ -13,6 +13,7 @@ export const AGENT_LINGER_MS = 5000;
 /** How long a started command keeps the agent on the roster when its end never arrives. */
 const AGENT_START_MS = 10 * 60_000;
 const AGENT_COLOR = 1;
+const AGENT_PREFIX = 'Agent \u00b7 ';
 /** Moves reach subscribers at most 30 times a second per device; `down` and `up` go at once. */
 export const MOVE_FLUSH_MS = 33;
 
@@ -32,6 +33,11 @@ interface Device {
 function personOf(who: PresenceParticipant): PresenceParticipant {
   const { id, kind, name, color, viewOnly } = who;
   return { id, kind, name, color, ...(viewOnly ? { viewOnly } : {}) };
+}
+
+/** The key a host Mac publishes a hosted session's presence under. */
+export function hostedPresenceKey(session: string): string {
+  return JSON.stringify(['device-host', session]);
 }
 
 /** The device key presence is published under: a workspace slot's owned or physical device. */
@@ -80,7 +86,7 @@ export class PresenceHub {
     const participant: PresenceParticipant = {
       id: 'a1',
       kind: 'agent',
-      name: `Agent \u00b7 ${command}`,
+      name: `${AGENT_PREFIX}${command}`,
       color: AGENT_COLOR,
     };
     device.agent = participant;
@@ -154,7 +160,8 @@ export class PresenceHub {
 }
 
 const SLOT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-const COMMAND = /^[a-z][a-z0-9-]{0,31}$/;
+/** The shape of an agent-device command name. */
+export const AGENT_COMMAND: RegExp = /^[a-z][a-z0-9-]{0,31}$/;
 
 function fraction(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
@@ -193,7 +200,8 @@ export function parsePresencePublish(params: unknown): PresencePublishParams | s
   if (slot !== undefined && (typeof slot !== 'string' || !SLOT.test(slot)))
     return 'params.slot must be 1-64 letters, digits, underscores or hyphens.';
   if (physical !== undefined && typeof physical !== 'boolean') return 'params.physical must be true or false.';
-  if (typeof command !== 'string' || !COMMAND.test(command)) return 'params.command must be an agent-device command.';
+  if (typeof command !== 'string' || !AGENT_COMMAND.test(command))
+    return 'params.command must be an agent-device command.';
   if (phase !== 'start' && phase !== 'end') return 'params.phase must be start or end.';
   const parsed = gesture === undefined ? undefined : gestureOf(gesture);
   if (parsed === null) return 'params.gesture is not a presence gesture.';
@@ -206,4 +214,21 @@ export function parsePresencePublish(params: unknown): PresencePublishParams | s
     phase,
     ...(parsed ? { gesture: parsed } : {}),
   };
+}
+
+/**
+ * The agent actions in a `presence` event a host Mac sent for a hosted session. It is another machine's data: only
+ * the agent participant, named for an agent-device command, with a valid gesture, is taken; anything else is dropped.
+ */
+export function parseHostedAgent(participants: unknown): { command: string; gesture?: PresenceGesture }[] {
+  if (!Array.isArray(participants)) return [];
+  return participants.flatMap((participant) => {
+    if (!isJsonObject(participant) || participant.kind !== 'agent' || participant.touch === null) return [];
+    const { name, gesture } = participant;
+    if (typeof name !== 'string' || !name.startsWith(AGENT_PREFIX)) return [];
+    const command = name.slice(AGENT_PREFIX.length);
+    const parsed = gesture === undefined ? undefined : gestureOf(gesture);
+    if (!AGENT_COMMAND.test(command) || parsed === null) return [];
+    return [{ command, ...(parsed ? { gesture: parsed } : {}) }];
+  });
 }

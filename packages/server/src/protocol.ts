@@ -1559,6 +1559,7 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: { subscription: { type: 'string' } },
           }),
+          request('device-host.presence.subscribe', session({})),
           request('device-host.unsubscribe', {
             type: 'object',
             required: ['subscription'],
