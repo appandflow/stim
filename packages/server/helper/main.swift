@@ -33,7 +33,10 @@ import ImageIO
 // "home|lock"}, or on an emulator also "back|app-switch"; {"input": "rotate", "direction":
 // "left|right"}; and on an emulator {"input": "posture", "posture":
 // "folded|half-open|unfolded"}. An emulator types and presses buttons only with a hardware
-// keyboard.
+// keyboard. {"clipboard": "set", "id": n, "text": s, "paste": bool} and {"clipboard": "get", "id": n} set or
+// read the clipboard of an emulator (gRPC) or an Android device (scrcpy, where paste sends the paste key) and
+// are answered by a {"clipboard": {"id": n, "text": s}} notice, with "error" and no "text" on a failure;
+// {"clipboard": "paste"} presses Command-V on an iOS simulator, whose clipboard stim-server sets itself.
 // stdout carries messages framed as a 4-byte big-endian length, then a kind byte:
 // 1 is a frame (2-byte width, 2-byte height, JPEG bytes), 2 is a JSON notice
 // ({"error": message} before a failed exit, {"inputError": message}, on a simulator
@@ -157,6 +160,14 @@ enum Output {
     body += Data([UInt8(unit.width >> 8), UInt8(unit.width & 0xff), UInt8(unit.height >> 8), UInt8(unit.height & 0xff)])
     body += unit.data
     writer.async { write(body) }
+  }
+
+  /// The reply to a clipboard `set` (no `text`) or `get`. A failure names the cause, never the clipboard's text.
+  static func clipboard(id: Int, text: String? = nil, error: String? = nil) {
+    var reply: [String: Any] = ["id": id]
+    if let text { reply["text"] = text }
+    if let error { reply["error"] = error }
+    notice(["clipboard": reply])
   }
 
   static func notice(_ object: [String: Any]) {
@@ -613,6 +624,8 @@ final class AndroidDeviceSource {
   private let video = videoEncoder()
   private let jpegGate = JpegGate()
 
+  let clipboards = ScrcpyClipboardRequests()
+
   init(serial: String, adb: String, serverJar: URL) {
     stream = AndroidDeviceStream(serial: serial, adb: adb, serverJar: serverJar)
     pacer = Pacer { [unowned self] config in
@@ -628,6 +641,14 @@ final class AndroidDeviceSource {
       self.pacer.changed()
     }
     stream.onEnd = { fail($0) }
+    stream.onDeviceMessage = { [weak self] message in
+      switch message {
+      case .clipboard(let text):
+        if let id = self?.clipboards.finishGet() { Output.clipboard(id: id, text: text) }
+      case .clipboardAck(let sequence):
+        if let id = self?.clipboards.finishSet(sequence: sequence) { Output.clipboard(id: id) }
+      }
+    }
     stream.start()
   }
 
@@ -654,6 +675,52 @@ final class AndroidDeviceSource {
       let (data, width, height) = jpeg(CIImage(cvPixelBuffer: frame), config: config)
     else { return }
     Output.frame(jpeg: data, width: width, height: height)
+  }
+}
+
+/// Pairs the clipboard requests of one scrcpy control socket with the server's replies: an acknowledgement names the
+/// sequence of its `SET_CLIPBOARD`, and the clipboard message answers the oldest `GET_CLIPBOARD`.
+final class ScrcpyClipboardRequests: @unchecked Sendable {
+  private let lock = NSLock()
+  private var sets: [UInt64: Int] = [:]
+  private var gets: [Int] = []
+  private var sequence: UInt64 = 0
+
+  func startSet(id: Int) -> UInt64 {
+    lock.withLock {
+      sequence += 1
+      sets[sequence] = id
+      return sequence
+    }
+  }
+
+  func startGet(id: Int) { lock.withLock { gets.append(id) } }
+  func finishSet(sequence: UInt64) -> Int? { lock.withLock { sets.removeValue(forKey: sequence) } }
+  func finishGet() -> Int? { lock.withLock { gets.isEmpty ? nil : gets.removeFirst() } }
+
+  /// Drops request `id` if no reply came; true when it was still waiting.
+  func expire(id: Int) -> Bool {
+    lock.withLock {
+      if let key = sets.first(where: { $0.value == id })?.key {
+        sets.removeValue(forKey: key)
+        return true
+      }
+      if let index = gets.firstIndex(of: id) {
+        gets.remove(at: index)
+        return true
+      }
+      return false
+    }
+  }
+}
+
+extension AndroidDeviceSource {
+  func expireClipboard(_ id: Int) {
+    DispatchQueue.global().asyncAfter(deadline: .now() + 8) { [weak self] in
+      if self?.clipboards.expire(id: id) == true {
+        Output.clipboard(id: id, error: "The device did not answer the clipboard request.")
+      }
+    }
   }
 }
 
@@ -701,6 +768,15 @@ extension AndroidDeviceSource: Source {
       stream.send(Scrcpy.keycode(.up, key.androidCode))
     case .rotate, .posture:
       Output.notice(["inputError": "A physical device rotates and folds only in hand."])
+    case .clipboard(.set(let id, let text, let paste)):
+      stream.send(Scrcpy.setClipboard(text, sequence: clipboards.startSet(id: id), paste: paste))
+      expireClipboard(id)
+    case .clipboard(.get(let id)):
+      clipboards.startGet(id: id)
+      stream.send(Scrcpy.getClipboard)
+      expireClipboard(id)
+    case .clipboard(.paste):
+      Output.notice(["inputError": "A scrcpy device pastes with SET_CLIPBOARD."])
     case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease:
       break
     }
@@ -868,6 +944,8 @@ extension WebSource: Source {
       page.back()
     case .rotate, .posture:
       Output.notice(["inputError": "A web page does not rotate or fold."])
+    case .clipboard(let request):
+      refuseClipboard(request, "A web page has no device clipboard.")
     case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
       break
     }
@@ -890,6 +968,23 @@ indirect enum Command {
   case button(String)
   case rotate(clockwise: Bool)
   case posture(EmulatorPosture)
+  case clipboard(ClipboardRequest)
+}
+
+/// `set` and `get` carry the id their reply notice names. `paste` presses Command-V on an iOS simulator, whose clipboard
+/// stim-server sets itself.
+enum ClipboardRequest {
+  case set(id: Int, text: String, paste: Bool)
+  case get(id: Int)
+  case paste
+}
+
+/// Answers a clipboard `set` or `get` the source cannot serve; other requests need no reply.
+func refuseClipboard(_ request: ClipboardRequest, _ message: String) {
+  switch request {
+  case .set(let id, _, _), .get(let id): Output.clipboard(id: id, error: message)
+  case .paste: Output.notice(["inputError": message])
+  }
 }
 
 func parseCommand(_ line: String, base: Config) -> Command? {
@@ -903,6 +998,14 @@ func parseCommand(_ line: String, base: Config) -> Command? {
       let command = parseCommand(String(decoding: data, as: UTF8.self), base: base)
     else { return nil }
     return .scoped(session, command)
+  }
+  if let action = object["clipboard"] as? String {
+    switch (action, object["id"] as? Int) {
+    case ("set", let id?): return (object["text"] as? String).map { .clipboard(.set(id: id, text: $0, paste: object["paste"] as? Bool ?? false)) }
+    case ("get", let id?): return .clipboard(.get(id: id))
+    case ("paste", _): return .clipboard(.paste)
+    default: return nil
+    }
   }
   if object["keyframe"] as? Bool == true { return .keyframe }
   if object["recordKeyframe"] as? Bool == true { return .recordKeyframe }
@@ -1008,7 +1111,8 @@ func readCommands(_ source: Source) {
         case let command?:
           source.input(command)
         case nil:
-          Output.notice(["inputError": "stim-frames could not read \(line.prefix(80))"])
+          let shown = line.contains("\"clipboard\"") ? "a clipboard command" : String(line.prefix(80))
+          Output.notice(["inputError": "stim-frames could not read \(shown)"])
         }
       }
     }
@@ -1114,6 +1218,16 @@ extension SimulatorSource: Source {
       hid.hardwareKey(code: key.macCode, down: true)
       usleep(10_000)
       hid.hardwareKey(code: key.macCode, down: false)
+    case .clipboard(.paste):
+      let command: UInt16 = 0x37
+      let v: UInt16 = 0x09
+      hid.hardwareKey(code: command, down: true)
+      hid.hardwareKey(code: v, down: true)
+      usleep(10_000)
+      hid.hardwareKey(code: v, down: false)
+      hid.hardwareKey(code: command, down: false)
+    case .clipboard(let request):
+      refuseClipboard(request, "stim-server sets an iOS simulator's clipboard itself.")
     case .config, .keyframe, .recordKeyframe, .rotate, .posture, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease:
       break
     }
@@ -1165,6 +1279,18 @@ extension EmulatorSource: Source {
       wait("rotation") { await EmulatorRotation.rotate(serial: self.serial, clockwise: clockwise) }
     case .posture(let posture):
       wait("posture") { await posture.apply(serial: self.serial) }
+    case .clipboard(.set(let id, let text, _)):
+      input.call("setClipboard", InputMessages.clipboard(text), timeout: 5) { reply in
+        if reply == nil { Output.clipboard(id: id, error: "The emulator did not take the clipboard.") } else { Output.clipboard(id: id) }
+      }
+    case .clipboard(.get(let id)):
+      input.call("getClipboard", Data(), timeout: 5) { reply in
+        if let reply { Output.clipboard(id: id, text: InputMessages.clipboardText(reply) ?? "") } else {
+          Output.clipboard(id: id, error: "The emulator did not return its clipboard.")
+        }
+      }
+    case .clipboard(.paste):
+      Output.notice(["inputError": "stim-server pastes on an emulator through adb."])
     case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease:
       break
     }

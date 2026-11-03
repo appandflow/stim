@@ -41,6 +41,8 @@ export interface DeviceInput {
   send: (command: Record<string, unknown>) => void;
   /** Whether the helper can type and press buttons on an emulator: once it reports a hardware keyboard. */
   keys: () => boolean;
+  /** Sets or reads the device clipboard through the helper; see {@link HelperSource.clipboard}. */
+  clipboard: (request: { text: string; paste: boolean } | null) => Promise<string | null>;
   detach: () => void;
 }
 
@@ -964,6 +966,7 @@ export class FramePool {
     return {
       send: (command) => source.send(controlSession ? { ...command, controlSession } : command),
       keys: () => source.keyboard === true,
+      clipboard: (request) => source.clipboard(request),
       detach: () => {
         if (controlSession) source.send({ control: { session: controlSession, enabled: false } });
         if (device.platform === 'ios' && device.foldable) source.send({ input: 'duo-release' });

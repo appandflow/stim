@@ -51,6 +51,7 @@ const VIDEO_MESSAGE = 3;
 const RECORD_MESSAGE = 4;
 const VIDEO_HEADER_BYTES = 14;
 const KEYFRAME_INTERVAL_MS = 250;
+const CLIPBOARD_TIMEOUT_MS = 10_000;
 
 function parseMacosWindow(value: unknown): MacosWindow | null {
   if (!isJsonObject(value) || !isJsonObject(value.frame)) return null;
@@ -266,6 +267,15 @@ export class HelperSource {
   private readonly foldHelper: (() => Promise<string>) | undefined;
   private hingeHelper: string | undefined;
   private hingeHelperRequested = false;
+  private clipboardId = 0;
+  private readonly clipboards = new Map<
+    number,
+    {
+      resolve: (text: string | null) => void;
+      reject: (error: Error) => void;
+      timer: NodeJS.Timeout;
+    }
+  >();
 
   constructor(
     helper: string,
@@ -339,6 +349,7 @@ export class HelperSource {
     if (this.keyframeTimer) clearTimeout(this.keyframeTimer);
     if (this.lingerTimer) clearTimeout(this.lingerTimer);
     this.listeners.clear();
+    this.settleClipboards(new Error('The capture helper stopped.'));
     this.child.stdin!.end();
     const stopped = terminate(this.child).then(() => {
       return this.claim ? clearClaimChild(this.claim) : undefined;
@@ -373,6 +384,34 @@ export class HelperSource {
 
   send(command: Record<string, unknown>): void {
     if (!this.stopped) this.child.stdin!.write(`${JSON.stringify(command)}\n`);
+  }
+
+  /**
+   * Sets (`request` with the text) or reads (`request` null) the device clipboard in the helper, which owns the
+   * emulator's gRPC connection and the scrcpy control socket. Resolves with the text read, or null after a set. The
+   * helper's failure messages never carry clipboard text.
+   */
+  clipboard(request: { text: string; paste: boolean } | null): Promise<string | null> {
+    if (this.stopped) return Promise.reject(new Error('The capture helper stopped.'));
+    const id = ++this.clipboardId;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.clipboards.delete(id);
+        reject(new Error(`The device did not answer the clipboard request within ${CLIPBOARD_TIMEOUT_MS / 1000} s.`));
+      }, CLIPBOARD_TIMEOUT_MS);
+      this.clipboards.set(id, { resolve, reject, timer });
+      this.send(
+        request ? { clipboard: 'set', id, text: request.text, paste: request.paste } : { clipboard: 'get', id },
+      );
+    });
+  }
+
+  private settleClipboards(error: Error): void {
+    for (const pending of this.clipboards.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.clipboards.clear();
   }
 
   private configure(): void {
@@ -569,6 +608,16 @@ export class HelperSource {
       if (typeof error === 'string') this.notice = error;
       const keyboard = (notice as { keyboard?: unknown } | null)?.keyboard;
       if (keyboard === 'yes' || keyboard === 'no') this.keyboard = keyboard === 'yes';
+      const clipboard = isJsonObject(notice) ? notice.clipboard : undefined;
+      if (isJsonObject(clipboard) && typeof clipboard.id === 'number') {
+        const pending = this.clipboards.get(clipboard.id);
+        this.clipboards.delete(clipboard.id);
+        if (pending) {
+          clearTimeout(pending.timer);
+          if (typeof clipboard.error === 'string') pending.reject(new Error(clipboard.error));
+          else pending.resolve(typeof clipboard.text === 'string' ? clipboard.text : null);
+        }
+      }
       const inputError = (notice as { inputError?: unknown } | null)?.inputError;
       if (typeof inputError === 'string') {
         console.error(`stim-server: stim-frames: ${inputError}`);

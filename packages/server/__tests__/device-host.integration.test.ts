@@ -489,7 +489,12 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
     chmodSync(tool, 0o755);
     const env = { ...process.env, PATH: `${home}:${process.env.PATH}` };
     const frames = new FramePool(env);
-    vi.spyOn(frames, 'control').mockReturnValue({ send: () => {}, keys: () => true, detach: () => {} });
+    vi.spyOn(frames, 'control').mockReturnValue({
+      send: () => {},
+      keys: () => true,
+      clipboard: async () => null,
+      detach: () => {},
+    });
     vi.spyOn(frames, 'litPosture').mockReturnValue('folded');
     vi.spyOn(frames, 'folded').mockImplementation(() => {});
     const control = new ControlHub({
@@ -575,7 +580,12 @@ test.skipIf(process.platform === 'win32')(
     chmodSync(tool, 0o755);
     const env = { ...process.env, PATH: `${home}:${process.env.PATH}` };
     const frames = new FramePool(env);
-    vi.spyOn(frames, 'control').mockReturnValue({ send: () => {}, keys: () => true, detach: () => {} });
+    vi.spyOn(frames, 'control').mockReturnValue({
+      send: () => {},
+      keys: () => true,
+      clipboard: async () => null,
+      detach: () => {},
+    });
     vi.spyOn(frames, 'litPosture').mockReturnValue('folded');
     const claim = tryAcquireClaim({ root: join(home, 'identity-owner.claims'), mode: 'exclusive' }).acquired!;
     const control = new ControlHub({

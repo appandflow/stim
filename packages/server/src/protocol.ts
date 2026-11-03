@@ -23,6 +23,7 @@ import {
   INPUT_KEYS,
   KEY_MODIFIERS,
   MAX_INPUT_TEXT,
+  MAX_CLIPBOARD_BYTES,
   INPUT_BUTTONS,
   ROTATE_DIRECTIONS,
   DEVICE_POSTURES,
@@ -1605,6 +1606,11 @@ export function protocolJsonSchema(): JsonSchema {
               'window',
             ]),
           ),
+          request(
+            'device-host.input.clipboard.set',
+            session({ text: { type: 'string', maxLength: MAX_CLIPBOARD_BYTES }, paste: { type: 'boolean' } }, ['text']),
+          ),
+          request('device-host.input.clipboard.get', session({})),
           request('device-host.input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
           request('device-host.input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('device-host.input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
@@ -1969,6 +1975,17 @@ export function protocolJsonSchema(): JsonSchema {
               'window',
             ]),
           ),
+          request(
+            'input.clipboard.set',
+            session(
+              {
+                text: { type: 'string', maxLength: MAX_CLIPBOARD_BYTES },
+                paste: { type: 'boolean' },
+              },
+              ['text'],
+            ),
+          ),
+          request('input.clipboard.get', session({})),
           request('input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
           request('input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),

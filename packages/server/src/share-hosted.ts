@@ -305,12 +305,19 @@ export class HostedShareSource implements ShareSource {
     method: string,
     params: Record<string, unknown>,
     _command: InputCommand,
-  ): Promise<Refusal | null> {
+  ): Promise<Refusal | object | null> {
     const control = this.control;
     if (control?.session !== session) return { code: 'action-failed', message: 'The hosted control session ended.' };
+    if (method.startsWith('input.clipboard.') && !control.lease.connection.supports('device-clipboard')) {
+      return {
+        code: 'action-failed',
+        message: `${this.host.machine} cannot set or read a clipboard: update its Stim.`,
+      };
+    }
     try {
       const reply = await control.lease.connection.request(`device-host.${method}`, { ...params, session });
-      return 'error' in reply ? reply.error : null;
+      if ('error' in reply) return reply.error;
+      return method === 'input.clipboard.get' && isJsonObject(reply.result) ? reply.result : null;
     } catch (cause) {
       return { code: 'action-failed', message: `${this.host.machine}: ${messageOf(cause)}` };
     }

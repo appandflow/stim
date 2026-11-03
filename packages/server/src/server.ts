@@ -67,7 +67,14 @@ import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
-import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
+import {
+  CLIPBOARD_INPUT_COST,
+  ControlHub,
+  parseControlBegin,
+  parseInput,
+  SLOT_NAME,
+  type Controller,
+} from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
 import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
 import {
@@ -233,6 +240,8 @@ const INPUT_METHODS = [
   'input.scroll',
   'input.key',
   'input.window',
+  'input.clipboard.set',
+  'input.clipboard.get',
 ] as const;
 
 function viewHostedPlacement(dir: string, platform: string, slot: string | undefined, physical: unknown) {
@@ -2213,10 +2222,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const owner = controller(session);
       const parsed = parseInput(method, params, (name) => relay.targetOf(name) ?? control.targetOf(owner, name));
       if ('code' in parsed) return error(id, parsed.code, parsed.message);
-      if (!take(inputs, 1, controlLimits.inputPerSecond, controlLimits.inputPerSecond)) {
+      const { command: sent } = parsed.value;
+      const cost = sent.input === 'clipboard' || sent.input === 'clipboard-get' ? CLIPBOARD_INPUT_COST : 1;
+      if (!take(inputs, cost, controlLimits.inputPerSecond, controlLimits.inputPerSecond)) {
         return error(id, 'limit-exceeded', `A connection can send ${controlLimits.inputPerSecond} inputs a second.`);
       }
-      const { command: sent } = parsed.value;
       if (
         sent.input === 'text' &&
         !take(characters, sent.text.length, controlLimits.textCharsPerSecond, MAX_INPUT_TEXT)
