@@ -57,6 +57,16 @@ describe('machineReadiness', () => {
       }),
     ).toMatchObject({ title: 'CPU x86_64 there, arm64 here', remedy: null, tone: 'error' });
   });
+
+  it('shows a machine whose server key changed as a different machine, with the commands that re-pair it', () => {
+    expect(machineReadiness({ machine: 'mini', state: 'key-changed' })).toEqual({
+      id: 'mini',
+      name: 'mini',
+      title: 'Different machine',
+      remedy: 'run stim remote remove, then stim remote add',
+      tone: 'error',
+    });
+  });
 });
 
 describe('buildPlacements', () => {

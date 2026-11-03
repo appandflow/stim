@@ -3486,6 +3486,10 @@ msgstr "Rotated to {name}"
 msgid "run Stim from a git checkout"
 msgstr "run Stim from a git checkout"
 
+#: src/lib/build-machines.ts
+msgid "run stim remote remove, then stim remote add"
+msgstr "run stim remote remove, then stim remote add"
+
 #: src/lib/workspaces.ts
 #: src/screens/logs.tsx
 msgid "running"

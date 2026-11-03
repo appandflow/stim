@@ -11,7 +11,7 @@ export interface MachineReadiness {
   tone: 'success' | 'warning' | 'error' | 'tertiary';
 }
 
-type State = { title: string; tone: MachineReadiness['tone'] };
+type State = { title: string; tone: MachineReadiness['tone']; remedy?: string };
 
 function pairingState(state: string): State {
   switch (state) {
@@ -25,8 +25,8 @@ function pairingState(state: string): State {
       return { title: t`Revoked`, tone: 'error' };
     case 'lapsed':
       return { title: t`Request lapsed`, tone: 'error' };
-    case 'node-changed':
-      return { title: t`Different machine`, tone: 'error' };
+    case 'key-changed':
+      return { title: t`Different machine`, tone: 'error', remedy: t`run stim remote remove, then stim remote add` };
     case 'not-on-tailnet':
       return { title: t`Not on the tailnet`, tone: 'warning' };
     case 'tailscale-off':
@@ -90,7 +90,7 @@ export function machineReadiness(report: BuildMachineReport): MachineReadiness {
   const name = machineName(id);
   const state = pairingState(report.state);
   if (report.state !== 'approved' || report.offloadable === undefined) {
-    return { id, name, ...state, remedy: null };
+    return { id, name, ...state, remedy: state.remedy ?? null };
   }
   if (report.offloadable) return { id, name, title: t`Ready`, tone: 'success', remedy: null };
   const first = report.problems?.[0];
