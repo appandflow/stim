@@ -110,29 +110,32 @@ describe('the dormant stage', () => {
   const dormant = (simsFailed = false) =>
     runDormantPass({ config: loadConfig(), act: true, log, devices: [], simsFailed });
 
-  test('after idle.dormantDays it deletes the owned devices, keeps node_modules and the parked pool, and records the stage', async () => {
-    const { root, udid } = workspace('old', 4 * DAY_MS, 'Shutdown');
-    const parked = { udid: 'PARKED', name: 'stim-parked', parkedAt: new Date(0).toISOString() };
-    saveConfig({ ...loadConfig()!, parked: { ios: [parked] } });
+  test.skipIf(process.platform !== 'darwin')(
+    'after idle.dormantDays it deletes the owned simulators, keeps node_modules and the parked pool, and records the stage',
+    async () => {
+      const { root, udid } = workspace('old', 4 * DAY_MS, 'Shutdown');
+      const parked = { udid: 'PARKED', name: 'stim-parked', parkedAt: new Date(0).toISOString() };
+      saveConfig({ ...loadConfig()!, parked: { ios: [parked] } });
 
-    const actions = await dormant();
+      const actions = await dormant();
 
-    expect(actions).toEqual([
-      expect.objectContaining({ rung: 4, kind: 'dormant-stage', target: root, outcome: 'done' }),
-    ]);
-    expect(deleted).toEqual([udid]);
-    expect(getProject(root)?.platforms?.ios?.deviceUdid).toBeUndefined();
-    expect(loadConfig()?.parked).toEqual({ ios: [parked] });
-    expect(existsSync(join(root, 'node_modules'))).toBe(true);
-    expect(readDormantStage(readWorkspaceState(root))).toMatchObject({
-      dormantDays: 3,
-      deletedDevices: ['stim-old (iPhone 17 26.0)'],
-    });
-    expect(log).toHaveBeenCalledWith('info', 'workspace_dormant', expect.stringContaining(root), expect.anything());
+      expect(actions).toEqual([
+        expect.objectContaining({ rung: 4, kind: 'dormant-stage', target: root, outcome: 'done' }),
+      ]);
+      expect(deleted).toEqual([udid]);
+      expect(getProject(root)?.platforms?.ios?.deviceUdid).toBeUndefined();
+      expect(loadConfig()?.parked).toEqual({ ios: [parked] });
+      expect(existsSync(join(root, 'node_modules'))).toBe(true);
+      expect(readDormantStage(readWorkspaceState(root))).toMatchObject({
+        dormantDays: 3,
+        deletedDevices: ['stim-old (iPhone 17 26.0)'],
+      });
+      expect(log).toHaveBeenCalledWith('info', 'workspace_dormant', expect.stringContaining(root), expect.anything());
 
-    deleted = [];
-    expect(await dormant()).toEqual([]);
-  });
+      deleted = [];
+      expect(await dormant()).toEqual([]);
+    },
+  );
 
   test('a fraction of a day shortens the clock, and a Stim command since restarts it', async () => {
     saveConfig({ ...loadConfig()!, idle: { dormantDays: 0.01 } });
@@ -372,7 +375,7 @@ describe('rung 5', () => {
     const roots: Record<string, string> = {};
     for (const name of names) {
       git(`worktree add -q "${join(projects, name)}" -b ${name}`);
-      const root = realpathSync(join(projects, name));
+      const root = realpathSync.native(join(projects, name));
       mkdirSync(join(root, 'node_modules', 'pkg'), { recursive: true });
       writeFileSync(join(root, 'node_modules', 'pkg', 'file'), 'x');
       mkdirSync(join(root, 'ios', 'Pods'), { recursive: true });
@@ -415,7 +418,7 @@ describe('rung 5', () => {
 
   test("it skips a worktree with no workspace in this home, the command's own workspace and one whose dev server runs", async () => {
     const { stranger, own, serving } = linkedWorktrees(['stranger', 'own', 'serving']);
-    register(realpathSync(join(projects, 'repo')));
+    register(realpathSync.native(join(projects, 'repo')));
     register(own!);
     register(serving!, { metroPort: 59125, supervisor: { pid: process.pid, port: 59999 } });
     const { actions } = await ladder('critical', own);
