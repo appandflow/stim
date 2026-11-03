@@ -283,7 +283,7 @@ test('offers before reservation, uploads digest-matching bytes, and development 
   expect(getProject(root)?.platforms?.ios).toBeUndefined();
   for (const [digest, bytes] of blobs) expect(createHash('sha256').update(bytes).digest('hex')).toBe(digest);
   expect(statSync(workspaceStateFile(root)).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
-  expect(workspaceIdleProbe(root).blocker()).toContain('runs on mini');
+  expect(await workspaceIdleProbe(root).blocker()).toContain('runs on mini');
 });
 
 test('missing configuration and approval keep their existing credential remedies', async () => {

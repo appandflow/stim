@@ -22,6 +22,7 @@ import { daemonClaimRoot, deviceViewersDir, readDeviceIdleShutdowns, readIdleSto
 import * as ios from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import { workspaceIdleProbe, type IdleProbe } from '../supervisor/idle-stop.ts';
+import { serveShareList, shareRow } from './_share-list-server.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { startBuildProgress } from '../engine/build-progress.ts';
 import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
@@ -566,10 +567,10 @@ describe('idle stop', () => {
     expect(seen.closed).toBe(0);
   });
 
-  test('the workspace probe blocks during a build and while a workspace device is driven', () => {
+  test('the workspace probe blocks during a build and while a workspace device is driven', async () => {
     useProbeHost({ ps: '' });
     const probe = workspaceIdleProbe(root);
-    expect(probe.blocker()).toBe(null);
+    expect(await probe.blocker()).toBe(null);
 
     const attempt = tryAcquireClaim({
       root: join(tmpHome, 'native-run.lock'),
@@ -578,41 +579,41 @@ describe('idle stop', () => {
     });
     assert(attempt.acquired);
     startBuildProgress({ root, platform: 'ios', slot: 'default', claim: attempt.acquired });
-    expect(probe.blocker()).toBe('a build is in progress');
+    expect(await probe.blocker()).toBe('a build is in progress');
     releaseClaim(attempt.acquired);
-    expect(probe.blocker()).toBe(null);
+    expect(await probe.blocker()).toBe(null);
 
     upsertProject(root, { platforms: { ios: { deviceUdid: 'STIM-IDLE-TEST-UDID', owned: true } } });
-    expect(probe.blocker()).toBe(null);
+    expect(await probe.blocker()).toBe(null);
     takeLease({ root, platform: 'ios', id: 'STIM-IDLE-TEST-UDID', kind: 'declared' });
-    expect(probe.blocker()).toMatch(/^ios device STIM-IDLE-TEST-UDID is leased by stim device lock until /);
+    expect(await probe.blocker()).toMatch(/^ios device STIM-IDLE-TEST-UDID is leased by stim device lock until /);
   });
 
   test('a physical device this workspace locks blocks the stop until the lease expires', async () => {
     useProbeHost({ ps: '' });
     const probe = workspaceIdleProbe(root);
     takeLease({ root, platform: 'android', id: 'PHYSICAL-SERIAL', kind: 'declared', durationMs: 30 * MINUTE });
-    expect(probe.blocker()).toMatch(/^android device PHYSICAL-SERIAL is leased by stim device lock until /);
+    expect(await probe.blocker()).toMatch(/^android device PHYSICAL-SERIAL is leased by stim device lock until /);
 
     vi.setSystemTime(Date.now() + 30 * MINUTE);
-    expect(probe.blocker()).toBe(null);
+    expect(await probe.blocker()).toBe(null);
 
     writeFileSync(deviceLeasePath('android', 'PHYSICAL-SERIAL'), '{');
-    expect(probe.blocker()).toBe('android device PHYSICAL-SERIAL has a lease that cannot be read');
+    expect(await probe.blocker()).toBe('android device PHYSICAL-SERIAL has a lease that cannot be read');
     rmSync(deviceLeasePath('android', 'PHYSICAL-SERIAL'));
-    expect(probe.blocker()).toBe(null);
+    expect(await probe.blocker()).toBe(null);
   });
 
-  test('on Windows, where ps does not exist, only the missing host driver probe is ignored', () => {
+  test('on Windows, where ps does not exist, only the missing host driver probe is ignored', async () => {
     upsertProject(root, { platforms: { android: { serial: 'emulator-5554', owned: true } } });
     const adb = useProbeHost({ ps: null, adb: '  PID ARGS\n  1 init\n' });
-    expect(workspaceIdleProbe(root, { platform: 'darwin' }).blocker()).toBe(
+    expect(await workspaceIdleProbe(root, { platform: 'darwin' }).blocker()).toBe(
       'android device emulator-5554 has unknown activity (driver-process)',
     );
-    expect(workspaceIdleProbe(root, { platform: 'win32' }).blocker()).toBe(null);
+    expect(await workspaceIdleProbe(root, { platform: 'win32' }).blocker()).toBe(null);
 
     adb.output = null;
-    expect(workspaceIdleProbe(root, { platform: 'win32' }).blocker()).toBe(
+    expect(await workspaceIdleProbe(root, { platform: 'win32' }).blocker()).toBe(
       'android device emulator-5554 has unknown activity (instrumentation)',
     );
   });
@@ -651,7 +652,14 @@ describe('device idle shutdown', () => {
     metroMinutes = 0,
     due = () => true,
     observesRequests = true,
-  }: { deviceMinutes?: number; metroMinutes?: number; due?: () => boolean; observesRequests?: boolean } = {}) {
+    probe = quiet,
+  }: {
+    deviceMinutes?: number;
+    metroMinutes?: number;
+    due?: () => boolean;
+    observesRequests?: boolean;
+    probe?: IdleProbe;
+  } = {}) {
     const seen = { closed: 0, checks: 0, shutDowns: [] as number[] };
     const deviceIdle: DeviceIdleOps = {
       due: () => {
@@ -672,7 +680,7 @@ describe('device idle shutdown', () => {
       attachSignals: false,
       onExit: () => {},
       idleStopMinutes: metroMinutes,
-      idleProbe: quiet,
+      idleProbe: probe,
       deviceIdleMinutes: deviceMinutes,
       deviceIdle,
       startBare: async () => ({
@@ -720,6 +728,39 @@ describe('device idle shutdown', () => {
     await vi.advanceTimersByTimeAsync(2 * MINUTE);
     expect(seen.shutDowns.length).toBeGreaterThan(0);
     expect(seen.closed).toBe(1);
+  });
+
+  test('stops neither the dev server nor devices while a web share of the workspace is live', async () => {
+    let shares = [shareRow(root, '2099-01-01T00:00:00.000Z')];
+    let asked = 0;
+    const server = await serveShareList(() => {
+      asked++;
+      return { shares };
+    });
+    onTestFinished(() => server.close());
+    const seen = await startDeviceIdleSupervisor({
+      deviceMinutes: 1,
+      metroMinutes: 2,
+      probe: workspaceIdleProbe(root),
+    });
+    await vi.advanceTimersByTimeAsync(3 * MINUTE);
+    expect(seen.shutDowns).toEqual([]);
+    expect(seen.closed).toBe(0);
+    await vi.waitFor(() => expect(asked).toBeGreaterThanOrEqual(2));
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    await vi.waitFor(() => expect(asked).toBeGreaterThanOrEqual(4));
+    expect(seen.shutDowns).toEqual([]);
+    expect(seen.closed).toBe(0);
+
+    shares = [];
+    await vi.waitFor(
+      async () => {
+        await vi.advanceTimersByTimeAsync(MINUTE);
+        expect(seen.closed).toBe(1);
+      },
+      { timeout: 5000 },
+    );
+    expect(seen.shutDowns.length).toBeGreaterThan(0);
   });
 
   test("Metro's idle stop first shuts down devices idle for metro.idleStopMinutes when that is shorter", async () => {

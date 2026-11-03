@@ -18,6 +18,7 @@ import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { liveClaimOwner } from './_factories.ts';
+import { serveShareList, shareRow, type ShareListAnswer } from './_share-list-server.ts';
 
 const MINUTE_MS = 60_000;
 
@@ -220,4 +221,68 @@ test('maintenance.keep keeps an idle workspace out of the idle stage', async () 
 
   expect(await pass()).toEqual([expect.objectContaining({ outcome: 'kept', detail: 'pinned by maintenance.keep' })]);
   expect(tornDown).toEqual([]);
+});
+
+describe('a web share', () => {
+  let answer: ShareListAnswer;
+  let server: { close: () => Promise<void> };
+  beforeEach(async () => {
+    answer = { shares: [] };
+    server = await serveShareList(() => answer);
+  });
+  afterEach(() => server.close());
+
+  test('keeps an idle workspace, naming it, until stim share stop ends it', async () => {
+    const { root, udid, derivedData } = bootedWorkspace('shared', 20 * MINUTE_MS);
+    const expiresAt = new Date(Date.now() + 30 * MINUTE_MS).toISOString();
+    answer = { shares: [shareRow(root, expiresAt)] };
+
+    expect(await pass()).toEqual([
+      expect.objectContaining({
+        path: root,
+        outcome: 'kept',
+        detail: `it has a live web share (ios until ${expiresAt}); stim share stop ends it`,
+      }),
+    ]);
+    expect(tornDown).toEqual([]);
+    expect(existsSync(derivedData)).toBe(true);
+
+    answer = { shares: [] };
+    expect(await pass()).toEqual([expect.objectContaining({ path: root, outcome: 'idle' })]);
+    expect(tornDown).toEqual([udid]);
+  });
+
+  test('past its expiry keeps nothing, even while stim-server still lists it', async () => {
+    const { root, udid } = bootedWorkspace('expiring', 20 * MINUTE_MS);
+    const other = join(projects, 'other');
+    mkdirSync(other);
+    answer = {
+      shares: [
+        shareRow(root, new Date(Date.now() + MINUTE_MS).toISOString()),
+        shareRow(other, '2099-01-01T00:00:00.000Z'),
+      ],
+    };
+    expect(await pass()).toEqual([expect.objectContaining({ path: root, outcome: 'kept' })]);
+
+    answer = {
+      shares: [shareRow(root, new Date(Date.now() - 1000).toISOString()), shareRow(other, '2099-01-01T00:00:00.000Z')],
+    };
+    expect(await pass()).toEqual([expect.objectContaining({ path: root, outcome: 'idle' })]);
+    expect(tornDown).toEqual([udid]);
+  });
+
+  test('a share list stim-server cannot give keeps the workspace', async () => {
+    const { root, derivedData } = bootedWorkspace('unreadable', 20 * MINUTE_MS);
+    answer = { error: { code: 'internal', message: 'The share hub is closing.' } };
+
+    expect(await pass()).toEqual([
+      expect.objectContaining({
+        path: root,
+        outcome: 'kept',
+        detail: 'its web shares cannot be listed (The share hub is closing)',
+      }),
+    ]);
+    expect(tornDown).toEqual([]);
+    expect(existsSync(derivedData)).toBe(true);
+  });
 });
