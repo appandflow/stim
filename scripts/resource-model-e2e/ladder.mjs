@@ -37,6 +37,8 @@ export function diffState(previous, next, at) {
   return events;
 }
 
+const PRESSURE_IDLE_MESSAGE = /\(pressure level (high|critical|normal):/;
+
 const parseLines = (text) =>
   text.split('\n').flatMap((line) => {
     try {
@@ -61,6 +63,7 @@ export function ladderActions({ daemonText = '', workspaceLogs = [] }) {
         workspace,
         target: workspace,
         bytes: record.freedBytes ?? 0,
+        pressure: PRESSURE_IDLE_MESSAGE.exec(record.msg ?? '')?.[1] ?? null,
         source,
       });
     } else if (record.event === 'pressure_action' && record.outcome === 'done' && Number.isInteger(record.rung)) {

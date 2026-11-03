@@ -494,12 +494,26 @@ describe('a web share', () => {
     const url = local(share, f.hub.port!);
     const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
     socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+    socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.25, y: 0.5, x2: 0.75, y2: 0.5 }));
     socket.send(JSON.stringify({ type: 'text', text: 'hi' }));
     socket.send(JSON.stringify({ type: 'key', key: 'left' }));
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
     expect(f.begins).toEqual([]);
     expect(f.inputs).toEqual([]);
+    socket.close();
+  });
+
+  it('with --control, passes the second finger of a touch on and drops a half pair', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.25, y: 0.5, x2: 0.75 }));
+    socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.25, y: 0.5, x2: 0.75, y2: 0.5 }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
+    expect(f.inputs).toEqual([
+      { session: 'c1', command: { input: 'touch', phase: 'down', x: 0.25, y: 0.5, x2: 0.75, y2: 0.5 } },
+    ]);
     socket.close();
   });
 
@@ -719,13 +733,14 @@ describe('a web share', () => {
     });
   });
 
-  it('serves its stylesheet and script without a token, and nothing else under that path', async () => {
+  it('serves its stylesheet and scripts without a token, and nothing else under that path', async () => {
     const share = await started(f);
     const base = new URL(local(share, f.hub.port ?? 0)).origin;
     const script = await http(`${base}/s/assets/viewer.js`);
     expect(script.status).toBe(200);
     expect(String(script.headers['content-type'])).toContain('javascript');
     expect((await http(`${base}/s/assets/viewer.css`)).status).toBe(200);
+    expect((await http(`${base}/s/assets/gestures.js`)).status).toBe(200);
     expect((await http(`${base}/s/assets/secret.js`)).status).toBe(404);
     expect((await http(`${base}/s/assets/viewer.js`, { method: 'POST', body: 'x=1' })).status).toBe(404);
   });
@@ -958,6 +973,13 @@ describe('a web share', () => {
       expect(record.inputs).toEqual([
         { session: 'h1', method: 'input.touch', params: { phase: 'down', x: 0.25, y: 0.75 } },
       ]);
+      socket.send(JSON.stringify({ type: 'touch', phase: 'move', x: 0.25, y: 0.75, x2: 0.5, y2: 0.25 }));
+      await vi.waitFor(() => expect(record.inputs).toHaveLength(2));
+      expect(record.inputs[1]).toEqual({
+        session: 'h1',
+        method: 'input.touch',
+        params: { phase: 'move', x: 0.25, y: 0.75, x2: 0.5, y2: 0.25 },
+      });
       expect(f.begins).toEqual([]);
       expect(f.inputs).toEqual([]);
       expect(f.hub.unrecordedTargets()).toEqual(new Set());

@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { createWorkspaces, HarnessError } from './workspaces.mjs';
 import { configureClocks } from './clocks.mjs';
 import { newestRecordMs } from './collect.mjs';
+import { ladderActions } from './ladder.mjs';
 import { clock, judgeIdleTiming, outcome, STATUS } from './assertions.mjs';
 import { bootsInFlight, daemonLine, findEnvironment, idleFacts, waitingRuns } from './evidence.mjs';
 import { parseCsv, parseLoad1 } from './platform.mjs';
@@ -196,7 +197,33 @@ function machineAt(ctx, ms) {
 
 const isPressured = (level) => level === 'high' || level === 'critical';
 
-function idleOutcome(ctx, entry, windowMs) {
+const readOrEmpty = (file) => {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    return '';
+  }
+};
+
+export function readLadder(ctx, workspaces) {
+  return ladderActions({
+    daemonText: readOrEmpty(join(ctx.home, 'daemon', 'daemon.ndjson')),
+    workspaceLogs: workspaces.flatMap((workspace) => {
+      const dir = ctx.record(workspace).workspaceDir;
+      return dir ? [{ workspace: workspace.path, text: readOrEmpty(join(dir, 'logs', 'metro.ndjson')) }] : [];
+    }),
+  });
+}
+
+function daemonIdleOf(actions, entry) {
+  const found = actions.find(
+    (action) =>
+      action.kind === 'idle-stage' && action.workspace === entry.workspace.path && action.ts >= entry.commandEndMs,
+  );
+  return found ? { atMs: found.ts, pressure: found.pressure } : null;
+}
+
+function idleOutcome(ctx, entry, windowMs, actions) {
   const label = entry.workspace.label;
   if (!entry.resolved) {
     return outcome(
@@ -217,6 +244,7 @@ function idleOutcome(ctx, entry, windowMs) {
     pressureLevel:
       [entry.resolved.poll.pressureLevel, entry.previousPressure].find(isPressured) ??
       entry.resolved.poll.pressureLevel,
+    daemonIdle: daemonIdleOf(actions, entry),
   });
   const dir = ctx.record(entry.workspace).workspaceDir;
   const newest = dir
@@ -236,6 +264,10 @@ const RECHECK_MS = 10_000;
 export async function assertIdleDown(ctx, scenario, waited, windowMs) {
   const A = ctx.assertions;
   const entries = [...waited.values()];
+  const { actions } = readLadder(
+    ctx,
+    entries.map((entry) => entry.workspace),
+  );
   const unsettled = entries.some((entry) => entry.resolved && !entry.resolved.facts.stageIdle);
   if (unsettled) await sleep(RECHECK_MS, ctx.signal);
   const later = unsettled ? await pollStatus(ctx) : null;
@@ -243,7 +275,7 @@ export async function assertIdleDown(ctx, scenario, waited, windowMs) {
     scenario,
     'idle-stage',
     `each workspace reaches its idle stage within the window (${Math.round(windowMs / 60000)} min) plus one tick`,
-    entries.map((entry) => idleOutcome(ctx, entry, windowMs)),
+    entries.map((entry) => idleOutcome(ctx, entry, windowMs, actions)),
   );
   A.fromItems(
     scenario,

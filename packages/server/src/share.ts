@@ -1045,7 +1045,12 @@ export class ShareHub {
     if (!take(viewer.inputs, cost, this.limits.inputPerSecond, this.limits.inputPerSecond)) return;
     const params =
       method === 'input.touch'
-        ? { phase: fields.phase, x: fields.x, y: fields.y }
+        ? {
+            phase: fields.phase,
+            x: fields.x,
+            y: fields.y,
+            ...(fields.x2 === undefined && fields.y2 === undefined ? {} : { x2: fields.x2, y2: fields.y2 }),
+          }
         : method === 'input.text'
           ? { text: fields.text }
           : method === 'input.key'

@@ -10013,6 +10013,38 @@ describe('frames.subscribe', () => {
     },
   );
 
+  test.skipIf(!fakeTailscale)('sends a second finger to the helper and refuses half a pair', async () => {
+    const inputs = join(root, 'two-finger-inputs.ndjson');
+    const port = await startControl({ FAKE_HELPER_INPUTS: inputs });
+    const driver = await authed(port, true);
+    const begun = await driver.request('control.begin', { workspace, platform: 'ios' });
+    if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+    const result: unknown = begun.result;
+    assert(isJsonObject(result) && typeof result.session === 'string');
+    const { session } = result;
+    const touch = { session, phase: 'down', x: 0.25, y: 0.5, x2: 0.75, y2: 0.5 };
+    expect(await driver.request('input.touch', touch)).toMatchObject({ result: {} });
+    expect(await driver.request('input.touch', { ...touch, y2: undefined })).toMatchObject({
+      error: { code: 'bad-request' },
+    });
+    expect(await driver.request('input.touch', { ...touch, y2: 2 })).toMatchObject({ error: { code: 'bad-request' } });
+    expect(await driver.request('input.touch', { ...touch, phase: 'up' })).toMatchObject({ result: {} });
+    const commands = () =>
+      existsSync(inputs)
+        ? readFileSync(inputs, 'utf8')
+            .split('\n')
+            .slice(0, -1)
+            .map((line) => JSON.parse(line))
+        : [];
+    await until(() => commands().length === 2);
+    expect(commands()).toEqual([
+      { input: 'touch', phase: 'down', x: 0.25, y: 0.5, x2: 0.75, y2: 0.5, display: 0 },
+      { input: 'touch', phase: 'up', x: 0.25, y: 0.5, x2: 0.75, y2: 0.5, display: 0 },
+    ]);
+    driver.socket.close();
+    await driver.closed;
+  });
+
   test.skipIf(!fakeTailscale)(
     'changes only advertised simulator options under the current control session',
     async () => {

@@ -44,16 +44,21 @@ export function judgeIdleTiming({
   idlePollStartMs,
   idlePollEndMs,
   pressureLevel = null,
+  daemonIdle = null,
 }) {
   const reported = lastActivityMs === null ? commandEndMs : Math.min(readAtMs, lastActivityMs + MINUTE_MS);
   const t0 = Math.max(commandEndMs, reported);
   const deadline = t0 + windowMs + lateTickMs;
   const late = previousPollStartMs !== null && previousPollStartMs > deadline;
   const earliest = commandEndMs + windowMs - tickMs;
-  const early = idlePollEndMs < earliest;
-  const idleFor = idlePollEndMs - t0;
-  const earlyAllowed =
-    early && (pressureLevel === 'high' || pressureLevel === 'critical') && idleFor >= PRESSURE_IDLE_MS;
+  const stoppedAtMs = daemonIdle ? daemonIdle.atMs : idlePollEndMs;
+  const level = daemonIdle ? daemonIdle.pressure : pressureLevel;
+  const pressureNote = daemonIdle
+    ? `the daemon's log records the idle at ${clock(stoppedAtMs)} with ${level ? `pressure level ${level}` : 'no pressure level named'}`
+    : `the build's status reported ${level ?? 'no'} pressure level`;
+  const early = stoppedAtMs < earliest;
+  const idleFor = stoppedAtMs - t0;
+  const earlyAllowed = early && (level === 'high' || level === 'critical') && idleFor >= PRESSURE_IDLE_MS;
   return {
     ok: !late && (!early || earlyAllowed),
     early,
@@ -71,8 +76,8 @@ export function judgeIdleTiming({
         ? [
             `idle before ${clock(earliest)}, the end of the last command plus the window minus one tick; ${
               earlyAllowed
-                ? `allowed: the build's status reported ${pressureLevel} pressure and the workspace had been idle ${Math.round(idleFor / 1000)} s`
-                : `not allowed: the build's status reported ${pressureLevel ?? 'no'} pressure level and the workspace had been idle ${Math.round(idleFor / 1000)} s (a pressure idle needs high or critical and 2 minutes)`
+                ? `allowed: ${pressureNote} and the workspace had been idle ${Math.round(idleFor / 1000)} s`
+                : `not allowed: ${pressureNote} and the workspace had been idle ${Math.round(idleFor / 1000)} s (a pressure idle needs high or critical and 2 minutes)`
             }`,
           ]
         : []),

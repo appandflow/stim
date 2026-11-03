@@ -244,10 +244,10 @@ function createOverlay(canvas, reduced) {
       kick();
     },
     /** This viewer's own finger, drawn without the round trip; `faded` while another viewer holds the screen. */
-    own(info, phase, x, y, faded) {
+    own(info, phase, x, y, faded, second) {
       const who = person(info.id, { name: info.name, color: info.color });
       who.faded = faded;
-      touch(who, phase, x, y, null, performance.now());
+      touch(who, phase, x, y, second, performance.now());
       kick();
     },
     fade(id) {

@@ -184,9 +184,13 @@ SECURITY MODEL
   seconds after the last one leaves. A share never records: footage of share
   viewing is not written to disk.
 - Control goes through the same control session and device lease stim-server
-  uses for Desktop and the phone app: taps, text, the arrow keys and Escape, rotation and the
+  uses for Desktop and the phone app: taps, two-finger gestures, text, the arrow keys and Escape, rotation and the
   hardware buttons of the shared device only. A device an agent or another client drives answers
   busy instead of being taken over.
+- Two-finger gestures on an iOS simulator, Android emulator or Android phone: two real
+  fingers on a phone or tablet, Option-drag with a mouse for a pinch (the second finger mirrors
+  the first through the screen center) and Shift-Option-drag to move both fingers together. A
+  circle marks each finger while Option is held.
 - A share ends at its expiry, on stim share stop, stim stop (without --slot),
   stim worktree remove, when its device stops or changes (stim stop --slot
   ends a share of that slot this way), when the device's frames fail, and when

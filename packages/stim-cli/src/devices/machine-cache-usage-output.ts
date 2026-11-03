@@ -12,7 +12,7 @@ function total(values: (number | null)[]): string {
 
 export function machineCacheLines(report: MachineCacheReport | null | undefined, now: number = Date.now()): string[] {
   if (!report) return [];
-  const { gradle, simRuntimes, deviceSupport, runnerBuilds } = report;
+  const { gradle, simRuntimes, deviceSupport, orphanedDerivedData, runnerBuilds } = report;
   const body: string[] = [];
   if (gradle.unusedVersions.length) {
     body.push(
@@ -21,6 +21,13 @@ export function machineCacheLines(report: MachineCacheReport | null | undefined,
     for (const entry of gradle.unusedVersions) {
       body.push(`    ${entry.version}: ${size(entry.bytes)}`);
       for (const dir of entry.dirs) body.push(`      ${dir.dir}`);
+      if (entry.transforms) {
+        const { dir, bytes, privateBytes, remedy } = entry.transforms;
+        body.push(
+          `      transforms: ${dir} ${size(bytes)}${privateBytes === null ? '' : ` (${size(privateBytes)} its own)`}`,
+        );
+        body.push(chalk.dim(`        remedy: ${remedy}`));
+      }
       if (entry.remedy) body.push(chalk.dim(`      remedy: ${entry.remedy}`));
     }
     if (gradle.unreadableProjects.length)
@@ -54,6 +61,16 @@ export function machineCacheLines(report: MachineCacheReport | null | undefined,
     body.push(`  Xcode device support (${total(deviceSupport.entries.map((entry) => entry.bytes))}):`);
     for (const entry of deviceSupport.entries) body.push(`    ${entry.dir}: ${size(entry.bytes)}`);
     body.push(chalk.dim(`    remedy: ${deviceSupport.remedy}`));
+  }
+  if (orphanedDerivedData.length) {
+    body.push(
+      `  Xcode DerivedData of workspaces that no longer exist (${total(orphanedDerivedData.map((entry) => entry.bytes))}):`,
+    );
+    for (const entry of orphanedDerivedData) {
+      const own = entry.privateBytes === null ? '' : ` (${size(entry.privateBytes)} its own)`;
+      body.push(`    ${entry.dir}: ${size(entry.bytes)}${own}`, `      workspace ${entry.workspacePath}`);
+      body.push(chalk.dim(`      remedy: ${entry.remedy}`));
+    }
   }
   if (runnerBuilds.groups.length) {
     const currentVersions =

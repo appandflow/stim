@@ -17,6 +17,7 @@ const TEMPLATES = {
 export const SHARE_ASSETS: Record<string, { body: string; type: string }> = {
   'viewer.css': { body: read('viewer.css'), type: 'text/css; charset=utf-8' },
   'overlay.js': { body: read('overlay.js'), type: 'text/javascript; charset=utf-8' },
+  'gestures.js': { body: read('gestures.js'), type: 'text/javascript; charset=utf-8' },
   'viewer.js': { body: read('viewer.js'), type: 'text/javascript; charset=utf-8' },
 };
 

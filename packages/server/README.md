@@ -1418,7 +1418,8 @@ control session ID and `lease: null`: the hosted lifetime claim protects this
 private device. Only one controller can drive the device; `takeOver: true`
 replaces the previous controller. Use the returned control ID with
 `device-host.input.touch|text|key`, using the same parameters as ordinary input
-(`key` takes the arrows and Escape on iOS and Android).
+(`key` takes the arrows and Escape on iOS and Android; `touch` takes the second
+finger `x2` and `y2`, which a worker older than this field refuses).
 iOS also supports `device-host.input.button|rotate|posture`. Android supports
 `device-host.input.button` through scrcpy; rotation and posture are unavailable
 on this path, as for physical Android devices. macOS also supports
@@ -2137,7 +2138,14 @@ of the other people on the device (30 messages a second at most, moves
 coalesced), and `{ type: 'busy', name }` when another viewer holds the touch
 pointer. A viewer may send `{ type: 'name', name }`, once per 5 seconds; names
 are cleaned (NFC, no control or format characters, 24 code points), kept only
-in memory and never logged. A hosted share has no presence.
+in memory and never logged. A hosted share has no presence. A `touch` message may carry `x2` and `y2` for a
+second finger and costs one input like any other. The viewer sends them for two
+real fingers on a touch screen, which wait 40 ms after the first finger lands
+so a second one starts a two-finger gesture instead of a tap, and for
+Option-drag with a mouse or pen, where the second finger mirrors the first
+through the screen's center and Shift-Option-drag moves both together, as in
+Xcode's Simulator. A small circle marks each finger while Option is held. The
+presence `touch` carries the second finger as `second`.
 
 ## Protocol
 
@@ -2916,6 +2924,15 @@ sends reaches any other device.
   it.
 - `input.touch` takes `session`, `phase` (`down`, `move`, `up`), `x` and `y`
   as fractions of the upright screen, and `display` (0, the main display).
+  `x2` and `y2`, given together, add a second finger for a pinch or a
+  two-finger pan on an iOS simulator or an Android emulator or device: the
+  simulator's digitizer takes both points in one HID event, an emulator takes
+  two gRPC touch contacts, and a scrcpy device takes the generic and the
+  virtual finger pointers. `down`, every `move` and `up` of the gesture each
+  carry both points, and the finger count never changes between its `down`
+  and its `up`; a client that changes it leaves the extra finger down until the
+  next `down`. A web page, a native macOS window and an iPhone Duo take one
+  finger, and `x2` there is refused as `bad-request`.
   Without `display`, a touch on an iPhone Duo goes to the panel its latest
   frame showed, and before any frame to the cover.
   `input.text` takes up to 256 printable ASCII characters, where `\n` presses

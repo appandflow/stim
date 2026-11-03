@@ -47,3 +47,38 @@ it('presses the Android D-pad and Escape key events for input.key over adb', () 
     ]);
   }
 });
+
+const touch = (platform: SessionTarget['platform'], params: Record<string, unknown>, extra?: Partial<SessionTarget>) =>
+  parseInput('input.touch', { session: 's', phase: 'down', x: 0.25, y: 0.5, ...params }, () => ({
+    ...target(platform),
+    ...extra,
+  }));
+
+it.each(['ios', 'android'] as const)('passes a second finger on as part of one input.touch on %s', (platform) => {
+  expect(touch(platform, { x2: 0.75, y2: 0.5 })).toEqual({
+    value: { session: 's', command: { input: 'touch', phase: 'down', x: 0.25, y: 0.5, x2: 0.75, y2: 0.5 } },
+  });
+  expect(touch(platform, {})).toEqual({
+    value: { session: 's', command: { input: 'touch', phase: 'down', x: 0.25, y: 0.5 } },
+  });
+});
+
+it('takes the second finger as a pair of fractions or not at all', () => {
+  for (const params of [
+    { x2: 0.5 },
+    { y2: 0.5 },
+    { x2: 1.5, y2: 0.5 },
+    { x2: 0.5, y2: -0.1 },
+    { x2: '0.5', y2: 0.5 },
+  ]) {
+    expect(touch('ios', params)).toHaveProperty('code', 'bad-request');
+  }
+});
+
+it('refuses a second finger where only one pointer exists', () => {
+  const two = { x2: 0.75, y2: 0.5 };
+  expect(touch('web', two)).toHaveProperty('code', 'bad-request');
+  expect(touch('macos', two)).toHaveProperty('code', 'bad-request');
+  expect(touch('ios', two, { postures: ['folded', 'unfolded'] })).toHaveProperty('code', 'bad-request');
+  expect(touch('android', two, { postures: ['folded', 'unfolded'] })).toHaveProperty('value');
+});

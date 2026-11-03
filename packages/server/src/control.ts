@@ -103,7 +103,16 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
 }
 
 export type InputCommand =
-  | { input: 'touch'; phase: TouchPhase; x: number; y: number; display?: number; duoRevision?: string }
+  | {
+      input: 'touch';
+      phase: TouchPhase;
+      x: number;
+      y: number;
+      x2?: number;
+      y2?: number;
+      display?: number;
+      duoRevision?: string;
+    }
   | { input: 'text'; text: string }
   | { input: 'scroll'; x: number; y: number; deltaX: number; deltaY: number }
   | { input: 'key'; key: InputKey; modifiers: KeyModifier[] }
@@ -293,9 +302,19 @@ export function parseInput(
     return { value: { session, command: { input: 'posture', posture: posture as DevicePosture } } };
   }
   if (method === 'input.touch') {
-    const { phase, x, y, display, duoRevision } = params;
+    const { phase, x, y, x2, y2, display, duoRevision } = params;
     if (!TOUCH_PHASES.includes(phase as TouchPhase) || !fraction(x) || !fraction(y)) {
       return { code: 'bad-request', message: 'input.touch needs phase (down, move or up), and x and y from 0 to 1.' };
+    }
+    let second: { x2: number; y2: number } | null = null;
+    if (x2 !== undefined || y2 !== undefined) {
+      if (typeof x2 !== 'number' || typeof y2 !== 'number' || !fraction(x2) || !fraction(y2)) {
+        return { code: 'bad-request', message: 'input.touch takes x2 and y2 together, each from 0 to 1.' };
+      }
+      if (platform === 'web' || platform === 'macos' || (platform === 'ios' && postures.length > 0)) {
+        return { code: 'bad-request', message: 'This device takes one finger only.' };
+      }
+      second = { x2, y2 };
     }
     if (
       display !== undefined &&
@@ -328,6 +347,7 @@ export function parseInput(
           phase: phase as TouchPhase,
           x: x as number,
           y: y as number,
+          ...second,
           ...(display === undefined ? {} : { display }),
           ...(duoRevision === undefined ? {} : { duoRevision: duoRevision as string }),
         },
@@ -945,6 +965,7 @@ export class ControlHub {
       phase: command.phase,
       x: command.x,
       y: command.y,
+      ...(command.x2 !== undefined && command.y2 !== undefined ? { second: { x: command.x2, y: command.y2 } } : {}),
       ...(command.display !== undefined ? { display: command.display } : {}),
       at: Date.now(),
     });
