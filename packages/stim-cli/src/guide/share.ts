@@ -262,9 +262,13 @@ SECURITY MODEL
   Android phone only. A device an agent or another client drives answers
   busy instead of being taken over.
 - Clipboard, with --control on an iOS simulator, Android emulator or Android phone: Command-V or Control-V while
-  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field, and the
-  toolbar's Copy device clipboard button copies the device clipboard to the browser. Nothing syncs on its own. A
-  share without --control, a web page and a macOS app never read or set the device clipboard, and the text is never
+  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field. The
+  top bar's options menu has a Sync clipboard switch, on by default for control viewers and remembered in the
+  browser: while the page is focused and visible it polls the device clipboard every two seconds (slower after
+  failures) and writes new text to the browser clipboard, with a Copy from device chip when the browser refuses
+  the write, and where the browser allows reading its clipboard (Chromium, after one permission prompt) it sends
+  the browser's new text to the device when the page regains focus. The menu's Copy from device button copies
+  once. A share without --control, a web page and a macOS app never read or set the device clipboard, and the text is never
   logged. The stim-server protocol methods are input.clipboard.set and input.clipboard.get, behind the hello
   feature device-clipboard.
 - Two-finger gestures on an iOS simulator, Android emulator or Android phone: two real

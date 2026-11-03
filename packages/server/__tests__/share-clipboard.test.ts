@@ -11,6 +11,11 @@ interface Clipboard {
     BlobClass: unknown,
     text: Promise<string>,
   ) => Promise<unknown>;
+  nextPollDelay: (current: number, ok: boolean) => number;
+  createClipboardSync: () => {
+    deviceRead: (text: unknown) => boolean;
+    browserRead: (text: unknown) => { message?: Record<string, unknown>; note?: string } | null;
+  };
 }
 
 const clipboard: Clipboard = runInNewContext(
@@ -72,5 +77,56 @@ describe('the viewer copy', () => {
     await expect(
       clipboard.writeClipboard({ write }, Item, Blob, Promise.reject(new Error('The device did not answer.'))),
     ).rejects.toThrow('The device did not answer.');
+  });
+});
+
+describe('the viewer clipboard sync', () => {
+  it('only records the first device text, then asks for a browser write on each new one', () => {
+    const sync = clipboard.createClipboardSync();
+    expect(sync.deviceRead('first')).toBe(false);
+    expect(sync.deviceRead('first')).toBe(false);
+    expect(sync.deviceRead('second')).toBe(true);
+    expect(sync.deviceRead('second')).toBe(false);
+    expect(sync.deviceRead('')).toBe(false);
+  });
+
+  it('only records the first browser text, then sends each new one without paste', () => {
+    const sync = clipboard.createClipboardSync();
+    expect(sync.browserRead('first')).toBeNull();
+    expect(sync.browserRead('second')).toEqual({ message: { type: 'clipboard-set', text: 'second' } });
+    expect(sync.browserRead('second')).toBeNull();
+    expect(sync.browserRead('')).toBeNull();
+  });
+
+  it('takes an empty first browser clipboard as the baseline, so the first copy after it is sent', () => {
+    const sync = clipboard.createClipboardSync();
+    expect(sync.browserRead('')).toBeNull();
+    expect(sync.browserRead('copied later')).toEqual({ message: { type: 'clipboard-set', text: 'copied later' } });
+  });
+
+  it('never echoes text back in the direction it came from', () => {
+    const sync = clipboard.createClipboardSync();
+    sync.deviceRead('start');
+    sync.browserRead('start');
+    expect(sync.deviceRead('from device')).toBe(true);
+    expect(sync.browserRead('from device')).toBeNull();
+    expect(sync.browserRead('from browser')).toEqual({ message: { type: 'clipboard-set', text: 'from browser' } });
+    expect(sync.deviceRead('from browser')).toBe(false);
+  });
+
+  it('shows the byte-limit note once for a text that is too long, and sends nothing', () => {
+    const sync = clipboard.createClipboardSync();
+    sync.browserRead('start');
+    const long = 'a'.repeat(MAX_CLIPBOARD_BYTES + 1);
+    expect(sync.browserRead(long)).toEqual({ note: expect.any(String) });
+    expect(sync.browserRead(long)).toBeNull();
+  });
+
+  it('polls every two seconds, doubles after each failure up to thirty, and recovers on a success', () => {
+    expect(clipboard.nextPollDelay(2000, true)).toBe(2000);
+    expect(clipboard.nextPollDelay(2000, false)).toBe(4000);
+    expect(clipboard.nextPollDelay(16000, false)).toBe(30000);
+    expect(clipboard.nextPollDelay(30000, false)).toBe(30000);
+    expect(clipboard.nextPollDelay(30000, true)).toBe(2000);
   });
 });
