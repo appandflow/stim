@@ -60,7 +60,8 @@ WHAT IT NEEDS
   A physical iPhone is view only; --control with ios --device is refused.
 - Or a ready hosted session (ios|android --remote <machine>): this machine's
   stim-server relays frames and input through its existing device-host
-  connection, one host stream for all viewers, none while nobody watches. The
+  connection, one host stream for the H.264 viewers and one for the JPEG
+  viewers, none while nobody watches. The
   host needs no new approval. A session that is not ready refuses the share;
   the share ends when the session stops or is replaced, or the host stream or
   its connection fails; control the host refuses reaches the viewer as
@@ -135,6 +136,14 @@ SECURITY MODEL
   cookie and a same-origin request. A share without a password needs no
   cookie: the link admits the page and the frame socket, which still needs a
   same-origin request. At most 5 viewers watch one share.
+- A browser that decodes H.264 with WebCodecs (Chrome, Edge, Safari 16.4+ on
+  macOS and iOS, desktop Firefox 130+) gets video at up to 60 fps, 1280 px on
+  the long edge, 3 to 8 Mbit/s; others, and a browser whose decoder fails, get
+  JPEG at 10 fps. A viewer that falls behind skips to the next keyframe, and a
+  joining viewer gets a keyframe at once. #jpeg on the link forces JPEG.
+  Measured on a local iOS simulator share of an animation in Chrome through
+  Funnel: H.264 54 fps at 4.8 Mbit/s, 7 ms median capture to screen; JPEG
+  9 fps at 4.0 Mbit/s.
 - Capture starts only when a signed-in viewer (any viewer with the link, for a
   share without a password) connects and stops about 10
   seconds after the last one leaves. A share never records: footage of share

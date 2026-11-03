@@ -1,5 +1,5 @@
 import { request } from 'node:http';
-import { connect as tcpConnect, type Socket } from 'node:net';
+import { connect as tcpConnect, Socket } from 'node:net';
 import { WebSocket } from 'ws';
 import type { FrameHint } from '../src/frame-helper.ts';
 import type { Device, FrameListener } from '../src/frames.ts';
@@ -435,9 +435,13 @@ describe('a web share', () => {
     video(unit(true, 1));
     await vi.waitFor(() => expect(received).toHaveLength(1));
 
-    const tcp = Reflect.get(socket, '_socket') as Socket;
+    const tcp: unknown = Reflect.get(socket, '_socket');
+    if (!(tcp instanceof Socket)) throw new Error('ws exposes no TCP socket');
     tcp.pause();
-    const big = (capturedAt: number): AccessUnit => ({ ...unit(false, capturedAt), data: Buffer.alloc(1024 * 1024, 1) });
+    const big = (capturedAt: number): AccessUnit => ({
+      ...unit(false, capturedAt),
+      data: Buffer.alloc(1024 * 1024, 1),
+    });
     let pushed = 1;
     await vi.waitFor(() => {
       video(big(++pushed));
@@ -451,9 +455,9 @@ describe('a web share', () => {
     video(unit(false, 10_002));
     video(unit(true, 10_003));
     video(unit(false, 10_004));
-    await vi.waitFor(() => expect(received.at(-1) && accessUnitOf(received.at(-1)!)?.capturedAt).toBe(10_004));
-    const late = received.map((packet) => accessUnitOf(packet)!.capturedAt).filter((at) => at >= 10_000);
-    expect(late).toEqual([10_003, 10_004]);
+    const late = () =>
+      received.map((packet) => accessUnitOf(packet)?.capturedAt ?? 0).filter((capturedAt) => capturedAt >= 10_000);
+    await vi.waitFor(() => expect(late()).toEqual([10_003, 10_004]));
   });
 
   it('drops input without --control and never begins a control session', async () => {
