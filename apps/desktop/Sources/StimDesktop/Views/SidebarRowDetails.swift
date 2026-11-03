@@ -16,6 +16,42 @@ struct SessionLine: View {
   }
 }
 
+struct RowTitleLine: View {
+  var title: String
+  var titleColor: Color
+  var status: String?
+  var statusColor: Color
+  var statusWeight: Font.Weight = .medium
+  var isHidden = false
+
+  private func statusText(_ status: String) -> some View {
+    Text(status).font(.stim(.caption, weight: statusWeight)).foregroundStyle(statusColor).lineLimit(1).fixedSize()
+  }
+
+  private func name(fitting: Bool) -> some View {
+    Text(title).foregroundStyle(titleColor).lineLimit(1).truncationMode(.middle).fixedSize(horizontal: fitting, vertical: false)
+  }
+
+  var body: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+        name(fitting: true)
+        Spacer(minLength: 0)
+        if isHidden { HiddenIndicator() }
+        if let status { statusText(status) }
+      }
+      VStack(alignment: .leading, spacing: Space.xs) {
+        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+          name(fitting: false)
+          Spacer(minLength: 0)
+          if isHidden { HiddenIndicator() }
+        }
+        if let status { statusText(status) }
+      }
+    }
+  }
+}
+
 struct RowDetailLine: View {
   var context: Text?
   var git: GitChip?
