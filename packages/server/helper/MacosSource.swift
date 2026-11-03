@@ -545,7 +545,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
       try post(events, window)
     }
     switch command {
-    case .touch(let phase, let point, _):
+    case .touch(let phase, let point, _, _):
       let type: NSEvent.EventType = phase == .down ? .leftMouseDown : phase == .up ? .leftMouseUp : .leftMouseDragged
       let global = location(point)
       let target = inputQueue.sync {
