@@ -1382,6 +1382,11 @@ export class ShareHub {
         () => !share.ended && share.source === source && share.viewers.size > 0,
       )
       .then((outcome) => {
+        if (share.ended || share.source !== source) {
+          if (!('code' in outcome)) source.endFor(share.owner, 'The share ended.');
+          this.releaseRecording(share);
+          return null;
+        }
         if ('code' in outcome) {
           share.controlRetryAt = Date.now() + 5000;
           this.releaseRecording(share, outcome.code !== 'device-busy');
