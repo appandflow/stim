@@ -521,13 +521,14 @@ describe('a web share', () => {
     socket.close();
   });
 
-  it('serves its stylesheet and script without a token, and nothing else under that path', async () => {
+  it('serves its stylesheet and scripts without a token, and nothing else under that path', async () => {
     const share = await started(f);
     const base = new URL(local(share, f.hub.port ?? 0)).origin;
     const script = await http(`${base}/s/assets/viewer.js`);
     expect(script.status).toBe(200);
     expect(String(script.headers['content-type'])).toContain('javascript');
     expect((await http(`${base}/s/assets/viewer.css`)).status).toBe(200);
+    expect((await http(`${base}/s/assets/gestures.js`)).status).toBe(200);
     expect((await http(`${base}/s/assets/secret.js`)).status).toBe(404);
     expect((await http(`${base}/s/assets/viewer.js`, { method: 'POST', body: 'x=1' })).status).toBe(404);
   });
