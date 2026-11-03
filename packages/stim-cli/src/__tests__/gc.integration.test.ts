@@ -3451,6 +3451,7 @@ describe('gc --json', () => {
       'parkedEmulators',
       'parkedHostedDevices',
       'hostedAppStorage',
+      'otherHomes',
       'orphanedDevices',
       'unverifiedDevices',
       'staleDevices',

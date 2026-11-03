@@ -3,6 +3,7 @@ import { join, resolve } from 'path';
 import { ensurePrivateDir, workspaceName, workspaceStateDir as workspaceDir } from '@stim-cli/core';
 import { readJsonObject, workspaceMetadataFile } from '@stim-cli/core/state';
 import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
+import { noteStimHome } from '../engine/stim-home-registry.ts';
 
 export { buildCacheRoot as sharedBuildCache, workspaceId } from '@stim-cli/core';
 export { workspaceName, workspaceDir };
@@ -31,6 +32,7 @@ export function ensureWorkspaceStorage(projectRoot: string): string {
   const dir = workspaceDir(canonicalRoot);
   const file = workspaceMetadataFile(canonicalRoot);
   ensurePrivateDir(dir);
+  noteStimHome();
   return withDirLock(join(dir, 'metadata.lock'), () => {
     if (!existsSync(file)) {
       const metadata: WorkspaceMetadata = {

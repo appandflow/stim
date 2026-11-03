@@ -7,6 +7,7 @@ import {
   type CreatedDevicePlatform,
 } from '@stim-cli/core/state';
 import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
+import { noteStimHome } from '../engine/stim-home-registry.ts';
 import { getConfigDir } from '../workspace/config.ts';
 
 export { readCreatedDevices, type CreatedDevicePlatform } from '@stim-cli/core/state';
@@ -36,6 +37,7 @@ function update(platform: CreatedDevicePlatform | 'systemImages', change: (entri
         rmSync(tmp, { force: true });
         throw error;
       }
+      noteStimHome({ ios: next.ios, android: next.android });
     },
     { ensureParent: () => ensurePrivateDir(dir) },
   );
