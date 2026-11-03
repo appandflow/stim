@@ -6,7 +6,7 @@ import { metroStoreRoot } from '../supervisor/metro-store.ts';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
-import { workspaceInUse } from '../workspace/in-use.ts';
+import { workspaceInUse, workspaceInUseAsync } from '../workspace/in-use.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { maintenanceKeepSetting, resolveProjectSettings, resolveProjectSettingsAsync } from '../workspace/settings.ts';
 import type { StimContext } from '@stim-cli/core';
@@ -39,16 +39,50 @@ function protectedCacheKeys(config: Config | null = loadConfig()): Set<string> {
   return keys;
 }
 
+const STORE_CHECKS = { managedLocks: false, hosted: false, nativeRun: false } as const;
+
 function liveMetroStores(config: Config | null = loadConfig()): string[] {
   return Object.keys(config?.projects ?? {})
-    .filter((root) => workspaceInUse(root, { managedLocks: false, hosted: false, nativeRun: false }).length > 0)
+    .filter((root) => workspaceInUse(root, STORE_CHECKS).length > 0)
     .map((root) => canonicalPath(metroStoreRoot(root)));
 }
 
+async function liveMetroStoresAsync(config: Config | null, operation: StimContext): Promise<string[]> {
+  const stores: string[] = [];
+  for (const root of Object.keys(config?.projects ?? {}))
+    if ((await workspaceInUseAsync(root, STORE_CHECKS, operation.signal, operation)).length > 0)
+      stores.push(canonicalPath(metroStoreRoot(root)));
+  return stores;
+}
+
 export function cacheEntryProtection(config: Config | null = loadConfig()): (entry: string) => string | null {
+  return entryProtection(config, () => liveMetroStores(config));
+}
+
+/** `cacheEntryProtection`, read without blocking when an operation is given. */
+export async function cacheEntryProtectionFor(
+  config: Config | null,
+  operation: StimContext | undefined,
+): Promise<(entry: string) => string | null> {
+  if (!operation) return cacheEntryProtection(config);
+  let stores: string[] | Error;
+  try {
+    stores = await liveMetroStoresAsync(config, operation);
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    stores = error instanceof Error ? error : new Error(String(error));
+  }
+  return entryProtection(config, () => {
+    if (stores instanceof Error) throw stores;
+    return stores;
+  });
+}
+
+function entryProtection(config: Config | null, liveStores: () => string[]): (entry: string) => string | null {
   try {
     const keys = protectedCacheKeys(config);
-    const stores = liveMetroStores(config);
+    const stores = liveStores();
     return (entry) => {
       if (keys.has(basename(entry))) return 'a project, parked device or running build still uses this build';
       const path = canonicalPath(entry);
@@ -82,6 +116,13 @@ export async function maintenancePinnedAsync(root: string, operation: StimContex
     operation.signal.throwIfAborted();
     return true;
   }
+}
+
+/** `maintenancePinned`, read without blocking when an operation is given. */
+export function maintenancePinnedReader(
+  operation: StimContext | undefined,
+): (root: string) => boolean | Promise<boolean> {
+  return operation ? (root) => maintenancePinnedAsync(root, operation) : maintenancePinned;
 }
 
 export function recentUse(

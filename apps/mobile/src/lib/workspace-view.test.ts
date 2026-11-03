@@ -32,6 +32,7 @@ import {
   deviceUsage,
   finishedCacheLookupLabel,
   diskParts,
+  diskSharedBytes,
   diskPartsLabel,
   gitChip,
   namesPhases,
@@ -618,7 +619,9 @@ describe('workspace view vectors', () => {
   });
 
   it.each(vectors.diskParts.map((c) => [c.name, c] as const))('disk parts: %s', (_, c) => {
-    expect(diskParts(c.workspace as unknown as EnvironmentState)).toEqual(c.parts);
+    const workspace = c.workspace as unknown as EnvironmentState;
+    expect(diskParts(workspace)).toEqual(c.parts);
+    expect(diskSharedBytes(workspace)).toBe(c.shared ?? null);
   });
 
   it.each(vectors.agentRow.map((c) => [c.name, c] as const))('agent row: %s', (_, c) => {
@@ -635,6 +638,23 @@ describe('usageParts and usageLabel', () => {
     const parts = diskParts(e)!;
     expect(diskPartsLabel(parts)).toBe('node_modules 1.5 GB, Rest of worktree 190 MB, Build output 19 MB');
     expect(parts.reduce((sum, part) => sum + part.bytes, 0)).toBeCloseTo(workspaceUsage(e, null).diskBytes!);
+  });
+
+  it('leaves shared node_modules out of the disk parts and the workspace disk', () => {
+    const e = env({
+      worktree: { path: '/w' },
+      disk: {
+        worktreeBytes: 1.9e9,
+        nodeModulesBytes: 0.9e9,
+        nodeModulesPrivateBytes: 0.01e9,
+        buildBytes: 0.3e9,
+        measuredAt: iso(0),
+      },
+    });
+    const total = (diskParts(e) ?? []).reduce((sum, part) => sum + part.bytes, 0);
+    expect(diskSharedBytes(e)).toBeCloseTo(0.89e9);
+    expect(total).toBeCloseTo(1.31e9);
+    expect(workspaceUsage(e, null).diskBytes).toBeCloseTo(1.31e9);
   });
 
   it('lists the measured resources in CPU, memory, disk order', () => {

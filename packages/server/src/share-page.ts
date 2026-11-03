@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { loginTitle } from './share-title.ts';
 import { fileURLToPath } from 'node:url';
 
 const BUNDLED = new URL('./share-viewer/', import.meta.url);
@@ -32,8 +33,8 @@ function fill(template: string, values: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, name: string) => (name === 'logo' ? LOGO : escape(values[name] ?? '')));
 }
 
-export function loginPage(message: string | null): string {
-  return fill(TEMPLATES.login, { message: message ?? '' });
+export function loginPage(message: string | null, app: string | null = null): string {
+  return fill(TEMPLATES.login, { message: message ?? '', title: loginTitle(app) });
 }
 
 export function endedPage(): string {
@@ -41,6 +42,7 @@ export function endedPage(): string {
 }
 
 export function viewerPage(options: {
+  title: string;
   control: boolean;
   /** The viewer can only watch a share that has control. */
   viewOnly: boolean;
@@ -53,6 +55,7 @@ export function viewerPage(options: {
   rotate: boolean;
 }): string {
   return fill(TEMPLATES.viewer, {
+    title: options.title,
     control: String(options.control),
     viewOnly: String(options.viewOnly),
     upgrade: String(options.upgrade),

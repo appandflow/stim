@@ -2065,6 +2065,8 @@ export class DeviceHost {
     const owned = this.owned.get(record.id);
     if (!owned || !this.detachable(record, owned)) return false;
     try {
+      owned.run?.cancel();
+      if (owned.run && !(await owned.run.done).settled) return false;
       await this.settleLogs(owned);
       releaseClaim(takeHostedInputClaim(owned.claim));
     } catch {
@@ -2178,8 +2180,8 @@ export class DeviceHost {
         process.stderr.write(
           `Hosted session ${record.id} could not be resumed (${why.replace(/[\r\n]+/g, ' ')}); stopping it.\n`,
         );
-        keep = true;
         this.beginStop(record);
+        keep = true;
         return;
       }
       owned.reachedReady = true;

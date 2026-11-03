@@ -2195,7 +2195,13 @@ With `control` on an iOS simulator, an Android emulator or an Android phone, a
 (`id`) from a viewer go through `input.clipboard.set` and `input.clipboard.get`,
 each costing ten inputs. The viewer sends `clipboard-set` with `paste: true` on
 Command-V or Control-V while the screen has focus, from the browser's `paste`
-event, and `clipboard-get` from its "Copy device clipboard" toolbar button. The
+event. With its options menu's Sync clipboard switch on (the default) and the
+page focused, it sends `clipboard-get` with `poll: true` every 2 seconds, backing
+off to 30 seconds after failures, and `clipboard-set` without `paste` when the
+browser clipboard it may read changed on focus. A `poll: true` read is answered
+only while the share's control session runs: it starts no session, and no
+`clipboard-get` counts as input for the 5 minute idle end. The menu's "Copy from
+device" button sends `clipboard-get` without `poll`. The
 reply `{ "type": "clipboard", "id", "text" }`, or `error` with a fixed message,
 goes to the asking viewer only and the text is never logged. A share without
 `control` drops both messages, and so does a viewer that cannot control.

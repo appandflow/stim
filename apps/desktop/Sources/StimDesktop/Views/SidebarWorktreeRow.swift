@@ -62,18 +62,11 @@ struct SidebarWorktreeRow: View {
         StatusDot(color: Color(summary.status.tone), filled: summary.active)
           .padding(.top, Space.sm - 1)
         VStack(alignment: .leading, spacing: Space.xs) {
-          HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-            Text(summary.title).foregroundStyle(summary.active ? Palette.text : Palette.secondary)
-              .lineLimit(1).truncationMode(.middle).layoutPriority(1)
-            Spacer(minLength: 0)
-            if prefs.hiddenWorkspaces.contains(archives.isEmpty ? .worktreeGroup(page) : .archivedGroup(archives)) {
-              HiddenIndicator()
-            }
-            if summary.status.kind != .running {
-              Text(summary.status.text).font(.stim(.caption, weight: .semibold)).foregroundStyle(Color(summary.status.tone))
-                .lineLimit(1).fixedSize()
-            }
-          }
+          RowTitleLine(
+            title: summary.title, titleColor: summary.active ? Palette.text : Palette.secondary,
+            status: summary.status.kind == .running ? nil : summary.status.text, statusColor: Color(summary.status.tone),
+            statusWeight: .semibold,
+            isHidden: prefs.hiddenWorkspaces.contains(archives.isEmpty ? .worktreeGroup(page) : .archivedGroup(archives)))
           if archives.isEmpty, let session = summary.agents.first {
             SessionLine(session: session, others: summary.agents.count - 1)
           }

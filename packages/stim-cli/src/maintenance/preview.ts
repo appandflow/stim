@@ -21,6 +21,7 @@ import { cachedDeviceActivity, cachedDeviceActivityAsync } from './activity.ts';
 import { planIdleStop } from './idle-stop.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 
 export function triggeringRoot(operation?: StimContext): string {
   return canonicalPath(
@@ -43,6 +44,7 @@ export async function plannedMaintenance(
     refresh = true,
     background = false,
     operation,
+    deviceActivity,
   }: {
     devices?: boolean;
     sweep?: boolean;
@@ -51,6 +53,8 @@ export async function plannedMaintenance(
     refresh?: boolean;
     background?: boolean;
     operation?: StimContext;
+    /** Reads owned device activity for an operation, such as from the daemon tick's measurement. */
+    deviceActivity?: (withSims: boolean) => Promise<OwnedDeviceActivity[]>;
   } = {},
 ): Promise<PlannedMaintenance> {
   const env = operation?.env ?? process.env;
@@ -132,6 +136,7 @@ export async function plannedMaintenance(
       refresh,
       idleDays: sweep && settings.removeIdleWorktrees && settings.olderThanDays > 0 ? settings.olderThanDays : null,
       operation,
+      deviceActivity,
     });
     merge(planned);
     result.worktreeSweep = planned.sweep;
@@ -147,7 +152,7 @@ export async function plannedMaintenance(
           operation,
           hostedOnly: true,
           devices: operation
-            ? cachedDeviceActivityAsync(now, env, operation.signal, operation)
+            ? (deviceActivity ?? cachedDeviceActivityAsync(now, env, operation.signal, operation))
             : cachedDeviceActivity(now),
         }),
       );
