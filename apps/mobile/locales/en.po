@@ -1472,10 +1472,6 @@ msgstr "Compiling"
 msgid "Configuring"
 msgstr "Configuring"
 
-#: src/lib/build-machines.ts
-msgid "confirm its fingerprint with stim remote list in a terminal"
-msgstr "confirm its fingerprint with stim remote list in a terminal"
-
 #: src/screens/pair.tsx
 msgid "Connect"
 msgstr "Connect"
@@ -2076,6 +2072,10 @@ msgstr "idle for {spoken}"
 #: src/lib/home-list.ts
 msgid "Idle for {spoken}"
 msgstr "Idle for {spoken}"
+
+#: src/lib/build-machines.ts
+msgid "if {machine} or its Stim home was replaced, run stim remote remove {machine}, then stim remote add {machine} on the computer this phone is paired with"
+msgstr "if {machine} or its Stim home was replaced, run stim remote remove {machine}, then stim remote add {machine} on the computer this phone is paired with"
 
 #: src/screens/home.tsx
 msgid "In Stim Desktop, open Pair a Phone and scan its QR code. This phone and the machine both need Tailscale."
@@ -2917,6 +2917,10 @@ msgstr "On {host}"
 msgid "on {machine}"
 msgstr "on {machine}"
 
+#: src/lib/build-machines.ts
+msgid "on {machine}, run stim-server service update --release <version>, then run stim remote add {machine} on the computer this phone is paired with"
+msgstr "on {machine}, run stim-server service update --release <version>, then run stim remote add {machine} on the computer this phone is paired with"
+
 #: src/lib/home-list.ts
 msgid "on {macName}"
 msgstr "on {macName}"
@@ -3503,12 +3507,8 @@ msgid "run Stim from a git checkout"
 msgstr "run Stim from a git checkout"
 
 #: src/lib/build-machines.ts
-msgid "run stim remote remove, then stim remote add"
-msgstr "run stim remote remove, then stim remote add"
-
-#: src/lib/build-machines.ts
-msgid "run stim-server service update there"
-msgstr "run stim-server service update there"
+msgid "run stim remote list in a terminal on the computer this phone is paired with, and answer y only if the fingerprint matches the one stim-server setup printed on {machine}"
+msgstr "run stim remote list in a terminal on the computer this phone is paired with, and answer y only if the fingerprint matches the one stim-server setup printed on {machine}"
 
 #: src/lib/workspaces.ts
 #: src/screens/logs.tsx
