@@ -512,8 +512,8 @@ test('a stray file in the agent-device sessions directory does not keep the work
   expect((await plan()).actions.map((action) => action.target)).toEqual([root]);
 });
 
-test('an automatic maintenance pass plans the idle stop of a hosted workspace only, the gc dry run of both', async () => {
-  const { root: local } = bootedWorkspace('local', 7 * HOUR_MS);
+test('an automatic maintenance pass plans the idle stop of a hosted workspace only, and the gc dry run, whose --delete stops none, lists no idle stop', async () => {
+  bootedWorkspace('local', 7 * HOUR_MS);
   const hosted = hostedWorkspace('hosted', 7 * HOUR_MS);
   vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
   vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
@@ -524,12 +524,7 @@ test('an automatic maintenance pass plans the idle stop of a hosted workspace on
   const planned = (readMaintenanceState()?.plan ?? []).filter((action) => action.check === 'idle');
   expect(planned.map((action) => action.target)).toEqual([hosted]);
   const preview = await previewMaintenance();
-  expect(
-    preview.actions
-      .filter((action) => action.check === 'idle')
-      .map((action) => action.target)
-      .toSorted(),
-  ).toEqual([hosted, local].toSorted());
+  expect(preview.actions.filter((action) => action.check === 'idle')).toEqual([]);
 });
 
 test('a daemon pass may stop the hosted workspace a command runs in, a command-started one may not', async () => {
