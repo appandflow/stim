@@ -418,17 +418,21 @@ pressed, and the label.
   then mapped to the upright frame with the device's rotation, which the frame stream already knows. The overlay
   draws in the screen box, never over the device frame artwork, like human touches.
 - **Fading.** The outline holds 600 ms after the command exits and fades over 300 ms.
-- **Verified so far.** From agent-device 0.21.35's types and code, not yet on a device:
-  - (a) `snapshot -i --json`: `nodes[].ref`, `nodes[].rect {x, y, width, height}` and `viewport`. Every ref'd node
-    has a rect.
-  - (b) `get attrs @ref --json`: read-only, but it takes snapshot flags (`--depth`, `--scope`), so it likely captures
-    a tree; whether its map includes the rect and what it costs per call are not known.
-  - (c) `press`, `click`, `fill` results: the dispatched point; the record builder copies no rect. Whether the full
-    result object carries the post-motion-check frame is not known.
-  - (d) the daemon's wire reply when the CLI prints text: not checked; the HTTP route would depend on it.
-    The on-device check (iOS simulator and Android emulator, in a scratch `STIM_HOME` with an owned device) was blocked
-    on 2026-11-03 by this MacBook's load average (above 750 against the ~80 limit for local native work). It is the
-    first task of phase 1.
+- **Verified on an iOS simulator** (agent-device 0.21.35, iPhone 18 Pro on iOS 27.0, 2026-11-03):
+  - (a) `snapshot -i --json` prints `{success, data}`; `data.nodes[]` carry `ref` (`e1`, no `@`) and
+    `rect {x, y, width, height}`, every node of the interactive tree has both, and `data.viewport` is
+    `{width: 402, height: 874}`, the same point space as the rects and as the press point (a tap at mid-screen
+    reports `x: 201`).
+  - (b) `get attrs @ref --json` returns `data.node.rect`. For a ref it reads the session's last snapshot: about
+    0.11 to 0.13 s, and after the screen changed it still answers from that snapshot with a staleness `warning`. A
+    selector (`get attrs 'label="Menu"' --json`) matches the current screen in 0.1 to 0.5 s under this machine's
+    load. It is no fresher than the wrapper's cached snapshot for refs, so the wrapper does not call it.
+  - (c) `press @ref --json` returns `x`, `y`, `referenceWidth`, `referenceHeight` (the viewport), `ref`,
+    `refLabel` and `selectorChain`, and no frame or rect of the target. The `action.recorded` details carry `x`,
+    `y`, `ref` and `positionals`, and agent-device writes them before the command exits (risk 11 does not occur).
+  - (d) not checked; it matters only to the HTTP route.
+  - Android: not checked. No Android build of a test app was cached and the machine's load ruled out a Gradle
+    build; until it is checked, Android points assume the same `viewport` space as iOS.
 - **Cheapest reliable source.** Wrapper: the agent's own `snapshot --json`, cached, with the result point as the
   stale check; if (b) proves to carry the rect and costs little, a `get attrs` before each ref or selector action
   removes the dependence on the agent's snapshot format. HTTP route: the snapshot RPC result, if (d) shows it carries

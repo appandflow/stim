@@ -27,7 +27,8 @@ import ImageIO
 // at no more than its own fps; {"recordKeyframe": true} makes that encoder's next frame a keyframe; {"keyframe": true} to make the next video frame a keyframe; or an input:
 // {"input": "touch", "phase": "down|move|up", "x": 0-1, "y": 0-1, "display": n} with x
 // and y on the upright screen; {"input": "text", "text": s}, printable ASCII where "\n"
-// is Return, "\t" is Tab and "\u{8}" is Delete; and {"input": "button", "button":
+// is Return, "\t" is Tab and "\u{8}" is Delete; {"input": "key", "key": "left|right|up|down|escape",
+// "modifiers": []} on an iOS simulator or an Android device; and {"input": "button", "button":
 // "home|lock"}, or on an emulator also "back|app-switch"; {"input": "rotate", "direction":
 // "left|right"}; and on an emulator {"input": "posture", "posture":
 // "folded|half-open|unfolded"}. An emulator types and presses buttons only with a hardware
@@ -685,9 +686,13 @@ extension AndroidDeviceSource: Source {
       }
       stream.send(Scrcpy.keycode(.down, key))
       stream.send(Scrcpy.keycode(.up, key))
+    case .key(let name, _):
+      guard let key = deviceKeys[name] else { return Output.notice(["inputError": "Android takes no \(name) key."]) }
+      stream.send(Scrcpy.keycode(.down, key.androidCode))
+      stream.send(Scrcpy.keycode(.up, key.androidCode))
     case .rotate, .posture:
       Output.notice(["inputError": "A physical device rotates and folds only in hand."])
-    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease:
       break
     }
   }
@@ -995,6 +1000,12 @@ func readCommands(_ source: Source) {
   }
 }
 
+// The keys `input.key` sends to an iOS or Android device, by macOS virtual key code
+// (the same codes Stim Desktop forwards) and by Android KeyEvent code for scrcpy.
+let deviceKeys: [String: (macCode: UInt16, androidCode: Int32)] = [
+  "left": (0x7B, 21), "right": (0x7C, 22), "down": (0x7D, 20), "up": (0x7E, 19), "escape": (0x35, 111),
+]
+
 // macOS virtual key codes of a US keyboard, which SimulatorKit's
 // hidUsageForCGKeyCode turns into HID usages and the emulator turns into evdev
 // keys; shifted characters also hold Shift (0x38).
@@ -1080,7 +1091,12 @@ extension SimulatorSource: Source {
       hid.button(button, down: true)
       usleep(100_000)
       hid.button(button, down: false)
-    case .config, .keyframe, .recordKeyframe, .rotate, .posture, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
+    case .key(let name, _):
+      guard let key = deviceKeys[name] else { return Output.notice(["inputError": "iOS takes no \(name) key."]) }
+      hid.hardwareKey(code: key.macCode, down: true)
+      usleep(10_000)
+      hid.hardwareKey(code: key.macCode, down: false)
+    case .config, .keyframe, .recordKeyframe, .rotate, .posture, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease:
       break
     }
   }
@@ -1122,11 +1138,16 @@ extension EmulatorSource: Source {
       let keys = ["home": "GoHome", "back": "GoBack", "app-switch": "AppSwitch", "lock": "Power"]
       guard let key = keys[name] else { return Output.notice(["inputError": "Android has no \(name) button."]) }
       input.call("sendKey", InputMessages.namedKey(key))
+    case .key(let name, _):
+      guard readStatus(input)?.keyboard == true else { return noKeyboard() }
+      guard let key = deviceKeys[name] else { return Output.notice(["inputError": "Android takes no \(name) key."]) }
+      send(input, InputMessages.key(macKeyCode: key.macCode, down: true))
+      send(input, InputMessages.key(macKeyCode: key.macCode, down: false))
     case .rotate(let clockwise):
       wait("rotation") { await EmulatorRotation.rotate(serial: self.serial, clockwise: clockwise) }
     case .posture(let posture):
       wait("posture") { await posture.apply(serial: self.serial) }
-    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease:
       break
     }
   }

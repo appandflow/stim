@@ -823,6 +823,12 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   booted devices before a boot: a simctl or adb listing failed or timed out,
   usually under heavy load, or other runs held the device-admission lock for
   5 minutes. Retry once the load falls.
+  From \`stim agent-device\`, the workspace has no device in the selected slot
+  and platform, its owned emulator is not running, its hosted session's host
+  offers no agent control, or agent-device is missing or older than 0.21.30.
+  The remedy names the run command or the install command. A UDID, serial,
+  device or remote config that is not the workspace's, \`boot\` and
+  \`shutdown\` refuse with STIM_BAD_ARG instead.
   If Android creation says an AVD already exists on disk but is not listed,
   run \`npx stim gc\` to inspect orphaned owned AVDs, then \`npx stim gc --delete\`
   to reclaim those safe to delete before retrying. Keep anything GC cannot
@@ -1751,6 +1757,15 @@ not on any remote"  (worktree remove)
   and does not print this line. When the locks match but Pods still name the
   source path and warm cannot move it, it prints "removed <dir>/Pods/Manifest.lock
   so pod install runs" and \`stim ios\` runs \`pod install\`.
+
+"carry       carried <dir>/Pods: The source checkout's Pods were last built as ..."
+  Warm copied Pods whose React-Core-prebuilt, ReactNativeDependencies or
+  hermes-engine were last built in Debug or Release, and this workspace builds
+  the other. React Native re-extracts those frameworks on the first build here,
+  costing about 1 GB of unshared disk and extraction time. Nothing is wrong
+  with the copy. Build the source checkout once in the configuration the
+  worktrees build (\`stim ios\` there) before warming more worktrees. \`stim
+  doctor\` reports the same condition as the \`ios-pods-flavor\` note.
 
 "carry       left out <app>/<platform>: <reason>"
   The app is an Expo project whose ios/ or android/ Git ignores, and Stim

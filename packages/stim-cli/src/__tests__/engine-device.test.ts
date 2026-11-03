@@ -1743,6 +1743,111 @@ describe('ensureOwnedDevice: ios', () => {
     });
   });
 
+  test.each([
+    {
+      name: 'slims a shut-down simulator as its boot',
+      settings: { ios: { simslim: 'on' } },
+      missing: false,
+      recorded: { profile: 'default', springBoardPid: 4242 },
+    },
+    {
+      name: 'boots stock when SimSlim is not installed',
+      settings: { ios: { simslim: 'on' } },
+      missing: true,
+      recorded: undefined,
+    },
+    {
+      name: 'applies a changed profile to a stopped simulator as its boot',
+      settings: { ios: { simslimProfile: 'simslim.json' } },
+      missing: false,
+      applied: { simslimManaged: true, simslimApplied: { profile: 'default', springBoardPid: 1111 } },
+      recorded: { profile: expect.stringMatching(/^profile:/), springBoardPid: 4242 },
+    },
+  ])('$name', async ({ settings, missing, applied, recorded }) => {
+    const root = projectDir();
+    try {
+      writeFileSync(join(root, 'simslim.json'), '{}\n');
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app', ...applied });
+      const { run, exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
+      const events: string[] = [];
+      setExecutor({
+        ...exec,
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            events.push('mute');
+            return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+          }
+          if (file === 'xcrun' && args.includes('notifyutil')) return 'com.apple.springboard.finishedstartup 4242';
+          return exec.runFile(file, args);
+        },
+        spawn(cmd, args = []) {
+          if (args[1] === 'boot') events.push('simctl boot');
+          return exec.spawn(cmd, args);
+        },
+      });
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings,
+        reconcileIosSimulator: async (args) => {
+          const phases = deviceLog(root).map((record) => record.phase);
+          events.push(`reconcile after ${phases.join(',')}`);
+          if (missing) return { managed: false, profile: null, notInstalled: true };
+          return { managed: true, profile: args.profile ?? null };
+        },
+      });
+      expect(await ensureBooted({ platform: 'ios', projectPath: root, device, timeoutMs: 5000, pollMs: 5 })).toEqual({
+        ok: true,
+        udid: 'U1',
+      });
+
+      expect(events).toEqual(['reconcile after boot_requested', 'simctl boot', 'mute']);
+      expect(run.filter((command) => /simctl boot/.test(command))).toHaveLength(1);
+      const phases = deviceLog(root).map((record) => record.phase);
+      expect(phases.filter((phase) => phase === 'boot_requested')).toHaveLength(1);
+      expect(phases).not.toContain('simslim_reboot');
+      expect(getProject(root)?.platforms?.ios?.simslimApplied).toEqual(recorded);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a SimSlim claim refusal before boot keeps its code and remedy', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { run, exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
+      setExecutor(exec);
+      const refusal = new ClaimRefusedError({
+        root: join(tmpHome, 'simslim-locks', 'U1.lock'),
+        claimPath: join(tmpHome, 'simslim-locks', 'U1.lock', 'claim'),
+        label: 'SimSlim for U1',
+        reason: 'another SimSlim operation is still using this simulator',
+      });
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslim: 'on' } },
+        reconcileIosSimulator: async () => {
+          throw refusal;
+        },
+      });
+      expect(await ensureBooted({ platform: 'ios', projectPath: root, device, timeoutMs: 5000, pollMs: 5 })).toEqual({
+        failed: true,
+        code: 'STIM_CLAIM_REFUSED',
+        reason: refusal.message,
+        remedy: expect.stringContaining(refusal.removeCommand),
+      });
+      expect(run.some((command) => /simctl boot/.test(command))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('a legacy shut-down sim (no owned flag) is reported, never booted', async () => {
     const root = projectDir();
     try {

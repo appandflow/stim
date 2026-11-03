@@ -368,6 +368,13 @@ function session(properties: Record<string, JsonSchema>, required: string[] = []
   };
 }
 
+const presencePoint: JsonSchema = {
+  type: 'object',
+  required: ['x', 'y'],
+  additionalProperties: false,
+  properties: { x: { type: 'number' }, y: { type: 'number' } },
+};
+
 function optionalParams(method: Method, params: JsonSchema): JsonSchema {
   return {
     type: 'object',
@@ -1012,6 +1019,29 @@ export function protocolJsonSchema(): JsonSchema {
           video: { type: 'array', items: { enum: [...VIDEO_CODECS] } },
           at: { type: 'number', description: 'Start replaying the footage recorded at this time; needs video.' },
           rate: { enum: [...REPLAY_RATES] },
+          presence: { type: 'boolean', default: false, description: 'Also send presence events.' },
+        },
+      },
+      PresenceGesture: {
+        type: 'object',
+        required: ['kind', 'from', 'durationMs'],
+        additionalProperties: false,
+        properties: {
+          kind: { enum: ['tap', 'swipe'] },
+          from: presencePoint,
+          to: presencePoint,
+          durationMs: { type: 'number', minimum: 0 },
+          target: {
+            type: 'object',
+            required: ['x', 'y', 'width', 'height'],
+            additionalProperties: false,
+            properties: {
+              x: { type: 'number' },
+              y: { type: 'number' },
+              width: { type: 'number', minimum: 0 },
+              height: { type: 'number', minimum: 0 },
+            },
+          },
         },
       },
       ActionParams: {
@@ -2218,6 +2248,20 @@ export function protocolJsonSchema(): JsonSchema {
             properties: { workspace: { type: 'string', minLength: 1 }, id: { type: 'string', minLength: 1 } },
           }),
           optionalParams('share.list', { type: 'object', maxProperties: 0 }),
+          request('presence.publish', {
+            type: 'object',
+            required: ['workspace', 'platform', 'command', 'phase'],
+            additionalProperties: false,
+            properties: {
+              workspace: { type: 'string', minLength: 1 },
+              platform: { enum: ['ios', 'android'] },
+              slot: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
+              physical: { type: 'boolean' },
+              command: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' },
+              phase: { enum: ['start', 'end'] },
+              gesture: { $ref: '#/$defs/PresenceGesture' },
+            },
+          }),
           request('machines.update.start', {
             type: 'object',
             required: ['machine'],
@@ -2350,6 +2394,10 @@ export function protocolJsonSchema(): JsonSchema {
                             kind: { enum: [...REPLAY_MARKER_KINDS] },
                             command: { type: 'string' },
                             label: { type: 'string' },
+                            x: { type: 'number' },
+                            y: { type: 'number' },
+                            x2: { type: 'number' },
+                            y2: { type: 'number' },
                           },
                         },
                       },
@@ -2614,6 +2662,31 @@ export function protocolJsonSchema(): JsonSchema {
                   screenID: { type: 'integer', minimum: 0, maximum: 4294967295 },
                   angle: { type: 'number', minimum: 0, maximum: 180 },
                   orientation: { type: 'integer', minimum: 1, maximum: 4 },
+                },
+              },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'participants'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'presence' },
+              subscription: { type: 'string' },
+              participants: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  required: ['id', 'kind', 'name', 'color'],
+                  additionalProperties: false,
+                  properties: {
+                    id: { type: 'string' },
+                    kind: { enum: ['viewer', 'host', 'agent'] },
+                    name: { type: 'string' },
+                    color: { type: 'integer', minimum: 0, maximum: 7 },
+                    touch: { type: 'null' },
+                    gesture: { $ref: '#/$defs/PresenceGesture' },
+                  },
                 },
               },
             },

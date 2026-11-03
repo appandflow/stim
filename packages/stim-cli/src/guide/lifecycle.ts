@@ -653,14 +653,14 @@ works for Debug runs while stim start runs; Release runs report driver: none.
 
 android.host.agent in stim status --json provides driver, remoteConfig and
 command, never its token. Each slot has a separate 0600 file under the workspace
-state directory at hosted-android/<slot>/agent-device-remote.json. Use that file:
+state directory at hosted-android/<slot>/agent-device-remote.json. stim agent-device passes that file itself:
 
-  agent-device open <packageId> --remote-config <file>
-  agent-device snapshot --remote-config <file>
-  agent-device click <ref> --remote-config <file>
-  agent-device screenshot --remote-config <file>
+  stim agent-device open <packageId>
+  stim agent-device snapshot
+  stim agent-device click <ref>
+  stim agent-device screenshot
 
-The command shape is agent-device <command> --remote-config <file>. Open leases
+Underneath, the command shape is agent-device <command> --remote-config <file>. Open leases
 the emulator automatically with android-instance, the proxy provider and this
 session's tenant. devices is permitted for the client's open flow; inventory
 contains only this emulator. Never use its serial with a local agent-device.
@@ -958,14 +958,14 @@ works for Debug runs while stim start runs; Release runs report driver: none.
 
 The client writes a separate 0600 remote-config file for each workspace slot.
 Status prints agent: <command>; ios.host.agent in --json carries driver,
-remoteConfig and command, never the token. Use the returned file:
+remoteConfig and command, never the token. stim agent-device passes that file itself:
 
-  agent-device open <bundleId> --remote-config <file>
-  agent-device snapshot --remote-config <file>
-  agent-device click <ref> --remote-config <file>
-  agent-device screenshot --remote-config <file>
+  stim agent-device open <bundleId>
+  stim agent-device snapshot
+  stim agent-device click <ref>
+  stim agent-device screenshot
 
-The command shape is agent-device <command> --remote-config <file>. Open leases
+Underneath, the command shape is agent-device <command> --remote-config <file>. Open leases
 the simulator automatically with ios-instance and the proxy provider, scoped
 to this session's tenant. Close releases it; Stim still owns the simulator.
 The config names daemonBaseUrl, daemonAuthToken, tenant, sessionIsolation,
@@ -1772,6 +1772,21 @@ settings, including under --fix. This inspection runs only in doctor, with
 30 seconds per Xcode query and 60 seconds total. Missing generated projects,
 failed metadata queries, and unresolved settings produce an unverified note
 rather than an architecture warning or a verified clean result.
+
+PREBUILT REACT NATIVE FLAVOR
+\`ios-pods-flavor\` (a note) fires in a linked worktree when the source
+checkout's ios/Pods/React-Core-prebuilt, ReactNativeDependencies or hermes-engine
+\`.last_build_configuration\` names Debug or Release and differs from the
+configuration this workspace builds (ios.configuration, else Debug), and the
+worktree has the same marker. React Native's build phase then re-extracts the
+prebuilt frameworks from Pods/*-artifacts on the worktree's first build, which
+writes about 1 GB of unshared disk (the Debug core is about 640 MB) and
+spends extraction time that the copy-on-write Pods clone otherwise avoids.
+Build the source checkout once in the configuration the worktrees build
+(\`stim ios\` there, or with --configuration) before warming more worktrees.
+Projects without these markers, other configuration names, and the source
+checkout itself are not flagged. \`worktree warm\` prints the same advice as one
+"carry" line on stderr. Doctor changes nothing, including under --fix.
 
 WHY ANDROID NEEDS CCACHE, AND WHAT IT COSTS
 Every AGP CMake task is uncacheable by Gradle, so --build-cache serves not one
@@ -3238,17 +3253,20 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   \`ios.simslim off\` opts that app out and restores stock services on its
   simulator. The defaults disable push, StoreKit, iCloud, Safari sync, Mail,
   Calendar and Contacts services, among others; move an app that needs them
-  to a profile that keeps those categories, or to \`off\`. A running
-  simulator is slimmed on the next \`stim ios\`, without a boot first, and a
-  parked simulator when Stim adopts it. An already slim simulator is left
-  alone, so only the first slim reboots it.
+  to a profile that keeps those categories, or to \`off\`. A shut-down
+  simulator (a new one, a stopped one, or a parked one Stim adopts) is
+  slimmed as part of its boot: SimSlim writes its settings while it is shut
+  down and boots it once, already slim. A running simulator is slimmed on the
+  next \`stim ios\` without a boot first, which reboots it. An already slim
+  simulator is left alone.
   Without the \`simslim\` command, doctor reports it and \`stim ios\` boots
   the simulator unslimmed with a one-line note. Hosted simulators on a named
   Mac are never slimmed, whatever either Mac's setting says.
 
   SimSlim 0.8 requires iOS 18.5 or newer. On each local \`stim ios\`,
-  Stim reconciles that profile on the owned simulator before the app build.
-  The first change can update services and reboot the simulator. Stim records
+  Stim reconciles that profile on the owned simulator: on a shut-down
+  simulator as its boot, alongside the app build, and on a running one before
+  the app build, where a change reboots the simulator. Stim records
   the applied profile (the default categories, or a hash of the profile file)
   and the boot of the simulator it was applied on, so a later launch on the
   same boot with the same profile skips the \`simslim\` call. A changed
@@ -3257,7 +3275,8 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   reboots or the profile changes. The settings persist across normal
   shutdowns and reboots. Removing the setting restores stock services when
   Stim applied the profile. Stim never changes an unowned or remote simulator.
-  Each SimSlim operation has a 12-minute outer deadline, including discovery.
+  Each SimSlim operation has a 12-minute outer deadline, including discovery
+  and a boot SimSlim runs; Stim's own boot wait starts after it.
   This cap also applies when SimSlim's own timeout is increased. On timeout,
   Ctrl-C, or SIGTERM, Stim attempts to stop only its verified process group, then waits up to
   10 seconds to confirm termination before returning or exiting.

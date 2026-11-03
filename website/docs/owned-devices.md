@@ -343,13 +343,15 @@ and profile setup; `doctor` recommends it without applying it automatically.
 
 To slim every Stim-owned simulator on a Mac without a profile per app, run
 `stim settings set ios.simslim on --scope machine`. A project profile still wins,
-and `ios.simslim` set to `off` in a project opts that app out. The first slim of
-a simulator reboots it once; an already slim simulator is left alone, and a
-rerun on the same boot with an unchanged profile skips SimSlim entirely. A manual
-`simslim off` on a running simulator is not noticed until it reboots or the
-profile changes. A running
-simulator is slimmed on the next `stim ios`, without a boot first, and Stim mutes
-it again after that reboot. A parked simulator is slimmed when Stim adopts it.
+and `ios.simslim` set to `off` in a project opts that app out. A shut-down
+simulator (new, stopped, or parked and adopted) is slimmed as part of its boot:
+SimSlim writes its settings while the simulator is shut down and boots it once,
+already slim, alongside the app build. An already slim simulator is left alone,
+and a rerun on the same boot with an unchanged profile skips SimSlim entirely. A
+manual `simslim off` on a running simulator is not noticed until it reboots or
+the profile changes. A running simulator is slimmed on the next `stim ios`,
+without a boot first, which reboots it, and Stim mutes it again after that
+reboot.
 Hosted simulators on a named Mac are muted like local ones but never slimmed.
 If `simslim` is not installed, `doctor` reports it and `stim ios` boots without
 it.
@@ -895,16 +897,17 @@ teardown. Clear a named claim only after proving its owner and child are gone.
 
 `ios.host.agent` reports `driver`, `remoteConfig` and `command`. Plain status prints
 `agent: <command>`. Each slot has its own 0600 config under the workspace's Stim
-state directory; tokens never appear in placement or status. Use that file:
+state directory; tokens never appear in placement or status.
+[`stim agent-device`](./commands.md#agent-device) passes that file for you:
 
 ```bash
-agent-device open <bundleId> --remote-config <file>
-agent-device snapshot --remote-config <file>
-agent-device click <ref> --remote-config <file>
-agent-device screenshot --remote-config <file>
+stim agent-device open <bundleId>
+stim agent-device snapshot
+stim agent-device click <ref>
+stim agent-device screenshot
 ```
 
-The command shape is `agent-device <command> --remote-config <file>`. `open`
+Underneath, the command shape is `agent-device <command> --remote-config <file>`. `open`
 automatically allocates an `ios-instance` lease through the `proxy` provider in
 this session's tenant. The config contains `daemonBaseUrl`, `daemonAuthToken`,
 `tenant`, `sessionIsolation`, `runId`, `clientId`, `deviceKey`, `leaseBackend`,
@@ -979,9 +982,8 @@ Copy this prompt into your coding agent:
 ```text
 Run this workspace's iOS app on janics-mac-mini with stim ios --remote janics-mac-mini.
 Use the host's offered simulator architecture, keep Metro here, report launch evidence
-and status. Read ios.host.agent from stim status --json, open the app with
-agent-device open <bundleId> --remote-config <file>, then snapshot and click through
-that config. Run stim stop when finished. If the host refuses, report its reason.
+and status. Open the app with stim agent-device open <bundleId>, then snapshot
+and click through stim agent-device. Run stim stop when finished. If the host refuses, report its reason.
 ```
 
 ## Paired Mac hosting approval

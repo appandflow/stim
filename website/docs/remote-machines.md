@@ -310,15 +310,16 @@ retry stop when the host answers.
 
 Set `hosting.agentDriver` to `agent-device` on the hosting Mac and install
 agent-device 0.21.30 or later on both machines. `android.host.agent` in
-`stim status --json` reports a private remote-config file per slot:
+`stim status --json` reports a private remote-config file per slot, which
+[`stim agent-device`](./commands.md#agent-device) passes for you:
 
 ```sh
-agent-device open <packageId> --remote-config <file>
-agent-device snapshot --remote-config <file>
-agent-device click <ref> --remote-config <file>
+stim agent-device open <packageId>
+stim agent-device snapshot
+stim agent-device click <ref>
 ```
 
-Use the returned config, keeping the host serial on the host. One daemon per
+The config keeps the host serial on the host. One daemon per
 session pins the exact owned emulator serial; its inventory lists only that
 emulator. It allows the same commands as a [hosted simulator](./owned-devices.md#run-ios-on-another-mac),
 including `telephony` for incoming calls and SMS, and refuses other devices and
