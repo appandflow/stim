@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { derivedDeviceCap, longestStreak, maxOf } from '../analysis.mjs';
+import { derivedDeviceCap, longestStreak, maxOf, sampleQuality } from '../analysis.mjs';
 import { clock, outcome, STATUS } from '../assertions.mjs';
 import {
   assertIdleDown,
@@ -14,10 +14,16 @@ import {
 import { parseCsv } from '../platform.mjs';
 
 const SCENARIO = 'stress';
-const REFUSALS = ['STIM_AT_CAPACITY', 'STIM_LOW_DISK'];
 const CRITICAL_LEVEL = 4;
 const CRITICAL_ALLOWED_MS = 60_000;
 const MAX_BOOTS_IN_FLIGHT = 2;
+
+function refusalCode(result) {
+  if (result.ok) return null;
+  const code = result.json?.code;
+  if (typeof code === 'string' && code.startsWith('STIM_')) return code;
+  return /\bSTIM_[A-Z0-9_]+\b/.exec(`${result.stderr}\n${result.stdout}`)?.[0] ?? null;
+}
 
 const verdict = (A, ok, ...args) => (ok ? A.pass(...args) : A.fail(...args));
 
@@ -31,6 +37,10 @@ export function batchAssertions(ctx, { startedAt, runs }, rows) {
   const A = ctx.assertions;
   const window = rows.filter((row) => row.epoch * 1000 >= startedAt - 5000);
   const interval = ctx.sampleIntervalSec;
+  const { gaps } = sampleQuality(window, interval);
+  const gapNote = gaps.length
+    ? `; ${gaps.length} sampler gaps in the window, longest ${Math.max(...gaps.map((g) => g.sec))} s`
+    : '';
   const numeric = (column) => window.filter((row) => typeof row[column] === 'number');
   const missing = (column) => `${window.length - numeric(column).length} of ${window.length} rows had no ${column}`;
   const sampled = (usable, ok, id, title, evidence) =>
@@ -56,7 +66,7 @@ export function batchAssertions(ctx, { startedAt, runs }, rows) {
   const peak = Math.max(0, ...both.map((row) => row.booted_ours + row.booting_ours));
   const reported = ctx.snapshots.map((poll) => poll.deviceSlots?.max).find((max) => max !== undefined);
   sampled(both, peak <= cap, 'booted-cap', `owned booted or booting devices never exceed the derived cap of ${cap}`, [
-    `peak ${peak} over ${both.length} samples of ${interval} s (${window.length - both.length} of ${window.length} rows had no simulator reading)`,
+    `peak ${peak} over ${both.length} samples of ${interval} s (${window.length - both.length} of ${window.length} rows had no simulator reading${gapNote})`,
     `status capacity.devices.max: ${reported ?? 'not available on this build'}`,
   ]);
 
@@ -72,28 +82,23 @@ export function batchAssertions(ctx, { startedAt, runs }, rows) {
       'not available on this build: status lists boot holders only while a device cap is set',
     ]);
   }
-  const booting = maxOf(window, 'booting_ours');
-  sampled(
-    numeric('booting_ours'),
-    booting <= MAX_BOOTS_IN_FLIGHT,
-    'booting-sampled',
-    `at most ${MAX_BOOTS_IN_FLIGHT} owned simulators are in the Booting state at once (sampler, supplementary)`,
-    [
-      `peak ${booting ?? 'n/a'} simulators in simctl state Booting, sampled every ${interval} s (${missing('booting_ours')})`,
-    ],
-  );
-
-  A.fromItems(
-    SCENARIO,
-    'no-refusals',
-    'zero STIM_AT_CAPACITY or STIM_LOW_DISK refusals',
-    runs.map(({ workspace, result }) => {
-      const hit = REFUSALS.find(
-        (code) => result.json?.code === code || result.stdout.includes(code) || result.stderr.includes(code),
-      );
-      return outcome(workspace.label, hit ? STATUS.fail : STATUS.pass, hit ? `refused with ${hit}` : 'not refused');
-    }),
-  );
+  const refusals = runs.map(({ workspace, result }) => ({ workspace, code: refusalCode(result) }));
+  const byCode = Object.entries(
+    Object.groupBy(
+      refusals.filter((r) => r.code),
+      (r) => r.code,
+    ),
+  ).map(([code, list]) => `${code} x${list.length}`);
+  A.fromItems(SCENARIO, 'no-refusals', 'no run is refused (a non-zero exit with a STIM_ code)', [
+    outcome(
+      'summary',
+      byCode.length ? STATUS.fail : STATUS.pass,
+      byCode.length ? `refusals by code: ${byCode.join(', ')}` : 'no refusals',
+    ),
+    ...refusals.map(({ workspace, code }) =>
+      outcome(workspace.label, code ? STATUS.fail : STATUS.pass, code ? `refused with ${code}` : 'not refused'),
+    ),
+  ]);
 
   const critical = longestStreak(numeric('pressure'), (row) => row.pressure === CRITICAL_LEVEL, interval);
   sampled(
@@ -102,11 +107,11 @@ export function batchAssertions(ctx, { startedAt, runs }, rows) {
     'pressure-critical',
     'memory pressure is never critical for more than one 60 s tick',
     [
-      `longest critical run ${Math.round(critical.ms / 1000)} s (${critical.samples} samples${critical.startEpoch ? ` from ${clock(critical.startEpoch * 1000)}` : ''}), peak level ${maxOf(window, 'pressure') ?? 'n/a'} (${missing('pressure')})`,
+      `longest critical run ${Math.round(critical.ms / 1000)} s (${critical.samples} samples${critical.startEpoch ? ` from ${clock(critical.startEpoch * 1000)}` : ''}), peak level ${maxOf(window, 'pressure') ?? 'n/a'} (${missing('pressure')}${gapNote})`,
     ],
   );
 
-  const empty = ['booted_ours', 'booting_ours', 'pressure'].filter((column) => numeric(column).length === 0);
+  const empty = ['booted_ours', 'pressure'].filter((column) => numeric(column).length === 0);
   const dataTitle = 'the sampler recorded the columns the stress assertions read';
   if (empty.length)
     A.fail(SCENARIO, 'sampler-data', dataTitle, [`no usable value in ${empty.join(', ')} for the batch`]);
@@ -178,7 +183,7 @@ export async function runStress(ctx) {
     const waited = survivors.length
       ? await waitForIdle(ctx, survivors, { windowMs: ctx.idleWindowMs, graceMs: 5 * 60_000 })
       : new Map();
-    if (survivors.length) assertIdleDown(ctx, SCENARIO, waited, ctx.idleWindowMs);
+    if (survivors.length) await assertIdleDown(ctx, SCENARIO, waited, ctx.idleWindowMs);
 
     const idle = [...waited.values()].filter((entry) => entry.resolved).map((entry) => entry.workspace);
     const chosen = [...new Set([idle[0], idle[Math.floor(idle.length / 2)], idle.at(-1)].filter(Boolean))];

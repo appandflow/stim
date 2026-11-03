@@ -1,6 +1,6 @@
 import { STATUS } from './assertions.mjs';
 import { PROCESS_KINDS } from './platform.mjs';
-import { bucketRows, maxOf, minOf, pagesToMb } from './analysis.mjs';
+import { bucketRows, maxOf, minOf, pagesToMb, sampleQuality, secondsWhere } from './analysis.mjs';
 
 const cell = (value) =>
   String(value ?? 'n/a')
@@ -28,29 +28,42 @@ function summarize(assertions) {
 
 const AVAILABLE = ['vm_free_pages', 'vm_inactive_pages', 'vm_speculative_pages', 'vm_purgeable_pages'];
 
+function availablePages(row) {
+  return AVAILABLE.every((column) => typeof row[column] === 'number')
+    ? AVAILABLE.reduce((sum, column) => sum + row[column], 0)
+    : null;
+}
+
 function minAvailablePages(samples) {
-  const totals = samples
-    .filter((row) => AVAILABLE.every((column) => typeof row[column] === 'number'))
-    .map((row) => AVAILABLE.reduce((sum, column) => sum + row[column], 0));
+  const totals = samples.map(availablePages).filter((pages) => pages !== null);
   return totals.length ? Math.min(...totals) : null;
 }
 
 const rssAt = (row) => PROCESS_KINDS.reduce((sum, kind) => sum + (row[`rss_${kind}_mb`] ?? 0), 0);
 
-export function resultLine(assertions, { harnessError = null, teardownClean = true } = {}) {
+export function resultLine(assertions, { harnessError = null, teardownClean = true, uncleanPaths = [] } = {}) {
   const c = summarize(assertions);
-  const tally = `${c.pass} passed, ${c.fail} failed, ${c.unavailable} not available on this build`;
+  const unclean = teardownClean
+    ? ''
+    : `; the host was left unclean${uncleanPaths.length ? `, could not verify or remove: ${uncleanPaths.join(', ')}` : ''}`;
+  const tally = `${c.pass} passed, ${c.fail} failed, ${c.unavailable} not available on this build${unclean}`;
   if (harnessError === 'interrupted') return `INTERRUPTED: ${tally}`;
   if (c.fail) return `FAIL: ${tally}`;
   if (harnessError) return `${c.pass ? 'INCOMPLETE' : 'NO RESULT'}: the harness stopped early; ${tally}`;
   if (!c.pass) return `NO RESULT: nothing passed; ${tally}`;
-  if (!teardownClean) return `INCOMPLETE: teardown did not finish cleanly; ${tally}`;
+  if (!teardownClean) return `INCOMPLETE: ${tally}`;
   return `PASS: ${tally}`;
 }
 
+function qualityLine(q, nominal) {
+  if (!q.rows) return 'no samples';
+  return `${q.rows} rows over ${q.spanSec} s, nominal ${nominal} s, median ${q.medianSec ?? 'n/a'} s, longest ${q.longestSec ?? 'n/a'} s; ${q.gaps.length} gaps over ${nominal * 3} s; ${q.suspectLoad.length} suspect load readings`;
+}
+
 function headline(meta, samples, assertions) {
-  const pressureSamples = (level) => samples.filter((row) => (row.pressure ?? 0) >= level).length;
-  const interval = samples.length > 1 ? (samples.at(-1).epoch - samples[0].epoch) / (samples.length - 1) : 5;
+  const nominal = meta.sampleIntervalSec;
+  const pressureSeconds = (level) => Math.round(secondsWhere(samples, (row) => (row.pressure ?? 0) >= level, nominal));
+  const quality = sampleQuality(samples, nominal);
   const peakRss = samples.reduce((best, row) => Math.max(best, rssAt(row)), 0);
   return [
     ['Scenario', `${meta.scenario} on ${meta.targetLabel}`],
@@ -66,7 +79,7 @@ function headline(meta, samples, assertions) {
     ['Peak 1-minute load', maxOf(samples, 'load1')],
     [
       'Memory pressure',
-      `peak level ${maxOf(samples, 'pressure') ?? 'n/a'}; ${Math.round(pressureSamples(2) * interval)} s at warning or worse, ${Math.round(pressureSamples(4) * interval)} s critical`,
+      `peak level ${maxOf(samples, 'pressure') ?? 'n/a'}; ${pressureSeconds(2)} s at warning or worse, ${pressureSeconds(4)} s critical (each sample counts until the next)`,
     ],
     ['Peak swap used', gb(maxOf(samples, 'swap_used_mb'))],
     [
@@ -79,7 +92,7 @@ function headline(meta, samples, assertions) {
     ],
     [
       'Most owned devices booted or booting',
-      `${Math.max(0, ...samples.map((row) => (row.booted_ours ?? 0) + (row.booting_ours ?? 0)))} (derived cap ${meta.deviceCap ?? 'n/a'}); most booting at once ${maxOf(samples, 'booting_ours') ?? 'n/a'}`,
+      `${Math.max(0, ...samples.map((row) => (row.booted_ours ?? 0) + (row.booting_ours ?? 0)))} (derived cap ${meta.deviceCap ?? 'n/a'}); most seen in simctl's Booting state ${maxOf(samples, 'booting_ours') ?? 'n/a'} (informational: that state can be shorter than a sample)`,
     ],
     [
       'Peak stim processes',
@@ -89,17 +102,19 @@ function headline(meta, samples, assertions) {
     ],
     ['Peak stim process RSS', gb(peakRss)],
     ['Daemon', meta.daemonLabel ?? 'not available on this build'],
+    ['Sampler', qualityLine(quality, nominal)],
   ];
 }
 
 function samplerTable(samples, durationSec) {
   if (!samples.length) return 'No samples were recorded.';
   const width = Math.max(60, Math.ceil(durationSec / 120 / 60) * 60);
-  const buckets = bucketRows(samples, width, {
+  const rows = samples.map((row) => ({ ...row, avail_pages: availablePages(row) }));
+  const buckets = bucketRows(rows, width, {
     load1: 'max',
     pressure: 'max',
     swap_used_mb: 'max',
-    vm_free_pages: 'min',
+    avail_pages: 'min',
     disk_free_mb: 'min',
     home_free_mb: 'min',
     booted_ours: 'max',
@@ -120,7 +135,7 @@ function samplerTable(samples, durationSec) {
       'Load',
       'Pressure max',
       'Swap GB',
-      'Free mem GB',
+      'Available mem GB',
       'Free sim disk GB',
       'Free home disk GB',
       'Booted',
@@ -138,7 +153,7 @@ function samplerTable(samples, durationSec) {
       bar(b.load1, peakLoad),
       b.pressure,
       b.swap_used_mb === null ? null : (b.swap_used_mb / 1024).toFixed(1),
-      pagesToMb(b.vm_free_pages, pageBytes) === null ? null : (pagesToMb(b.vm_free_pages, pageBytes) / 1024).toFixed(1),
+      pagesToMb(b.avail_pages, pageBytes) === null ? null : (pagesToMb(b.avail_pages, pageBytes) / 1024).toFixed(1),
       b.disk_free_mb === null ? null : (b.disk_free_mb / 1024).toFixed(1),
       b.home_free_mb === null ? null : (b.home_free_mb / 1024).toFixed(1),
       b.booted_ours,
@@ -150,6 +165,29 @@ function samplerTable(samples, durationSec) {
       b.n_xcodebuild,
     ]),
   );
+}
+
+const stamp = (epoch) => new Date(epoch * 1000).toISOString().slice(11, 19);
+
+function qualityLines(q) {
+  const lines = [];
+  if (q.gaps.length) {
+    lines.push('Sampling gaps:', '');
+    for (const gap of q.gaps.slice(0, 20)) {
+      lines.push(
+        `- ${stamp(gap.fromEpoch)} to ${stamp(gap.toEpoch)}: ${gap.sec} s without a sample (stage ${gap.stage || 'none'})`,
+      );
+    }
+    lines.push('');
+  }
+  if (q.suspectLoad.length) {
+    lines.push('Suspect load readings (fell faster than a 1-minute average can):', '');
+    for (const s of q.suspectLoad.slice(0, 20)) {
+      lines.push(`- ${stamp(s.epoch)}: ${s.previous} then ${s.reading} ${s.sec} s later`);
+    }
+    lines.push('');
+  }
+  return lines;
 }
 
 export function renderReport({ meta: baseMeta, assertions, workspaces, events, samples, teardown, harnessError }) {
@@ -201,19 +239,20 @@ export function renderReport({ meta: baseMeta, assertions, workspaces, events, s
   lines.push(
     '## Sampler',
     '',
-    `Samples every ${meta.sampleIntervalSec} s; each row folds the samples of one bucket (maximum, or minimum for free space). Process counts are the run's own.`,
+    `Nominal interval ${meta.sampleIntervalSec} s; the recorded timestamps are used for every duration. Each row folds the samples of one bucket (maximum, or minimum for free space and available memory). Process counts are the run's own.`,
     '',
   );
   lines.push(samplerTable(samples, meta.durationMs / 1000), '');
+  lines.push(...qualityLines(sampleQuality(samples, meta.sampleIntervalSec)));
 
   lines.push('## Teardown', '');
   if (teardown) {
     lines.push(
-      `- worktrees removed: ${teardown.worktrees.filter((w) => w.removed).length} of ${teardown.worktrees.length}`,
+      `- worktrees removed: ${teardown.worktrees.filter((w) => w.removed === true).length} of ${teardown.worktrees.length}${teardown.unverified.length ? ` (could not verify: ${teardown.unverified.join(', ')})` : ''}`,
       `- simulators deleted from the run's ledger after worktree removal: ${teardown.simulators.length}${teardown.simulators.length ? ` (${teardown.simulators.map((s) => s.name).join(', ')})` : ''}`,
       `- trash empty: ${teardown.trashEmpty}`,
       `- processes that had to be signalled: ${teardown.processes.length}`,
-      `- private home deleted: ${teardown.homeDeleted}`,
+      `- private home deleted: ${teardown.homeDeleted === null ? 'could not verify' : teardown.homeDeleted}`,
       ...teardown.errors.map((error) => `- error: ${error}`),
       '',
     );

@@ -5,6 +5,7 @@ import { C_LOCALE, run } from './shell.mjs';
 export const SAMPLE_COLUMNS = [
   'ts',
   'epoch',
+  'took_ms',
   'stage',
   'load1',
   'pressure',
@@ -117,8 +118,6 @@ export function noteRecorded(recordedAt, pids, now) {
   for (const pid of pids) if (!recordedAt.has(pid)) recordedAt.set(pid, now);
 }
 
-// `recordedAt` maps a pid to when its record first appeared. A process that started after that moment is a later holder
-// of the pid, not the process the record describes, so it is never accepted.
 export function recordIdentities(identities, rows, recordedAt, scope, sinceMs) {
   for (const row of rows) {
     if (!recordedAt.has(row.pid) || identities.has(row.pid) || !row.lstart) continue;
@@ -228,6 +227,7 @@ export async function readMachine() {
 }
 
 export async function sampleHost({ home, worktreePrefix, stage, volumes, identities, recordedAt, sinceMs }) {
+  const startedMs = Date.now();
   const [load, pressure, vm, swap, ps, sims] = await Promise.all([
     run('sysctl', ['-n', 'vm.loadavg'], { timeoutMs: 10_000 }),
     run('sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { timeoutMs: 10_000 }),
@@ -248,6 +248,7 @@ export async function sampleHost({ home, worktreePrefix, stage, volumes, identit
   const row = {
     ts: now.toISOString(),
     epoch: Math.round(now.getTime() / 1000),
+    took_ms: now.getTime() - startedMs,
     stage,
     load1: parseLoad1(load.stdout),
     pressure: Number(pressure.stdout.trim()) || null,

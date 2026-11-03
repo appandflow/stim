@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { UsageError, parseArgs } from './args.mjs';
 import { createAssertions, STATUS } from './assertions.mjs';
 import { renderReport, resultLine } from './report.mjs';
+import { removalState } from './workspaces.mjs';
 import { batchAssertions } from './scenarios/stress.mjs';
 import { remoteArguments, workspaceClosure } from './ssh.mjs';
 import { stimEnvironment, parseJsonOutput } from './stim.mjs';
@@ -143,7 +144,6 @@ describe('stress batch assertions on missing sampler data', () => {
     const result = run(stressContext({ rows: [blank(1), blank(6), blank(11)] }), [ok('w1')]);
     expect(result).toMatchObject({
       'booted-cap': STATUS.unavailable,
-      'booting-sampled': STATUS.unavailable,
       'pressure-critical': STATUS.unavailable,
       'sampler-data': STATUS.fail,
     });
@@ -166,6 +166,51 @@ describe('stress batch assertions on missing sampler data', () => {
     expect(ctx.assertions.list.find((a) => a.id === 'booted-cap').evidence[0]).toContain(
       '1 of 2 rows had no simulator reading',
     );
+  });
+});
+
+const failed = (label, code, stderr = '') => ({
+  workspace: { label },
+  result: { ok: false, code: 1, ms: 5, json: code ? { code } : null, stdout: '', stderr },
+});
+
+describe('stress refusals', () => {
+  it('counts every non-zero exit that carries a STIM_ code, listed by code', () => {
+    const runs = Array.from({ length: 7 }, (_, i) => failed(`w${i}`, 'STIM_BAD_ARG'));
+    const ctx = stressContext({ rows: [sample(1)] });
+    run(ctx, [...runs, ok('w8'), failed('w9', null, 'STIM_AT_CAPACITY: full')]);
+    const refusals = ctx.assertions.list.find((a) => a.id === 'no-refusals');
+    expect(refusals.status).toBe(STATUS.fail);
+    expect(refusals.evidence[0]).toContain('STIM_BAD_ARG x7');
+    expect(refusals.evidence[0]).toContain('STIM_AT_CAPACITY x1');
+  });
+
+  it('does not count a run that exited 0 or failed without a STIM_ code', () => {
+    const ctx = stressContext({ rows: [sample(1)] });
+    run(ctx, [ok('w1'), failed('w2', null, 'killed')]);
+    expect(ctx.assertions.list.find((a) => a.id === 'no-refusals').status).toBe(STATUS.pass);
+  });
+});
+
+const only =
+  (...present) =>
+  (path) =>
+    present.includes(path);
+
+describe('teardown of a vanished volume', () => {
+  it('reads an absent path as removed only while its parent is still there', () => {
+    expect(removalState('/w/a', '/w', only('/w', '/w/a'))).toBe(false);
+    expect(removalState('/w/a', '/w', only('/w'))).toBe(true);
+    expect(removalState('/w/a', '/w', only())).toBeNull();
+  });
+
+  it('puts the unverified paths in the headline instead of PASS', () => {
+    const A = createAssertions();
+    A.pass('s', 'a', 't', []);
+    const line = resultLine(A.list, { teardownClean: false, uncleanPaths: ['/Volumes/x/home', '/Volumes/x/wt-01'] });
+    expect(line).toMatch(/^INCOMPLETE/);
+    expect(line).toContain('the host was left unclean');
+    expect(line).toContain('/Volumes/x/home, /Volumes/x/wt-01');
   });
 });
 

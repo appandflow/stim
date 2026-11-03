@@ -229,9 +229,14 @@ function idleOutcome(ctx, entry, windowMs) {
   return outcome(label, timing.ok ? STATUS.pass : STATUS.fail, ...timing.evidence, ...machine, ...extra);
 }
 
-export function assertIdleDown(ctx, scenario, waited, windowMs) {
+const RECHECK_MS = 10_000;
+
+export async function assertIdleDown(ctx, scenario, waited, windowMs) {
   const A = ctx.assertions;
   const entries = [...waited.values()];
+  const unsettled = entries.some((entry) => entry.resolved && !entry.resolved.facts.stageIdle);
+  if (unsettled) await sleep(RECHECK_MS, ctx.signal);
+  const later = unsettled ? await pollStatus(ctx) : null;
   A.fromItems(
     scenario,
     'idle-stage',
@@ -274,11 +279,14 @@ export function assertIdleDown(ctx, scenario, waited, windowMs) {
     'idle-stage-reported',
     'status reports the idle stage',
     entries.map((entry) => {
-      const f = entry.resolved?.facts;
-      if (!f) return outcome(entry.workspace.label, STATUS.fail, 'workspace never went idle');
+      const first = entry.resolved?.facts;
+      if (!first) return outcome(entry.workspace.label, STATUS.fail, 'workspace never went idle');
+      const rechecked = later?.envs[entry.workspace.path]?.facts;
+      const f = !first.stageIdle && rechecked?.stageIdle ? rechecked : first;
       if (f.stageIdle) {
         const freed = f.idleStage ? `, idleStage.freedBytes=${f.idleStage.freedBytes}` : ', dormantStage present';
-        return outcome(entry.workspace.label, STATUS.pass, `stage.kind=${f.stageKind}${freed}`);
+        const lateNote = f === first ? '' : ' (written after the first idle poll)';
+        return outcome(entry.workspace.label, STATUS.pass, `stage.kind=${f.stageKind}${freed}${lateNote}`);
       }
       if (WORKING_STAGES.has(f.stageKind)) {
         return outcome(

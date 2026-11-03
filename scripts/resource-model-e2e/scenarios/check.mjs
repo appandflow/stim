@@ -1,8 +1,9 @@
-import { setup } from '../phases.mjs';
+import { pollStatus, setup } from '../phases.mjs';
 
 export async function runCheck(ctx) {
   await setup(ctx, ctx.opts.workspaces);
   for (const workspace of ctx.workspaces) workspace.role = 'workspace';
+  await pollStatus(ctx);
   ctx.assertions.pass('check', 'worktrees', 'worktrees are created, warmed, repaired and share one fingerprint', [
     `${ctx.workspaces.length} worktrees at ${ctx.commit.slice(0, 9)}, fingerprint ${ctx.fingerprint}`,
   ]);

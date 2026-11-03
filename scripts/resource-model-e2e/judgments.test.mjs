@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bucketRows, derivedDeviceCap, longestStreak } from './analysis.mjs';
+import { bucketRows, derivedDeviceCap, longestStreak, sampleQuality, secondsWhere } from './analysis.mjs';
 import { createAssertions, judgeIdleTiming, outcome, STATUS } from './assertions.mjs';
 import { bootsInFlight, idleFacts } from './evidence.mjs';
 import { checkRungOrder, diffState } from './ladder.mjs';
@@ -26,6 +26,30 @@ describe('longestStreak', () => {
   });
   it('closes a run that reaches the last sample', () => {
     expect(longestStreak(rows([1, 4, 4]), (r) => r.pressure === 4, 5).samples).toBe(2);
+  });
+});
+
+const at = (epoch, extra = {}) => ({ epoch, stage: 'batch', pressure: 1, load1: 100, ...extra });
+
+describe('sampling that is not every 5 s', () => {
+  it('counts a gap toward the state it follows and flags it', () => {
+    const samples = [at(0, { pressure: 4 }), at(5, { pressure: 4 }), at(69, { pressure: 1 })];
+    expect(longestStreak(samples, (r) => r.pressure === 4, 5).ms).toBe(69_000);
+    expect(secondsWhere(samples, (r) => r.pressure === 4, 5)).toBe(69);
+    expect(sampleQuality(samples, 5).gaps).toEqual([{ fromEpoch: 5, toEpoch: 69, sec: 64, stage: 'batch' }]);
+  });
+
+  it('flags a load reading that fell faster than a 1-minute average can, and not a steady decay', () => {
+    const samples = [at(0, { load1: 1013 }), at(5, { load1: 6.9 }), at(10, { load1: 111 }), at(15, { load1: 105 })];
+    expect(sampleQuality(samples, 5).suspectLoad).toEqual([{ epoch: 5, previous: 1013, reading: 6.9, sec: 5 }]);
+  });
+
+  it('reports the real spacing', () => {
+    expect(sampleQuality([at(0), at(3), at(14), at(17)], 5)).toMatchObject({
+      medianSec: 3,
+      longestSec: 11,
+      spanSec: 17,
+    });
   });
 });
 
@@ -76,12 +100,12 @@ describe('idle timing judgment', () => {
   });
   describe('an idle stop before the window ends', () => {
     const idleAt = base.commandEndMs + 3 * MIN;
-    const judge = (pressureLevel, at = idleAt) =>
+    const judge = (pressureLevel, when = idleAt) =>
       judgeIdleTiming({
         ...base,
         previousPollStartMs: null,
-        idlePollStartMs: at - 2000,
-        idlePollEndMs: at,
+        idlePollStartMs: when - 2000,
+        idlePollEndMs: when,
         pressureLevel,
       });
     it('passes only when the build reported high or critical pressure and the workspace had been idle two minutes', () => {
