@@ -1791,12 +1791,16 @@ not on any remote"  (worktree remove)
   otherwise pod install and native builds resolve the old package versions.
   A pnpm source checkout installed with --filter or --prod also reads as a
   mismatch, because pnpm records only what it installed.
+  With an npm lockfile the command is \`npm ci\`, which deletes node_modules
+  before it installs: it replaces the clone, which costs no disk, with a
+  private copy of every package, and the line says so.
 
 "carry       carried dependencies may be stale: they do not match ..."
   node_modules records no install state Stim can read (Bun, or no record),
   and the source checkout's lockfile differs from this branch's lockfile. Run
   the printed package-manager command before building. A carry whose lockfile
   matches is silent; the warning means a real difference.
+  The same \`npm ci\` note applies.
 
   If the source checkout has no dependencies to copy, use this project's
   package manager to install them. Warm does not install dependencies or prove
