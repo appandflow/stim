@@ -140,7 +140,7 @@ function startIosBoot(
 
 type CreatedIosSim = Awaited<ReturnType<typeof createOwnedIosSim>>;
 
-async function createAndStartIosBoot(
+function startIosCreation(
   create: () => Promise<CreatedIosSim>,
   configure: (sim: CreatedIosSim, boot: IosBootStart) => Promise<unknown>,
   out: Notify,
@@ -148,16 +148,21 @@ async function createAndStartIosBoot(
   root: string,
   slot: string | undefined,
   deviceSlotWait?: DeviceSlotWaitPolicy,
-): Promise<{ sim: CreatedIosSim; booting: IosBoot }> {
+): { created: Promise<{ sim: CreatedIosSim; booting: IosBoot }>; queued: Promise<void> } {
   let created!: (sim: CreatedIosSim) => void;
   let failed!: (error: unknown) => void;
+  let queue!: () => void;
   const creation = new Promise<CreatedIosSim>((resolve, reject) => {
     created = resolve;
     failed = reject;
   });
+  const queued = new Promise<void>((resolve) => {
+    queue = resolve;
+  });
   const done = withDeviceBootAdmission(
     { platform: 'ios', key: uncreatedDeviceKey() },
     async (admitted) => {
+      deviceSlotWait?.signal?.throwIfAborted();
       const sim = await create();
       admitted.rekey(sim.udid);
       created(sim);
@@ -172,11 +177,18 @@ async function createAndStartIosBoot(
         'created',
       );
     },
-    { ...deviceSlotWait, root, out },
+    {
+      ...deviceSlotWait,
+      root,
+      out,
+      waitingFor(info) {
+        deviceSlotWait?.waitingFor?.(info);
+        if (info) queue();
+      },
+    },
   );
   done.catch(failed);
-  const sim = await creation;
-  return { sim, booting: { udid: sim.udid, done } };
+  return { created: creation.then((sim) => ({ sim, booting: { udid: sim.udid, done } })), queued };
 }
 
 const SPRINGBOARD_MUTE_WAIT_MS = 60000;
@@ -407,7 +419,7 @@ export async function ensureOwnedIosDevice({
     return { ...adopted, booting, deviceType: choice.deviceType, runtime: choice.runtime };
   }
 
-  const { sim: created, booting } = await createAndStartIosBoot(
+  const creation = startIosCreation(
     async () =>
       await withIosDeviceNameLock(async () => {
         const suffix = ownedIosNameSuffix(
@@ -440,14 +452,24 @@ export async function ensureOwnedIosDevice({
     slot,
     flags.deviceSlotWait,
   );
-  return {
-    deviceUdid: created.udid,
+  const createdRecord = creation.created.then(({ sim, booting }): OwnedDeviceRecord => ({
+    deviceUdid: sim.udid,
     owned: true,
-    deviceName: created.name,
+    deviceName: sim.name,
     created: true,
     booting,
-    deviceType: created.deviceType,
-    runtime: created.runtime,
+    deviceType: sim.deviceType,
+    runtime: sim.runtime,
+  }));
+  if (!flags.allowPendingCreation) return await createdRecord;
+  const settled = await Promise.race([createdRecord, creation.queued.then(() => null)]);
+  if (settled) return settled;
+  createdRecord.catch(() => {});
+  return {
+    owned: true,
+    deviceType: choice.deviceType,
+    runtime: choice.runtime,
+    creating: { runtimeId: choice.runtimeId, created: createdRecord },
   };
 }
 
