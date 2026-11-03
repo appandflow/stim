@@ -27,6 +27,8 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
         'scripts/ci/app-smoke.mjs',
         'scripts/perf/bench.mjs',
         'scripts/perf/compare.mjs',
+        'scripts/resource-model-e2e/run.mjs',
+        'scripts/resource-model-e2e/sampler.mjs',
         'scripts/build-android-audio.mjs',
         'scripts/agent-benchmark/native-driver.mjs',
         'scripts/agent-benchmark/native-fixtures.mjs',
@@ -37,6 +39,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
       ignoreDependencies: production ? ['@stim-cli/metro'] : [],
     },
     'packages/server': {
+      ignore: ['share-viewer/**'],
       ignoreBinaries: ['plutil', 'ditto', 'mkfifo'],
     },
     'apps/mobile': {

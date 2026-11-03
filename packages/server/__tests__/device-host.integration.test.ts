@@ -489,7 +489,12 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
     chmodSync(tool, 0o755);
     const env = { ...process.env, PATH: `${home}:${process.env.PATH}` };
     const frames = new FramePool(env);
-    vi.spyOn(frames, 'control').mockReturnValue({ send: () => {}, keys: () => true, detach: () => {} });
+    vi.spyOn(frames, 'control').mockReturnValue({
+      send: () => {},
+      keys: () => true,
+      clipboard: async () => null,
+      detach: () => {},
+    });
     vi.spyOn(frames, 'litPosture').mockReturnValue('folded');
     vi.spyOn(frames, 'folded').mockImplementation(() => {});
     const control = new ControlHub({
@@ -575,7 +580,12 @@ test.skipIf(process.platform === 'win32')(
     chmodSync(tool, 0o755);
     const env = { ...process.env, PATH: `${home}:${process.env.PATH}` };
     const frames = new FramePool(env);
-    vi.spyOn(frames, 'control').mockReturnValue({ send: () => {}, keys: () => true, detach: () => {} });
+    vi.spyOn(frames, 'control').mockReturnValue({
+      send: () => {},
+      keys: () => true,
+      clipboard: async () => null,
+      detach: () => {},
+    });
     vi.spyOn(frames, 'litPosture').mockReturnValue('folded');
     const claim = tryAcquireClaim({ root: join(home, 'identity-owner.claims'), mode: 'exclusive' }).acquired!;
     const control = new ControlHub({
@@ -827,7 +837,7 @@ function recordAbsence(id: string, absentMs: number) {
 
 describe('a hosted session whose client is gone', () => {
   beforeEach(() => {
-    hostEnv.STIM_MAINTENANCE = 'on';
+    hostEnv.STIM_DAEMON = 'on';
     hostEnv.STIM_MAINTENANCE_IDLE_STOP_HOURS = '1';
   });
 
@@ -873,8 +883,8 @@ describe('a hosted session whose client is gone', () => {
   });
 
   test.each([
-    ['maintenance.mode is off', { STIM_MAINTENANCE: 'off' }],
-    ['maintenance.mode is report', { STIM_MAINTENANCE: 'report' }],
+    ['daemon.mode is off', { STIM_DAEMON: 'off' }],
+    ['daemon.mode is report', { STIM_DAEMON: 'report' }],
     ['maintenance.idleStopHours is invalid', { STIM_MAINTENANCE_IDLE_STOP_HOURS: '-1' }],
   ])('stops nothing when %s', async (_, env) => {
     Object.assign(hostEnv, env);

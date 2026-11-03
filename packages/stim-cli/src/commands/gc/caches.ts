@@ -1,7 +1,7 @@
 import { readdir, rm } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
-import { cacheDirRefusal, type StimContext } from '@stim-cli/core';
+import { cacheDirRefusal, isScopedHome, type StimContext } from '@stim-cli/core';
 import { sharedCompilationCache } from '@stim-cli/core/state';
 import { resolveMaintenanceSettings } from '../../maintenance/settings.ts';
 import { getConfigDir } from '../../workspace/config.ts';
@@ -25,7 +25,7 @@ export interface GcCache extends CacheDescriptor {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function cacheSweepIsScoped(env: NodeJS.ProcessEnv) {
-  return Boolean(env.STIM_HOME);
+  return isScopedHome(env);
 }
 
 function isInsideConfigDir(dir: string) {

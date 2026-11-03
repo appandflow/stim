@@ -49,15 +49,4 @@ public struct MaintenanceStatus: Decodable, Hashable, Sendable {
     self.claim = claim
     self.lastPass = lastPass
   }
-
-  /// True when the CLI cleans up on its own: mode `on` with valid settings and no unresolved claim blocking its
-  /// passes. A `stim` without the block, or in `report` or `off` mode, cleans up nothing by itself.
-  public var cleansAutomatically: Bool { mode == "on" && invalid == nil && claim == nil }
-
-  /// Whether free disk under the budget needs a person: the CLI does not clean up on its own, or its last pass
-  /// was blocked.
-  public static func asksAboutDiskPressure(_ status: MaintenanceStatus?) -> Bool {
-    guard let status, status.cleansAutomatically else { return true }
-    return !(status.lastPass?.blocked.isEmpty ?? true)
-  }
 }

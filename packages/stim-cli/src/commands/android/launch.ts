@@ -521,7 +521,6 @@ interface FinishAndroidRunArgs {
   out: (line: string) => void;
   emit: (line: string) => void;
   recordRun: ReportAndroidResultArgs['recordRun'];
-  reclaimed: ReportAndroidResultArgs['reclaimed'];
   devServer: ReportAndroidResultArgs['devServer'];
   enterPhase: (phase: BuildPhase) => void;
   enterActivity: BuildProgress['activity'];
@@ -768,7 +767,6 @@ export async function finishAndroidRun({
   out,
   emit,
   recordRun,
-  reclaimed,
   devServer,
   enterPhase,
   enterActivity,
@@ -1130,7 +1128,6 @@ export async function finishAndroidRun({
     out,
     lease: physical ? leaseFacts : undefined,
     recordRun,
-    reclaimed,
     devServer,
     links: await workspaceLinks(root, { platform: 'android', slot }),
   });

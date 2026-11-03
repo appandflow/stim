@@ -17,6 +17,7 @@ import { prepareOwnedAvd } from '../engine/android-avd-setup.ts';
 import { deleteProjectDevices } from '../commands/gc/devices.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import { createOwnedAvd, deleteAvd, ownedAvdDirectory } from '../devices/android.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { processGroupAlive, readClaimSet, releaseClaim } from '@stim-cli/core/ownership-claim';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { makeExitingChild } from './_factories.ts';
@@ -246,8 +247,10 @@ describe('teardown of a record on a machine without the Android emulator tool', 
   const unconfigure = () => {
     for (const key of envKeys.filter((name) => name.startsWith('ANDROID_'))) delete process.env[key];
   };
-  const reserve = () =>
+  const reserve = () => {
+    recordCreatedDevice('android', avdName);
     setDevice(project, 'android', { avdName, owned: true, deviceName: avdName, setupIncomplete: true });
+  };
 
   beforeEach(() => {
     const base = getExecutor();

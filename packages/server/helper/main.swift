@@ -26,12 +26,17 @@ import ImageIO
 // "record", present only while stim-server records the device, runs a second encoder for it
 // at no more than its own fps; {"recordKeyframe": true} makes that encoder's next frame a keyframe; {"keyframe": true} to make the next video frame a keyframe; or an input:
 // {"input": "touch", "phase": "down|move|up", "x": 0-1, "y": 0-1, "display": n} with x
-// and y on the upright screen; {"input": "text", "text": s}, printable ASCII where "\n"
-// is Return, "\t" is Tab and "\u{8}" is Delete; and {"input": "button", "button":
+// and y on the upright screen, and on an iOS simulator or an Android device optionally
+// "x2" and "y2" for a second finger, sent with every phase of its gesture; {"input": "text", "text": s}, printable ASCII where "\n"
+// is Return, "\t" is Tab and "\u{8}" is Delete; {"input": "key", "key": "left|right|up|down|escape",
+// "modifiers": []} on an iOS simulator or an Android device; and {"input": "button", "button":
 // "home|lock"}, or on an emulator also "back|app-switch"; {"input": "rotate", "direction":
 // "left|right"}; and on an emulator {"input": "posture", "posture":
 // "folded|half-open|unfolded"}. An emulator types and presses buttons only with a hardware
-// keyboard.
+// keyboard. {"clipboard": "set", "id": n, "text": s, "paste": bool} and {"clipboard": "get", "id": n} set or
+// read the clipboard of an emulator (gRPC) or an Android device (scrcpy, where paste sends the paste key) and
+// are answered by a {"clipboard": {"id": n, "text": s}} notice, with "error" and no "text" on a failure;
+// {"clipboard": "paste"} presses Command-V on an iOS simulator, whose clipboard stim-server sets itself.
 // stdout carries messages framed as a 4-byte big-endian length, then a kind byte:
 // 1 is a frame (2-byte width, 2-byte height, JPEG bytes), 2 is a JSON notice
 // ({"error": message} before a failed exit, {"inputError": message}, on a simulator
@@ -157,6 +162,14 @@ enum Output {
     writer.async { write(body) }
   }
 
+  /// The reply to a clipboard `set` (no `text`) or `get`. A failure names the cause, never the clipboard's text.
+  static func clipboard(id: Int, text: String? = nil, error: String? = nil) {
+    var reply: [String: Any] = ["id": id]
+    if let text { reply["text"] = text }
+    if let error { reply["error"] = error }
+    notice(["clipboard": reply])
+  }
+
   static func notice(_ object: [String: Any]) {
     guard let json = try? JSONSerialization.data(withJSONObject: object) else { return }
     writer.sync { write(Data([2]) + json) }
@@ -219,13 +232,19 @@ final class Pacer {
     guard dirty, !scheduled, config.fps > 0 else { return }
     let next = last + .nanoseconds(Int(1_000_000_000 / max(config.fps, 0.1)))
     scheduled = true
-    queue.asyncAfter(deadline: max(next, .now())) {
+    // A LaunchAgent with launchd.plist(5) ProcessType Standard, as `stim-server service install` writes, coalesces
+    // the timers a process sets with the default leeway: asyncAfter paced a simulator at 22 fps instead of 60.
+    let timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
+    timer.schedule(deadline: max(next, .now()), leeway: .nanoseconds(0))
+    timer.setEventHandler {
+      timer.cancel()
       self.scheduled = false
       guard self.dirty else { return }
       self.dirty = false
       self.last = .now()
       self.render(self.config)
     }
+    timer.resume()
   }
 }
 
@@ -356,6 +375,7 @@ final class SimulatorSource {
       }
       self.displays = []
       self.reportedDisplay = nil
+      SimulatorRotation.forget(udid: self.udid)
       DispatchQueue.main.async {
         MainActor.assumeIsolated {
           self.releaseDuo(self.duo?.configure(nil))
@@ -412,13 +432,20 @@ final class SimulatorSource {
     pacer.changed()
   }
 
-  // uiOrientation is a UIInterfaceOrientation; the framebuffer stays in the
-  // display's native portrait orientation, so the image is turned upright.
+  // CoreSimulator reports only the foreground app's orientation, so the device's is the
+  // one this process last sent; a rotation made by another process, or before this
+  // helper started, is not seen. A device with two panels follows the foreground app.
+  private func displayedOrientation(of display: SimDisplay, in displays: [SimDisplay]) -> UInt32 {
+    let app = display.screenProperties?.uiOrientation ?? 1
+    let panels = displays.filter { $0.screenProperties?.screenType == 0 }.count
+    return screenOrientation(app: app, device: panels > 1 ? nil : SimulatorRotation.orientation(udid: udid))
+  }
+
   private func render(_ config: Config) {
     guard let display = litDisplay(), let surface = display.framebufferSurface else { return }
     let orientation: CGImagePropertyOrientation
     let quarterTurns: Int
-    switch display.screenProperties?.uiOrientation ?? 1 {
+    switch displayedOrientation(of: display, in: displays) {
     case 2: (orientation, quarterTurns) = (.down, 2)
     case 3: (orientation, quarterTurns) = (.right, 3)
     case 4: (orientation, quarterTurns) = (.left, 1)
@@ -592,6 +619,9 @@ final class EmulatorSource {
   }
 }
 
+/// `POINTER_ID_VIRTUAL_FINGER` in scrcpy's Controller: the second finger of a pinch, next to the generic finger.
+let virtualFingerPointer: Int64 = -3
+
 final class AndroidDeviceSource {
   let queue = DispatchQueue(label: "stim.frames.android-device")
   let stream: AndroidDeviceStream
@@ -599,6 +629,8 @@ final class AndroidDeviceSource {
   private var pacer: Pacer!
   private let video = videoEncoder()
   private let jpegGate = JpegGate()
+
+  let clipboards = ScrcpyClipboardRequests()
 
   init(serial: String, adb: String, serverJar: URL) {
     stream = AndroidDeviceStream(serial: serial, adb: adb, serverJar: serverJar)
@@ -615,6 +647,14 @@ final class AndroidDeviceSource {
       self.pacer.changed()
     }
     stream.onEnd = { fail($0) }
+    stream.onDeviceMessage = { [weak self] message in
+      switch message {
+      case .clipboard(let text):
+        if let id = self?.clipboards.finishGet() { Output.clipboard(id: id, text: text) }
+      case .clipboardAck(let sequence):
+        if let id = self?.clipboards.finishSet(sequence: sequence) { Output.clipboard(id: id) }
+      }
+    }
     stream.start()
   }
 
@@ -644,18 +684,68 @@ final class AndroidDeviceSource {
   }
 }
 
+/// Pairs the clipboard requests of one scrcpy control socket with the server's replies: an acknowledgement names the
+/// sequence of its `SET_CLIPBOARD`, and the clipboard message answers the oldest `GET_CLIPBOARD`.
+final class ScrcpyClipboardRequests: @unchecked Sendable {
+  private let lock = NSLock()
+  private var sets: [UInt64: Int] = [:]
+  private var gets: [Int] = []
+  private var sequence: UInt64 = 0
+
+  func startSet(id: Int) -> UInt64 {
+    lock.withLock {
+      sequence += 1
+      sets[sequence] = id
+      return sequence
+    }
+  }
+
+  func startGet(id: Int) { lock.withLock { gets.append(id) } }
+  func finishSet(sequence: UInt64) -> Int? { lock.withLock { sets.removeValue(forKey: sequence) } }
+  func finishGet() -> Int? { lock.withLock { gets.isEmpty ? nil : gets.removeFirst() } }
+
+  /// Drops request `id` if no reply came; true when it was still waiting.
+  func expire(id: Int) -> Bool {
+    lock.withLock {
+      if let key = sets.first(where: { $0.value == id })?.key {
+        sets.removeValue(forKey: key)
+        return true
+      }
+      if let index = gets.firstIndex(of: id) {
+        gets.remove(at: index)
+        return true
+      }
+      return false
+    }
+  }
+}
+
+extension AndroidDeviceSource {
+  func expireClipboard(_ id: Int) {
+    DispatchQueue.global().asyncAfter(deadline: .now() + 8) { [weak self] in
+      if self?.clipboards.expire(id: id) == true {
+        Output.clipboard(id: id, error: "The device did not answer the clipboard request.")
+      }
+    }
+  }
+}
+
 extension AndroidDeviceSource: Source {
   func input(_ command: Command) {
     switch command {
-    case .touch(let phase, let point, let display):
+    case .touch(let phase, let point, let second, let display):
       guard display == 0 else { return Output.notice(["inputError": "Input goes to the device's main display only."]) }
       guard let size = stream.size else { return Output.notice(["inputError": "The device has sent no frame yet."]) }
       let action: Scrcpy.TouchAction = phase == .down ? .down : phase == .up ? .up : .move
-      stream.send(
-        Scrcpy.touch(
-          action, x: Int32((point.x * Double(size.width - 1)).rounded()),
-          y: Int32((point.y * Double(size.height - 1)).rounded()), width: UInt16(size.width),
-          height: UInt16(size.height)))
+      var fingers = [(pointer: Scrcpy.fingerPointer, point: point)]
+      if let second { fingers.append((pointer: virtualFingerPointer, point: second)) }
+      for finger in phase == .up ? fingers.reversed() : fingers {
+        stream.send(
+          Scrcpy.touch(
+            action, pointer: finger.pointer, x: Int32((finger.point.x * Double(size.width - 1)).rounded()),
+            y: Int32((finger.point.y * Double(size.height - 1)).rounded()), width: UInt16(size.width),
+            height: UInt16(size.height)))
+      }
     case .text(let text):
       var run = ""
       let flush = {
@@ -678,9 +768,22 @@ extension AndroidDeviceSource: Source {
       }
       stream.send(Scrcpy.keycode(.down, key))
       stream.send(Scrcpy.keycode(.up, key))
+    case .key(let name, _):
+      guard let key = deviceKeys[name] else { return Output.notice(["inputError": "Android takes no \(name) key."]) }
+      stream.send(Scrcpy.keycode(.down, key.androidCode))
+      stream.send(Scrcpy.keycode(.up, key.androidCode))
     case .rotate, .posture:
       Output.notice(["inputError": "A physical device rotates and folds only in hand."])
-    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
+    case .clipboard(.set(let id, let text, let paste)):
+      stream.send(Scrcpy.setClipboard(text, sequence: clipboards.startSet(id: id), paste: paste))
+      expireClipboard(id)
+    case .clipboard(.get(let id)):
+      clipboards.startGet(id: id)
+      stream.send(Scrcpy.getClipboard)
+      expireClipboard(id)
+    case .clipboard(.paste):
+      Output.notice(["inputError": "A scrcpy device pastes with SET_CLIPBOARD."])
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease:
       break
     }
   }
@@ -834,7 +937,7 @@ extension WebSource: Source {
 
   private func apply(_ command: Command, on page: WebPage) {
     switch command {
-    case .touch(let phase, let point, _):
+    case .touch(let phase, let point, _, _):
       switch phase {
       case .down: page.touch(.down, x: point.x, y: point.y)
       case .move: page.touch(.move, x: point.x, y: point.y)
@@ -847,6 +950,8 @@ extension WebSource: Source {
       page.back()
     case .rotate, .posture:
       Output.notice(["inputError": "A web page does not rotate or fold."])
+    case .clipboard(let request):
+      refuseClipboard(request, "A web page has no device clipboard.")
     case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
       break
     }
@@ -862,13 +967,30 @@ indirect enum Command {
   case config(Config)
   case keyframe
   case recordKeyframe
-  case touch(TouchPhase, CGPoint, display: Int)
+  case touch(TouchPhase, CGPoint, second: CGPoint?, display: Int)
   case duoTouch(TouchPhase, CGPoint, revision: String)
   case duoRelease
   case text(String)
   case button(String)
   case rotate(clockwise: Bool)
   case posture(EmulatorPosture)
+  case clipboard(ClipboardRequest)
+}
+
+/// `set` and `get` carry the id their reply notice names. `paste` presses Command-V on an iOS simulator, whose clipboard
+/// stim-server sets itself.
+enum ClipboardRequest {
+  case set(id: Int, text: String, paste: Bool)
+  case get(id: Int)
+  case paste
+}
+
+/// Answers a clipboard `set` or `get` the source cannot serve; other requests need no reply.
+func refuseClipboard(_ request: ClipboardRequest, _ message: String) {
+  switch request {
+  case .set(let id, _, _), .get(let id): Output.clipboard(id: id, error: message)
+  case .paste: Output.notice(["inputError": message])
+  }
 }
 
 func parseCommand(_ line: String, base: Config) -> Command? {
@@ -883,6 +1005,14 @@ func parseCommand(_ line: String, base: Config) -> Command? {
     else { return nil }
     return .scoped(session, command)
   }
+  if let action = object["clipboard"] as? String {
+    switch (action, object["id"] as? Int) {
+    case ("set", let id?): return (object["text"] as? String).map { .clipboard(.set(id: id, text: $0, paste: object["paste"] as? Bool ?? false)) }
+    case ("get", let id?): return .clipboard(.get(id: id))
+    case ("paste", _): return .clipboard(.paste)
+    default: return nil
+    }
+  }
   if object["keyframe"] as? Bool == true { return .keyframe }
   if object["recordKeyframe"] as? Bool == true { return .recordKeyframe }
   switch object["input"] as? String {
@@ -896,7 +1026,13 @@ func parseCommand(_ line: String, base: Config) -> Command? {
     if let revision = object["duoRevision"] as? String, UUID(uuidString: revision) != nil {
       return .duoTouch(phase, CGPoint(x: x, y: y), revision: revision)
     }
-    return .touch(phase, CGPoint(x: x, y: y), display: object["display"] as? Int ?? 0)
+    var second: CGPoint?
+    if object["x2"] != nil || object["y2"] != nil {
+      guard let x2 = object["x2"] as? Double, let y2 = object["y2"] as? Double, (0...1).contains(x2), (0...1).contains(y2)
+      else { return nil }
+      second = CGPoint(x: x2, y: y2)
+    }
+    return .touch(phase, CGPoint(x: x, y: y), second: second, display: object["display"] as? Int ?? 0)
   case "scroll":
     guard let x = object["x"] as? Double, let y = object["y"] as? Double,
       let dx = object["deltaX"] as? Double, let dy = object["deltaY"] as? Double,
@@ -981,12 +1117,19 @@ func readCommands(_ source: Source) {
         case let command?:
           source.input(command)
         case nil:
-          Output.notice(["inputError": "stim-frames could not read \(line.prefix(80))"])
+          let shown = line.contains("\"clipboard\"") ? "a clipboard command" : String(line.prefix(80))
+          Output.notice(["inputError": "stim-frames could not read \(shown)"])
         }
       }
     }
   }
 }
+
+// The keys `input.key` sends to an iOS or Android device, by macOS virtual key code
+// (the same codes Stim Desktop forwards) and by Android KeyEvent code for scrcpy.
+let deviceKeys: [String: (macCode: UInt16, androidCode: Int32)] = [
+  "left": (0x7B, 21), "right": (0x7C, 22), "down": (0x7D, 20), "up": (0x7E, 19), "escape": (0x35, 111),
+]
 
 // macOS virtual key codes of a US keyboard, which SimulatorKit's
 // hidUsageForCGKeyCode turns into HID usages and the emulator turns into evdev
@@ -1041,7 +1184,9 @@ extension SimulatorSource: Source {
 
   private func apply(_ command: Command) {
     if case .rotate(let clockwise) = command {
-      if !SimulatorRotation.rotate(udid: udid, clockwise: clockwise) {
+      if SimulatorRotation.rotate(udid: udid, clockwise: clockwise) {
+        pacer.changed()
+      } else {
         Output.notice(["inputError": "\(udid) did not take the rotation."])
       }
       return
@@ -1049,12 +1194,15 @@ extension SimulatorSource: Source {
     if hid?.isConnected != true { hid = SimulatorHID(udid: udid) }
     guard let hid else { return Output.notice(["inputError": "\(udid) could not be opened for input."]) }
     switch command {
-    case .touch(let phase, let point, let index):
+    case .touch(let phase, let point, let second, let index):
       let displays = CoreSimulator.displays(udid: udid)
       guard displays.indices.contains(index), let properties = displays[index].screenProperties else {
         return Output.notice(["inputError": "\(udid) has no display \(index)."])
       }
-      hid.touch(phase, at: nativeScreenPoint(point, orientation: properties.uiOrientation), screenID: properties.screenID)
+      let orientation = displayedOrientation(of: displays[index], in: displays)
+      hid.touch(
+        phase, at: nativeScreenPoint(point, orientation: orientation),
+        second: second.map { nativeScreenPoint($0, orientation: orientation) }, screenID: properties.screenID)
     case .text(let text):
       for character in text {
         guard let key = keyCodes[character] else { continue }
@@ -1071,7 +1219,22 @@ extension SimulatorSource: Source {
       hid.button(button, down: true)
       usleep(100_000)
       hid.button(button, down: false)
-    case .config, .keyframe, .recordKeyframe, .rotate, .posture, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
+    case .key(let name, _):
+      guard let key = deviceKeys[name] else { return Output.notice(["inputError": "iOS takes no \(name) key."]) }
+      hid.hardwareKey(code: key.macCode, down: true)
+      usleep(10_000)
+      hid.hardwareKey(code: key.macCode, down: false)
+    case .clipboard(.paste):
+      let command: UInt16 = 0x37
+      let v: UInt16 = 0x09
+      hid.hardwareKey(code: command, down: true)
+      hid.hardwareKey(code: v, down: true)
+      usleep(10_000)
+      hid.hardwareKey(code: v, down: false)
+      hid.hardwareKey(code: command, down: false)
+    case .clipboard(let request):
+      refuseClipboard(request, "stim-server sets an iOS simulator's clipboard itself.")
+    case .config, .keyframe, .recordKeyframe, .rotate, .posture, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease:
       break
     }
   }
@@ -1089,14 +1252,14 @@ extension EmulatorSource: Source {
   private func apply(_ command: Command) {
     guard let input = inputClient() else { return Output.notice(["inputError": "\(serial) has no gRPC endpoint for input."]) }
     switch command {
-    case .touch(let phase, let point, let index):
+    case .touch(let phase, let point, let second, let index):
       guard index == 0 else { return Output.notice(["inputError": "Input goes to the emulator's main display only."]) }
       guard let size = readStatus(input)?.size else {
         return Output.notice(["inputError": "\(serial) did not report its display size."])
       }
       let rotation = queue.sync { latest?.rotation ?? 0 }
-      let pixel = displayPixel(point, rotation: rotation, displaySize: size)
-      input.call("sendTouch", InputMessages.touch(x: pixel.x, y: pixel.y, pressed: phase != .up))
+      let pixels = ([point] + (second.map { [$0] } ?? [])).map { displayPixel($0, rotation: rotation, displaySize: size) }
+      input.call("sendTouch", InputMessages.touches(pixels, pressed: phase != .up))
     case .text(let text):
       guard readStatus(input)?.keyboard == true else { return noKeyboard() }
       for character in text {
@@ -1113,11 +1276,28 @@ extension EmulatorSource: Source {
       let keys = ["home": "GoHome", "back": "GoBack", "app-switch": "AppSwitch", "lock": "Power"]
       guard let key = keys[name] else { return Output.notice(["inputError": "Android has no \(name) button."]) }
       input.call("sendKey", InputMessages.namedKey(key))
+    case .key(let name, _):
+      guard readStatus(input)?.keyboard == true else { return noKeyboard() }
+      guard let key = deviceKeys[name] else { return Output.notice(["inputError": "Android takes no \(name) key."]) }
+      send(input, InputMessages.key(macKeyCode: key.macCode, down: true))
+      send(input, InputMessages.key(macKeyCode: key.macCode, down: false))
     case .rotate(let clockwise):
       wait("rotation") { await EmulatorRotation.rotate(serial: self.serial, clockwise: clockwise) }
     case .posture(let posture):
       wait("posture") { await posture.apply(serial: self.serial) }
-    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
+    case .clipboard(.set(let id, let text, _)):
+      input.call("setClipboard", InputMessages.clipboard(text), timeout: 5) { reply in
+        if reply == nil { Output.clipboard(id: id, error: "The emulator did not take the clipboard.") } else { Output.clipboard(id: id) }
+      }
+    case .clipboard(.get(let id)):
+      input.call("getClipboard", Data(), timeout: 5) { reply in
+        if let reply { Output.clipboard(id: id, text: InputMessages.clipboardText(reply) ?? "") } else {
+          Output.clipboard(id: id, error: "The emulator did not return its clipboard.")
+        }
+      }
+    case .clipboard(.paste):
+      Output.notice(["inputError": "stim-server pastes on an emulator through adb."])
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease:
       break
     }
   }

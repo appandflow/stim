@@ -58,8 +58,7 @@ import { windowsLauncherArgs } from '../detached-entry.ts';
 import {
   publicUrlSetting,
   ngrokUrlSetting,
-  deviceIdleShutdownMinutesSetting,
-  metroIdleStopMinutesSetting,
+  idleMinutesSetting,
   metroPortSetting,
   metroCommandSetting,
   metroCommandSettingError,
@@ -91,7 +90,8 @@ import {
   type TerminableChild,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
-import { budgetGate, type ReclaimedStep, type ReclaimObserver } from '../budget.ts';
+import type { ReclaimObserver } from '../budget.ts';
+import { diskFloorGate } from '../daemon/floor.ts';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { groupExitBudgetMs, waitForGroupExit } from '../process-group-exit.ts';
 import { ambientContext, ambientEnv } from '@stim-cli/core';
@@ -271,7 +271,7 @@ interface StartCommandDeps {
   withWorktreeLock: typeof withManagedRemoteWorktreeLock;
   withTunnelLock: typeof withManagedTunnelLock;
   clearTunnelRecord(root: string, record: TunnelRecord): unknown;
-  budgetGate: typeof budgetGate;
+  diskFloorGate: typeof diskFloorGate;
   platform: NodeJS.Platform;
 }
 
@@ -337,7 +337,7 @@ const DEFAULT_START_DEPS: StartCommandDeps = {
   withWorktreeLock: withManagedRemoteWorktreeLock,
   withTunnelLock: withManagedTunnelLock,
   clearTunnelRecord: (root, record) => withWorkspaceStateLockAsync(root, () => clearManagedMetroTunnel(root, record)),
-  budgetGate,
+  diskFloorGate,
   platform: process.platform,
 };
 
@@ -382,14 +382,12 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         message,
         remedy = null,
         lines = [],
-        reclaimed = [],
         exitCode = 1,
       }: {
         code: string;
         message: string;
         remedy?: string | null;
         lines?: string[];
-        reclaimed?: ReclaimedStep[];
         exitCode?: number;
       }): never => {
         note(chalk.red(message));
@@ -397,9 +395,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         if (remedy) note(chalk.dim(remedy));
         note(chalk.red(`failed: ${code}`));
         if (json) {
-          console.log(
-            JSON.stringify({ ...startError({ code, message, remedy }), ...(reclaimed.length ? { reclaimed } : {}) }),
-          );
+          console.log(JSON.stringify(startError({ code, message, remedy })));
         }
         process.exit(exitCode);
       };
@@ -479,19 +475,16 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
               ok: false as const,
               error: startError({ code: 'STIM_CANCELLED', message: error.message }),
               lines: [],
-              reclaimed: [],
             };
           }
         }),
       );
-      if (!result.ok)
-        return fail({ ...result.error, lines: result.lines, reclaimed: result.reclaimed, exitCode: interrupted ?? 1 });
+      if (!result.ok) return fail({ ...result.error, lines: result.lines, exitCode: interrupted ?? 1 });
       report({
         json,
         out,
         facts: result.facts,
         waited: result.waited,
-        reclaimed: result.reclaimed,
         links: await workspaceLinks(root),
       });
       if (interrupted !== null) exitAfterFlush(interrupted);
@@ -549,8 +542,8 @@ export interface HostedMetroPorts {
 }
 
 export type StartDevServerResult =
-  | { ok: true; facts: StartFacts; waited: string; reclaimed: ReclaimedStep[] }
-  | { ok: false; error: StartError; lines: string[]; reclaimed: ReclaimedStep[]; retainedClaimRoots?: string[] };
+  | { ok: true; facts: StartFacts; waited: string }
+  | { ok: false; error: StartError; lines: string[]; retainedClaimRoots?: string[] };
 
 export async function startDevServer(
   {
@@ -571,7 +564,6 @@ export async function startDevServer(
   const operationSignal = ambientContext()?.signal;
   throwIfCancelled(operationSignal, 'Metro startup');
   const waitTimer = stepTimer();
-  let reclaimed: ReclaimedStep[] = [];
   const fail = (refusal: StartRefusalArgs): never => {
     throw new StartRefusal(refusal);
   };
@@ -693,8 +685,7 @@ export async function startDevServer(
       }, operationSignal);
 
       const gateBudget = async () => {
-        const budget = await d.budgetGate({ root, note, env: ambientEnv(), signal: operationSignal, onReclaim });
-        reclaimed = [...reclaimed, ...budget.reclaimed];
+        const budget = await d.diskFloorGate({ root, note, env: ambientEnv(), signal: operationSignal, onReclaim });
         if (budget.refusal) return fail(budget.refusal);
       };
       if (resetCache) {
@@ -878,9 +869,9 @@ export async function startDevServer(
           ...(tunnel ? ['--tunnel'] : []),
           ...(resetCache ? ['--reset-cache'] : []),
           '--idle-stop-minutes',
-          String(metroIdleStopMinutesSetting(settings)),
+          String(idleMinutesSetting(settings)),
           '--device-idle-minutes',
-          String(deviceIdleShutdownMinutesSetting(settings)),
+          String(idleMinutesSetting(settings)),
         ];
         const childEnv: NodeJS.ProcessEnv = {
           ...ambientEnv(),
@@ -1562,19 +1553,18 @@ export async function startDevServer(
     } catch (error) {
       note(chalk.yellow(`Could not write agent-device's boot hook: ${error instanceof Error ? error.message : error}`));
     }
-    return { ok: true, facts, waited: waitTimer(), reclaimed };
+    return { ok: true, facts, waited: waitTimer() };
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError) {
       return {
         ok: false,
         error: startError(error),
         lines: error.cause instanceof StartRefusal ? (error.cause.refusal.lines ?? []) : [],
-        reclaimed,
         retainedClaimRoots: [...new Set(error.claims.map((claim) => claim.root))],
       };
     }
     if (!(error instanceof StartRefusal)) throw error;
-    return { ok: false, error: startError(error.refusal), lines: error.refusal.lines ?? [], reclaimed };
+    return { ok: false, error: startError(error.refusal), lines: error.refusal.lines ?? [] };
   }
 }
 
@@ -1766,18 +1756,16 @@ function report({
   out,
   facts,
   waited,
-  reclaimed,
   links,
 }: {
   json: boolean;
   out: (line: string) => void;
   facts: StartFacts;
   waited: string;
-  reclaimed: ReclaimedStep[];
   links: WorkspaceLinks | undefined;
 }): void {
   if (json) {
-    console.log(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
+    console.log(JSON.stringify({ ...facts, ...(links ? { links } : {}) }));
     return;
   }
   const who = facts.supervisorPid

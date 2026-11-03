@@ -34,6 +34,8 @@ import {
   listRecordedDevices,
   loadConfig,
   readMacosRecord,
+  readAgentSnapshot,
+  type AgentSnapshotTree,
   readWorkspaceState,
   hostedIosPlacements,
   hostedAndroidPlacements,
@@ -65,7 +67,14 @@ import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
-import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
+import {
+  CLIPBOARD_INPUT_COST,
+  ControlHub,
+  parseControlBegin,
+  parseInput,
+  SLOT_NAME,
+  type Controller,
+} from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
 import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
 import {
@@ -171,9 +180,9 @@ import {
   parseQuietHours,
   pushEvents,
   readBuildClients,
-  readDeviceHostClients,
-  readDevices,
+  readRegistries,
   recordsForKey,
+  RegistryUnavailable,
   secretPsk,
   serverIdentity,
   setDevicePush,
@@ -182,12 +191,14 @@ import {
   touchDevice,
   type KeyRecords,
   type PairedDevice,
+  type Registries,
   validStuckMinutes,
 } from './registry.ts';
 import {
   acceptNoise,
   decodeSecret,
   HandshakeRefusal,
+  HOME_UNAVAILABLE_MESSAGE,
   CLOSE_REFUSED,
   MAX_CLIENT_MESSAGE_BYTES,
   MAX_FIRST_MESSAGE_BYTES,
@@ -211,6 +222,13 @@ import {
 import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
+import { HostedShareSource } from './share-hosted.ts';
+import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
+import { parsePresencePublish, PresenceHub, presenceKey } from './presence.ts';
+import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
+import { ShareRoute, tailscaleFunnel } from './share-route.ts';
+
+const SHARE_SERVER_GRACE_MS = 2 * 60_000;
 
 const INPUT_METHODS = [
   'input.touch',
@@ -222,6 +240,8 @@ const INPUT_METHODS = [
   'input.scroll',
   'input.key',
   'input.window',
+  'input.clipboard.set',
+  'input.clipboard.get',
 ] as const;
 
 function viewHostedPlacement(dir: string, platform: string, slot: string | undefined, physical: unknown) {
@@ -251,6 +271,11 @@ export interface ServerOptions {
   /** Whether this machine can host simulators and apps for other machines; only a Mac can. Defaults to running on macOS. */
   hostsDevices?: boolean;
   port: number;
+  /**
+   * Set for a server `stim share` started: `idle` runs once its last share has ended, or when no share starts within
+   * `graceMs` (two minutes by default) of the server being ready.
+   */
+  shareServer?: { idle: () => void; graceMs?: number };
   /** The Unix socket for this machine's own user; defaults to core's serverLocalSocket(), null for none. */
   localSocket?: string | null;
   stimCli: string;
@@ -1176,14 +1201,6 @@ function send(socket: ServerSocket, message: ServerMessage | string): void {
   if (socket.readyState === socket.OPEN) socket.send(typeof message === 'string' ? message : JSON.stringify(message));
 }
 
-function buildAllowed(session: PairedDevice): boolean {
-  return Boolean(
-    readBuildClients()
-      .find((entry) => entry.id === session.id)
-      ?.capabilities.includes('build'),
-  );
-}
-
 function requestId(value: unknown): RequestId | null {
   return typeof value === 'number' || typeof value === 'string' ? value : null;
 }
@@ -1211,6 +1228,58 @@ function registeredWorkspace(workspace: unknown): ResolvedWorkspace {
     return { code: 'unknown-workspace', message: `${dir} is registered but no longer exists on this machine.` };
   }
   return { dir };
+}
+
+/** The share hub's recording grace from the control lease's `stim device lock --for` duration, such as `2m`. */
+function leaseGrace(leaseFor: string): { leaseGraceMs?: number } {
+  const [, amount, unit] = /^(\d+)(s|m|h)$/.exec(leaseFor) ?? [];
+  if (amount === undefined || unit === undefined) return {};
+  return { leaseGraceMs: Number(amount) * (unit === 's' ? 1000 : unit === 'm' ? 60_000 : 3_600_000) };
+}
+
+/** Validates `share.start` params; returns why they are refused. */
+function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { workspace: string }) | string {
+  if (!isJsonObject(params)) return 'params must be an object.';
+  const { workspace, platform, slot, physical, control, expiresMinutes, password, passwordless, view, ...rest } =
+    params;
+  if (Object.keys(rest).length) return `share.start does not take ${Object.keys(rest).join(', ')}.`;
+  if (typeof workspace !== 'string') return 'params.workspace must be a workspace path.';
+  if (platform !== 'ios' && platform !== 'android') return 'params.platform must be ios or android.';
+  if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot)))
+    return 'params.slot must be 1-64 letters, digits, underscores or hyphens.';
+  if (physical !== undefined && typeof physical !== 'boolean') return 'params.physical must be true or false.';
+  if (control !== undefined && typeof control !== 'boolean') return 'params.control must be true or false.';
+  if (password !== undefined && (typeof password !== 'string' || password.length < 8 || password.length > 128))
+    return 'params.password must be 8 to 128 characters.';
+  if (passwordless !== undefined && typeof passwordless !== 'boolean')
+    return 'params.passwordless must be true or false.';
+  if (passwordless && password !== undefined) return 'A share takes a password or passwordless, not both.';
+  if (view !== undefined) {
+    if (!isJsonObject(view) || Object.keys(view).some((key) => key !== 'password'))
+      return 'params.view must be an object that takes only password.';
+    if (
+      view.password !== undefined &&
+      (typeof view.password !== 'string' || view.password.length < 8 || view.password.length > 128)
+    )
+      return 'params.view.password must be 8 to 128 characters.';
+    if (control !== true || passwordless) return 'params.view needs control and a password.';
+    if (view.password !== undefined && view.password === password)
+      return 'The view password and the control password must differ.';
+  }
+  const minutes = expiresMinutes ?? SHARE_EXPIRY.default;
+  if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > SHARE_EXPIRY.max)
+    return `params.expiresMinutes must be a whole number of minutes from 1 to ${SHARE_EXPIRY.max}.`;
+  return {
+    workspace,
+    platform,
+    ...(slot && slot !== 'default' ? { slot } : {}),
+    ...(physical ? { physical } : {}),
+    control: control === true,
+    expiresMinutes: minutes,
+    ...(typeof password === 'string' ? { password } : {}),
+    ...(passwordless ? { passwordless } : {}),
+    ...(view ? { view: typeof view.password === 'string' ? { password: view.password } : {} } : {}),
+  };
 }
 
 interface Replayable {
@@ -1406,12 +1475,33 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   let nativeViewerOpened = false;
   const helperEnv = options.host ? { ...options.env, STIM_CAPTURE_HOST: options.host.name } : options.env;
-  const frames = new FramePool(helperEnv, frameLimits, frameHelper, new DeviceViewers(), undefined, foldHelper);
+  const viewers = new DeviceViewers();
+  const frames = new FramePool(helperEnv, frameLimits, frameHelper, viewers, undefined, foldHelper);
   let recorder: Recorder | null = null;
   let startup: StartupState = { state: 'pending' };
+  let approvals: Registries | null = null;
+  let homeLost = false;
+  const readApprovals = (): Registries | null => {
+    try {
+      approvals = readRegistries();
+      return approvals;
+    } catch (error) {
+      if (!(error instanceof RegistryUnavailable)) throw error;
+      if (startup.state === 'ready') {
+        homeLost = true;
+        startup = { state: 'degraded', reason: error.message, cause: 'home-unreadable' };
+        console.error(`stim-server: listening, but not serving clients until the Stim home answers. ${error.message}`);
+      }
+      return null;
+    }
+  };
+  const approved = (): Registries => readApprovals() ?? approvals ?? { devices: [], build: [], deviceHost: [] };
+  const buildAllowed = (session: Pick<PairedDevice, 'id'>) =>
+    approved().build.some((entry) => entry.id === session.id && entry.capabilities.includes('build'));
   let startupProbe: ReturnType<typeof probeDirectories> | null = null;
   let startupRetry: NodeJS.Timeout | null = null;
   let setupPruneTimer: NodeJS.Timeout | null = null;
+  let shareServerGrace: NodeJS.Timeout | null = null;
   const running = new Set<() => Promise<void>>();
   const peerCommands = new Map<string, number>();
   const requestLimits: RequestLimits = { ...REQUEST_LIMITS, ...options.requestLimits };
@@ -1532,7 +1622,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ),
     approved: (client, from) =>
       ('client' in from ? from.client === client : from.node !== null && agentNodes.get(client) === from.node) &&
-      readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+      approved().deviceHost.some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
     withdrawn: (session) => {
       for (const stream of agentStreams.get(session) ?? []) stream.destroy();
     },
@@ -1543,14 +1633,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     agents: agentDrivers,
     limits: options.deviceHostLimits,
     allowed: (client) =>
-      readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+      approved().deviceHost.some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
     connected: (client) => [...sessions.values()].some((entry) => entry.id === client),
     builtBundle: (client, handoff, sha256) => {
-      const host = readDeviceHostClients().find(
+      const host = approved().deviceHost.find(
         (entry) => entry.id === client && entry.capabilities.includes('device-host'),
       )?.publicKey;
       return builds.takeBundle(handoff, sha256, (builder) => {
-        const build = readBuildClients().find(
+        const build = approved().build.find(
           (entry) => entry.id === builder && entry.capabilities.includes('build'),
         )?.publicKey;
         return host !== undefined && host === build;
@@ -1637,8 +1727,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         ...(error ? { error } : {}),
         durationMs,
       }),
-    allowed: (client) => readBuildClients().some((each) => each.id === client && each.capabilities.includes('build')),
+    allowed: (client) => buildAllowed({ id: client }),
   });
+  const presence = new PresenceHub();
   const control = new ControlHub({
     env: options.env,
     stimCli: options.stimCli,
@@ -1654,8 +1745,40 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     foldTimeoutMs: controlLimits.foldTimeoutMs,
     conflict: (deviceId, conflict) => push.control(deviceId, conflict),
     adbEmulators,
+    onInput: (device) => viewers.input(device),
+    presence,
   });
   const hostedViews = new HostedViews(hostedDevices, control, helperEnv, frameHelper);
+  const funnel = tailscaleFunnel(
+    () => tailscale.snapshot().binary,
+    options.env,
+    () => tailscale.rawStatus(),
+  );
+  const shareRoute = new ShareRoute(join(serverDir(), 'share-route'), funnel);
+  const exposedRoute = new ExposedRoute(
+    shareRoute,
+    () => {
+      const share = loadConfig()?.share;
+      return { exposure: share?.exposure, publicUrl: share?.publicUrl, port: share?.port };
+    },
+    async () => tailscaleLoggedIn(await tailscale.rawStatus()),
+  );
+  const shares = new ShareHub({
+    frames,
+    control,
+    presence,
+    subscribeStatus: (listener) =>
+      statusFeed.subscribe({
+        item: (payload) => listener.item(payload as unknown as StatusPayload),
+        failed: listener.failed,
+      }),
+    route: exposedRoute,
+    hosted: (host, request) => new HostedShareSource(hostConnections, host, request, auditSafely),
+    lookup: { adbEmulators },
+    limits: leaseGrace(controlLimits.leaseFor),
+    recordingChanged: () => recorder?.refresh(),
+    ...(options.shareServer ? { idle: options.shareServer.idle } : {}),
+  });
   const ownStimBuild = stimBuildDigest(dirname(options.stimCli));
   const machineUpdates = new MachineUpdates({
     version: options.serverVersion,
@@ -1701,7 +1824,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     readPressure: readMemoryPressure,
     pullRequests: options.pullRequests ?? ((worktrees) => worktreePullRequests()(worktrees)),
     ownLeases: () => control.ownLeaseTimes(),
-    devices: readDevices,
+    devices: () => approved().devices,
     dropToken: dropPushToken,
     log: notificationLog,
     whilePaired: options.history ?? true,
@@ -1730,7 +1853,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let revocationCheck: NodeJS.Timeout | null = null;
   let checkedRegistry: string | null = null;
   const checkRevocations = () => {
-    const devices = [...readDevices(), ...readBuildClients(), ...readDeviceHostClients()];
+    const registries = readApprovals();
+    if (!registries) {
+      if (homeLost) {
+        watcher?.close();
+        watcher = null;
+      }
+      return;
+    }
+    if (homeLost && startup.state === 'degraded') {
+      homeLost = false;
+      startup = { state: 'ready' };
+      watchServerDir();
+      console.error('stim-server: the Stim home answers again; serving clients.');
+    }
+    const devices = [...registries.devices, ...registries.build, ...registries.deviceHost];
     const registry = JSON.stringify(devices);
     if (registry === checkedRegistry) return;
     checkedRegistry = registry;
@@ -1759,14 +1896,28 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let revocationPoll: NodeJS.Timeout | null = null;
   let hostedIdleSweep: NodeJS.Timeout | null = null;
   let retireOnce: Promise<void> | undefined;
+  const watchServerDir = () => {
+    if (watcher) return;
+    let created: FSWatcher;
+    try {
+      created = watch(serverDir(), () => {
+        revocationCheck ??= setTimeout(() => {
+          revocationCheck = null;
+          checkRevocations();
+        }, 50);
+      });
+    } catch {
+      return;
+    }
+    created.once('error', () => {
+      created.close();
+      if (watcher === created) watcher = null;
+    });
+    watcher = created;
+  };
   const becomeReady = () => {
     mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
-    watcher ??= watch(serverDir(), () => {
-      revocationCheck ??= setTimeout(() => {
-        revocationCheck = null;
-        checkRevocations();
-      }, 50);
-    });
+    watchServerDir();
     // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
     revocationPoll ??= setInterval(checkRevocations, 1000).unref();
     hostedIdleSweep ??= setInterval(
@@ -1784,6 +1935,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         frames,
         subscribeStatus: (listener) => statusFeed.subscribe(listener),
         limits: options.recordLimits,
+        unrecordedTargets: () => shares.unrecordedTargets(),
       });
     }
   };
@@ -1854,7 +2006,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     relays.set(socket, relay);
 
     const refuse = (id: RequestId | null, code: ErrorCode, message: string, closeCode: number) => {
-      if (!device) limiter.record(limitKey);
+      if (!device && code !== 'home-unavailable') limiter.record(limitKey);
       send(socket, { id, error: { code, message } });
       socket.close(closeCode, code);
     };
@@ -1886,7 +2038,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       tracker.identify({ id: null, runId });
       const probing = hostHealth();
       const name = typeof params.client.name === 'string' ? params.client.name.slice(0, 64) : 'Stim Desktop';
-      const keyRecords = clientKey === null ? {} : recordsForKey(clientKey);
+      const registries = local ? null : readApprovals();
+      if (!local && (!registries || startup.state !== 'ready'))
+        return refuse(id, 'home-unavailable', HOME_UNAVAILABLE_MESSAGE, CLOSE_REFUSED);
+      const keyRecords = clientKey === null || !registries ? {} : recordsForKey(clientKey, registries);
       const chosen = local ? { ...LOCAL_DEVICE, name } : access === undefined ? keyRecords.device : keyRecords[access];
       if (!chosen) {
         return refuse(
@@ -1992,7 +2147,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     /** Control is re-read from the record each time, so a revoked grant stops at once; the local socket always has it. */
     const canControl = (session: Pick<PairedDevice, 'id'>) =>
-      local || readDevices().some((entry) => entry.id === session.id && entry.capabilities.includes('control'));
+      local || approved().devices.some((entry) => entry.id === session.id && entry.capabilities.includes('control'));
 
     const inputs = { tokens: controlLimits.inputPerSecond, at: Date.now() };
     const characters = { tokens: MAX_INPUT_TEXT, at: Date.now() };
@@ -2083,10 +2238,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const owner = controller(session);
       const parsed = parseInput(method, params, (name) => relay.targetOf(name) ?? control.targetOf(owner, name));
       if ('code' in parsed) return error(id, parsed.code, parsed.message);
-      if (!take(inputs, 1, controlLimits.inputPerSecond, controlLimits.inputPerSecond)) {
+      const { command: sent } = parsed.value;
+      const cost = sent.input === 'clipboard' || sent.input === 'clipboard-get' ? CLIPBOARD_INPUT_COST : 1;
+      if (!take(inputs, cost, controlLimits.inputPerSecond, controlLimits.inputPerSecond)) {
         return error(id, 'limit-exceeded', `A connection can send ${controlLimits.inputPerSecond} inputs a second.`);
       }
-      const { command: sent } = parsed.value;
       if (
         sent.input === 'text' &&
         !take(characters, sent.text.length, controlLimits.textCharsPerSecond, MAX_INPUT_TEXT)
@@ -2520,6 +2676,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
       const cleanup = () => {
         ended = true;
+        stopPresence?.();
         player?.stop();
         replays.delete(subscription);
         stopViewing?.();
@@ -2647,6 +2804,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (replayAt && replay().seek(replayAt.at, replayAt.rate) === null) {
         send(socket, { event: 'replay-ended', subscription, at: replayAt.at });
       }
+      const stopPresence =
+        target.presence === true && archive === undefined && !hosted && resolvedDir
+          ? presence.subscribe(
+              presenceKey(resolvedDir, frameTarget.platform, slot ?? 'default', physical === true),
+              (participants) => {
+                if (!ended) send(socket, { event: 'presence', subscription, participants });
+              },
+            )
+          : undefined;
       const stopViewing = archive !== undefined || physical || hosted ? undefined : recorder?.viewing(frameTarget);
       let unsubscribeStatus: (() => void) | null = null;
       if (hosted) attach(hosted.view.device);
@@ -3229,9 +3395,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (
         !isJsonObject(params) ||
-        Object.keys(params).some(
-          (key) => !['cwd', 'cache', 'olderThan', 'worktrees', 'delete', 'idleMs'].includes(key),
-        ) ||
+        Object.keys(params).some((key) => !['cwd', 'cache', 'olderThan', 'worktrees', 'delete'].includes(key)) ||
         typeof params.cwd !== 'string' ||
         params.cwd.length > 4096 ||
         params.cwd.includes('\0') ||
@@ -3241,21 +3405,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         (params.olderThan !== undefined &&
           (typeof params.olderThan !== 'number' || !Number.isSafeInteger(params.olderThan))) ||
         (params.worktrees !== undefined && typeof params.worktrees !== 'boolean') ||
-        (params.delete !== undefined && typeof params.delete !== 'boolean') ||
-        (params.idleMs !== undefined &&
-          (typeof params.idleMs !== 'number' || !Number.isSafeInteger(params.idleMs) || params.idleMs <= 0))
+        (params.delete !== undefined && typeof params.delete !== 'boolean')
       )
         return error(
           id,
           'bad-request',
-          'GC requires an absolute cwd and valid cache, age, worktree, delete and idle selectors.',
+          'GC requires an absolute cwd and valid cache, age, worktree and delete selectors.',
         );
       const request = {
         cache: typeof params.cache === 'string' ? params.cache : undefined,
         olderThan: typeof params.olderThan === 'number' ? params.olderThan : undefined,
         worktrees: typeof params.worktrees === 'boolean' ? params.worktrees : undefined,
         delete: typeof params.delete === 'boolean' ? params.delete : undefined,
-        idleMs: typeof params.idleMs === 'number' ? params.idleMs : undefined,
       };
       subscribeLifecycle(id, params.cwd, owner, 'gc', (cwd, _admit, onProgress) =>
         gcAction(cwd, options.env, actionLimits, request, onProgress),
@@ -3777,7 +3938,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const failed = [actions, errors].find((result) => typeof result === 'string');
         if (typeof failed === 'string') return error(id, 'stim-failed', failed);
         const records = [...(actions as NdjsonRecord[]), ...(errors as NdjsonRecord[])];
-        const markers = timelineMarkers(records, platform as RecordingPlatform, slotName, spans[0]!.start);
+        const viewports = new Map<string, AgentSnapshotTree['viewport']>();
+        const markers = timelineMarkers(
+          records,
+          platform as RecordingPlatform,
+          slotName,
+          spans[0]!.start,
+          (session) => {
+            const known = viewports.get(session);
+            if (known !== undefined) return known;
+            const read = readAgentSnapshot(cwd, session)?.viewport ?? null;
+            viewports.set(session, read);
+            return read;
+          },
+        );
         return send(socket, { id, result: { ...state, markers } });
       });
     }
@@ -4410,13 +4584,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     async function updateMethod(id: RequestId, method: string, params: unknown, session: PairedDevice): Promise<void> {
-      const approved =
+      const registries = approved();
+      const machine =
         !local &&
-        (readBuildClients().some((entry) => entry.id === session.id && entry.capabilities.includes('build')) ||
-          readDeviceHostClients().some(
-            (entry) => entry.id === session.id && entry.capabilities.includes('device-host'),
-          ));
-      if (!approved) {
+        (registries.build.some((entry) => entry.id === session.id && entry.capabilities.includes('build')) ||
+          registries.deviceHost.some((entry) => entry.id === session.id && entry.capabilities.includes('device-host')));
+      if (!machine) {
         return error(
           id,
           'forbidden',
@@ -4640,6 +4813,54 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
+    async function shareMethod(
+      id: RequestId,
+      method: 'share.start' | 'share.stop' | 'share.list',
+      params: unknown,
+    ): Promise<void> {
+      if (!local) return error(id, 'forbidden', `${method} works only on this machine's local Unix socket.`);
+      if (method === 'share.list') {
+        if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length))
+          return error(id, 'bad-request', 'share.list takes no parameters.');
+        return send(socket, { id, result: { shares: shares.list() } });
+      }
+      if (method === 'share.stop') {
+        if (
+          !isJsonObject(params) ||
+          typeof params.workspace !== 'string' ||
+          (params.id !== undefined && (typeof params.id !== 'string' || params.id === '')) ||
+          Object.keys(params).some((key) => key !== 'workspace' && key !== 'id')
+        )
+          return error(id, 'bad-request', 'share.stop needs params.workspace and takes an optional params.id.');
+        if (params.id === undefined)
+          return send(socket, { id, result: { stopped: await shares.stop(params.workspace) } });
+        const stopped = await shares.stopOne(params.workspace, params.id);
+        if (!stopped) return error(id, 'bad-request', `No share ${params.id} in this workspace.`);
+        return send(socket, { id, result: { stopped: [stopped] } });
+      }
+      const parsed = parseShareStart(params);
+      if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
+      const resolved = registeredWorkspace(parsed.workspace);
+      if ('code' in resolved) return error(id, resolved.code, resolved.message);
+      const started = await shares.start({ ...parsed, workspace: resolved.dir });
+      return send(socket, 'code' in started ? { id, error: started } : { id, result: started });
+    }
+
+    function publishPresence(id: RequestId, params: unknown): void {
+      if (!local) return error(id, 'forbidden', "presence.publish works only on this machine's local Unix socket.");
+      const parsed = parsePresencePublish(params);
+      if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
+      const resolved = registeredWorkspace(parsed.workspace);
+      if ('code' in resolved) return error(id, resolved.code, resolved.message);
+      presence.agent(
+        presenceKey(resolved.dir, parsed.platform, parsed.slot ?? 'default', parsed.physical === true),
+        parsed.command,
+        parsed.phase,
+        parsed.gesture,
+      );
+      send(socket, { id, result: {} });
+    }
+
     /**
      * Admits this local-socket connection to the Desktop-only methods when it proves the bundled Desktop's private key
      * against this connection's challenge. The challenge answers one attempt, so a replayed or late proof cannot win.
@@ -4669,6 +4890,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, failure ? { id, error: failure } : { id, result: {} });
     }
 
+    const localMethods: Partial<Record<string, (id: RequestId, params: unknown) => void | Promise<void>>> = {
+      'share.start': (id, params) => shareMethod(id, 'share.start', params),
+      'share.stop': (id, params) => shareMethod(id, 'share.stop', params),
+      'share.list': (id, params) => shareMethod(id, 'share.list', params),
+      'presence.publish': publishPresence,
+    };
+
     async function handle(raw: string): Promise<void> {
       if (socket.readyState !== socket.OPEN) return;
       let message: unknown;
@@ -4695,6 +4923,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const approvedMachine = machineMethod(id, message.method, message.params, device);
       if (approvedMachine) return approvedMachine;
+      const localMethod = Object.hasOwn(localMethods, message.method) ? localMethods[message.method] : undefined;
+      if (localMethod) return localMethod(id, message.params);
       const desktop = desktopMethod(id, message.method, message.params, device);
       if (desktop) return desktop;
       if (!device.capabilities.includes('read')) {
@@ -4923,7 +5153,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
      * and a 16-byte lookup reveals nothing without the PSK. It has its own, far higher, limit per address.
      */
     const refuse = (code: string) => {
-      (code === 'unknown-secret' ? unknownSecrets : limiter).record(limitKey);
+      if (code !== 'home-unavailable') (code === 'unknown-secret' ? unknownSecrets : limiter).record(limitKey);
       if (ws.readyState === ws.OPEN) ws.close(CLOSE_REFUSED, code);
     };
     try {
@@ -4936,10 +5166,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     try {
       accepted = await acceptNoise(ws, data, isBinary, {
         keyPair: serverKey,
-        psk: (lookup) => secretPsk(lookup),
+        psk: (lookup) => {
+          try {
+            return secretPsk(lookup);
+          } catch (error) {
+            if (!(error instanceof RegistryUnavailable)) throw error;
+            readApprovals();
+            throw new HandshakeRefusal('home-unavailable', HOME_UNAVAILABLE_MESSAGE);
+          }
+        },
         timeoutMs: authTimeoutMs,
       });
     } catch (error) {
+      if (error instanceof HandshakeRefusal && error.code === 'home-unavailable') return;
       (error instanceof HandshakeRefusal && error.code === 'unknown-secret' ? unknownSecrets : limiter).record(
         limitKey,
       );
@@ -4957,11 +5196,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const from = peer ? await describePeer(request, peer) : 'this machine';
       if (ws.readyState !== ws.OPEN) return;
-      records = spendSecret(accepted.lookup!, publicKey, name, from);
+      try {
+        records = spendSecret(accepted.lookup!, publicKey, name, from);
+      } catch (error) {
+        if (!(error instanceof RegistryUnavailable)) throw error;
+        readApprovals();
+        return refuse('home-unavailable');
+      }
       if (!records) return refuse('unknown-secret');
       if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
     } else {
-      records = recordsForKey(publicKey);
+      const registries = readApprovals();
+      if (!registries) return refuse('home-unavailable');
+      records = recordsForKey(publicKey, registries);
       if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
     }
     if (ws.readyState !== ws.OPEN) return;
@@ -5043,6 +5290,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     desktopReports.close();
     if (startupRetry) clearTimeout(startupRetry);
     if (setupPruneTimer) clearInterval(setupPruneTimer);
+    if (shareServerGrace) clearTimeout(shareServerGrace);
     startupProbe?.cancel();
     watcher?.close();
     if (revocationPoll) clearInterval(revocationPoll);
@@ -5051,10 +5299,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     await settle(builds.close());
     for (const client of [...wss.clients, ...localWss.clients]) client.terminate();
     hostConnections.close();
-    if (startup.state === 'ready') {
+    if (startup.state === 'ready' || homeLost) {
       push.close();
       helperAbort.abort();
       sampler.stop();
+      await settle(shares.close());
+      presence.close();
       await settle(control.close());
       await settle(agentDrivers.close());
       await settle(hostedDevices.close());
@@ -5328,6 +5578,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       startup = { state: 'ready' };
       pruneSetup();
+      if (options.shareServer && !shareServerGrace) {
+        const { idle, graceMs = SHARE_SERVER_GRACE_MS } = options.shareServer;
+        shareServerGrace = setTimeout(() => {
+          if (shares.isIdle()) idle();
+        }, graceMs);
+        shareServerGrace.unref?.();
+      }
+      void shareRoute
+        .recover()
+        .catch((failure: Error) =>
+          console.error(`stim-server: could not remove a web share route left behind: ${failure.message}`),
+        );
       setupPruneTimer ??= setInterval(pruneSetup, 60 * 60_000).unref();
       return settle(startup);
     }

@@ -1,5 +1,5 @@
 import { maintenanceStatus, maintenanceLines } from '../maintenance/status.ts';
-import { triggerMaintenance } from '../maintenance/trigger.ts';
+import { daemonLine, daemonStatus, lastActionLine, waitingLines } from '../daemon/status.ts';
 import {
   createRefreshScheduler,
   WATCH_DEBOUNCE_MS,
@@ -20,13 +20,13 @@ import { totalmem, userInfo } from 'os';
 import { join } from 'path';
 import { quotedPath } from '@stim-cli/core';
 import type { Command } from 'commander';
-import { getConfigDir } from '../workspace/config.ts';
+import { admissionLimits, getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { describeMetroLastStop } from '../supervisor/stop-cause.ts';
 import { detectIsExpo, projectShortcut } from '../workspace/project.ts';
 import { buildStatusLine } from '../engine/build-progress.ts';
 import { formatBytes, volumeRootFor } from '../fs-util.ts';
-import { formatDuration, plural } from '../command-output.ts';
+import { formatDuration, formatLongDuration, plural } from '../command-output.ts';
 import {
   withDerivedFacts,
   withGitChip,
@@ -38,6 +38,8 @@ import {
   archiveRoot,
   readArchives,
   type ArchivedWorkspace,
+  readDaemonSnapshot,
+  type DaemonSnapshot,
   DEVICE_METRO_IDLE_STOP_REASON,
   DEVICE_RECLAIM_REASON,
   loadPerCore,
@@ -126,11 +128,11 @@ function formatGb(mb: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
 
-function phaseMarker({ phase, live, warmStep, pathMissing }: EnvironmentState): string {
+function phaseMarker({ phase, warmStep, pathMissing }: EnvironmentState): string {
   if (pathMissing) return chalk.yellow(' [folder missing]');
   if (phase === 'warming') return chalk.cyan(` [warming: ${warmStep}]`);
   if (phase === 'ready') return chalk.green(' [ready]');
-  return live ? '' : chalk.dim(' [idle]');
+  return '';
 }
 
 const WATCH_GIT_MAX_AGE_MS = 60_000;
@@ -148,6 +150,37 @@ export default function statusCommand(program: Command): void {
       const json = Boolean(opts.json);
       for (const line of renderStatus(await readStatus(), json)) console.log(line);
     });
+}
+
+function timeIn(at: string, now: number): string {
+  const since = Date.parse(at);
+  return Number.isFinite(since) ? ` for ${formatLongDuration(Math.max(0, now - since))}` : '';
+}
+
+/** The workspace's stage and how long it has been in it: running, idle, dormant or stopped. */
+function stageLine(state: EnvironmentState, snapshot: DaemonSnapshot | null, now: number): string {
+  if (state.dormantStage) {
+    const { at, deletedDevices, archived } = state.dormantStage;
+    const back = deletedDevices.length
+      ? 'the next `stim ios` or `stim android` creates a device'
+      : `${state.metro?.idleStop ? '`stim revive`' : '`stim ios` or `stim android`'} resumes it`;
+    return `  stage: dormant${timeIn(at, now)}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${archived ? '; logs archived' : ''}; ${back}`;
+  }
+  if (state.idleStage) {
+    const { at, idleMinutes, freedBytes } = state.idleStage;
+    const restore = state.metro?.idleStop ? '`stim revive`' : '`stim ios` or `stim android`';
+    return `  stage: idle${timeIn(at, now)}, after ${idleMinutes}m without activity; freed ${formatBytes(freedBytes)}; ${restore} resumes it`;
+  }
+  if (!state.live && state.build?.state !== 'running') return '  stage: stopped';
+  const decision = snapshot?.workspaces.find((entry) => entry.path === state.path);
+  const last = decision?.lastActivity;
+  const at = Date.parse(last?.at ?? '');
+  const activity =
+    last && Number.isFinite(at)
+      ? `; last activity ${formatLongDuration(Math.max(0, now - at))} ago (${last.basis})`
+      : '';
+  const kept = decision?.outcome === 'kept' && decision.detail ? `; the idle stage leaves it: ${decision.detail}` : '';
+  return `  stage: running${activity}${kept}`;
 }
 
 function renderStatus(
@@ -183,6 +216,7 @@ function renderStatus(
   });
 
   const maintenance = maintenanceStatus();
+  const daemon = daemonStatus();
   if (json) {
     const payload = {
       environments: states.map((state, i) =>
@@ -196,11 +230,18 @@ function renderStatus(
       simctlAvailable: simsAvailable,
       machine,
       maintenance,
+      daemon,
     } satisfies StatusPayload;
     out.push(JSON.stringify(settle(payload)));
     return out;
   }
 
+  const now = Date.now();
+  const snapshot = daemon.running ? readDaemonSnapshot() : null;
+  out.push(chalk.dim(daemonLine(daemon, now)));
+  const lastAction = lastActionLine(daemon, now);
+  if (lastAction) out.push(chalk.dim(lastAction));
+  out.push(...waitingLines(daemon, now));
   out.push(...maintenanceLines(maintenance).map((line) => chalk.dim(line)));
   if (usage.count) out.push(`Archived: ${plural(usage.count, 'workspace')}, ${formatBytes(usage.bytes)}`);
 
@@ -212,7 +253,7 @@ function renderStatus(
     }
     for (const line of deviceLeaseLines(leases, leaseNow)) out.push(line);
     out.push(chalk.dim(loadLine(cap.load)));
-    for (const line of slotUsageLines(cap)) out.push(chalk.dim(line));
+    for (const line of slotUsageLines(cap, admissionLimits().derived)) out.push(chalk.dim(line));
     return out;
   }
 
@@ -225,14 +266,14 @@ function renderStatus(
     if (!state) continue;
     const shortcut = projectShortcut(path, proj);
     const marker = path === cwdRoot ? chalk.bold.cyan(`* ${shortcut}`) : shortcut;
-    const idle = phaseMarker(state);
-    out.push(`\n${marker}${idle} ${chalk.dim(`(${path})`)}`);
+    out.push(`\n${marker}${phaseMarker(state)} ${chalk.dim(`(${path})`)}`);
     out.push(
       labelOnlyRoots[i]
         ? chalk.dim('  worktree root (holds the label; the app registers its own entry)')
         : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${(proj.isExpo ?? detectIsExpo(path)) ? 'expo' : 'bare'})`),
     );
 
+    if (!labelOnlyRoots[i]) out.push(chalk.dim(stageLine(state, snapshot, now)));
     if (state.metro) {
       const label = state.metro.running
         ? chalk.green(`running (pid ${state.metro.pid})`)
@@ -332,7 +373,7 @@ function renderStatus(
     ),
   );
   out.push(chalk.dim(loadLine(cap.load)));
-  for (const line of slotUsageLines(cap)) out.push(chalk.dim(line));
+  for (const line of slotUsageLines(cap, admissionLimits().derived)) out.push(chalk.dim(line));
   const volumes = readVolumes(cwdRoot || cwd);
   const line = diskLine(volumes);
   if (line) {
@@ -403,7 +444,6 @@ export function runStatusWatch({
     debounceMs: WATCH_DEBOUNCE_MS,
     lightIntervalMs: WATCH_LIGHT_INTERVAL_MS,
     run: async (kind) => {
-      triggerMaintenance('status-watch', { warn: false });
       let text: string;
       let payload = null as StatusPayload | null;
       try {
@@ -524,10 +564,10 @@ function idleShutdownSuffix(record: DeviceIdleShutdownRecord | undefined): strin
   if (!record) return '';
   const why =
     record.reason === DEVICE_RECLAIM_REASON
-      ? 'reclaimed for a waiting run; devices.reclaimIdleMinutes'
+      ? 'reclaimed for a waiting run after 2m idle'
       : record.reason === DEVICE_METRO_IDLE_STOP_REASON
-        ? "with Metro's idle stop; metro.idleStopMinutes"
-        : 'devices.idleShutdownMinutes';
+        ? "with Metro's idle stop; idle.minutes"
+        : 'idle.minutes';
   return chalk.dim(` -- shut down after ${record.idleMinutes}m idle at ${record.at} (${why})`);
 }
 

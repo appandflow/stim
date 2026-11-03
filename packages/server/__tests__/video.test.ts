@@ -1,4 +1,4 @@
-import { Bitrate, DEFAULT_VIDEO_LIMITS, VideoGate } from '../src/video.ts';
+import { accessUnitOf, Bitrate, DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate } from '../src/video.ts';
 
 describe('Bitrate', () => {
   const limits = { ...DEFAULT_VIDEO_LIMITS, startBitrate: 1_000_000, minBitrate: 300_000, maxBitrate: 1_500_000 };
@@ -31,4 +31,20 @@ it('reports congestion once, then drops until a keyframe arrives on a drained so
   expect(gate.admit(key, 500)).toBe('drop');
   expect(gate.admit(delta, 0)).toBe('drop');
   expect(gate.admit(key, 0)).toBe('send');
+});
+
+it('reads back the access unit a video packet carries, whatever subscription it names', () => {
+  const unit = {
+    keyframe: true,
+    capturedAt: 1_762_000_000_123.5,
+    width: 590,
+    height: 1280,
+    posture: 'folded' as const,
+    artworkTurns: 3,
+    data: Buffer.from([0, 0, 0, 1, 0x67, 0x4d]),
+  };
+  expect(accessUnitOf(videoPacket('host-subscription-7', 42, unit))).toEqual(unit);
+  const later = { keyframe: false, capturedAt: unit.capturedAt, width: 590, height: 1280, data: unit.data };
+  expect(accessUnitOf(videoPacket('s', 0, later))).toEqual(later);
+  expect(accessUnitOf(Buffer.from([2, 0, 0, 21]))).toBeNull();
 });

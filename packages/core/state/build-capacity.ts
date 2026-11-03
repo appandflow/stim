@@ -10,7 +10,7 @@ import {
   type ClaimHandle,
   type ClaimRefusedError,
 } from '../ownership-claim.ts';
-import { getConcurrencyLimits, loadConfig } from './config.ts';
+import { admissionLimits, loadConfig } from './config.ts';
 import { isJsonObject } from './json-file.ts';
 import { settingDefinition } from './settings-registry.ts';
 import type { LoadState } from './status.ts';
@@ -84,7 +84,7 @@ function liveOffloadedSlots(): number {
  * How busy this machine is for native builds. `loadPerCore` is the 5-minute load average divided by the CPU count,
  * rounded to one decimal. `builds` counts this Stim home's runs that hold a live native-run claim and are in
  * prebuild, pods or compile here, not on a remote machine, plus the build slots this machine holds for other machines'
- * offloaded builds. `maxBuilds` is `concurrency.maxBuilds`, 0 when unlimited.
+ * offloaded builds. `maxBuilds` is `concurrency.maxBuilds`, or the derived cap when it is 0.
  */
 export interface MachineCapacity {
   cpus: number;
@@ -152,7 +152,7 @@ export function machineCapacity(): MachineCapacity {
   return {
     ...loadPerCore(),
     builds: liveNativeBuilds() + liveOffloadedSlots(),
-    maxBuilds: getConcurrencyLimits().maxBuilds,
+    maxBuilds: admissionLimits().maxBuilds,
     maxLoadPerCore: maxLoadPerCore(),
   };
 }

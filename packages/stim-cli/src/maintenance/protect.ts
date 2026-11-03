@@ -3,6 +3,7 @@ import { LAST_BUILD_KEYS, readBuildHistory } from '@stim-cli/core/state';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { metroStoreRoot } from '../supervisor/metro-store.ts';
+import { readWorkspaceLaunches } from '../supervisor/state.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
@@ -29,6 +30,8 @@ function protectedCacheKeys(config: Config | null = loadConfig()): Set<string> {
       const key = entries.find((entry) => entry.result === 'succeeded')?.cacheKey;
       if (key) keys.add(key);
     }
+    for (const launch of Object.values(readWorkspaceLaunches(root)))
+      if (launch.artifact?.cacheKey) keys.add(launch.artifact.cacheKey);
   }
   for (const platform of ['ios', 'android'] as const)
     for (const record of readParked(platform, { config })) if (record.cacheKey) keys.add(record.cacheKey);

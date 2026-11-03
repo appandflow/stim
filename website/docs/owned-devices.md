@@ -33,6 +33,16 @@ workspace references them. It lists any other `stim-*` device, including one
 another `STIM_HOME` created, with the command that deletes it (`rm -rf <dir>`
 for AVD data with no registration), and leaves it for you to run.
 
+A booted simulator also gets a folder under `/private/var/tmp`,
+`com.apple.CoreSimulator.SimDevice.<udid>`, where CoreSimulator keeps its
+`launchd.log` and the SimSlim overrides Stim applies. `simctl delete` leaves
+that folder behind, so Stim removes it when it deletes an owned simulator.
+`stim gc` lists the folders whose UDID has no simulator in Xcode's device set,
+with their sizes, and never deletes them: a simulator in another `simctl`
+device set is not in Xcode's list, and removing its folder would drop its
+SimSlim overrides. Remove one yourself with `rm -rf` once you are sure its
+simulator is gone.
+
 With `STIM_HOME` set, gc skips the device sweep because simulators and AVDs are
 machine-global. Pruning a dead project still deletes the devices its record marks
 as owned, and the dry run lists them under "Device sweep notices". Every other
@@ -343,13 +353,15 @@ and profile setup; `doctor` recommends it without applying it automatically.
 
 To slim every Stim-owned simulator on a Mac without a profile per app, run
 `stim settings set ios.simslim on --scope machine`. A project profile still wins,
-and `ios.simslim` set to `off` in a project opts that app out. The first slim of
-a simulator reboots it once; an already slim simulator is left alone, and a
-rerun on the same boot with an unchanged profile skips SimSlim entirely. A manual
-`simslim off` on a running simulator is not noticed until it reboots or the
-profile changes. A running
-simulator is slimmed on the next `stim ios`, without a boot first, and Stim mutes
-it again after that reboot. A parked simulator is slimmed when Stim adopts it.
+and `ios.simslim` set to `off` in a project opts that app out. A shut-down
+simulator (new, stopped, or parked and adopted) is slimmed as part of its boot:
+SimSlim writes its settings while the simulator is shut down and boots it once,
+already slim, alongside the app build. An already slim simulator is left alone,
+and a rerun on the same boot with an unchanged profile skips SimSlim entirely. A
+manual `simslim off` on a running simulator is not noticed until it reboots or
+the profile changes. A running simulator is slimmed on the next `stim ios`,
+without a boot first, which reboots it, and Stim mutes it again after that
+reboot.
 Hosted simulators on a named Mac are muted like local ones but never slimmed.
 If `simslim` is not installed, `doctor` reports it and `stim ios` boots without
 it.
@@ -435,91 +447,58 @@ a copy button for each command.
 
 ## Idle shutdown
 
-A stalled agent can leave its simulator or emulator booted for hours. Set
-`devices.idleShutdownMinutes` to have the workspace's dev server supervisor
-shut its owned devices down after that many idle minutes. It is on by default
-at 15 minutes. Set it for the machine or for one project; `0` turns it off:
+A stalled agent can leave its simulator or emulator booted for hours. Once a
+workspace has had no activity for `idle.minutes`, 15 by default, the
+per-home `stim-daemon` shuts its owned devices down together with its dev
+server, in the [idle stage](./dev-server-and-logs.md#idle-stop), whether or
+not a dev server runs, so a Release run or a failed build no longer leaves a
+simulator booted. Set it for the machine or for one project; `0` turns it off:
 
 ```bash
-stim settings set devices.idleShutdownMinutes 60 --scope machine
+stim settings set idle.minutes 60 --scope machine
 ```
 
-A device counts as idle when it is booted, no tool drives it, no `stim device
-lock` or agent-device session holds it, no build runs in the workspace, and it
-has shown no activity (app logs, device logs, bundle requests, Stim commands, agent actions)
-for that long. A phone app viewing the device through `stim-server` keeps it
-up. Stim Desktop's own simulator view does not.
+Activity is a Stim command or native build in the workspace, a Metro bundle or
+HMR request, an agent-device action, an input sent to the device through
+`stim-server` (the phone app or Stim Desktop; a view that only streams frames
+does not count), a `stim device lock`, and, on macOS, you using the device in
+the frontmost Simulator, Device Hub or emulator window. App and device logs never count,
+whatever the device's last launch. A device stays up while a tool drives it,
+while `stim device lock` or an agent-device session holds it, while a build
+runs in the workspace, and while its activity cannot be read.
 
 The device is shut down, never deleted, through the same path as `stim stop`.
 Physical devices are never touched. `stim status` shows
-`shut down after 15m idle` on the device, and the next `stim ios` or
-`stim android` boots it again.
+`shut down after 15m idle` on the device, and the next `stim ios`,
+`stim android` or `stim revive` boots it again. The daemon reads the setting on
+every tick. With `daemon.mode off`, the workspace's dev server supervisor
+checks once a minute and shuts its own devices down after `idle.minutes`; a
+device with no dev server then stays booted.
 
-The supervisor checks once a minute and reads the setting when it starts, so
-restart the dev server with `stim stop` and `stim start` after changing it.
-When `metro.idleStopMinutes` is shorter, the dev server's idle stop shuts down
-the devices idle that long first.
-
-Device logs stop counting as activity once the workspace's dev server is gone,
-for a device whose last launch loads its JavaScript from Metro: a Debug app
-cannot run without Metro, and its reconnect attempts would otherwise count as
-activity for as long as the device stays booted. A Debug app's device therefore goes down with the
-[idle stop](./dev-server-and-logs.md#idle-stop) even when
-`devices.idleShutdownMinutes` is longer, and `stim status` shows it as shut
-down `with Metro's idle stop`. Device logs still count for a Release or
-native-process launch and for a slot with no recorded launch. For those, any
-change to the workspace's device log counts, so another slot's reconnect logs
-keep them booted until that slot's device is shut down.
-
-With `maintenance.mode on`, the default,
-[automatic maintenance](./build-caches.md#automatic-maintenance) applies the
-same setting to devices with no supervisor, such as those of release runs or of
-a dev server that exited. Every `maintenance.idleCheckMinutes` (5) a Stim command
-starts a background check that shuts down each owned device idle for its
-workspace's `devices.idleShutdownMinutes`, read fresh each time. It uses the same
-idle rules, rechecks under the workspace's native-run lock, records the same
-`shut down after 15m idle` status and `device_idle_shutdown` log record, and
-never touches the workspace of the command that started the check. It covers
-what Stim Desktop's **Shut down idle devices** option does.
-
-Queue reclaim is a separate, faster path. With `concurrency.maxDevices` or a per-platform cap set,
-the waiting run uses its own effective `devices.reclaimIdleMinutes`, default 10, to shut down the
-longest-idle eligible owned device across this Stim home's other workspaces.
-Only the FIFO head reclaims, or a run behind a head that is held back only by its own platform's cap and has no earlier waiter on its own platform, one device at a time, at most once every 15
-seconds, then checks the queue and capacity before another. `0` disables
-reclaim; the supervisor's own idle shutdown defaults to 15 minutes.
-
-The same idle check applies: no driver, Stim or agent-device lock, build,
-device lock or viewer, and no Stim command, app log, device log, Metro bundle
-or agent action within the interval. Reclaim rechecks idleness under the
-target workspace's native-run lock and re-resolves ownership through
-centralized teardown. It shuts down, never deletes, and excludes the waiting
-workspace, physical, hosted, remote, parked and other homes' devices. Lock or
-teardown failures are reported once per device and skipped for the rest of
-the wait. It
-can reclaim the device of any workspace of this Stim home that is idle for
-`devices.reclaimIdleMinutes`, even when the target has no supervisor and even
-when its own `devices.idleShutdownMinutes` is `0`. Stim Desktop's simulator
-view and manual input in Simulator.app do not count as activity.
-
-The waiting run prints the reclaimed device, workspace and idle minutes on
-stderr. The reclaimed workspace's status and `device_idle_shutdown` log say
-`reclaimed for a waiting run`; wait stats include a positive `reclaimed` count.
-
-Opt out machine-wide with the command below; the waiter's effective setting
-decides.
-
-```bash
-stim settings set devices.reclaimIdleMinutes 0 --scope machine
-```
+Queue reclaim is a separate, faster path. Every boot waits for a device slot
+under a derived cap (`concurrency.maxDevices` overrides it; see
+[settings](./settings.md#machine-settings)). While a run waits to boot because
+the booted devices fill a cap, the `stim-daemon` shuts down, once per tick, the
+longest-idle booted owned device of another workspace of this Stim home that
+has had no activity for 2 minutes and has no blocker, then wakes the waiter.
+The same activity counts as for idle shutdown: no driver, Stim or agent-device
+lock, build or device lock, and no Stim command, Metro bundle, agent action,
+stim-server input or use of its Simulator or emulator window; app and device
+logs do not count. Reclaim rechecks under the target workspace's native-run
+lock and re-resolves ownership through centralized teardown. It shuts down,
+never deletes, and excludes the waiting workspace, physical, hosted, remote,
+parked and other homes' devices, and the devices of a workspace with a live
+[web share](./share.md); the run keeps waiting and its progress line names the
+share. The reclaimed workspace's status and
+`device_idle_shutdown` log say `reclaimed for a waiting run`. With no daemon,
+waiters wait without reclaim. `devices.reclaimIdleMinutes` is no longer read.
 
 Agent prompt:
 
 ```text
-Change Stim's idle device shutdown for this project to 60 minutes with
-`stim settings set devices.idleShutdownMinutes 60 --scope workspace`, restart
-the dev server with `stim stop` and `stim start`, and confirm with
-`stim settings get devices.idleShutdownMinutes`.
+Change Stim's idle stop for this project to 60 minutes with
+`stim settings set idle.minutes 60 --scope workspace`, and confirm with
+`stim settings get idle.minutes`.
 ```
 
 ## Remote devices
@@ -625,8 +604,10 @@ Home on iOS or Back on Android and web, and both rotation directions. **More** (
 opens a native menu for Lock, Android Home and Apps, supported foldable postures,
 and simulator options. **Device Frame** appears in More when matching artwork is
 available and remains usable without a control lease. The bar stays below the screen in portrait and landscape
-and fits its common controls within the available width. The app in front still needs
-to support the requested orientation. Physical devices rotate only in hand.
+and fits its common controls within the available width. An iOS simulator turns with
+the device, so a portrait-only app shows sideways in a turned frame; on an emulator the
+app in front still needs to support the requested orientation. Physical devices rotate
+only in hand.
 
 Tapping Control explicitly takes over from the displayed driver immediately.
 If the server reports a driver conflict after that tap, the Take over action
@@ -684,15 +665,16 @@ back through it in the Stim phone app.
   Android emulators for another workspace. Each platform keeps up to three
   parked devices by default and deletes the oldest when full. Disabling
   parking makes removal delete the device; see [settings](/docs/settings).
-  Under disk pressure level 2 or 3 removal deletes the devices instead of
-  parking them, and says so in its output.
-- Automatic maintenance treats owned simulators and emulators as disposable:
-  the next run recreates them. It deletes the owned devices of a workspace
-  that is idle, meaning no dev server, native run, build, lease, managed lock,
-  driven or busy device, and no recorded use, for a threshold: 10 minutes
-  (`maintenance.pressureProtectMinutes`) under disk pressure level 2 or 3,
-  3 days (`maintenance.deviceIdleDays`) otherwise, and `gc.worktreeGraceMinutes`
-  for a workspace whose worktree is finished but kept. A workspace pinned with
+  While the disk pressure level is high or critical removal deletes the
+  devices instead of parking them, and says so in its output.
+- Stim treats owned simulators and emulators as disposable: the next run
+  recreates them. The `stim-daemon`'s dormant stage deletes the owned devices
+  of a workspace with nothing running and no activity for `idle.dormantDays`
+  (3 days; fractions allowed; `0` never), the parked pool untouched; its
+  pressure ladder does so at high disk pressure for a workspace idle 10
+  minutes, and at critical for every idle workspace. Automatic maintenance deletes them after
+  `gc.worktreeGraceMinutes` for a workspace whose worktree is finished but
+  kept, unless a [web share](./share.md) of it is live. A workspace pinned with
   `maintenance.keep` keeps its devices. `stim status` shows the disk they use.
   Its daily age sweep also deletes parked simulators and emulators parked for
   `maintenance.olderThanDays` (7 days; 0 never), through centralized teardown.
@@ -703,7 +685,11 @@ back through it in the Stim phone app.
   `--older-than <days>`, it removes only the devices parked at least that long.
   It also deletes the owned devices of a linked worktree whose branch is merged
   or whose pull request ended but that it keeps, for example because it is
-  dirty, under the same idle rules as automatic maintenance. `stim gc` prints
+  dirty, under the same idle rules as automatic maintenance, a live web share
+  included. It then runs the
+  `stim-daemon`'s pressure ladder at high, whatever the machine measures, which
+  deletes parked devices and moves workspaces idle 10 minutes or more into the
+  dormant stage, deleting their owned devices. `stim gc` prints
   the disk owned devices use as `Owned device disk`.
 - `stim gc --cache parked` lists only the parked devices, with the app each
   one holds and its size. With `--delete` it erases each verified parked
@@ -905,7 +891,7 @@ rotation and the postures reported by the host. Hosted viewing has no replay,
 Duo frame rendering or physical-device target. A stopped session shows a rerun
 command; an unavailable host reports the connection failure.
 
-`devices.idleShutdownMinutes` does not stop hosted
+`idle.minutes` does not stop hosted
 simulators in this phase; their recorded sessions prevent Metro idle stop.
 `maintenance.idleStopHours` does stop them: see
 [hosted sessions stop when they are idle](./remote-machines.md#hosted-sessions-stop-when-they-are-idle).
@@ -923,16 +909,17 @@ teardown. Clear a named claim only after proving its owner and child are gone.
 
 `ios.host.agent` reports `driver`, `remoteConfig` and `command`. Plain status prints
 `agent: <command>`. Each slot has its own 0600 config under the workspace's Stim
-state directory; tokens never appear in placement or status. Use that file:
+state directory; tokens never appear in placement or status.
+[`stim agent-device`](./commands.md#agent-device) passes that file for you:
 
 ```bash
-agent-device open <bundleId> --remote-config <file>
-agent-device snapshot --remote-config <file>
-agent-device click <ref> --remote-config <file>
-agent-device screenshot --remote-config <file>
+stim agent-device open <bundleId>
+stim agent-device snapshot
+stim agent-device click <ref>
+stim agent-device screenshot
 ```
 
-The command shape is `agent-device <command> --remote-config <file>`. `open`
+Underneath, the command shape is `agent-device <command> --remote-config <file>`. `open`
 automatically allocates an `ios-instance` lease through the `proxy` provider in
 this session's tenant. The config contains `daemonBaseUrl`, `daemonAuthToken`,
 `tenant`, `sessionIsolation`, `runId`, `clientId`, `deviceKey`, `leaseBackend`,
@@ -1007,9 +994,8 @@ Copy this prompt into your coding agent:
 ```text
 Run this workspace's iOS app on janics-mac-mini with stim ios --remote janics-mac-mini.
 Use the host's offered simulator architecture, keep Metro here, report launch evidence
-and status. Read ios.host.agent from stim status --json, open the app with
-agent-device open <bundleId> --remote-config <file>, then snapshot and click through
-that config. Run stim stop when finished. If the host refuses, report its reason.
+and status. Open the app with stim agent-device open <bundleId>, then snapshot
+and click through stim agent-device. Run stim stop when finished. If the host refuses, report its reason.
 ```
 
 ## Paired Mac hosting approval

@@ -37,30 +37,6 @@ public struct GcPreview: Sendable {
     sections.flatMap(\.entries).filter { $0.kept == nil }.compactMap(\.bytes).reduce(0, +)
   }
 
-  /// Booted owned devices the report found idle, which `stim gc --idle <duration>` shuts down.
-  public var idleDevices: [IdleDevice] = []
-
-  public struct IdleDevice: Hashable, Sendable {
-    public var name: String
-    public var idleFor: TimeInterval?
-    public var buildInProgress: Bool
-  }
-
-  /// How many idle devices `stim gc --idle` with this many seconds would shut down.
-  public func idleShutdownCount(atLeast seconds: TimeInterval) -> Int {
-    idleDevices.filter { !$0.buildInProgress && ($0.idleFor ?? -1) >= seconds }.count
-  }
-
-  public static func idleSeconds(_ duration: String) -> TimeInterval? {
-    guard let unit = duration.last, let count = Double(duration.dropLast()), count > 0 else { return nil }
-    switch unit {
-    case "m": return count * 60
-    case "h": return count * 3600
-    case "d": return count * 86400
-    default: return nil
-    }
-  }
-
   public var deletableCount: Int {
     sections.flatMap(\.entries).filter { $0.kept == nil }.count
   }
@@ -76,11 +52,11 @@ public struct GcPreview: Sendable {
     ("parkedEmulators", "Parked emulators"),
     ("orphanedDevices", "Orphaned devices"),
     ("unverifiedDevices", "Unrecognized stim-* devices"),
+    ("simulatorLaunchdFolders", "Simulator launchd folders with no simulator"),
     ("staleDevices", "Stale devices"),
     ("staleDeviceRecords", "Stale device records"),
     ("staleLedgerEntries", "Stale device ledger entries"),
     ("staleStatusCaches", "Stale status cache entries"),
-    ("idleDevices", "Idle devices"),
     ("orphanedEasSessions", "Orphaned EAS sessions"),
     ("staleBuildLocks", "Stale build locks"),
     ("staleBuildSlots", "Stale build slots"),
@@ -100,20 +76,16 @@ public struct GcPreview: Sendable {
   /// Sections `stim guide facts gc` documents as never deleted.
   static let reportOnly: Set<String> = [
     "unresolvedBuildClaims", "buildsInProgress", "keptDeviceLeases", "deviceSweepNotices",
-    "easSessionSweepNotices", "skipped", "idleDevices", "unverifiedDevices",
+    "easSessionSweepNotices", "skipped", "unverifiedDevices", "simulatorLaunchdFolders",
   ]
 
   /// The `stim gc` arguments that act on what a dry run with `preview` reported: the same scope with
   /// `--delete`, so a preview of one cache never becomes a full `gc --delete`. Nil for arguments that are
   /// not a `gc --json` dry run.
   public static func deleteArguments(after preview: [String]) -> [String]? {
-    guard preview.first == "gc", preview.contains("--json"), !preview.contains("--delete"), !preview.contains("--idle")
-    else { return nil }
+    guard preview.first == "gc", preview.contains("--json"), !preview.contains("--delete") else { return nil }
     return preview + ["--delete"]
   }
-
-  /// Durations offered for `stim gc --idle`.
-  public static let idleDurations = ["30m", "1h", "2h", "4h", "1d"]
 
   public init(json: Data) throws {
     guard let object = try? JSONSerialization.jsonObject(with: json) as? [String: Any] else {
@@ -124,22 +96,32 @@ public struct GcPreview: Sendable {
     }
     guard let sections = object["sections"] as? [String: Any] else { throw Failure.unreadable }
     actionable = object["actionable"] as? Bool ?? false
-    idleDevices = ((sections["idleDevices"] as? [[String: Any]]) ?? []).map {
-      IdleDevice(
-        name: $0["name"] as? String ?? "?",
-        idleFor: ($0["idleForMs"] as? NSNumber).map { $0.doubleValue / 1000 },
-        buildInProgress: $0["buildInProgress"] as? Bool ?? false)
-    }
     let known = Set(Self.order.map(\.key))
     let keys = Self.order + sections.keys.filter { !known.contains($0) }.sorted().map { ($0, $0) }
-    self.sections = keys.compactMap { key, title in
-      let items = ((sections[key] as? [[String: Any]]) ?? []).filter {
-        key != "workspaceLogs" || (($0["trimBytes"] as? NSNumber)?.int64Value ?? 0) > 0
-      }
-      guard !items.isEmpty else { return nil }
-      let entries = items.map { Self.entry($0, key: key) }
-      return Section(key: key, title: title, entries: entries)
+    self.sections =
+      keys.compactMap { key, title in
+        let items = ((sections[key] as? [[String: Any]]) ?? []).filter {
+          key != "workspaceLogs" || (($0["trimBytes"] as? NSNumber)?.int64Value ?? 0) > 0
+        }
+        guard !items.isEmpty else { return nil }
+        let entries = items.map { Self.entry($0, key: key) }
+        return Section(key: key, title: title, entries: entries)
+      } + Self.ladderSection(object["ladder"])
+  }
+
+  /// What `stim gc --delete` runs of the pressure ladder: its high level, as the dry run previewed it.
+  private static func ladderSection(_ ladder: Any?) -> [Section] {
+    let levels = (ladder as? [String: Any])?["levels"] as? [[String: Any]] ?? []
+    let actions = levels.first { $0["level"] as? String == "high" }?["actions"] as? [[String: Any]] ?? []
+    guard !actions.isEmpty else { return [] }
+    let entries = actions.map { action in
+      Entry(
+        label:
+          "\((action["kind"] as? String ?? "?").replacingOccurrences(of: "-", with: " ")) \(action["target"] as? String ?? "?")",
+        bytes: (action["bytes"] as? NSNumber)?.int64Value,
+        kept: action["outcome"] as? String == "kept" ? action["detail"] as? String ?? "kept" : nil)
     }
+    return [Section(key: "ladder", title: "Pressure ladder at high", entries: entries)]
   }
 
   private static func entry(_ item: [String: Any], key: String) -> Entry {
@@ -150,11 +132,11 @@ public struct GcPreview: Sendable {
     let bytesKey = key == "workspaceLogs" ? "trimBytes" : key == "recordings" && acted == true ? "deleteBytes" : "bytes"
     let bytes = (item[bytesKey] as? NSNumber)?.int64Value
     let kept: String?
-    if key == "idleDevices" {
-      let idle = (item["idleForMs"] as? NSNumber).map { "idle \(Format.duration($0.doubleValue / 1000))" }
-      kept = [idle ?? "idle", "stim gc --idle shuts it down"].joined(separator: "; ")
-    } else if key == "unverifiedDevices" {
+    if key == "unverifiedDevices" {
       kept = "This Stim home has no record of creating it; to delete it, run: \(item["command"] as? String ?? "?")"
+    } else if key == "simulatorLaunchdFolders" {
+      kept =
+        "No simulator in Xcode's device set has this UDID; once its simulator is gone for good, run: \(item["command"] as? String ?? "?")"
     } else if key == "recordings", item["withWorkspace"] as? Bool == true {
       kept = "deleted with its workspace directory, counted there"
     } else if reportOnly {

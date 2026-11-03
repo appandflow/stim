@@ -42,7 +42,6 @@ import { findProjectRoot, projectShortcut } from '../workspace/project.ts';
 import {
   resolveCacheProviderConfig,
   resolveSettings,
-  deviceReclaimIdleMinutesSetting,
   metroWarmupUrlSetting,
   metroPortSetting,
   projectSettingsContextAsync,
@@ -61,7 +60,13 @@ import {
   type RunLease,
 } from '../engine/device-lease-run.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
-import { getConcurrencyLimits, getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
+import {
+  admissionLimits,
+  getConcurrencyLimits,
+  getProject,
+  upsertProject,
+  withConfigLockAsync,
+} from '../workspace/config.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild } from '../engine/build-lock.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
@@ -107,7 +112,7 @@ import {
 } from '../devices/android.ts';
 import type { teardownOwnedAvd } from '../devices/teardown.ts';
 import { DeviceAdmissionRefusal, checkDeviceCapacity } from '../engine/device-capacity.ts';
-import { budgetGate, type ReclaimedStep } from '../budget.ts';
+import { diskFloorGate } from '../daemon/floor.ts';
 import {
   didSetUpDevice,
   ensureBooted,
@@ -264,7 +269,7 @@ export function registerAndroid(program: Command): void {
     )
     .option(
       '--wait <seconds>',
-      'How long to wait for another workspace to release the device it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, wait for an owned-device slot (default 600 seconds; --no-wait refuses immediately).',
+      'How long to wait for another workspace to release the device it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, bound the owned-device slot wait; without --wait, a queued run waits while the devices ahead of it are listed, and refuses after 90 minutes or once the devices cannot be counted for max(10 minutes, position x 5 minutes) (--no-wait refuses immediately).',
     )
     .option(
       '--no-wait',
@@ -389,7 +394,7 @@ interface RunAndroidOptions {
   detectRemoteProviders?: typeof detectProviders;
   getLimits?: typeof getConcurrencyLimits;
   checkCapacity?: typeof checkDeviceCapacity;
-  checkBudget?: typeof budgetGate;
+  checkBudget?: typeof diskFloorGate;
   acquireSlot?: typeof acquireBuildSlot;
   releaseSlot?: typeof releaseBuildSlot;
   ensureDevice?: typeof ensureOwnedDevice;
@@ -470,7 +475,7 @@ function resolveRunAndroidOptions(
     deviceAbi = androidDeviceAbi,
     isEmulatorDevice = probeEmulatorSerial,
     readApkPackage = async (apkPath: string | null) => apkPackage(await dumpApkManifest(apkPath, { context })),
-    getLimits = getConcurrencyLimits,
+    getLimits = admissionLimits,
     checkCapacity = checkDeviceCapacity,
     acquireSlot = acquireBuildSlot,
     releaseSlot = releaseBuildSlot,
@@ -815,7 +820,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const recordRun = stats.record;
 
   let ccacheActivity: CcacheActivity = CCACHE_NOT_RUN;
-  let reclaimed: ReclaimedStep[] = [];
   let artifactAcquired = false;
 
   const fail = (
@@ -866,7 +870,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           ...(record.devicePlacement ? { devicePlacement: record.devicePlacement } : {}),
           ...(ccacheActivity.status === 'not-run' ? {} : { ccache: ccacheActivity }),
           ...(lease === undefined ? {} : { lease }),
-          ...(reclaimed.length ? { reclaimed } : {}),
         }),
       );
     }
@@ -954,7 +957,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     automatic: plan.target.kind === 'hosted' && plan.target.machine === 'auto',
     signal: runCancellationSignal(context),
     waitMs: plan.deviceSlotWaitMs,
-    reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     waitingFor: (info: Parameters<typeof progress.waitingFor>[0]) => progress.waitingFor(info, 'device-slot'),
     onBootStart: () => progress.bootStarted(),
     onWait: (ms: number) => {
@@ -1024,7 +1026,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         }
       : {}),
     localSelectors,
-    checkBudget: (args) => (options.checkBudget ?? budgetGate)({ ...args, env: context.env, onReclaim }),
+    checkBudget: (args) => (options.checkBudget ?? diskFloorGate)({ ...args, env: context.env, onReclaim }),
     note: out,
     phase,
     log: (entry) => writer.write(entry),
@@ -1045,7 +1047,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses links this machine opens to the host.',
       );
   }
-  reclaimed = budget.reclaimed;
   const localRefusal = await localRunRefusal(
     budget.refusal,
     target,
@@ -1129,7 +1130,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         start: startServer,
         readState,
       });
-      reclaimed = [...reclaimed, ...gate.reclaimed];
       if (!gate.ok) {
         return {
           ok: false,
@@ -1483,7 +1483,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         writer,
         emit,
         recordRun: (outcome) => recordRun({ ...outcome, remoteDevice: true }),
-        reclaimed,
         devServer,
         recordBuild,
       });
@@ -1625,7 +1624,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         out,
         emit,
         recordRun: (outcome) => recordRun({ ...outcome, remoteDevice: Boolean(remoteDevice) }),
-        reclaimed,
         devServer,
         enterPhase: progress.step,
         enterActivity: progress.activity,

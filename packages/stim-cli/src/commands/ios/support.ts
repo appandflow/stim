@@ -4,7 +4,7 @@ import { parseDeviceWait } from '../../engine/device-lease-run.ts';
 import { join, basename } from 'node:path';
 import chalk from 'chalk';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
-import { shortUdid, phaseLine } from '../../command-output.ts';
+import { formatDuration, shortUdid, phaseLine, SLOW_STEP_MS } from '../../command-output.ts';
 import type { IosCommandOptions, DeviceLike, PodStateLike, PodVerdictLike, FailArgs } from './types.ts';
 import type { BuildIosResult } from '../../engine/xcode.ts';
 import {
@@ -21,7 +21,7 @@ import { resolveBuildPlacement } from '../../offload/selection.ts';
 import { resolveOptimizations, type Optimizations } from '../../optimizations.ts';
 import type { SettingScope } from '@stim-cli/core/state';
 import {
-  DEFAULT_DEVICE_SLOT_WAIT_MS,
+  DeviceAdmissionRefusal,
   type DeviceSlotWaitPolicy,
   layerNote,
   unknownIosDeviceTypeRefusal,
@@ -30,7 +30,8 @@ import {
 import { parseIosSimulatorApp, type IosSimulatorApp } from '../../devices/ios-simulator-viewer.ts';
 import { listIosRuntimes, type IosSimSnapshot } from '../../devices/ios.ts';
 import { IosDeviceMismatchError } from '../../engine/device-ios.ts';
-import { RecordedDeviceLostError } from '../../engine/device.ts';
+import { didSetUpDevice, RecordedDeviceLostError, type OwnedDeviceRecord } from '../../engine/device.ts';
+import { claimFailure } from '../../ownership-claim.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import { describeDiagnostic } from '../../engine/errors-xcode.ts';
 import type { SimulatorArch } from '../../engine/agent-device.ts';
@@ -254,9 +255,11 @@ export async function deviceModelRefusal({
 }
 
 export function ownedSimFailure(error: unknown): { code: string; message: string; remedy: string } {
-  if (error instanceof RecordedDeviceLostError) {
+  if (error instanceof RecordedDeviceLostError || error instanceof DeviceAdmissionRefusal) {
     return { code: error.code, message: error.message, remedy: error.remedy };
   }
+  const refusal = claimFailure(error, 'stim ios');
+  if (refusal) return refusal;
   return {
     code: 'STIM_NO_DEVICE',
     message: `Could not ensure an owned iOS simulator: ${(error as Error)?.message || error}`,
@@ -342,7 +345,9 @@ export function printDiagnostics(note: (line: string) => void, result: Extract<B
 export function resolveIosWait(
   opts: IosCommandOptions,
   physical: boolean,
-): { waitSeconds: number; noWait: boolean; deviceSlotWaitMs: number; checkCapacity: boolean } | { failure: FailArgs } {
+):
+  | { waitSeconds: number; noWait: boolean; deviceSlotWaitMs: number | undefined; checkCapacity: boolean }
+  | { failure: FailArgs } {
   const noWait = opts.wait === false;
   if (opts.waitConflict) {
     return {
@@ -368,11 +373,7 @@ export function resolveIosWait(
     waitSeconds: waitParsed.seconds,
     noWait,
     checkCapacity: !physical && (noWait || waitParsed.seconds === 0),
-    deviceSlotWaitMs: noWait
-      ? 0
-      : opts.wait === undefined && !physical
-        ? DEFAULT_DEVICE_SLOT_WAIT_MS
-        : waitParsed.seconds * 1000,
+    deviceSlotWaitMs: noWait ? 0 : opts.wait === undefined && !physical ? undefined : waitParsed.seconds * 1000,
   };
 }
 
@@ -380,7 +381,75 @@ interface IosDeviceWaitRun {
   policy: DeviceSlotWaitPolicy;
   record: RunRecorder['record'];
   booting(pending: { done: Promise<unknown> } | undefined): void;
+  /** A simulator creation the run cannot abandon: `finish` waits for it to settle, queued or not. */
+  creating(pending: Promise<unknown>): void;
   finish(): Promise<void>;
+}
+
+/** What the run records once its owned simulator is prepared: how long it took, and the device it boots. */
+export function iosDeviceSettler({
+  prepare,
+  phase,
+  progress,
+  deviceWaitRun,
+  remote,
+  onSettled,
+}: {
+  prepare: () => number;
+  phase: (label: string, line: string) => void;
+  progress: BuildProgress;
+  deviceWaitRun: Pick<IosDeviceWaitRun, 'booting'>;
+  remote: boolean;
+  onSettled: (prepared: OwnedDeviceRecord) => void;
+}): (prepared: OwnedDeviceRecord) => void {
+  return (prepared) => {
+    onSettled(prepared);
+    deviceWaitRun.booting(prepared.booting);
+    progress.deviceSetup(didSetUpDevice(prepared, remote));
+    const prepareMs = prepare();
+    if (prepared.created || prepareMs >= SLOW_STEP_MS) {
+      phase(
+        'device',
+        `${deviceLabel(prepared, prepared.deviceUdid)} ${prepared.created ? 'created' : 'prepared'} (${formatDuration(prepareMs)})`,
+      );
+    }
+  };
+}
+
+export interface PendingOwnedDevice {
+  runtimeId: string;
+  created: Promise<void>;
+}
+
+/**
+ * Settles `device` with `settle` unless it is a simulator still waiting for its boot slot. A pending one is
+ * settled when its creation resolves; the run waits for it in `finish`, and a rejection stays on `created`.
+ */
+export function pendOwnedDevice(
+  device: OwnedDeviceRecord,
+  settle: (device: OwnedDeviceRecord) => void,
+  waitRun: Pick<IosDeviceWaitRun, 'creating'>,
+): PendingOwnedDevice | null {
+  if (!device.creating) {
+    settle(device);
+    return null;
+  }
+  const { runtimeId, created } = device.creating;
+  waitRun.creating(created);
+  const settled = created.then((prepared) => settle(prepared));
+  settled.catch(() => {});
+  return { runtimeId, created: settled };
+}
+
+/** Runs `start` once the pending device exists; the promise rejects with the creation's failure. */
+export function startWhenCreated(pending: PendingOwnedDevice | null, start: () => unknown): Promise<void> | null {
+  if (!pending) return null;
+  const started = (async () => {
+    await pending.created;
+    start();
+  })();
+  started.catch(() => {});
+  return started;
 }
 
 export function createIosDeviceWaitRun(
@@ -391,6 +460,7 @@ export function createIosDeviceWaitRun(
   const controller = new AbortController();
   let waiting = false;
   let boot: Promise<unknown> | undefined;
+  let creation: Promise<unknown> | undefined;
   let outcome: Parameters<RunRecorder['record']>[0] | undefined;
   return {
     policy: {
@@ -409,9 +479,13 @@ export function createIosDeviceWaitRun(
     booting(pending) {
       boot ??= pending?.done;
     },
+    creating(pending) {
+      creation = pending;
+    },
     async finish() {
       const queued = waiting;
       controller.abort();
+      await creation?.catch(() => {});
       if (queued) await boot?.catch(() => {});
       if (outcome) stats.record(outcome);
     },

@@ -2,10 +2,12 @@ import { readFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  agentActionPoints,
   archiveDir,
   listSegments,
   recordingDeviceName,
   workspaceRecordingsDir,
+  type AgentSnapshotTree,
   type NdjsonRecord,
   type RecordedSegment,
   type RecordingPlatform,
@@ -126,12 +128,14 @@ function label(text: unknown): string {
  * Timeline markers for one device slot from workspace log records: agent actions on it (agent-device's, and the
  * owned Chrome page's agent input), and errors. An error that names no platform or slot, like most Metro and
  * client errors, belongs to every device of the workspace. Keeps the newest 400 actions and 100 errors at or after `since`.
+ * An action whose agent-device session has a measured screen (`viewport`) carries where it landed.
  */
 export function timelineMarkers(
   records: readonly NdjsonRecord[],
   platform: RecordingPlatform,
   slot: string,
   since: number,
+  viewport: (session: string) => AgentSnapshotTree['viewport'] = () => null,
 ): ReplayMarker[] {
   const markers: ReplayMarker[] = [];
   for (const record of records) {
@@ -143,11 +147,15 @@ export function timelineMarkers(
     if (record.src === 'agent') {
       if (record.platform !== platform || (record.event !== 'agent_action' && record.event !== 'agent_failed'))
         continue;
+      const points =
+        typeof record.session === 'string' ? agentActionPoints(record.details, viewport(record.session)) : null;
       markers.push({
         at,
         kind: 'action',
         ...(typeof record.command === 'string' ? { command: record.command } : {}),
         label: label(record.msg),
+        ...(points ? { x: points.from.x, y: points.from.y } : {}),
+        ...(points?.to ? { x2: points.to.x, y2: points.to.y } : {}),
       });
     } else if (record.level === 'error' || record.level === 'fatal') {
       markers.push({ at, kind: record.level === 'fatal' ? 'crash' : 'error', label: label(record.msg) });

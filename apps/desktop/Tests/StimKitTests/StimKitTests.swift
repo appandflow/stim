@@ -839,20 +839,37 @@ import Testing
 }
 
 @Suite struct GcPreviewTests {
-  @Test func idleAndUnrecognizedDevicesAreNeverCountedAsDeletable() throws {
+  @Test func unrecognizedDevicesAreKeptAndTheLadderAtHighIsWhatDeleteRuns() throws {
     let json = """
-      {"mode":"dry-run","idle":null,"actionable":false,"failures":null,"sections":{
-        "idleDevices":[
-          {"kind":"ios","id":"U1","name":"stim-a (iPhone 17 27.0)","project":"/p","slot":"default","lastActivityAt":null,"idleForMs":7200000,"buildInProgress":false},
-          {"kind":"android","id":"stim-b","name":"stim-b","project":"/p","slot":"default","lastActivityAt":null,"idleForMs":90000000,"buildInProgress":true}],
+      {"mode":"dry-run","actionable":true,"failures":null,"sections":{
         "unverifiedDevices":[{"kind":"ios","id":"U9","name":"stim-desktop-duo-test","command":"xcrun simctl delete U9"}]
+      },"ladder":{"pressure":{"level":"normal","disk":"normal","memory":"normal","reasons":[]},"workspaces":[],"levels":[
+        {"level":"high","command":"stim gc --delete","actions":[
+          {"rung":1,"kind":"delete-build-outputs","target":"/w/app","outcome":"would","bytes":2048,"detail":""}]},
+        {"level":"critical","command":"stim gc --delete --cache all","actions":[
+          {"rung":5,"kind":"delete-dependencies","target":"/w/app/node_modules","outcome":"would","bytes":9,"detail":""}]}]}}
+      """
+    let report = try GcPreview(json: Data(json.utf8))
+    #expect(report.sections.map(\.key) == ["unverifiedDevices", "ladder"])
+    #expect(report.sections[0].entries.allSatisfy { $0.kept != nil })
+    #expect(report.sections[1].entries == [GcPreview.Entry(label: "delete build outputs /w/app", bytes: 2048, kept: nil)])
+    #expect(report.deletableCount == 1)
+  }
+
+  @Test func leftoverSimulatorLaunchdFoldersAreKeptAndNotCountedAsReclaimable() throws {
+    let json = """
+      {"mode":"dry-run","actionable":false,"failures":null,"sections":{
+        "simulatorLaunchdFolders":[{"udid":"A48B2B1E-3768-48D8-9816-86B2AC7F2188","path":"/private/var/tmp/com.apple.CoreSimulator.SimDevice.A48B2B1E-3768-48D8-9816-86B2AC7F2188","bytes":2097152,"command":"rm -rf \\"/private/var/tmp/com.apple.CoreSimulator.SimDevice.A48B2B1E-3768-48D8-9816-86B2AC7F2188\\""}]
       }}
       """
     let report = try GcPreview(json: Data(json.utf8))
+    #expect(report.sections.map(\.title) == ["Simulator launchd folders with no simulator"])
+    #expect(report.sections[0].entries.count == 1)
+    #expect(
+      report.sections[0].entries[0].kept?.hasSuffix(
+        "run: rm -rf \"/private/var/tmp/com.apple.CoreSimulator.SimDevice.A48B2B1E-3768-48D8-9816-86B2AC7F2188\"") == true)
     #expect(report.deletableCount == 0)
-    #expect(report.sections.flatMap(\.entries).allSatisfy { $0.kept != nil })
-    #expect(report.idleShutdownCount(atLeast: GcPreview.idleSeconds("1h")!) == 1)
-    #expect(report.idleShutdownCount(atLeast: GcPreview.idleSeconds("4h")!) == 0)
+    #expect(report.reclaimableBytes == 0)
   }
 
   @Test func marksWhatDeleteLeavesAlone() throws {
@@ -985,7 +1002,7 @@ import Testing
 
   @Test func onlyActingGcJsonRunsHaveAnOutcome() {
     #expect(GcOutcome.describes(["gc", "--delete", "--json"]))
-    #expect(GcOutcome.describes(["gc", "--idle", "30m", "--json"]))
+    #expect(!GcOutcome.describes(["gc", "--idle", "30m", "--json"]))
     #expect(!GcOutcome.describes(["gc", "--json"]))
     #expect(!GcOutcome.describes(["gc", "--delete"]))
   }

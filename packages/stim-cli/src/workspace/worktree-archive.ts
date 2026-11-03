@@ -6,7 +6,9 @@ import { worktreeArchiveRoot } from '@stim-cli/core/state';
 import { chmod, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { enforceArchiveRetention, worktreeArchiveBytes, worktreeArchiveLimits } from '../archive.ts';
-import { readVolumeSpaceAsync, resolveBudget } from '../budget.ts';
+import { readVolumeSpaceAsync } from '../budget.ts';
+import { diskThresholds } from '../daemon/pressure.ts';
+import { loadConfig } from './config.ts';
 import { getExecutor, type ExecOptions } from '../exec.ts';
 import { gitAsync, gitQuietAsync } from './git.ts';
 import { childEnvironment } from './git-read.ts';
@@ -263,12 +265,12 @@ export async function archiveWorktreeChanges({
     );
   }
   const [volume] = await readVolumeSpaceAsync([worktreeArchiveRoot()], operation?.signal);
-  const floorMb = resolveBudget({ env: operation?.env }).budget.hardFloorDiskMb;
+  const floorMb = diskThresholds(loadConfig(), operation?.env).thresholds.hardFloorMb;
   const neededMb = (bytes + 2 * tracked + 2 * (plan?.bytes ?? 0)) / 1024 ** 2;
   if (!volume || volume.freeMb - neededMb < floorMb) {
     throw new Error(
       volume
-        ? `writing it would leave less free disk than budget.hardFloorDiskGb on ${volume.volume}`
+        ? `writing it would leave less free disk than disk.hardFloorGb on ${volume.volume}`
         : 'free disk for it could not be read',
     );
   }
@@ -357,7 +359,7 @@ export async function archiveWorktreeChanges({
     }
     const [after] = await readVolumeSpaceAsync([dir], operation?.signal);
     if (!after || after.freeMb < floorMb) {
-      throw new Error(`it left less free disk than budget.hardFloorDiskGb on ${after?.volume ?? 'its volume'}`);
+      throw new Error(`it left less free disk than disk.hardFloorGb on ${after?.volume ?? 'its volume'}`);
     }
     await retention();
     if (!(await lstat(join(dir, 'manifest.json')).catch(() => null))) throw new Error('archive retention removed it');

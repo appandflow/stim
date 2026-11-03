@@ -146,3 +146,65 @@ it.each([
   expect(release).toHaveBeenCalledTimes(2);
   relay.close();
 });
+
+async function clipboardCalls(supported: boolean) {
+  const messages: (ServerMessage | Buffer)[] = [];
+  const request = vi.fn<(method: string, params: unknown) => Promise<{ result: Record<string, unknown> }>>(
+    async (method) => ({
+      result:
+        method === 'device-host.control.begin'
+          ? { session: 'host-control', postures: [] }
+          : method === 'device-host.input.clipboard.get'
+            ? { text: 'from the host' }
+            : {},
+    }),
+  );
+  const connection = {
+    request,
+    supports: (feature: string) => supported && feature === 'device-clipboard',
+    route: () => () => {},
+  } as unknown as Upstream;
+  const hosts = { acquire: async () => ({ connection, release: () => {} }) } as unknown as HostConnections;
+  const relay = new HostedRelay(
+    hosts,
+    (message) => messages.push(message),
+    () => 0,
+    () => 'local',
+    () => {},
+    () => {},
+  );
+  await relay.begin(1, { machine: 'mini', session: 'host-session' }, false, () => true, {
+    workspace: '/w',
+    device: { id: 'viewer', name: 'Desktop' },
+    platform: 'ios',
+    slot: 'default',
+  });
+  const begun = request.mock.calls.length;
+  relay.control(2, 'input.clipboard.set', { session: 'h1', text: 'abc', paste: true });
+  relay.control(3, 'input.clipboard.get', { session: 'h1' });
+  const answers = () =>
+    messages.filter((message) => 'id' in message && typeof message.id === 'number' && message.id >= 2);
+  await vi.waitFor(() => expect(answers()).toHaveLength(2));
+  return { sent: request.mock.calls.slice(begun), answers: answers() };
+}
+
+it('forwards the clipboard calls to a hosted session whose host advertises device-clipboard', async () => {
+  const { sent, answers } = await clipboardCalls(true);
+  expect(sent).toEqual([
+    ['device-host.input.clipboard.set', { session: 'host-control', text: 'abc', paste: true }],
+    ['device-host.input.clipboard.get', { session: 'host-control' }],
+  ]);
+  expect(answers).toEqual([
+    { id: 2, result: {} },
+    { id: 3, result: { text: 'from the host' } },
+  ]);
+});
+
+it('refuses the clipboard calls for a host without device-clipboard, without sending them', async () => {
+  const { sent, answers } = await clipboardCalls(false);
+  expect(sent).toEqual([]);
+  expect(answers).toEqual([
+    { id: 2, error: { code: 'action-failed', message: expect.stringContaining('update its Stim') } },
+    { id: 3, error: { code: 'action-failed', message: expect.stringContaining('update its Stim') } },
+  ]);
+});

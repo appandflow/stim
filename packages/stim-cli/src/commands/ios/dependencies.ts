@@ -22,7 +22,7 @@ import {
   untrackedNativeFiles,
 } from '../../cache/build-cache.ts';
 import {
-  getConcurrencyLimits,
+  admissionLimits as getConcurrencyLimits,
   getProject,
   recordIosSchemeApprovals,
   upsertProject,
@@ -36,7 +36,7 @@ import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts'
 import { readPodState, podsAreStale, runPodInstall } from '../../engine/deps.ts';
 import { iosToolchainAsync } from '../../offload/toolchain.ts';
 import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
-import { budgetGate } from '../../budget.ts';
+import { diskFloorGate } from '../../daemon/floor.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
 import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
 import {
@@ -135,7 +135,7 @@ export interface IosDeps {
   upsertProject: (...args: Parameters<typeof upsertProject>) => Promise<ProjectRecord>;
   recordIosSchemeApprovals: typeof recordIosSchemeApprovals;
   checkDeviceCapacity: typeof checkDeviceCapacity;
-  budgetGate: typeof budgetGate;
+  diskFloorGate: typeof diskFloorGate;
   ensureOwnedDevice: typeof ensureOwnedDevice;
   listIosRuntimes: (options?: {
     signal?: AbortSignal;
@@ -243,7 +243,7 @@ export const DEFAULT_DEPS: IosDeps = {
   upsertProject: (...args) => withConfigLockAsync(() => upsertProject(...args)),
   recordIosSchemeApprovals,
   checkDeviceCapacity,
-  budgetGate,
+  diskFloorGate,
   ensureOwnedDevice,
   listIosRuntimes: listIosRuntimesAsync,
   listAllIosSims,

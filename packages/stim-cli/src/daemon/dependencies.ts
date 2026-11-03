@@ -1,0 +1,268 @@
+import type { StimContext } from '@stim-cli/core';
+import { diskUsageCacheFile, readDiskUsage, type DaemonLadderAction } from '@stim-cli/core/state';
+import { clearClaimChild, markClaimChildPending, releaseClaim } from '@stim-cli/core/ownership-claim';
+import { canonicalPath } from '../commands/gc/paths.ts';
+import { formatBytes } from '../fs-util.ts';
+import {
+  artifactWorktrees,
+  artifactWorktreesAsync,
+  clearArtifact,
+  collectArtifactsAsync,
+  type ArtifactCandidate,
+  type ArtifactWorktree,
+} from '../maintenance/artifacts.ts';
+import { maintenancePinned } from '../maintenance/protect.ts';
+import { knownPrivateBytes, measureTree, treeSignature } from '../private-size.ts';
+import { holdOn, takeWalkClaim, writeCacheFile } from '../status-measures.ts';
+import { workspaceKeys } from '../workspace/lightened.ts';
+import { ARTIFACT_DIRS, existingDirsOf } from '../workspace/regenerable-dirs.ts';
+import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
+import { dormantAfterMs, idleStageCandidates, stillIdle, type DeviceReading, type StageCandidate } from './stages.ts';
+
+/**
+ * The private bytes above which deleting a node_modules or Pods tree is worth a `stim worktree warm` or reinstall.
+ * A copy-on-write clone from `worktree warm` shares nearly all its blocks; a reinstalled React Native tree holds 1 to 2
+ * GB of its own. 256 MB is about 4% of the 6 GB critical free-disk floor (`disk.criticalFreeGb`).
+ */
+export const REAL_BYTES_THRESHOLD: number = 256 * 1024 ** 2;
+const HOUR_MS = 60 * 60_000;
+const SCAN_EVERY_MS = 10 * 60_000;
+const MEASURE_MAX_AGE_MS = 6 * HOUR_MS;
+const WALK_TIMEOUT_MS = 10 * 60_000;
+const RESTORE = 'stim worktree warm';
+const UNKNOWN_KEPT = 'its real size is not measured yet, or the volume cannot tell, so it stays';
+const VERBS: Record<DaemonLadderAction['outcome'], string> = {
+  would: 'would delete',
+  done: 'deleted',
+  kept: 'kept',
+  failed: 'failed to delete',
+};
+
+export interface RankedDependency {
+  candidate: ArtifactCandidate;
+  workspace: string;
+  bytes: number | null;
+  /** What deleting it would free, from a measurement whose install signature still matches; null when unknown. */
+  privateBytes: number | null;
+}
+
+type Measured = RankedDependency & { privateBytes: number };
+
+function sharedDetail({ bytes, privateBytes }: Measured): string {
+  return `${formatBytes(privateBytes)} of its ${bytes === null ? 'size' : formatBytes(bytes)} is its own and the rest is shared with copy-on-write clones or hard links, under the ${formatBytes(REAL_BYTES_THRESHOLD)} worth deleting`;
+}
+
+/**
+ * Which dependency trees to delete, given in the order their workspaces went idle: those whose private bytes reach
+ * REAL_BYTES_THRESHOLD, most private bytes first; trees below it are kept. A tree of unknown size is taken after the
+ * measured ones in the given order (`unknown: 'take'`) or kept (`'keep'`).
+ */
+export function selectDependencies(
+  ranked: readonly RankedDependency[],
+  unknown: 'take' | 'keep',
+): { take: RankedDependency[]; kept: { dependency: RankedDependency; detail: string }[] } {
+  const known = ranked.filter((dependency): dependency is Measured => dependency.privateBytes !== null);
+  const unmeasured = ranked.filter((dependency) => dependency.privateBytes === null);
+  const take: RankedDependency[] = known
+    .filter((dependency) => dependency.privateBytes >= REAL_BYTES_THRESHOLD)
+    .toSorted((a, b) => b.privateBytes - a.privateBytes);
+  const kept: { dependency: RankedDependency; detail: string }[] = known
+    .filter((dependency) => dependency.privateBytes < REAL_BYTES_THRESHOLD)
+    .map((dependency) => ({ dependency, detail: sharedDetail(dependency) }));
+  if (unknown === 'take') take.push(...unmeasured);
+  else kept.push(...unmeasured.map((dependency) => ({ dependency, detail: UNKNOWN_KEPT })));
+  return { take, kept };
+}
+
+function canonicalOrNull(path: string): string | null {
+  try {
+    return canonicalPath(path);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The node_modules and Pods of linked worktrees whose workspace is among `idle`, in `idle`'s order, with their cached
+ * sizes. `protectedRoot` is the command's own workspace, which none is taken from.
+ */
+export async function rankDependencies(
+  idle: readonly StageCandidate[],
+  protectedRoot: string,
+  operation?: StimContext,
+): Promise<RankedDependency[]> {
+  const rank = new Map(
+    idle.flatMap((candidate, index) => {
+      const key = canonicalOrNull(candidate.path);
+      return key ? [[key, index] as const] : [];
+    }),
+  );
+  if (!rank.size) return [];
+  const found = await collectArtifactsAsync(
+    'dependencies',
+    { now: Date.now(), windowMs: 0, protectedRoot, pinned: maintenancePinned },
+    operation?.signal ?? new AbortController().signal,
+    operation,
+  );
+  return found.candidates
+    .flatMap((candidate) => {
+      const workspace = workspaceKeys(candidate.keys).find((key) => rank.has(canonicalOrNull(key) ?? ''));
+      if (!workspace) return [];
+      const dependency: RankedDependency = {
+        candidate,
+        workspace,
+        bytes: readDiskUsage(candidate.path)?.bytes ?? null,
+        privateBytes: knownPrivateBytes(candidate.path),
+      };
+      return [{ dependency, order: rank.get(canonicalOrNull(workspace) ?? '') ?? 0 }];
+    })
+    .toSorted((a, b) => a.order - b.order)
+    .map(({ dependency }) => dependency);
+}
+
+/** Deletes one dependency tree under its workspace's claim once the workspace is still idle `idleMs`, recording the restore. */
+export async function clearDependency(
+  dependency: RankedDependency,
+  idleMs: number,
+  protectedRoot: string,
+  worktrees: readonly ArtifactWorktree[],
+  reason: string,
+): Promise<{ status: 'done' | 'kept' | 'failed'; bytes: number; detail: string }> {
+  try {
+    return await clearArtifact(
+      {
+        kind: 'would-delete-dependencies',
+        target: dependency.candidate.path,
+        bytes: dependency.privateBytes ?? 0,
+        reason,
+        workspace: dependency.workspace,
+      },
+      'dependencies',
+      {
+        windowMs: 0,
+        protectedRoot,
+        pinned: maintenancePinned,
+        worktrees,
+        requireRestorable: true,
+        recheck: async (key) => ((await stillIdle(key, idleMs)) ? null : 'it is no longer idle'),
+      },
+    );
+  } catch (error) {
+    return { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+let dormantCheckedAt = -Infinity;
+
+/**
+ * The dormant stage's dependency step, at most hourly: the node_modules and Pods of workspaces idle
+ * `idle.dormantDays` whose private bytes reach REAL_BYTES_THRESHOLD, most first, each recorded for `stim worktree
+ * warm`. Clones below it and trees of unknown size stay.
+ */
+export async function runDormantDependencies(
+  input: Pick<IdlePassInput, 'config' | 'act' | 'log'> & DeviceReading,
+): Promise<DaemonLadderAction[]> {
+  const { config } = input;
+  const afterMs = dormantAfterMs(config);
+  if (!config || afterMs <= 0 || Date.now() - dormantCheckedAt < HOUR_MS) return [];
+  dormantCheckedAt = Date.now();
+  const idle = await idleStageCandidates(config, input, afterMs);
+  if (!idle.length) return [];
+  const { take } = selectDependencies(await rankDependencies(idle, ''), 'keep');
+  const worktrees = take.length ? artifactWorktrees() : [];
+  const why = `idle.dormantDays is ${afterMs / (24 * HOUR_MS)}`;
+  const actions: DaemonLadderAction[] = [];
+  for (const dependency of take) {
+    const target = dependency.candidate.path;
+    const reason = `${why}; ${formatBytes(dependency.privateBytes ?? 0)} of it is its own`;
+    const result: { status: DaemonLadderAction['outcome']; bytes: number; detail: string } = input.act
+      ? await clearDependency(dependency, afterMs, '', worktrees, reason)
+      : { status: 'would', bytes: 0, detail: 'daemon.mode report acts on nothing' };
+    const restore = result.status === 'done' ? { restore: RESTORE } : {};
+    actions.push({
+      rung: 4,
+      kind: 'delete-dependencies',
+      target,
+      workspace: dependency.workspace,
+      outcome: result.status,
+      bytes: result.bytes,
+      detail: result.detail,
+      ...restore,
+    });
+    const level = result.status === 'failed' ? 'warn' : 'info';
+    const msg = `dormant stage: ${VERBS[result.status]} ${target} (${formatBytes(result.bytes)} freed): ${result.detail}; ${reason}${result.status === 'done' ? `; restore with ${RESTORE}` : ''}`;
+    const fields = { target, outcome: result.status, bytes: result.bytes, reason, ...restore };
+    input.log(level, 'dormant_dependencies', msg, { ...fields, workspace: dependency.workspace });
+    if (result.status === 'done' || result.status === 'failed')
+      try {
+        writeWorkspaceEvent(dependency.workspace, level, 'dormant_dependencies', msg, fields);
+      } catch {}
+  }
+  return actions;
+}
+
+async function dependencyTrees(): Promise<string[]> {
+  const trees = new Set<string>();
+  for (const worktree of await artifactWorktreesAsync(new AbortController().signal)) {
+    if (!worktree.linked) continue;
+    for (const base of new Set([worktree.path, ...worktree.keys]))
+      for (const path of existingDirsOf(base, ARTIFACT_DIRS.dependencies)) trees.add(path);
+  }
+  return [...trees];
+}
+
+function measureDue(path: string, now: number): boolean {
+  const measure = readDiskUsage(path);
+  return (
+    !measure ||
+    measure.signature === undefined ||
+    measure.signature !== treeSignature(path) ||
+    now - Date.parse(measure.measuredAt) >= MEASURE_MAX_AGE_MS
+  );
+}
+
+async function measureDependencyTrees(): Promise<void> {
+  for (const path of await dependencyTrees()) {
+    if (!measureDue(path, Date.now())) continue;
+    const claim = takeWalkClaim();
+    if (!claim) return;
+    try {
+      if (!measureDue(path, Date.now())) continue;
+      const signature = treeSignature(path);
+      const measuredAt = new Date().toISOString();
+      markClaimChildPending(claim);
+      const size = await measureTree(path, { timeoutMs: WALK_TIMEOUT_MS, onSpawn: holdOn(claim) }).finally(() =>
+        clearClaimChild(claim),
+      );
+      if (!size || !signature) continue;
+      writeCacheFile(diskUsageCacheFile(path), {
+        path,
+        measuredAt,
+        bytes: size.bytes,
+        ...(size.privateBytes !== null ? { privateBytes: size.privateBytes } : {}),
+        signature,
+      });
+    } finally {
+      releaseClaim(claim);
+    }
+  }
+}
+
+let measuring = false;
+let scannedAt = -Infinity;
+
+/**
+ * Measures the node_modules and Pods of linked worktrees in the background, one walk at a time on the machine under
+ * the disk-usage walk claim, at most every 10 minutes: each tree whose install signature changed since its last
+ * measurement or whose measurement is 6 hours old. Never awaited by its caller.
+ */
+export function scheduleDependencyMeasures(): void {
+  if (measuring || Date.now() - scannedAt < SCAN_EVERY_MS) return;
+  measuring = true;
+  scannedAt = Date.now();
+  void measureDependencyTrees()
+    .catch(() => {})
+    .finally(() => {
+      measuring = false;
+    });
+}

@@ -28,7 +28,14 @@ const args = parseArgs(process.argv.slice(2));
 const FRAMEWORK = args.framework;
 const HOME_DIR = args.dryRun ? '<dry-run>' : args.home || mkdtempSync(join(tmpdir(), `stim-pool-${FRAMEWORK}-home-`));
 const WORK_DIR = args.dryRun ? '<dry-run>' : mkdtempSync(join(tmpdir(), `stim-pool-${FRAMEWORK}-`));
-const ENV = { ...process.env, STIM_HOME: HOME_DIR, CI: '1', STIM_POOL_IOS_PARKED_MAX: PARKED_MAX };
+const ENV = {
+  ...process.env,
+  STIM_HOME: HOME_DIR,
+  CI: '1',
+  STIM_DAEMON: 'off',
+  STIM_TEST_GUARD_NO_HOME_PASSES: '1',
+  STIM_POOL_IOS_PARKED_MAX: PARKED_MAX,
+};
 process.env.STIM_HOME = HOME_DIR;
 
 const h = createHarness({ env: ENV, cliPath: CLI, label: `pool-e2e ${FRAMEWORK}` });

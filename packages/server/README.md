@@ -182,8 +182,8 @@ never replays a build. This transport is a migration prerequisite; existing
 Desktop buttons do not use it yet.
 
 The private `desktop-gc` feature provides `desktop.gc.subscribe` with an absolute
-existing `cwd` and optional `cache`, `olderThan` (whole days), `worktrees`, `delete`
-and `idleMs` (positive whole milliseconds). It invokes `createStim.collectGarbage`
+existing `cwd` and optional `cache`, `olderThan` (whole days), `worktrees` and
+`delete`. It invokes `createStim.collectGarbage`
 with the same scoped cleanup and ownership rules as the CLI. Only the proved
 Desktop connection can call it; phone, network and adopted-server connections
 cannot. Ordered `desktop-gc-progress` events end with `desktop-gc-ended`, whose
@@ -586,7 +586,9 @@ device tokens.
 
 A refusal during the handshake closes the WebSocket with code 4401 and the
 reason `unknown-secret` (no valid token or ticket matches), `unauthorized` (no
-record has the key, or it was revoked) or `handshake-failed`. A client that
+record has the key, or it was revoked), `home-unavailable` (the server cannot
+read its Stim home, so it cannot check the key; clients retry and never treat
+it as a revocation) or `handshake-failed`. A client that
 gets another server key than it pinned closes with `server-key-mismatch`. A
 protocol 1 client gets `protocol-unsupported` in cleartext with an "update,
 then pair again" message. Pairings, approvals and credentials from protocol 1
@@ -1415,11 +1417,13 @@ Start control with `device-host.control.begin` and
 control session ID and `lease: null`: the hosted lifetime claim protects this
 private device. Only one controller can drive the device; `takeOver: true`
 replaces the previous controller. Use the returned control ID with
-`device-host.input.touch|text`, using the same parameters as ordinary input.
+`device-host.input.touch|text|key`, using the same parameters as ordinary input
+(`key` takes the arrows and Escape on iOS and Android; `touch` takes the second
+finger `x2` and `y2`, which a worker older than this field refuses).
 iOS also supports `device-host.input.button|rotate|posture`. Android supports
 `device-host.input.button` through scrcpy; rotation and posture are unavailable
 on this path, as for physical Android devices. macOS also supports
-`device-host.input.scroll|key`; these two methods are for macOS sessions only.
+`device-host.input.scroll`, and `device-host.input.key` with its full key set and modifiers; scroll is for macOS sessions only.
 Touch coordinates range from 0 to 1 on the streamed display.
 End it with `device-host.control.end` and `{"session":"<control-id>"}`.
 
@@ -1529,6 +1533,21 @@ missing directories are created by that protocol. The check preserves claims and
 recordings. It does not restore an inaccessible volume or change the server's
 permissions, and a stall that starts after the check passes still blocks the
 server until the operating system returns.
+
+A Stim home that stops answering while the server runs, such as `~/.stim`
+symlinked to an external volume that unmounts, puts the server in the same
+degraded state. The server tells a registry it cannot read (a missing or
+unreadable `server` directory, or a `devices.json`, `build-clients.json` or
+`device-host-clients.json` it cannot read or parse) from one with no clients;
+a file missing from a readable `server` directory means no clients. While it
+cannot read them it revokes nothing: open connections, hosted sessions, builds
+and controllers are left as they are and keep the approvals it last read,
+while new connections, including hosted agent requests, get 503. A handshake or
+`hello` it cannot check, including a first contact whose `secrets.json` it
+cannot read, is refused with `home-unavailable` rather than `unauthorized` or
+`unknown-secret`. It checks the registries every second, and once they read
+again it logs `the Stim home answers again; serving clients.`, serves again and
+applies any revocation it then finds.
 
 The job runs in your GUI login session, so it starts when you log in and not at
 boot. On a Mac with no one at the screen, turn on automatic login. Moving the
@@ -2036,6 +2055,106 @@ owned short homes, including a marked legacy client home. With non-zero
 appends a `build` record to the [action log](#actions) with the repository as
 `workspace`. The worker root keeps growing with each repository; delete a
 client's directory to reclaim it.
+
+## Web shares
+
+`stim share` asks this server for a public, password-protected link to one
+workspace device with three methods that only the local Unix socket may call
+(any network connection gets `forbidden`), without the Desktop bootstrap proof:
+
+- `share.start` takes `workspace`, `platform` (`ios` or `android`), `slot`,
+  `physical`, `control`, `expiresMinutes` (1 to 480, 60 by default), and
+  either `password` (8 to 128 characters, kept only as its digest) or
+  `passwordless: true` (no login; the URL token alone admits a viewer); with
+  neither, the server generates a password. `view` (the `share-view-password`
+  feature) is `{ password? }` and adds a second, view-only password, the given
+  one or a generated one; `password` stays the control password. It returns
+  `auth` (`generated`, `set` or `none`), `viewAuth` (`generated`, `set` or
+  `null`), and `password` and `viewPassword` only when it generated them, in
+  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, viewAuth, url, password, viewPassword }`.
+  It refuses a device the workspace does not own or lease, a hosted device,
+  `control` on a physical iPhone, `password` with `passwordless`, and `view`
+  without `control`, with `passwordless`, or with the same password as
+  `password`.
+- `share.stop` takes `workspace` and ends its shares, returning `stopped`. With
+  `id` (the `share-stop-id` feature) it ends only that share of the workspace,
+  and refuses an `id` the workspace does not have with `bad-request`. A server
+  without the feature refuses `id`, so a client checks the feature first.
+- `share.list` returns `shares`, the same rows without `url`, `password` or
+  `viewPassword`.
+
+`stim-server --share [--port <n>]` is the server `stim share` starts when none
+answers on the local socket: loopback only, without a Desktop bootstrap. It
+holds an exclusive ownership claim at `$STIM_HOME/server/share-server` with its
+port for as long as it runs, so `stim share stop` stops only a server it
+started, and it exits once its last share has ended and its route is removed,
+after a start it refused leaves no share, or when no share starts within 2
+minutes, but never while a route it could not remove is still public. Every
+stim-server retries removing such a route every 30 seconds once no share is
+live or starting. When its Stim home does not answer at
+startup, it does not wait: it logs why and exits, so `stim share` refuses with
+`STIM_SERVER_NOT_RUNNING` and the log path. Viewers see only generic messages
+("This share has ended.", "Control is not available right now."); the reasons
+go to the server log.
+
+Shares live in memory only and end at their expiry, on `share.stop`, when the
+device stops or changes in status, when its frames fail, and when the server stops. The server serves
+them on one listener on a loopback port of its own, not on this protocol, and
+publishes it with `tailscale funnel --bg --yes --https=<port>
+http://127.0.0.1:<listener>` on the first Funnel port the node's
+`funnel-ports` capability allows that nothing in the serve config uses. It
+holds an exclusive ownership claim at `$STIM_HOME/server/share-route` with
+the port and target while the route exists, removes the route with
+`tailscale funnel --https=<port> off` when the last share ends, before it
+closes the listener, and on start
+removes a route a crashed server left, in each case only while that port holds
+exactly the recorded route. `stim-server setup` and `service` never enable
+Funnel.
+
+Per share the listener serves `GET /s/<token>/` (a password form, or the viewer
+once signed in), `POST /s/<token>/login` and the WebSocket `/s/<token>/ws`.
+Everything else is 404. The token is 32 random bytes; the password 16
+characters from a 31-letter alphabet, kept as a SHA-256 digest and compared
+with `timingSafeEqual`. A login is compared with both the control and the
+view digest, always both. Ten failures in ten minutes lock the share's login for
+the rest of that window. A correct password sets `stim_share`, `HttpOnly;
+Secure; SameSite=Strict`, scoped to the share's path, until it expires; the
+server keeps that cookie's access, `control` or `view`, and its optional name
+in memory. A login that carries a valid cookie raises a `view` session to
+`control` on the control password and never lowers one; a wrong password there
+redirects back to the page with `?upgrade=wrong`. The
+WebSocket needs that cookie and an `Origin` matching the host, else the upgrade
+is refused before any capture starts; at most 5 viewers per share. Each viewer
+subscribes to the device's frames as a JPEG subscriber at 10 frames a second
+and 1280 pixels, as binary messages; the share never asks the recorder to
+record. With `control`, `touch`, `text` and `button` messages from a `control`
+session go through `parseInput` and the control hub as the `Web share`
+controller, which begins one control session without takeover on the first
+input and ends it when the last viewer leaves; every input from a `view`
+session is dropped. Each viewer socket is a presence participant: the share
+sends `{ type: 'you', id, name, color, access }` once, then
+`{ type: 'presence', participants }` with the `presence` event's participants
+of the other people on the device (30 messages a second at most, moves
+coalesced), and `{ type: 'busy', name }` when another viewer holds the touch
+pointer. A viewer may send `{ type: 'name', name }`, once per 5 seconds; names
+are cleaned (NFC, no control or format characters, 24 code points), kept only
+in memory and never logged. A hosted share has no presence. A `touch` message may carry `x2` and `y2` for a
+second finger and costs one input like any other. The viewer sends them for two
+real fingers on a touch screen, which wait 40 ms after the first finger lands
+so a second one starts a two-finger gesture instead of a tap, and for
+Option-drag with a mouse or pen, where the second finger mirrors the first
+through the screen's center and Shift-Option-drag moves both together, as in
+Xcode's Simulator. A small circle marks each finger while Option is held. The
+presence `touch` carries the second finger as `second`.
+With `control` on an iOS simulator, an Android emulator or an Android phone, a
+`clipboard-set` message (`text`, optional `paste`) and a `clipboard-get` message
+(`id`) from a viewer go through `input.clipboard.set` and `input.clipboard.get`,
+each costing ten inputs. The viewer sends `clipboard-set` with `paste: true` on
+Command-V or Control-V while the screen has focus, from the browser's `paste`
+event, and `clipboard-get` from its "Copy device clipboard" toolbar button. The
+reply `{ "type": "clipboard", "id", "text" }`, or `error` with a fixed message,
+goes to the asking viewer only and the text is never logged. A share without
+`control` drops both messages, and so does a viewer that cannot control.
 
 ## Protocol
 
@@ -2550,9 +2669,11 @@ waiting records the server ends that subscription with `slow-client`.
 The server records owned simulators, emulators and the Stim-owned Chrome page
 so clients can replay what happened while nobody watched. It records a device
 while `stim status` shows an automation tool driving it (`activity.state` is
-`driven`), or while a client has a `frames.subscribe` subscription to it. It
-records nothing else, holds no device awake and changes no device setting. To
-see drivers, it reads the status watch the server runs for as long as it
+`driven`), or while a client has a `frames.subscribe` subscription to it. A
+device a web share controls, while that share's `stim device lock` lease is
+its only driver, is not recorded, and a web share viewer is not a
+subscription here. It records nothing else, holds no device awake and changes
+no device setting. To see drivers, it reads the status watch the server runs for as long as it
 runs, shared with status subscribers.
 
 Recording goes through the device's `stim-frames` helper, shared with live
@@ -2812,10 +2933,39 @@ sends reaches any other device.
   it.
 - `input.touch` takes `session`, `phase` (`down`, `move`, `up`), `x` and `y`
   as fractions of the upright screen, and `display` (0, the main display).
+  `x2` and `y2`, given together, add a second finger for a pinch or a
+  two-finger pan on an iOS simulator or an Android emulator or device: the
+  simulator's digitizer takes both points in one HID event, an emulator takes
+  two gRPC touch contacts, and a scrcpy device takes the generic and the
+  virtual finger pointers. `down`, every `move` and `up` of the gesture each
+  carry both points, and the finger count never changes between its `down`
+  and its `up`; a client that changes it leaves the extra finger down until the
+  next `down`. A web page, a native macOS window and an iPhone Duo take one
+  finger, and `x2` there is refused as `bad-request`.
   Without `display`, a touch on an iPhone Duo goes to the panel its latest
   frame showed, and before any frame to the cover.
   `input.text` takes up to 256 printable ASCII characters, where `\n` presses
-  Return, `\t` Tab and `\b` Delete. `input.button` takes `home` or `lock`,
+  Return, `\t` Tab and `\b` Delete. On an iOS or Android device, `input.key`
+  takes `left`, `right`, `up`, `down` or `escape` with no modifiers: the
+  simulator gets the hardware key, an emulator the key through its gRPC
+  keyboard or `KEYCODE_DPAD_*` and `KEYCODE_ESCAPE` over `adb` without one,
+  and a phone the same Android key events through scrcpy. A web page takes no
+  keys. When hello advertises `device-clipboard`, `input.clipboard.set` takes
+  `text`, any Unicode text of at most 8192 UTF-8 bytes (a request is one
+  message of at most 64 KiB, and JSON escapes a control character in up to six
+  bytes), and an optional `paste` that then pastes it into the focused field.
+  `input.clipboard.get` answers `{ "text" }`, refusing a clipboard over 65536
+  bytes. An iOS simulator's clipboard is `simctl pbcopy` and `pbpaste` and its
+  paste is Command-V through the HID connection; an Android emulator's is the
+  gRPC `setClipboard` and `getClipboard`, pasted with `KEYCODE_PASTE` over
+  `adb`; an Android phone's is scrcpy's `SET_CLIPBOARD` (with its paste flag)
+  and `GET_CLIPBOARD`. A web page, a native macOS window and a physical iPhone
+  refuse both as `bad-request`. Each call costs ten inputs of the budget, takes
+  no text from the characters budget, and the text never reaches a log, an
+  audit record or an error message. The hosted relay forwards them as
+  `device-host.input.clipboard.set` and `.get`, and answers `action-failed`
+  when the host's hello lacks `device-clipboard`. There is no automatic sync.
+  `input.button` takes `home` or `lock`,
   and on Android also `back` or `app-switch`. `input.rotate` takes
   `direction` (`left` or `right`) and turns the device a quarter turn. An
   iPhone Duo rotates through its Virtualization provider in folded, half-open
@@ -2941,7 +3091,8 @@ ended or whom it took the device from. Inputs are not logged.
 The error codes `unauthorized`, `pairing-expired`, and `protocol-unsupported`
 refuse the client until it pairs again or updates; `unknown-secret` means the
 server does not hold the pairing token or setup ticket, or not yet, so a client
-with a setup ticket retries until setup runs; clients retry the others.
+with a setup ticket retries until setup runs; `home-unavailable` means the
+server cannot read its Stim home; clients retry the others.
 Refusals during the handshake arrive as the WebSocket close reason with code
 4401, not as a JSON error.
 

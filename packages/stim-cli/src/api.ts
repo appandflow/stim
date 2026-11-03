@@ -385,7 +385,7 @@ export function createStim(options: StimOptions): StimClient {
         return result;
       });
     },
-    collectGarbage: ({ signal, olderThan, cache, worktrees, delete: deleting, idleMs }: StimGcMutationOptions = {}) => {
+    collectGarbage: ({ signal, olderThan, cache, worktrees, delete: deleting }: StimGcMutationOptions = {}) => {
       const invalid =
         olderThan !== undefined && !Number.isSafeInteger(olderThan)
           ? 'olderThan must be a whole number of days.'
@@ -395,12 +395,10 @@ export function createStim(options: StimOptions): StimClient {
               ? 'worktrees must be a boolean.'
               : deleting !== undefined && typeof deleting !== 'boolean'
                 ? 'delete must be a boolean.'
-                : idleMs !== undefined && (!Number.isSafeInteger(idleMs) || idleMs <= 0)
-                  ? 'idleMs must be a positive whole number of milliseconds.'
-                  : null;
+                : null;
       if (invalid) return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: invalid }));
       const operation = beginReport(signal);
-      const request = { olderThan, cache, worktrees, delete: deleting, idle: idleMs, json: true };
+      const request = { olderThan, cache, worktrees, delete: deleting, json: true };
       return lifecycle(operation, (context) =>
         withGcMaintenanceClaim(request, (claim) =>
           runReport(context, (bounded) =>
@@ -777,7 +775,6 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
         ...result.error,
         details: {
           lines: result.lines,
-          reclaimed: result.reclaimed,
           ...(result.retainedClaimRoots ? { retainedClaimRoots: result.retainedClaimRoots } : {}),
         },
       });

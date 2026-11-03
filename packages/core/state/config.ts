@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { availableParallelism, totalmem } from 'node:os';
 import { isAbsolute, join, sep, win32 } from 'node:path';
 import { ambientEnv } from '../context.ts';
 import { configDir, ensurePrivateDir, withDirLock, withDirLockAsync } from '../index.ts';
@@ -117,6 +118,37 @@ export function getConcurrencyLimits({ env = ambientEnv() }: { env?: NodeJS.Proc
   return {
     maxBuilds: resolveLimit(env.STIM_MAX_BUILDS, c.maxBuilds),
     maxDevices: resolveLimit(env.STIM_MAX_DEVICES, c.maxDevices),
+  };
+}
+
+const GIB = 1024 ** 3;
+
+/** The derived `concurrency.maxBuilds`: one native build per six cores, at least one. */
+export function derivedBuildCap(cores: number = availableParallelism()): number {
+  return Math.max(1, Math.floor(cores / 6));
+}
+
+/** The derived `concurrency.maxDevices`: one booted simulator or emulator per 1.5 GB of RAM above 4 GB, at least two. */
+export function derivedDeviceCap(totalBytes: number = totalmem()): number {
+  return Math.max(2, Math.floor((totalBytes - 4 * GIB) / (1.5 * GIB)));
+}
+
+/**
+ * The build and device caps admission enforces: `concurrency.maxBuilds` and `concurrency.maxDevices` when set above 0,
+ * else the derived caps. `derived` names the caps that were derived.
+ */
+export function admissionLimits({
+  env = ambientEnv(),
+  cores,
+  totalBytes,
+}: { env?: NodeJS.ProcessEnv; cores?: number; totalBytes?: number } = {}): ConcurrencyLimits & {
+  derived: { builds: boolean; devices: boolean };
+} {
+  const set = getConcurrencyLimits({ env });
+  return {
+    maxBuilds: set.maxBuilds || derivedBuildCap(cores),
+    maxDevices: set.maxDevices || derivedDeviceCap(totalBytes),
+    derived: { builds: set.maxBuilds === 0, devices: set.maxDevices === 0 },
   };
 }
 

@@ -16,10 +16,11 @@ import {
   type HostedAndroidDevice,
   type HostedAppOffer,
 } from '@stim-cli/core/state';
-import { peekBudget } from '../budget.ts';
+import { measureDisk } from '../daemon/measure.ts';
+import { diskPressure, diskThresholds } from '../daemon/pressure.ts';
 import { namedBuildMachine, resolveBuildMachine } from '../offload/selection.ts';
 import { readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
-import { DEFAULT_DEVICE_SLOT_WAIT_MS, peekDeviceSlots } from '../engine/device-capacity.ts';
+import { peekDeviceSlots } from '../engine/device-capacity.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
@@ -45,6 +46,14 @@ function refusalText(decision: { reason: string; skipped: PlacementSkip[] }, wai
   ].join('; ');
 }
 
+const REMOTE_ONLY_WAIT_MS = 600_000;
+
+/** Why this machine's disk is under pressure, high or critical, or null at normal. */
+async function localDiskPressure(): Promise<string | null> {
+  const config = loadConfig();
+  const disk = diskPressure(await measureDisk(config), diskThresholds(config).thresholds);
+  return disk.level === 'normal' ? null : `disk pressure ${disk.level} here: ${disk.reasons.join('; ')}`;
+}
 export async function probeHost(
   machine: string,
   platform: 'ios' | 'android' | 'macos',
@@ -161,7 +170,7 @@ export async function automaticDevicePlacement(
     appMode,
     buildMachine,
     noWait,
-    waitMs = DEFAULT_DEVICE_SLOT_WAIT_MS,
+    waitMs = REMOTE_ONLY_WAIT_MS,
     onWait = () => {},
     eas,
     signal,
@@ -200,7 +209,7 @@ export async function automaticDevicePlacement(
     capacity = machineCapacity,
     memory = () => readHostMemoryPressureAsync(undefined, undefined, signal),
     probe = probeHost,
-    budget = (projectRoot) => peekBudget(projectRoot, {}, ambientEnv(), signal),
+    budget = localDiskPressure,
     now = Date.now,
     sleep = (ms) => delay(ms, undefined, { signal }),
   }: {
@@ -212,7 +221,7 @@ export async function automaticDevicePlacement(
     capacity?: typeof machineCapacity;
     memory?: () => HostMemoryPressure | null | Promise<HostMemoryPressure | null>;
     probe?: typeof probeHost;
-    budget?: typeof peekBudget;
+    budget?: (root: string) => Promise<string | null>;
     now?: () => number;
     sleep?: (ms: number) => Promise<unknown>;
   } = {},

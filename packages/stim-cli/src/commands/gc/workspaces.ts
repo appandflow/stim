@@ -11,7 +11,7 @@ import { readClaimSet } from '../../ownership-claim.ts';
 import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
-import { ARTIFACT_DIRS, existingDirsOf, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
+import { existingBuildDirs, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { workspaceBuildInProgress } from './idle.ts';
 import { mapLimited, sizeConcurrency } from './limited.ts';
 import { canonicalPath } from './paths.ts';
@@ -334,7 +334,7 @@ export const REBUILD_COST: string =
   'are off), so that build recompiles Swift. The next stim macos in a cleared workspace is a full Swift build.';
 
 /** How long after its last ios, android or macos run a workspace keeps its build outputs. */
-export const LIGHTEN_AFTER_MS: number = 15 * 60_000;
+const LIGHTEN_AFTER_MS = 15 * 60_000;
 
 const BUILD_CHECKS = { devServer: false, hosted: false, managedLocks: false } as const;
 const BUILD_IN_PROGRESS = 'a build is in progress';
@@ -356,8 +356,7 @@ async function workspaceBuildReasonsAsync(
 
 async function inTreeBuildDirs(root: string, signal?: AbortSignal): Promise<string[]> {
   const dirs: string[] = [];
-  for (const path of existingDirsOf(root, ARTIFACT_DIRS.build))
-    if (!(await regenerableDirProblem(root, path, signal))) dirs.push(path);
+  for (const path of existingBuildDirs(root)) if (!(await regenerableDirProblem(root, path, signal))) dirs.push(path);
   return dirs;
 }
 
@@ -449,7 +448,8 @@ const gitRead = (operation?: StimContext, signal?: AbortSignal) => ({
   declareFor: operation,
 });
 
-function outputPaths(dir: string): string[] {
+/** The regenerable build outputs Stim keeps for a workspace in its workspace directory. */
+export function workspaceOutputPaths(dir: string): string[] {
   const paths = WORKSPACE_OUTPUT_DIRS.map((name) => join(dir, name)).filter((path) => existsSync(path));
   const macos = join(dir, 'macos');
   try {
@@ -528,7 +528,7 @@ export function collectWorkspaceOutputs({
       .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
       .map((entry) => {
         const inTreeDirs = inTree.get(entry.dir) ?? [];
-        return Object.assign({}, entry, { inTreeDirs, paths: [...outputPaths(entry.dir), ...inTreeDirs] });
+        return Object.assign({}, entry, { inTreeDirs, paths: [...workspaceOutputPaths(entry.dir), ...inTreeDirs] });
       })
       .filter((entry) => entry.paths.length > 0);
   const report = (
@@ -650,10 +650,10 @@ export async function clearWorkspaceOutputs(
           );
           if (again?.keptReason) return again.keptReason;
           const inTree: { path: string; problem: string | null }[] = [];
-          for (const path of lighten ? existingDirsOf(root, ARTIFACT_DIRS.build) : [])
+          for (const path of lighten ? existingBuildDirs(root) : [])
             inTree.push({ path, problem: await regenerableDirProblem(root, path, signal) });
           for (const path of [
-            ...outputPaths(entry.dir),
+            ...workspaceOutputPaths(entry.dir),
             ...inTree.filter((dir) => !dir.problem).map((dir) => dir.path),
           ]) {
             signal?.throwIfAborted();

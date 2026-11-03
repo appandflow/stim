@@ -6,9 +6,12 @@ If Stim is not installed globally, replace stim with npx stim.
 
 AGENT-DEVICE WORKSPACE STATE
 
-When you drive a device yourself with agent-device, opt in to the workspace's
-state directory reported as agentDevice.stateDir in the stim ios, android and
-macos output and in status. Read it once from status, run from the app root:
+stim agent-device <args> runs agent-device in this workspace's state
+directory, on its device (a hosted session keeps agent-device's own) (guide agent, DRIVING THE DEVICE). Its actions appear
+in stim logs --source agent. When you run agent-device directly instead, opt in
+to the workspace's state directory reported as agentDevice.stateDir in the
+stim ios, android and macos output and in status. Read it once from status,
+run from the app root:
 
   STATE_DIR="$(stim status --json | jq -r '.environments[] | select(.path=="'"$(pwd -P)"'") | .agentDevice.stateDir')"
 
@@ -282,19 +285,20 @@ status and maintenance/maintenance.ndjson; this command reads workspace logs.
 
 GC LOG
 stim logs --source gc reads $STIM_HOME/gc/gc.ndjson from any directory: one
-record per item that a gc run, a maintenance action or the budget gate
-cleared, kept or failed to clear. It cannot be combined with other sources,
+record per item that a gc run or a maintenance action cleared, kept or
+failed to clear. The pressure ladder's actions are in
+$STIM_HOME/daemon/daemon.ndjson and each workspace's metro.ndjson as
+pressure_action records. It cannot be combined with other sources,
 and --source all does not include it. --errors shows the failed items.
 Each record has src: gc, level (info, or error for a failed item), msg and
   runId    the stim invocation, or the pass id of maintenance.ndjson
   trigger  manual (stim gc in a terminal), desktop (STIM_DESKTOP_APP is set, so also a gc run through a stim-server Desktop started),
-           maintenance, or budget (the disk, memory or workspace check before
-           start, ios and android)
+           or maintenance (budget in records written before the pressure
+           ladder replaced the per-command budget)
   via      maintenance only: the command whose run started the pass
   options  gc only: delete, worktrees, olderThan, cache, idleMs
-  kind     what the item was (the kind of gc --json results, plus devServer
-           for a dev server the budget gate stops; maintenance also writes
-           buildDirectory and dependencies)
+  kind     what the item was (the kind of gc --json results; maintenance
+           also writes buildDirectory and dependencies)
   status   done, kept or failed
   label, id, path, bytes, detail
            name, identifier, absolute path when the item is one, bytes freed,
@@ -436,8 +440,8 @@ they stay in the local logs. These records carry no tokens.
 
 WHAT WRITES WHAT
   maintenance.ndjson   workspace maintenance actions, failures and explaining skips
-  $STIM_HOME/gc/gc.ndjson  machine-wide, not in a workspace: what gc, maintenance
-                       and the budget gate cleared (stim logs --source gc)
+  $STIM_HOME/gc/gc.ndjson  machine-wide, not in a workspace: what gc and
+                       maintenance cleared (stim logs --source gc)
   $STIM_HOME/builds/builds.ndjson  machine-wide: the last 500 native builds
                        (stim logs --source builds)
   metro.ndjson         the bundler, in every supervisor mode. Stim's

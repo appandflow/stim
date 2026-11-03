@@ -49,6 +49,12 @@ export interface OwnedDeviceRecord {
    * fails. It is never persisted.
    */
   booted?: string;
+  /**
+   * An iOS simulator this call has yet to create: it waits for a boot slot, and `created` settles with the
+   * device once the slot is taken and `simctl create` has run. `runtimeId` is the runtime it will have. It is never
+   * persisted.
+   */
+  creating?: { runtimeId: string; created: Promise<OwnedDeviceRecord> };
 }
 
 export interface DeviceSettings {
@@ -73,6 +79,11 @@ export interface DeviceFlags {
   deviceProfile?: string | null;
   /** The only device this run may use: the slot's simulator UDID or AVD name. It never creates or adopts another. */
   expectedDevice?: string;
+  /**
+   * Lets an iOS run that must create its simulator return once its creation waits in the boot queue, with the
+   * pending creation in `creating`, instead of waiting for the slot and the creation.
+   */
+  allowPendingCreation?: boolean;
 }
 
 export type Notify = (msg: string) => void;

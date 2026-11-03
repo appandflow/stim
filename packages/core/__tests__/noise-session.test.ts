@@ -11,6 +11,8 @@ import { generateNoiseKeyPair, HandshakeState, NOISE_XX } from '../noise.ts';
 import {
   acceptNoise,
   decodeSecret,
+  HandshakeRefusal,
+  HOME_UNAVAILABLE_MESSAGE,
   handshakePrefix,
   handshakePrologue,
   initiateNoise,
@@ -163,6 +165,26 @@ describe('handshake', () => {
       initiateNoise(clientRaw, { keyPair: client, secret: decodeSecret(newSecret())!, timeoutMs: 2000 }),
     ).rejects.toMatchObject({ code: 'unknown-secret' });
     await expect(refused).rejects.toMatchObject({ code: 'unknown-secret' });
+  });
+
+  it('refuses with the code of a HandshakeRefusal the PSK lookup throws, so a server can say why it cannot look', async () => {
+    const [clientRaw, serverRaw] = socketPair();
+    const refused = new Promise<AcceptedHandshake>((resolve, reject) => {
+      serverRaw.once('message', (data: Buffer, isBinary: boolean) =>
+        acceptNoise(serverRaw, data, isBinary, {
+          keyPair: server,
+          psk: () => {
+            throw new HandshakeRefusal('home-unavailable', 'unreadable');
+          },
+          timeoutMs: 2000,
+        }).then(resolve, reject),
+      );
+    });
+    refused.catch(() => undefined);
+    await expect(
+      initiateNoise(clientRaw, { keyPair: client, secret: Buffer.alloc(32, 9), timeoutMs: 2000 }),
+    ).rejects.toMatchObject({ code: 'home-unavailable', message: HOME_UNAVAILABLE_MESSAGE });
+    await expect(refused).rejects.toMatchObject({ code: 'home-unavailable' });
   });
 
   it('fails when the cleartext prefix is changed in transit, since the prologue binds it', async () => {

@@ -23,7 +23,7 @@ import { DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, videoSubscription, Vide
 const TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 20_000;
 const KEYFRAME_RETRY_MS = 1000;
-const CONGESTION_NOTICE_MS = 250;
+export const CONGESTION_NOTICE_MS = 250;
 type Placement = { machine: string; session: string };
 type RelayTarget = { platform: 'ios' | 'android' | 'macos'; slot: string };
 type Reply = { result: unknown } | { error: ProtocolError };
@@ -635,6 +635,16 @@ export class HostedRelay {
     if (!isJsonObject(params) || typeof params.session !== 'string') return false;
     const entry = this.controls.get(params.session);
     if (!entry) return false;
+    if (method.startsWith('input.clipboard.') && !entry.lease.connection.supports('device-clipboard')) {
+      this.send({
+        id,
+        error: {
+          code: 'action-failed',
+          message: 'The Mac hosting this device cannot set or read a clipboard: update its Stim.',
+        },
+      });
+      return true;
+    }
     const response = this.forward(id, entry.lease.connection, `device-host.${method}`, {
       ...params,
       session: entry.hostSession,

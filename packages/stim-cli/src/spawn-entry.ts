@@ -1,15 +1,23 @@
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export type SpawnEntryName = 'cli' | 'supervisor-run' | 'collector-run' | 'web-run' | 'macos-run' | 'maintenance-run';
+export type SpawnEntryName =
+  | 'cli'
+  | 'supervisor-run'
+  | 'collector-run'
+  | 'web-run'
+  | 'macos-run'
+  | 'daemon-run'
+  | 'passes-run';
 
 const DEV_ENTRIES: Record<SpawnEntryName, string> = {
   cli: '../bin/cli.ts',
   'supervisor-run': './supervisor/run.ts',
   'collector-run': './collector/run.ts',
   'web-run': './web/run.ts',
-  'maintenance-run': './maintenance/run.ts',
   'macos-run': './macos/run.ts',
+  'daemon-run': './daemon/run.ts',
+  'passes-run': './daemon/passes-run.ts',
 };
 
 export function spawnEntry(name: SpawnEntryName): string {

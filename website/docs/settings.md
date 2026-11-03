@@ -283,7 +283,7 @@ Run `stim guide settings` for the complete key and value list.
 ```json
 {
   "concurrency": { "maxBuilds": 2, "maxDevices": 3 },
-  "budget": { "minFreeDiskGb": 20, "hardFloorDiskGb": 5 },
+  "disk": { "minFreeGb": 20, "hardFloorGb": 5 },
   "iosSimulatorApp": "xcode",
   "androidEmulatorApp": "emulator",
   "tempDir": "/Volumes/SSD/stim-tmp",
@@ -296,32 +296,43 @@ Run `stim guide settings` for the complete key and value list.
 }
 ```
 
-These settings live only in the machine file. The budget, archive and
+These settings live only in the machine file. The disk threshold, archive and
 maintenance settings are listed in their own sections below.
 
 <MachineSettings />
 
-`concurrency.maxDevices` limits booted or booting owned devices. At the cap,
-new devices wait in FIFO order across the Stim home for 600 seconds by default.
-Use `--wait <seconds>` to change the bound, or `--no-wait` / `--wait 0` to
-refuse immediately. A workspace's own live device bypasses the queue. Waiting
-prints holder names and elapsed time, followed by the queue position, head
-workspace name and `$STIM_HOME/device-waits` path. Workspaces that share a
-project name show the directory that tells them apart, as in
-`mobile (qa-b-p2)`. Timeout names the same head and path. `stim stop` cancels a queued run and releases its ticket without
-booting its device. Status adds `build.waitingFor`, and
-stats records `capacityWaits` and positive placement `deviceSlotWaitMs`.
-`0` or an unset cap means unlimited devices.
+Every native build and every boot of an owned simulator or emulator takes a
+slot. The caps are derived from the machine, and `concurrency.maxBuilds` and
+`concurrency.maxDevices` override them; `0` or unset means the derived cap:
+`max(1, floor(CPU cores / 6))` builds and `max(2, floor((RAM - 4 GB) / 1.5 GB))`
+booted or booting owned devices (8 on a 16 GB Mac). At most 2 boots run at
+once, and no boot starts while macOS memory pressure is critical, or warning
+with under 2 GB available. A boot that needs a new simulator or emulator
+creates it inside its slot, so a burst of new workspaces creates at most 2
+devices at a time.
+
+A run past a cap waits in arrival order per resource and prints its queue
+position and what it waits for every 10 seconds, and keeps waiting while every
+holder ahead of it is alive. It refuses with `STIM_AT_CAPACITY` and the queue
+state after 90 minutes, or once a holder cannot be verified (an unresolved slot
+claim, or a device listing that fails) for `max(10 minutes, position x 5
+minutes)`. A boot held only by memory keeps waiting. Use `--wait <seconds>` to bound a
+device wait instead, or `--no-wait` / `--wait 0` to refuse immediately. A
+workspace's own live device bypasses the queue. `stim stop` cancels a queued
+run and releases its ticket without booting its device. Status adds
+`build.waitingFor` with the run's position and resource, and `daemon.waiting`
+with every waiting run; stats records `capacityWaits` and positive placement
+`deviceSlotWaitMs`.
 
 `concurrency.maxIosDevices`, `concurrency.maxAndroidDevices` and
 `concurrency.maxMacosApps` cap one platform each: booted owned iOS simulators,
 booted owned Android emulators and macOS apps. They default
-to `0`, no per-platform limit, and they only tighten. A run must fit its
+to `0`, no per-platform limit (the derived device cap still applies), and they only tighten. A run must fit its
 platform's cap and `concurrency.maxDevices`: `maxDevices` counts simulators and
 emulators together, local and hosted, and counts hosted macOS apps as a pool of
 their own, so a macOS app is bounded by both `maxMacosApps` and `maxDevices`
-and never adds to the simulator and emulator total. With the new settings unset,
-nothing changes for an existing `maxDevices`. Local admission queues and
+and never adds to the simulator and emulator total; a derived `maxDevices`
+does not bound macOS apps. Local admission queues and
 reclaims for a platform cap the way it does for `maxDevices`, and a run held
 back only by its own platform's cap does not hold up a run on the other
 platform; reclaim for a full platform cap shuts down only devices of that
@@ -338,28 +349,16 @@ A refusal names the full limit with its count and cap, such as
 stim settings set concurrency.maxIosDevices 2 --scope machine
 ```
 
-With a cap set, queue reclaim uses the waiting workspace's effective setting:
-`devices.reclaimIdleMinutes` defaults to 10. The queue head shuts down the
-longest-idle eligible owned device in another workspace of this Stim home,
-one at a time, at most once every 15 seconds, rechecking capacity before
-another. `0` disables it. The same idle checks as
-[supervisor idle shutdown](./owned-devices.md#idle-shutdown) protect drivers,
-locks, builds, viewers and recent activity. Reclaim never deletes and excludes
-the waiting workspace, physical, hosted, remote, parked and other homes'
-devices. Failed locks or shutdowns are reported once per device and skipped
-for the rest of the wait. The supervisor's own
-idle shutdown defaults to 15 minutes. Positive `reclaimed` counts
-are included in wait stats.
-
-Any workspace of this Stim home with a device idle for
-`devices.reclaimIdleMinutes` is eligible, even with no supervisor and even
-when its own `devices.idleShutdownMinutes` is `0`. Stim Desktop's simulator
-view and manual input in Simulator.app do not count as activity. Opt out
-machine-wide with the command below; the waiter's effective setting decides.
-
-```bash
-stim settings set devices.reclaimIdleMinutes 0 --scope machine
-```
+While a run waits to boot because the booted devices fill a cap, the
+`stim-daemon` shuts down, once per tick, the longest-idle booted owned device of
+another workspace that has had no activity for 2 minutes and has no blocker,
+then wakes the waiter. The same activity as
+[idle shutdown](./owned-devices.md#idle-shutdown) counts: input sent through
+stim-server and use of the device in the frontmost Simulator, Device Hub or
+emulator window do, app and device logs do not. Reclaim never deletes and excludes the waiting
+workspace, physical, hosted, remote, parked and other homes' devices. With no
+daemon running, waiters wait without reclaim. `devices.reclaimIdleMinutes` is
+no longer read.
 
 `iosSimulatorApp` chooses the macOS app that displays an owned iOS simulator after
 Stim boots it. It defaults to `"stim-desktop"` while Stim Desktop is installed
@@ -371,13 +370,16 @@ agents are using; never quit it to free memory or clean up. Set
 `"siniulator"` to use an installed
 [Siniulator](https://github.com/kmagiera/Siniulator) instead. Set
 `"stim-desktop"` to open no simulator window and show a launch card in Stim
-Desktop. Clicking **Show** opens the workspace that owns the device. This is a
+Desktop. Clicking **Show** opens the workspace that owns the device. Set
+`"none"` to boot the simulator with no viewer, for agents and other headless
+runs. This is a
 machine-wide preference, not a project setting; Stim still creates, boots, and
 owns the simulator. An invalid value refuses before boot. Opening the chosen
 app is best effort, so install Siniulator or Stim Desktop before selecting it.
 
 Override it for one launch with `stim ios --simulator-app siniulator`,
-`stim ios --simulator-app stim-desktop`, or `stim ios --simulator-app xcode`. The flag also opens an already running owned
+`stim ios --simulator-app stim-desktop`, `stim ios --simulator-app xcode`, or
+`stim ios --simulator-app none`. The flag also opens an already running owned
 simulator without rebooting it and leaves the saved preference unchanged. It
 only applies to local simulators.
 
@@ -648,13 +650,14 @@ machine, the checkouts and Gradle homes themselves live in short directories
 under `C:\sw` instead (see [Windows worker](./remote-machines.md#windows-worker)). Put it on a
 large volume. It boots or installs nothing. It declines a build while that
 volume has less than 10 GB free, while `server.maxOffloadedBuilds` offloaded
-builds already run (default 0, no limit; with it and `concurrency.maxBuilds`
-both unset, only the load average limits a burst of builds, and it lags by
-minutes),
-while its own Stim builds and the offloaded ones fill its
-`concurrency.maxBuilds`, or while its load per core is at or above its
-`server.maxLoadPerCore`. While an offloaded build runs, it holds one of the
-remote machine's `concurrency.maxBuilds` slots, so a local `stim ios` or
+builds already run (default 0, no limit),
+while its own Stim builds and the offloaded ones fill its build cap, or while
+its load per core is at or above its
+`server.maxLoadPerCore`. Offloaded builds share that cap with the worker's own
+builds: `concurrency.maxBuilds` on the worker, derived as
+`max(1, floor(CPU cores / 6))` when `0`, so a worker with fewer than 12 cores
+runs one build at a time; set `concurrency.maxBuilds` there to allow more.
+While an offloaded build runs, it holds one of the remote machine's build slots, so a local `stim ios` or
 `stim android` there waits for the slot and counts the machine as busy. The
 slot is freed when the build ends, is cancelled, or its process is gone. Delete
 a client's directory there to reclaim its space.
@@ -749,51 +752,52 @@ merged or closed. Absent means 120; `0` removes
 a finished worktree at once. `STIM_GC_WORKTREE_GRACE_MINUTES` overrides it. See
 [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk).
 
-`budget` keeps parallel agents from filling the disk or memory. It is on by
-default. Before `stim start`, `stim ios`, or `stim android` builds or boots
-anything, Stim checks free disk on the volumes that hold the app and
-`$STIM_HOME`, and the estimated memory of active environments:
+The disk thresholds keep parallel agents from filling the disk. Each
+`stim-daemon` tick classifies the machine from free disk on every volume Stim
+writes to and from memory: **high** under `disk.minFreeGb` (20 GB), after
+10 minutes of macOS memory pressure warning, or with under 10% of RAM
+available; **critical** under `disk.criticalFreeGb` (6 GB), or under
+`disk.hardFloorGb` when that is higher, or with critical memory pressure.
+Above normal it runs one pressure ladder until the level
+clears: idle stage for every workspace idle 2 minutes, parked devices, the
+shared caches, the dormant stage, at critical the `node_modules` and Pods of
+idle worktrees, then Gradle daemons, unpinned Gradle versions, TMPDIR leftovers
+and the worktree trash. Each rung measures again first, skips a workspace with
+a build, a driver, a lease, a live [web share](./share.md) or
+`maintenance.keep`, and takes the longest-idle
+workspace first; a level raised by memory alone runs only what frees memory.
+Every action is logged with its reason, the bytes it freed and the command
+that brings it back. `stim start`, `stim ios` and `stim android` refuse with
+`STIM_LOW_DISK` only while free disk is still under `disk.hardFloorGb`
+(5 GB) after the ladder ran. `0` turns a threshold off. The thresholds apply in
+every Stim home, a `STIM_HOME` one included. Memory has no threshold to set:
+it never refuses, and the ladder's memory rules are fixed.
 
 <BudgetSettings />
 
-Stim reclaims in order and stops once it is back under budget: it shuts down
-idle owned devices in other workspaces, stops idle dev servers in other
-workspaces, clears the build outputs of workspaces idle for 10 minutes (least
-recently used first), and
-trims shared cache entries unused for 14 days. The last two steps run only for
-disk. Each step prints a `budget` line on stderr, and `--json` output lists them
-under `reclaimed`. A cache trim that removed nothing is not repeated for 5
-minutes while the same caches exist and free disk has not fallen by more than
-1 GB; the skipped run prints one `budget` line saying so. `stim gc` and
-automatic maintenance never skip. The current workspace, a device someone is driving or has
-locked, and a workspace with a build in progress are never reclaimed. A memory
-or workspace limit never refuses a command. `0` turns a check off. When
-`STIM_HOME` is set, the budget is off unless its environment variable is set.
-`stim doctor` reports the free disk and committed memory against the budget,
-and what the next command would reclaim.
-
 ```bash
-stim settings set budget.minFreeDiskGb 40
+stim settings set disk.minFreeGb 40 --scope machine
 ```
 
-Without waiting for a budget, `devices.idleShutdownMinutes` shuts down a
-workspace's owned simulators and emulators once they have been idle that long,
-through the workspace's dev server supervisor or, with no supervisor, through
-automatic maintenance every `maintenance.idleCheckMinutes` (5).
-It is on by default at 15 minutes; see
-[idle shutdown](./owned-devices.md#idle-shutdown). A device whose app loads
-its JavaScript from Metro goes down with the dev server's
-[idle stop](./dev-server-and-logs.md#idle-stop) even when
-`devices.idleShutdownMinutes` is longer than `metro.idleStopMinutes`, because
-its device logs stop counting as use once Metro is gone. `0` keeps devices
-booted, at the idle stop too.
+The `stim-daemon` also shuts down a workspace's owned simulators and emulators,
+together with its dev server, once the workspace has had no activity for
+`idle.minutes` (15 by default), whether or not a dev server runs; see
+[idle stop](./dev-server-and-logs.md#idle-stop) and
+[idle shutdown](./owned-devices.md#idle-shutdown). `0` keeps them running.
+After `idle.dormantDays` (3 by default; fractions of a day allowed; `0` never)
+without activity a workspace goes dormant: its owned devices are deleted (the
+parked pool is untouched) and its logs archived. In a linked worktree, its
+`node_modules` and Pods are deleted when they hold 256 MB or more of their own
+bytes, recorded so `stim worktree warm` restores them; copy-on-write clones
+under that, and trees Stim could not size, stay. When it deleted a device, the next `stim ios` or `stim android` creates
+one; with none deleted, `stim revive` resumes the workspace while its dev
+server's idle stop survives.
 
 Try it with an agent:
 
 ```text
-Run `stim doctor` and tell me how much free disk and committed memory this
-machine has against its Stim budget, and what the next `stim ios` would
-reclaim first.
+Run `stim status` and tell me the pressure level of this machine, why it is at
+that level, and what the stim-daemon last reclaimed.
 ```
 
 `caches.buildCache` and `caches.metroCache` move the shared build cache and the
@@ -810,6 +814,19 @@ cross-volume copy costs and invalid values.
 
 Use a top-level [`optimizations` object](./build-optimizations.md) in this file to
 control build optimizations on this machine without changing project files.
+
+### Web share exposure
+
+`stim share` is reached through Tailscale Funnel or through your own reverse
+proxy. All three settings are machine settings:
+
+```bash
+stim settings set share.exposure proxy                      # auto (default), tailscale or proxy
+stim settings set share.publicUrl https://demo.example.com  # links print under this address
+stim settings set share.port 7790                           # loopback port the proxy forwards to
+```
+
+See [Share a running app](./share.md#custom-domain) for the Caddyfile.
 
 ## Device recordings
 
@@ -915,49 +932,50 @@ See [archived workspaces](./worktrees.md#archived-workspaces) for privacy and de
 
 ## Automatic maintenance
 
-`maintenance.mode` is `on` by default: a pass removes what `stim gc --delete`
-would remove under the caps and floors below and logs every action. `report`
-measures, plans and logs and deletes nothing, and `off` disables passes.
-`STIM_HOME` and `CI` make the mode `off` unless `STIM_MAINTENANCE` is set.
+Automatic maintenance follows [`daemon.mode`](#stim-daemon), `on` by default:
+a pass removes what `stim gc --delete` would remove under the caps below and
+logs every action. `report` measures, plans and logs and deletes nothing, and
+`off` runs no pass. It is `off` in CI unless `STIM_DAEMON` is set. A
+`STIM_HOME`-scoped home runs passes like any other.
 All of these settings have machine scope except `maintenance.keep`, a project
-setting that pins a workspace: automatic passes never clear its build outputs,
-delete its owned devices or remove its worktree. `maintenance.idleStopHours`
-takes machine and project layers; see
-[idle workspace stop](./dev-server-and-logs.md#idle-workspace-stop). On a hosting Mac, stim-server reads its
+setting that pins a workspace: the `stim-daemon` never moves it to the idle or
+dormant stage, and automatic passes and the pressure ladder never clear its
+build outputs, delete its owned devices or remove its worktree.
+`maintenance.idleStopHours` applies only to a workspace whose device is hosted
+on a remote Mac and takes machine and project layers; see
+[idle workspace stop](./dev-server-and-logs.md#idle-workspace-stop). Every
+other workspace follows `idle.minutes` and `idle.dormantDays`. On a hosting Mac, stim-server reads its
 machine value to stop a hosted session whose client has been gone that long. GB and MB below mean GiB and MiB.
 
 <MaintenanceSettings />
 
-Size scans defer above `maintenance.maxLoadPerCore`; pressure checks continue.
+Size, idle, worktree and sweep checks wait while the one-minute load is above
+4 per core; the `stim-daemon`'s pressure level and ladder never wait.
 On macOS the memory signal is the sysctl pressure level, with no signal when
-sysctl fails. `os.freemem()` and `maintenance.minAvailableMemoryGb` apply only
-on other platforms.
-Caps act toward `maintenance.capTargetPercent` of the limit. The Swift
+sysctl fails, and other platforms use `os.freemem()`.
+The build-cache and Metro caps trim entries down to 80% of the limit. The Swift
 compilation cache can only be emptied whole, so a pass empties it once it is
-over `caches.swiftCompilationCacheMaxGb` or at disk pressure level 3, and never
-while an iOS build holds its claim on it or that claim is unresolved. Plain
-`stim gc --delete` applies the same cap.
-`maintenance.urgentFreeDiskGb`, `maintenance.criticalFreeDiskGb` and
-`maintenance.pressureProtectMinutes` set the
-[disk pressure levels](./build-caches.md#disk-pressure-levels). `caches.ccacheMaxGb` is
-passed to ccache, which evicts by itself. `maintenance.sweepHours` (24) sets how
-often the age sweep runs. `maintenance.olderThanDays` (7; 0 turns these off) is how long
-something stays unused before that sweep removes it: workspace build outputs,
-shared cache entries, parked simulators and emulators, and clean, pushed linked
-worktrees (only with `maintenance.removeIdleWorktrees`, off by default); `maintenance.deviceIdleDays` sets how long a workspace stays idle
-before that sweep deletes its owned simulators and emulators (0 turns it off);
-`maintenance.gradleVersionIdleDays` (7) sets how long a Gradle version no project pins stays unmodified before level 3 stops the idle Gradle and Kotlin daemons that keep it and deletes it (0 turns that off);
-`maintenance.removeFinishedWorktrees` controls the worktree
-check. Under memory pressure a pass stops verified idle Gradle and Kotlin daemons;
-manual `stim gc --delete --cache gradle-daemons` requires fresh configured pressure
-and no local build, including iOS, independently of `maintenance.mode`.
-`memoryPressureLevel: off`, invalid settings or an unreadable macOS signal keep
-daemons; a manual report does not update warning history and ignores observations
-older than `maintenance.pressureCheckMinutes` or outside the last completed,
-unblocked pass. A later unrelated pass can conservatively keep warning daemons.
-Disk-level-3 version
-cleanup remains independent of memory pressure and allows known iOS builds.
-Below disk pressure level 3 a pass stops a dev server only after `maintenance.idleStopHours` without real activity (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
+over `caches.swiftCompilationCacheMaxGb`, and never while an iOS build holds
+its claim on it or that claim is unresolved. Plain `stim gc --delete` applies
+the same cap. Under disk pressure the
+[pressure ladder](./build-caches.md#disk-pressure) trims the caches further.
+`caches.ccacheMaxGb` is passed to ccache, which evicts by itself.
+`maintenance.sweepHours` (24) sets how often the age sweep runs.
+`maintenance.olderThanDays` (7; 0 turns these off) is how long something stays
+unused before that sweep removes it: workspace build outputs, shared cache
+entries, parked simulators and emulators, and clean, pushed linked worktrees
+(only with `maintenance.removeIdleWorktrees`, off by default). The age sweep
+also stops idle Gradle and Kotlin daemons, deletes Gradle versions no project
+pins once unmodified for `maintenance.gradleVersionIdleDays` (7; 0 keeps
+them), and deletes TMPDIR leftovers and the worktree trash.
+`maintenance.removeFinishedWorktrees` controls the worktree check. Manual
+`stim gc --delete --cache gradle-daemons` requires sustained memory pressure
+(the daemon's high or critical memory level) and no local build, including
+iOS, whatever `daemon.mode` says. A pass stops a dev server only in a
+workspace whose device is hosted on a remote Mac, after
+`maintenance.idleStopHours` without real activity (removing a finished worktree
+tears down that workspace's own, as `gc --delete` does). Debug check logs are
+off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
 
 ## Debug logs
@@ -981,6 +999,110 @@ Turn on debug.logs, rerun the command that stalled, then read
 ~/.stim/logs/debug/cli.ndjson and tell me which child process or remote request
 took the time.
 ```
+
+## Stim daemon
+
+`daemon.mode` is a machine setting, `on` by default, with the environment
+override `STIM_DAEMON`. It governs every pass Stim runs on its own: the idle
+and dormant stages, the [pressure ladder](./build-caches.md#disk-pressure), the
+reclaim for a run waiting to boot, and
+[automatic maintenance](#automatic-maintenance). `start`, `ios`, `android`,
+`web`, `macos` and `revive` start one `stim-daemon` process per Stim home,
+scoped homes included. It ticks each minute while anything runs there or the
+pressure level is above normal, and every 5 minutes otherwise. It exits two
+ticks after nothing runs and no workspace waits for its dormant stage, so the
+stage fires in a quiet home. A workspace waits until its `idle.dormantDays`
+have passed plus one slow tick, and never while `maintenance.keep`,
+`idle.minutes` 0, `idle.dormantDays` 0, a hosted placement, an unreadable state
+or a failing device listing keeps it out, nor with no activity recorded in its
+state. A finished-worktree removal does not keep the daemon. Each tick it
+measures the machine once,
+classifies the pressure level, moves workspaces with no activity for
+`idle.minutes` into the [idle stage](./dev-server-and-logs.md#idle-stop) and
+those idle for `idle.dormantDays` into the dormant stage, runs the pressure
+ladder above normal, and runs automatic maintenance. It also wakes the oldest
+run waiting for a build slot as soon as one is released. `report` logs what
+each pass would do and acts on nothing. `off` runs no daemon and no pass: each
+dev server supervisor stops its own dev server and devices after
+`idle.minutes`, and nothing times a device with no dev server. It is `off` in
+CI unless `STIM_DAEMON` is set.
+
+While no daemon runs (on Windows, which has none, or when one could not start),
+`stim doctor`, `stim start`, `stim ios` and `stim android` run automatic
+maintenance, the idle stage for owned devices whose workspace has no running dev
+server, and the pressure ladder in their own process, never for the command's own
+workspace, acting in `on` and only logging in `report`. On Windows every other
+top-level command except `stim guide`, `stim settings`, `stim help`, `stim gc` and
+`stim agent-device` starts the same passes in a detached background process, which
+the command does not wait for and which prints nothing, at most once a minute. `stim gc --delete` runs the ladder in its own process
+whether or not a daemon runs. A command starts the daemon in the mode it resolves, `STIM_DAEMON` included; a
+later change to the machine setting can make a running daemon stricter, never
+laxer. The daemon also keeps the starting command's `CI` and the environment
+overrides of settings that are not sensitive, such as `STIM_DISK_MIN_FREE_GB`,
+for its whole life: one exported after it started applies to the daemon only
+once it exits and a command starts a new one. Its log is
+`$STIM_HOME/daemon/daemon.ndjson`, rotated like workspace logs, and its last
+tick's measurement and decisions, with its last 20 actions, are in
+`$STIM_HOME/daemon/snapshot.json`.
+
+`stim status` prints a daemon line with its mode, whether it runs, when it last
+ticked and the pressure level, then the last daemon action, the runs waiting for
+a slot, and a stage line for every workspace: running with its last activity,
+idle or dormant with the time in it, or stopped. `stim status --json` carries
+the last 20 actions as `daemon.recent`. `stim doctor` prints the daemon line, its
+last action or snapshot file and its log, and reports a daemon that stopped
+ticking or a claim it cannot resolve. On Windows, which has no daemon yet, the
+line says that `start`, `ios`, `android` and `doctor` run the passes in their own
+process and other top-level commands start them in the background.
+
+`idle.minutes` takes machine and project layers; `0` turns the idle and dormant
+stages off. `idle.dormantDays` is a machine setting.
+
+<StimTabs code="stim settings set daemon.mode report --scope machine" />
+
+Stim does not read the settings below. `stim doctor` and `stim settings` report
+any left in a config file or the environment, with the setting that replaces
+it. `stim settings set` and `get` refuse each with `STIM_BAD_ARG` naming its
+replacement, and `stim settings unset <key>` removes a leftover key from every
+layer that has it (`--scope` limits it to one). `stim start`, `ios`,
+`android`, `web`, `macos`, `revive` and `gc` refuse with `STIM_BAD_ARG` while
+the environment sets one of the variables named here; unset it, or set its
+replacement. They also refuse while a config file they read still holds a
+removed setting's old value that turned something off, so it never quietly
+becomes a default that acts: `maintenance.mode` `off` or `report`, or
+`metro.idleStopMinutes` or `devices.idleShutdownMinutes` `0`. The refusal names
+the `stim settings set` and `unset` commands that keep the old behavior, such
+as `stim settings set daemon.mode off` then `stim settings unset maintenance.mode`,
+or only the `unset` when a layer already sets the replacement, and `stim doctor`
+rates each one a cost. `maintenance.idleStopHours` `0` is still read, for hosted
+sessions, so it never refuses; `stim doctor` rates it a cost until
+`idle.dormantDays` is set, since it no longer keeps workspaces from going
+dormant.
+
+- `metro.idleStopMinutes` and `devices.idleShutdownMinutes`: use
+  `idle.minutes`, which stops the dev server and the owned devices together.
+- `devices.reclaimIdleMinutes`: nothing replaces it. While a run waits to
+  boot, the `stim-daemon` shuts down the longest-idle device of another
+  workspace idle 2 minutes or more.
+- `maintenance.deviceIdleDays` (`STIM_MAINTENANCE_DEVICE_IDLE_DAYS`): use
+  `idle.dormantDays`.
+- `budget.minFreeDiskGb` (`STIM_BUDGET_MIN_FREE_DISK_GB`): use
+  `disk.minFreeGb` (`STIM_DISK_MIN_FREE_GB`).
+- `budget.hardFloorDiskGb` (`STIM_BUDGET_HARD_FLOOR_DISK_GB`): use
+  `disk.hardFloorGb` (`STIM_DISK_HARD_FLOOR_GB`).
+- `maintenance.criticalFreeDiskGb` (`STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB`):
+  use `disk.criticalFreeGb` (`STIM_DISK_CRITICAL_FREE_GB`).
+- `maintenance.mode` (`STIM_MAINTENANCE`) and `daemon.enabled`: use
+  `daemon.mode` (`STIM_DAEMON`).
+- `budget.maxCommittedMemoryGb`, `budget.maxLiveWorkspaces`,
+  `maintenance.pressureCheckMinutes`, `maintenance.sizeCheckMinutes`,
+  `maintenance.maxLoadPerCore`, `maintenance.memoryPressureLevel`,
+  `maintenance.memoryWarningMinutes`, `maintenance.minAvailableMemoryGb`,
+  `maintenance.capTargetPercent`, `maintenance.idleCheckMinutes`,
+  `maintenance.urgentFreeDiskGb` and `maintenance.pressureProtectMinutes`:
+  nothing replaces them, because the pressure ladder has fixed rules. Each one's
+  variable is its key in upper snake case with a `STIM_` prefix, such as
+  `STIM_MAINTENANCE_MAX_LOAD_PER_CORE`.
 
 ## Timing traces
 

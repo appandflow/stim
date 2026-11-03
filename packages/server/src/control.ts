@@ -9,6 +9,8 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { takeHostedInputClaim } from './hosted-input.ts';
+import { GRAB_IDLE_MS, PointerGrab } from './pointer-grab.ts';
+import { presenceKey, type PresenceHub } from './presence.ts';
 import { isJsonObject, type DeviceActivity, type StatusPayload } from '@stim-cli/core/state';
 import { actionOutcome, type AuditRecord } from './actions.ts';
 import type { FeedListener } from './feed.ts';
@@ -30,6 +32,8 @@ import {
   type KeyModifier,
   PLATFORMS,
   MAX_INPUT_TEXT,
+  MAX_CLIPBOARD_BYTES,
+  MAX_CLIPBOARD_READ_BYTES,
   ROTATE_DIRECTIONS,
   TOUCH_PHASES,
   type ControlBeginParams,
@@ -39,9 +43,11 @@ import {
   type DevicePosture,
   type ErrorCode,
   type InputButton,
+  type InputClipboardGetResult,
   type SimulatorCommand,
   type SimulatorOptions,
   type Platform,
+  type PresenceParticipant,
   type ProtocolError,
   type RotateDirection,
   type ServerMessage,
@@ -53,6 +59,9 @@ import type { PairedDevice } from './registry.ts';
 import { Pending, runStim, terminate, type CommandLimits } from './stim-command.ts';
 
 type Refusal = { code: ErrorCode; message: string };
+type TouchCommand = Extract<InputCommand, { input: 'touch' }>;
+/** A touch dropped because another participant holds the pointer; `busy` is that participant's name. */
+export type BusyRefusal = Refusal & { busy: string };
 type Parsed<T> = { value: T } | Refusal;
 
 export const SLOT_NAME: RegExp = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -97,8 +106,19 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
 }
 
 export type InputCommand =
-  | { input: 'touch'; phase: TouchPhase; x: number; y: number; display?: number; duoRevision?: string }
+  | {
+      input: 'touch';
+      phase: TouchPhase;
+      x: number;
+      y: number;
+      x2?: number;
+      y2?: number;
+      display?: number;
+      duoRevision?: string;
+    }
   | { input: 'text'; text: string }
+  | { input: 'clipboard'; text: string; paste: boolean }
+  | { input: 'clipboard-get' }
   | { input: 'scroll'; x: number; y: number; deltaX: number; deltaY: number }
   | { input: 'key'; key: InputKey; modifiers: KeyModifier[] }
   | { input: 'window'; window: number | null }
@@ -116,7 +136,9 @@ type InputMethod =
   | 'input.simulator'
   | 'input.scroll'
   | 'input.key'
-  | 'input.window';
+  | 'input.window'
+  | 'input.clipboard.set'
+  | 'input.clipboard.get';
 
 /**
  * What a control session accepts: its device's platform, the postures `input.posture` takes, and whether it is a
@@ -130,6 +152,14 @@ export interface SessionTarget {
   physical?: boolean;
 }
 
+/** The keys an iOS or Android device takes as `input.key`: the arrows and Escape. */
+const DEVICE_KEYS = ['left', 'right', 'up', 'down', 'escape'] as const;
+type DeviceKey = (typeof DEVICE_KEYS)[number];
+
+function isDeviceKey(key: unknown): key is DeviceKey {
+  return DEVICE_KEYS.some((candidate) => candidate === key);
+}
+
 const IOS_BUTTONS: readonly InputButton[] = ['home', 'lock'];
 const WEB_BUTTONS: readonly InputButton[] = ['back'];
 
@@ -139,6 +169,104 @@ function delta(value: unknown): boolean {
 
 function fraction(value: unknown): boolean {
   return typeof value === 'number' && value >= 0 && value <= 1;
+}
+
+function parseDeviceKey(
+  session: string,
+  platform: 'ios' | 'android',
+  params: Record<string, unknown>,
+): Parsed<{ session: string; command: InputCommand }> {
+  const { key, modifiers = [] } = params;
+  if (!isDeviceKey(key) || !Array.isArray(modifiers) || modifiers.length) {
+    return {
+      code: 'bad-request',
+      message: `An ${platform === 'ios' ? 'iOS' : 'Android'} device takes the keys ${DEVICE_KEYS.join(', ')}, without modifiers.`,
+    };
+  }
+  return { value: { session, command: { input: 'key', key, modifiers: [] } } };
+}
+
+function parseScrollOrKey(
+  method: 'input.scroll' | 'input.key',
+  session: string,
+  platform: ControlPlatform,
+  params: Record<string, unknown>,
+): Parsed<{ session: string; command: InputCommand }> {
+  if (platform !== 'macos' && method === 'input.key' && platform !== 'web') {
+    return parseDeviceKey(session, platform, params);
+  }
+  if (platform !== 'macos')
+    return { code: 'bad-request', message: 'This input is for a native macOS app window only.' };
+  if (method === 'input.scroll') {
+    const { x, y, deltaX, deltaY } = params;
+    if (!fraction(x) || !fraction(y) || !delta(deltaX) || !delta(deltaY)) {
+      return {
+        code: 'bad-request',
+        message: 'input.scroll needs x and y from 0 to 1 and finite pixel deltas from -1000 to 1000.',
+      };
+    }
+    return {
+      value: {
+        session,
+        command: {
+          input: 'scroll',
+          x: x as number,
+          y: y as number,
+          deltaX: deltaX as number,
+          deltaY: deltaY as number,
+        },
+      },
+    };
+  }
+  const { key, modifiers = [] } = params;
+  if (
+    !INPUT_KEYS.includes(key as InputKey) ||
+    !Array.isArray(modifiers) ||
+    modifiers.length > 4 ||
+    new Set(modifiers).size !== modifiers.length ||
+    !modifiers.every((modifier) => KEY_MODIFIERS.includes(modifier as KeyModifier))
+  ) {
+    return {
+      code: 'bad-request',
+      message: 'input.key needs a supported native key and unique command, shift, option or control modifiers.',
+    };
+  }
+  return {
+    value: { session, command: { input: 'key', key: key as InputKey, modifiers: modifiers as KeyModifier[] } },
+  };
+}
+
+function parseClipboard(
+  method: 'input.clipboard.set' | 'input.clipboard.get',
+  session: string,
+  platform: ControlPlatform,
+  physical: boolean,
+  params: Record<string, unknown>,
+): Parsed<{ session: string; command: InputCommand }> {
+  if (platform === 'web' || platform === 'macos' || (platform === 'ios' && physical)) {
+    return {
+      code: 'bad-request',
+      message: 'Only an iOS simulator, an Android emulator and an Android phone have a clipboard to set or read.',
+    };
+  }
+  const { text, paste } = params;
+  if (method === 'input.clipboard.get') {
+    if (text !== undefined || paste !== undefined) {
+      return { code: 'bad-request', message: 'input.clipboard.get takes only session.' };
+    }
+    return { value: { session, command: { input: 'clipboard-get' } } };
+  }
+  if (
+    typeof text !== 'string' ||
+    Buffer.byteLength(text, 'utf8') > MAX_CLIPBOARD_BYTES ||
+    (paste !== undefined && typeof paste !== 'boolean')
+  ) {
+    return {
+      code: 'bad-request',
+      message: `input.clipboard.set takes text of at most ${MAX_CLIPBOARD_BYTES} UTF-8 bytes and an optional paste flag.`,
+    };
+  }
+  return { value: { session, command: { input: 'clipboard', text, paste: paste === true } } };
 }
 
 /** Validates an `input.*` request for one of the connection's sessions; returns its session id and command. */
@@ -174,46 +302,9 @@ export function parseInput(
       return { code: 'bad-request', message: 'input.window needs a window id from 0 to 4294967295 or null.' };
     return { value: { session, command: { input: 'window', window } } };
   }
-  if (method === 'input.scroll' || method === 'input.key') {
-    if (platform !== 'macos')
-      return { code: 'bad-request', message: 'This input is for a native macOS app window only.' };
-    if (method === 'input.scroll') {
-      const { x, y, deltaX, deltaY } = params;
-      if (!fraction(x) || !fraction(y) || !delta(deltaX) || !delta(deltaY)) {
-        return {
-          code: 'bad-request',
-          message: 'input.scroll needs x and y from 0 to 1 and finite pixel deltas from -1000 to 1000.',
-        };
-      }
-      return {
-        value: {
-          session,
-          command: {
-            input: 'scroll',
-            x: x as number,
-            y: y as number,
-            deltaX: deltaX as number,
-            deltaY: deltaY as number,
-          },
-        },
-      };
-    }
-    const { key, modifiers = [] } = params;
-    if (
-      !INPUT_KEYS.includes(key as InputKey) ||
-      !Array.isArray(modifiers) ||
-      modifiers.length > 4 ||
-      new Set(modifiers).size !== modifiers.length ||
-      !modifiers.every((modifier) => KEY_MODIFIERS.includes(modifier as KeyModifier))
-    ) {
-      return {
-        code: 'bad-request',
-        message: 'input.key needs a supported native key and unique command, shift, option or control modifiers.',
-      };
-    }
-    return {
-      value: { session, command: { input: 'key', key: key as InputKey, modifiers: modifiers as KeyModifier[] } },
-    };
+  if (method === 'input.scroll' || method === 'input.key') return parseScrollOrKey(method, session, platform, params);
+  if (method === 'input.clipboard.set' || method === 'input.clipboard.get') {
+    return parseClipboard(method, session, platform, target.physical === true, params);
   }
   if (platform === 'web' && (method === 'input.rotate' || method === 'input.posture')) {
     return { code: 'bad-request', message: 'A web page does not rotate or fold.' };
@@ -254,9 +345,19 @@ export function parseInput(
     return { value: { session, command: { input: 'posture', posture: posture as DevicePosture } } };
   }
   if (method === 'input.touch') {
-    const { phase, x, y, display, duoRevision } = params;
+    const { phase, x, y, x2, y2, display, duoRevision } = params;
     if (!TOUCH_PHASES.includes(phase as TouchPhase) || !fraction(x) || !fraction(y)) {
       return { code: 'bad-request', message: 'input.touch needs phase (down, move or up), and x and y from 0 to 1.' };
+    }
+    let second: { x2: number; y2: number } | null = null;
+    if (x2 !== undefined || y2 !== undefined) {
+      if (typeof x2 !== 'number' || typeof y2 !== 'number' || !fraction(x2) || !fraction(y2)) {
+        return { code: 'bad-request', message: 'input.touch takes x2 and y2 together, each from 0 to 1.' };
+      }
+      if (platform === 'web' || platform === 'macos' || (platform === 'ios' && postures.length > 0)) {
+        return { code: 'bad-request', message: 'This device takes one finger only.' };
+      }
+      second = { x2, y2 };
     }
     if (
       display !== undefined &&
@@ -289,6 +390,7 @@ export function parseInput(
           phase: phase as TouchPhase,
           x: x as number,
           y: y as number,
+          ...second,
           ...(display === undefined ? {} : { display }),
           ...(duoRevision === undefined ? {} : { duoRevision: duoRevision as string }),
         },
@@ -319,11 +421,16 @@ export function parseInput(
   return { value: { session, command: { input: 'button', button: button as InputButton } } };
 }
 
-const ANDROID_KEYS: Record<InputButton | '\n' | '\t' | '\b', string> = {
+const ANDROID_KEYS: Record<InputButton | DeviceKey | '\n' | '\t' | '\b', string> = {
   home: 'KEYCODE_HOME',
   back: 'KEYCODE_BACK',
   'app-switch': 'KEYCODE_APP_SWITCH',
   lock: 'KEYCODE_POWER',
+  left: 'KEYCODE_DPAD_LEFT',
+  right: 'KEYCODE_DPAD_RIGHT',
+  up: 'KEYCODE_DPAD_UP',
+  down: 'KEYCODE_DPAD_DOWN',
+  escape: 'KEYCODE_ESCAPE',
   '\n': 'KEYCODE_ENTER',
   '\t': 'KEYCODE_TAB',
   '\b': 'KEYCODE_DEL',
@@ -334,8 +441,11 @@ const ANDROID_KEYS: Record<InputButton | '\n' | '\t' | '\b', string> = {
  * (`hw.keyboard=no`), which drops gRPC key events. `adb shell` joins its arguments into one device shell
  * command, so text goes single-quoted; `input text` reads `%s` as a space.
  */
-function adbInputArgs(command: Extract<InputCommand, { input: 'text' | 'button' }>): string[][] {
+export function adbInputArgs(command: Extract<InputCommand, { input: 'text' | 'button' | 'key' }>): string[][] {
   if (command.input === 'button') return [['shell', 'input', 'keyevent', ANDROID_KEYS[command.button]]];
+  if (command.input === 'key') {
+    return isDeviceKey(command.key) ? [['shell', 'input', 'keyevent', ANDROID_KEYS[command.key]]] : [];
+  }
   const calls: string[][] = [];
   for (const part of command.text.split(/([\n\t\b]+)/)) {
     if (!part) continue;
@@ -352,6 +462,20 @@ const ADB_TIMEOUT_MS = 10_000;
 
 const POSTURE_TIMEOUT_MS = 5_000;
 
+const CLIPBOARD_TIMEOUT_MS = 10_000;
+
+export const CLIPBOARD_INPUT_COST = 10;
+
+/** `simctl pbcopy` reads its stdin as bytes in the process's locale, so a non-ASCII clipboard needs UTF-8. */
+function simctlEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...env, LC_ALL: 'en_US.UTF-8' };
+}
+
+interface ChildText {
+  input?: string;
+  maxOutput?: number;
+}
+
 function runQuietly(
   env: NodeJS.ProcessEnv,
   file: string,
@@ -359,22 +483,38 @@ function runQuietly(
   label: string,
   timeoutMs: number,
   claim?: ClaimHandle,
-): Promise<void> {
+  text: ChildText = {},
+): Promise<string> {
   let childPid: number | undefined;
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     if (claim) markClaimChildPending(claim);
-    const child = spawn(file, args, { env, detached: !!claim, stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(file, args, { env, detached: !!claim, stdio: ['pipe', 'pipe', 'pipe'] });
     childPid = child.pid;
     let stderr = '';
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let oversized = false;
     let timedOut = false;
     const finish = (code: number | null) => {
       clearTimeout(timer);
       if (timedOut) return;
       if (claim && child.pid && processGroupAlive(child.pid))
         return reject(new Error(`${label} left an unresolved process group; its input claim was retained.`));
-      if (code === 0) resolve();
+      if (oversized) return reject(new Error(`${label} wrote more than ${text.maxOutput} bytes.`));
+      if (code === 0) resolve(Buffer.concat(chunks).toString('utf8'));
       else reject(new Error(`${label} failed (code ${code}): ${stderr.trim()}`));
     };
+    child.stdin.on('error', () => {});
+    child.stdin.end(text.input);
+    const limit = text.maxOutput;
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (limit === undefined) return;
+      size += chunk.length;
+      if (size > limit) {
+        oversized = true;
+        child.kill();
+      } else chunks.push(chunk);
+    });
     const timer = setTimeout(() => {
       child.stderr.destroy();
       if (child.exitCode !== null || child.signalCode !== null) return finish(child.exitCode);
@@ -407,7 +547,13 @@ function runQuietly(
 }
 
 function runAdb(env: NodeJS.ProcessEnv, serial: string, args: string[]): Promise<void> {
-  return runQuietly(env, adbPath(env), ['-s', serial, ...args], `adb ${args.slice(0, 3).join(' ')}`, ADB_TIMEOUT_MS);
+  return runQuietly(
+    env,
+    adbPath(env),
+    ['-s', serial, ...args],
+    `adb ${args.slice(0, 3).join(' ')}`,
+    ADB_TIMEOUT_MS,
+  ).then(() => undefined);
 }
 
 function activityOf(payload: StatusPayload, target: ControlBeginParams): DeviceActivity | undefined {
@@ -476,6 +622,10 @@ interface Session {
   postures: DevicePosture[];
   simulator: SimulatorOptions | null;
   simulatorAbort: AbortController;
+  grab: PointerGrab<PresenceParticipant, TouchCommand>;
+  grabIdle: NodeJS.Timeout | null;
+  /** Whether the session's own controller, not a participant it forwards, published a touch as the host. */
+  hostShown: boolean;
   startedAt: number;
   idle: NodeJS.Timeout;
   renew: NodeJS.Timeout;
@@ -512,6 +662,10 @@ export interface ControlOptions {
   conflict: (deviceId: string, conflict: ControlConflict) => void;
   /** Test switch: resolves a `physical` target to an emulator the workspace leases, driven over adb. */
   adbEmulators?: boolean;
+  /** Hears each input this hub forwards, so the viewer record dates the device's last use. */
+  onInput?: (device: Device) => void;
+  /** Shows each touch to the device's presence subscribers. */
+  presence?: Pick<PresenceHub, 'touch' | 'leave'>;
 }
 
 const STATUS_WAIT_MS = 60_000;
@@ -717,6 +871,9 @@ export class ControlHub {
       postures,
       simulator,
       simulatorAbort: new AbortController(),
+      grab: new PointerGrab(),
+      grabIdle: null,
+      hostShown: false,
       startedAt: Date.now(),
       idle: setTimeout(() => void this.end(session, 'idle', 'No input for 5 minutes.'), this.options.idleMs),
       renew: setInterval(() => this.renew(session, beganAt), this.options.renewMs),
@@ -779,7 +936,16 @@ export class ControlHub {
     );
   }
 
-  input(owner: Controller, id: string, command: InputCommand): Promise<Refusal | SimulatorOptions | null> {
+  /**
+   * `participant` is the viewer a share forwards the input for; it holds the device's pointer from its `down` until
+   * its `up` and is told when another holds it. Input without one is the owner's own, shown as the host.
+   */
+  input(
+    owner: Controller,
+    id: string,
+    command: InputCommand,
+    participant?: PresenceParticipant,
+  ): Promise<Refusal | BusyRefusal | SimulatorOptions | InputClipboardGetResult | null> {
     const session = this.sessions.get(id);
     if (!session || session.owner !== owner || session.ended) {
       return Promise.resolve({ code: 'unknown-session', message: `No control session ${id} on this connection.` });
@@ -794,7 +960,13 @@ export class ControlHub {
       void this.end(session, 'device-gone', message);
       return Promise.resolve({ code: 'unknown-session', message });
     }
+    this.options.onInput?.(session.device);
+    if (command.input === 'touch') {
+      const dropped = this.touch(session, command, participant);
+      if (dropped !== undefined) return Promise.resolve(dropped);
+    }
     if (command.input === 'simulator') return this.simulator(session, command);
+    if (command.input === 'clipboard' || command.input === 'clipboard-get') return this.clipboard(session, command);
     if (command.input === 'posture' && session.device.platform === 'ios') {
       const udid = session.device.udid;
       if (this.folding.has(udid))
@@ -828,7 +1000,7 @@ export class ControlHub {
     const run = (async (): Promise<Refusal | null> => {
       await previous;
       try {
-        for (const args of adbInputArgs(command as Extract<InputCommand, { input: 'text' | 'button' }>)) {
+        for (const args of adbInputArgs(command as Extract<InputCommand, { input: 'text' | 'button' | 'key' }>)) {
           if (session.ended) return null;
           await runAdb(this.options.env, serial, args);
         }
@@ -839,6 +1011,140 @@ export class ControlHub {
     })();
     session.adb = run.then(() => undefined);
     return this.pending.track(run);
+  }
+
+  private clipboard(
+    session: Session,
+    command: Extract<InputCommand, { input: 'clipboard' | 'clipboard-get' }>,
+  ): Promise<Refusal | InputClipboardGetResult | null> {
+    const { device } = session;
+    const set = command.input === 'clipboard' ? command : null;
+    const read = async (): Promise<string> => {
+      const text = await this.readClipboard(session, device);
+      if (Buffer.byteLength(text, 'utf8') > MAX_CLIPBOARD_READ_BYTES) {
+        throw new Error(`The device clipboard is larger than ${MAX_CLIPBOARD_READ_BYTES} bytes.`);
+      }
+      return text;
+    };
+    const run = async (): Promise<Refusal | InputClipboardGetResult | null> => {
+      try {
+        if (!set) return { text: await read() };
+        if (device.platform === 'ios') {
+          const claim = session.claim ? takeHostedInputClaim(session.claim) : undefined;
+          await runQuietly(
+            simctlEnv(this.options.env),
+            'xcrun',
+            ['simctl', 'pbcopy', device.udid],
+            'simctl pbcopy',
+            CLIPBOARD_TIMEOUT_MS,
+            claim,
+            {
+              input: set.text,
+            },
+          );
+          if (set.paste && !session.ended) session.input.send({ clipboard: 'paste' });
+        } else if (device.platform === 'android') {
+          await session.input.clipboard({
+            text: set.text,
+            paste: set.paste && device.physical === true,
+          });
+          if (set.paste && !device.physical && !session.ended) {
+            await runAdb(this.options.env, device.serial, ['shell', 'input', 'keyevent', 'KEYCODE_PASTE']);
+          }
+        }
+        return null;
+      } catch (cause) {
+        return { code: 'action-failed', message: cause instanceof Error ? cause.message : String(cause) };
+      }
+    };
+    if (device.platform !== 'android' || device.physical) return this.pending.track(run());
+    const previous = session.adb;
+    const queued = previous.then(run);
+    session.adb = queued.then(() => undefined);
+    return this.pending.track(queued);
+  }
+
+  private async readClipboard(session: Session, device: Device): Promise<string> {
+    if (device.platform === 'ios') {
+      const claim = session.claim ? takeHostedInputClaim(session.claim) : undefined;
+      return runQuietly(
+        simctlEnv(this.options.env),
+        'xcrun',
+        ['simctl', 'pbpaste', device.udid],
+        'simctl pbpaste',
+        CLIPBOARD_TIMEOUT_MS,
+        claim,
+        {
+          maxOutput: MAX_CLIPBOARD_READ_BYTES,
+        },
+      );
+    }
+    return (await session.input.clipboard(null)) ?? '';
+  }
+
+  /** Admits a touch through the pointer grab and shows it; undefined when it goes on to the device. */
+  private touch(
+    session: Session,
+    command: TouchCommand,
+    participant?: PresenceParticipant,
+  ): BusyRefusal | null | undefined {
+    if (participant) {
+      const verdict = session.grab.admit(participant, command);
+      if (!verdict.admit) {
+        return verdict.busy === undefined
+          ? null
+          : { code: 'device-busy', message: `${verdict.busy} is using the screen.`, busy: verdict.busy };
+      }
+      if (session.grabIdle) clearTimeout(session.grabIdle);
+      session.grabIdle = command.phase === 'up' ? null : setTimeout(() => this.expireGrab(session), GRAB_IDLE_MS);
+    }
+    this.show(session, participant ?? this.host(session), command);
+    return undefined;
+  }
+
+  private host(session: Session): PresenceParticipant {
+    session.hostShown = true;
+    return { id: session.id, kind: 'host', name: 'Host', color: 0 };
+  }
+
+  private show(session: Session, who: PresenceParticipant, command: TouchCommand): void {
+    const { platform, slot, physical, workspace } = session.target;
+    if (!this.options.presence || (platform !== 'ios' && platform !== 'android')) return;
+    this.options.presence.touch(presenceKey(workspace, platform, slot ?? 'default', physical === true), who, {
+      phase: command.phase,
+      x: command.x,
+      y: command.y,
+      ...(command.x2 !== undefined && command.y2 !== undefined ? { second: { x: command.x2, y: command.y2 } } : {}),
+      ...(command.display !== undefined ? { display: command.display } : {}),
+      at: Date.now(),
+    });
+  }
+
+  private lift(session: Session, lifted: { holder: { id: string }; up: TouchCommand } | null): void {
+    if (session.grabIdle) clearTimeout(session.grabIdle);
+    session.grabIdle = null;
+    if (!lifted || session.ended) return;
+    session.input.send(
+      lifted.up.display === undefined && lifted.up.duoRevision === undefined
+        ? { ...lifted.up, display: session.frames.litDisplay(session.device) }
+        : lifted.up,
+    );
+  }
+
+  private expireGrab(session: Session): void {
+    const lifted = session.grab.expire();
+    session.grabIdle = null;
+    this.lift(session, lifted);
+    if (lifted) this.show(session, lifted.holder, lifted.up);
+  }
+
+  /** A participant that held the pointer left (its socket closed): lifts the pointer for it. */
+  release(owner: Controller, id: string, participant: PresenceParticipant): void {
+    const session = this.sessions.get(id);
+    if (!session || session.owner !== owner) return;
+    const lifted = session.grab.release(participant.id);
+    this.lift(session, lifted);
+    if (lifted) this.show(session, participant, lifted.up);
   }
 
   private async simulator(
@@ -936,6 +1242,8 @@ export class ControlHub {
     session.simulatorAbort.abort();
     clearTimeout(session.idle);
     clearInterval(session.renew);
+    if (session.grabIdle) clearTimeout(session.grabIdle);
+    if (session.hostShown) this.hideHost(session);
     session.unwatch();
     session.input.detach();
     this.sessions.delete(session.id);
@@ -948,6 +1256,13 @@ export class ControlHub {
     });
     if (!release || !session.lease?.mine) return Promise.resolve();
     return this.pending.track(session.renewing.then(() => this.unlock(session.target, session.cwd)));
+  }
+
+  private hideHost(session: Session): void {
+    const { platform, slot, physical, workspace } = session.target;
+    if (platform === 'ios' || platform === 'android') {
+      this.options.presence?.leave(presenceKey(workspace, platform, slot ?? 'default', physical === true), session.id);
+    }
   }
 
   private status(): Promise<StatusPayload | Refusal> {

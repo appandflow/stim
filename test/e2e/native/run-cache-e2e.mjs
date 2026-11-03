@@ -69,6 +69,8 @@ if (!args.dryRun) mkdirSync(CACHE_TMP_DIR, { recursive: true });
 const ENV = {
   ...process.env,
   STIM_HOME: HOME_DIR,
+  STIM_DAEMON: 'off',
+  STIM_TEST_GUARD_NO_HOME_PASSES: '1',
   STIM_BUILD_CACHE: BUILD_CACHE_ROOT,
   STIM_METRO_CACHE: METRO_CACHE_ROOT,
   TMPDIR: CACHE_TMP_DIR,

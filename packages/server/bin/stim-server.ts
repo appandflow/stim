@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { hostname, networkInterfaces } from 'node:os';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { readHostedSessions } from '@stim-cli/core/state';
+import { configDir } from '@stim-cli/core';
+import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { discoverToolchain } from '@stim-cli/core/toolchain';
 import { bundledStim } from '../src/environment.ts';
 import { formatHostedSessions, readHostedSessionRows } from '../src/hosted-sessions.ts';
@@ -63,6 +65,8 @@ const USAGE = `Usage:
                                     serve paired clients (default port ${DEFAULT_PORT});
                                     --loopback-only serves this machine only (127.0.0.1, no remote peers);
                                     --env and --path-prepend apply after the login shell's environment
+  stim-server --share [--port <n>]  what \`stim share\` starts when no stim-server runs: loopback only, and it
+                                    exits once its last web share ends, or after 2 minutes without one
   STIM_SETUP_TICKET=<t> stim-server setup --expires <iso>
                     [--build] [--device-host] [--port <n>] [--label <name>]
                     [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json] [--verbose] [--no-wait]
@@ -131,7 +135,13 @@ function macName(tailscale: TailscaleState): string {
   return (tailscale.state === 'running' && tailscale.hostName) || hostname();
 }
 
-async function serve(port: number, extraEnv: string[], pathPrepend: string[], loopbackOnly: boolean): Promise<void> {
+async function serve(
+  port: number,
+  extraEnv: string[],
+  pathPrepend: string[],
+  loopbackOnly: boolean,
+  shareOnly = false,
+): Promise<void> {
   const bootstrapFd = process.env.STIM_DESKTOP_BOOTSTRAP_FD;
   delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
   if (bootstrapFd !== undefined && bootstrapFd !== '0') fail('Desktop bootstrap input is invalid or unavailable.');
@@ -170,6 +180,27 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
   await Promise.race([lanSetting.ready, new Promise((done) => setTimeout(done, 1000).unref())]);
   const lan = localTransport({ entries: lanSetting.current });
   const stim = bundledStim();
+  let shareClaim: ClaimHandle | null = null;
+  if (shareOnly) {
+    let attempt;
+    try {
+      attempt = tryAcquireClaim({
+        root: join(configDir(), 'server', 'share-server'),
+        mode: 'exclusive',
+        label: 'web share server',
+        details: { port },
+      });
+    } catch (error) {
+      fail(
+        `cannot record this server as the one stim share started: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (!attempt.acquired)
+      fail(`a stim-server started for web shares already runs (pid ${attempt.held?.owner.pid ?? 'unknown'}).`);
+    shareClaim = attempt.acquired;
+  }
+  let idle: (() => void) | null = null;
   let server;
   try {
     server = await startServer({
@@ -178,6 +209,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
       host: captureHost,
       hosts: ['127.0.0.1'],
       ...(loopbackOnly ? { loopbackOnly: true } : {}),
+      ...(shareOnly ? { shareServer: { idle: () => idle?.() } } : {}),
       port,
       stimCli: stim.cli,
       stimVersion: stim.version,
@@ -245,12 +277,29 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
         reportShutdownFailure(error);
         process.exitCode = 1;
       })
-      .finally(() => process.exit());
+      .finally(() => {
+        releaseClaim(shareClaim);
+        process.exit();
+      });
+  };
+  idle = () => {
+    console.log('stim-server: no web share is left; stopping.');
+    shutdown();
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('SIGHUP', shutdown);
   void desktopInput?.closed.then(shutdown);
+  if (shareOnly) {
+    const startup = await server.ready;
+    if (startup.state !== 'ready') {
+      console.error(
+        `stim-server: not serving web shares, because ${startup.state === 'degraded' ? startup.reason : 'it did not start'}; stopping.`,
+      );
+      process.exitCode = 1;
+      shutdown();
+    }
+  }
   if (!loopbackOnly) await announce(tailscale);
 }
 
@@ -421,6 +470,7 @@ async function main(): Promise<void> {
     options: {
       port: { type: 'string' },
       'loopback-only': { type: 'boolean' },
+      share: { type: 'boolean' },
       json: { type: 'boolean' },
       control: { type: 'boolean' },
       read: { type: 'boolean' },
@@ -462,7 +512,15 @@ async function main(): Promise<void> {
   if (values['loopback-only'] && command !== undefined) {
     fail(`--loopback-only applies only to serving.\n${USAGE}`);
   }
-  if (command === undefined) return serve(port, extraEnv, pathPrepend, values['loopback-only'] === true);
+  if (values.share && command !== undefined) fail(`--share applies only to serving.\n${USAGE}`);
+  if (command === undefined)
+    return serve(
+      port,
+      extraEnv,
+      pathPrepend,
+      values['loopback-only'] === true || values.share === true,
+      values.share === true,
+    );
   const grant = command === 'devices' && sub === 'grant';
   if (values.read && !grant) fail(`--read applies only to \`devices grant\`.\n${USAGE}`);
   for (const flag of ['build', 'device-host'] as const) {

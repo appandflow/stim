@@ -620,7 +620,10 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
       (!isPlainObject(value) || ![...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`)))
     )
       continue;
-    if (isPlainObject(value) && [...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`))) {
+    if (
+      isPlainObject(value) &&
+      [...KNOWN_SETTINGS, ...Object.keys(REPLACED_SETTINGS)].some((k) => k.startsWith(`${path}.`))
+    ) {
       unknown.push(...unknownSettingKeys(value, path));
       continue;
     }
@@ -634,7 +637,9 @@ export function inertSettingWarning(settings: unknown, key: string): string {
   const instead = advice
     ? advice.command
       ? ` Run \`${advice.command}\` instead.`
-      : ` Use ${advice.key} instead.`
+      : advice.key
+        ? ` Use ${advice.key} instead.`
+        : ` ${advice.replacement.charAt(0).toUpperCase()}${advice.replacement.slice(1)}.`
     : '';
   return `Warning: setting "${key}" is not read by Stim and will be ignored.${instead}`;
 }
@@ -947,25 +952,13 @@ export function remoteAndroidSetting(settings: SettingsObject): IosRemoteTarget 
   return isPlainObject(android) && typeof android.remote === 'string' ? parseIosRemote(android.remote) : null;
 }
 
-function minutesSetting(settings: SettingsObject, block: string, name: string): number {
-  const parent = settings[block];
-  const value = isPlainObject(parent) ? parent[name] : undefined;
-  const setting = settingDefinition(`${block}.${name}`);
+/** `idle.minutes`, or its default when it is unset or invalid. */
+export function idleMinutesSetting(settings: SettingsObject): number {
+  const setting = settingDefinition('idle.minutes');
+  const value = settingValueAt(settings, 'idle.minutes');
   return setting && value !== undefined && settingValueError(setting, value) === null
     ? (value as number)
     : Number(setting?.default);
-}
-
-export function metroIdleStopMinutesSetting(settings: SettingsObject): number {
-  return minutesSetting(settings, 'metro', 'idleStopMinutes');
-}
-
-export function deviceIdleShutdownMinutesSetting(settings: SettingsObject): number {
-  return minutesSetting(settings, 'devices', 'idleShutdownMinutes');
-}
-
-export function deviceReclaimIdleMinutesSetting(settings: SettingsObject): number {
-  return minutesSetting(settings, 'devices', 'reclaimIdleMinutes');
 }
 
 export function maintenanceKeepSetting(settings: SettingsObject): boolean {

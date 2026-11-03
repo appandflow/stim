@@ -27,12 +27,25 @@ the source checkout is infrastructure, not a workspace: you edit, build, and run
 in the worktree, and you keep the seed fit to copy. Every rule below about the
 source checkout's fitness as a seed belongs to this workflow.
 
+DISPOSABLE STATE
+
+In every workspace, node_modules, ios/Pods, Xcode DerivedData and the build
+directories (android/app/build, android/build, android/.gradle, .build,
+android/.cxx, android/<module>/.cxx and a .dd directory laid out as DerivedData) are
+disposable. The stim-daemon deletes a workspace's build outputs when it goes
+idle, and node_modules and Pods of idle linked worktrees under critical disk
+pressure; the next start, ios or android restores them from the build cache
+or with worktree warm. Never fix a dependency by editing files inside them:
+the change is lost. Put dependency changes in the project's own patch
+mechanism, such as patch-package, pnpm patch, yarn patch or a Podfile
+post_install hook, and commit them.
+
 MULTIPLE DEVICES
 
 Use ios/android --slot <name> to retain multiple devices in one workspace,
 including several of the same model. Reuse the same slot name on subsequent
-runs. Read guide lifecycle options for the complete slot workflow. Use the
-reported device ID for UI interaction. All slots share Metro and reload can
+runs. Read guide lifecycle options for the complete slot workflow. Drive a
+slot's device with stim agent-device --slot <name>. All slots share Metro and reload can
 reach multiple devices. A launch counts a bundle delivery only when it can
 attribute it to its own device; read guide lifecycle options for the rule.
 Use stop --slot <name> for one slot, or plain stop for the whole workspace.
@@ -50,20 +63,29 @@ A named Mac never falls back here; auto can use the local device queue when no
 host admits. Auto keeps a live local slot or recorded hosted session. Follow the
 placement reason and the reported device. Stop reconciles a recorded host
 before changing named placement.
-For hosted iOS or Android, use agent-device <command> --remote-config <file>
-from ios.host.agent or android.host.agent in stim status --json. Open the
-installed app first; never use the host UDID or serial locally. See guide
-lifecycle hosted-ios or hosted-android for the agent policy and setup.
+DRIVING THE DEVICE
 
-When driving a device yourself with agent-device, set AGENT_DEVICE_STATE_DIR
-from agentDevice.stateDir in stim ios|android|macos --json or status --json.
-Its sessions and logs are then cleaned with the workspace. Do not set
-AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH or AGENT_DEVICE_CLAIMS_DIR; the runner
-build cache and device claims stay shared. Read stim guide logs for examples.
-stim start writes a boot hook into that directory: an agent-device that reads
-it runs stim revive instead of booting a shut-down simulator or emulator
-itself. When revive refuses, agent-device's error quotes its output; follow
-that remedy.
+Drive this workspace's iOS or Android device through stim agent-device, never
+agent-device directly. Pass agent-device's own arguments and no device ids:
+
+  stim agent-device open <bundle id>
+  stim agent-device snapshot -i --json
+  stim agent-device press @e3
+  stim agent-device scroll down --slot tablet --platform android
+
+Stim adds the platform, the UDID or serial, the session (stim-<slot>-<platform>
+unless you pass --session) and AGENT_DEVICE_STATE_DIR, or the remote config of
+a hosted iOS or Android session (guide lifecycle hosted-ios or hosted-android).
+--slot picks a slot; --platform is needed only when the slot has both. It
+revives an idle-stopped workspace before the command (progress on stderr) and
+refuses with STIM_BAD_ARG a UDID, serial, device or remote config that is not
+this workspace's, and boot and shutdown: Stim owns the device lifecycle. stdout, stderr and the exit
+code are agent-device's, so --json output stays parseable. Take snapshots with
+--json so viewers can outline the element each press acts on. It needs
+agent-device 0.21.30 or later; it does not drive macOS apps (guide macos).
+Without it, set AGENT_DEVICE_STATE_DIR from agentDevice.stateDir in
+stim ios|android|macos --json or status --json (guide logs). Do not set
+AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH or AGENT_DEVICE_CLAIMS_DIR.
 
 NORMAL WORKFLOW
 
@@ -164,7 +186,7 @@ waiting times out.
 
   # Edit JavaScript or TypeScript; Fast Refresh applies the change.
   # For UI work, wait for the expected UI and repeat the affected interaction
-  # on the reported device. Keep using the existing automation session, if any.
+  # with stim agent-device. Keep using the existing session, if any.
   stim logs --errors
   # Retain proof before cleanup: a screenshot, recording, or relevant runtime output.
 
@@ -248,8 +270,8 @@ RULES DURING THE LOOP
   port, server, or build facts. A normal start and platform run already print
   them. Use stim doctor when a build is unexpectedly slow or the environment
   looks incomplete. If status reports a changed Android serial, rerun stim
-  android with the same build options to restore forwarding, then reopen your automation
-  session on the reported serial (guide lifecycle). Each status issue names a
+  android with the same build options to restore forwarding; stim agent-device
+  then targets the new serial (guide lifecycle). Each status issue names a
   remedy to run from its workspace (guide facts status).
 
 OWNERSHIP AND DELETION
@@ -285,23 +307,28 @@ stop and worktree remove release this workspace's leases. On a physical
 iPhone, stop also closes the app by ending its log collector; it does not
 shut down the phone or uninstall the app.
 
-Owned-device caps wait in FIFO order across the Stim home for 600s by default.
-Use --wait <seconds> to change the bound or --no-wait to refuse at once.
-At the cap, the queue head shuts down one longest-idle eligible owned device
-from another workspace, at most once every 15 seconds, then rechecks capacity.
-devices.reclaimIdleMinutes is 10 by default; 0 off.
-It never deletes devices or touches this workspace, physical, hosted, remote,
-parked or other homes' devices. Drivers, locks, builds, viewers and recent
-activity prevent reclaim. The supervisor's own idle shutdown default is 15m.
+Builds and boots of owned devices take a slot under caps derived from the
+machine (concurrency.* overrides them). A run past a cap waits in arrival
+order and prints its queue position every 10s. It keeps waiting while the
+holders ahead are alive; it refuses with STIM_AT_CAPACITY only after 90m, or
+when a holder cannot be verified (or devices cannot be counted) for
+max(10m, position x 5m). Use --wait <seconds> to bound a device wait or
+--no-wait to refuse at once.
+While a run waits to boot, the stim-daemon shuts down one idle device (2m) of
+another workspace per tick; it never deletes devices or touches this
+workspace, physical, hosted, remote, parked or other homes' devices.
 Read the holder names in progress and build.waitingFor in status; do not start
 replacement runs while one is queued. See \`stim guide lifecycle concurrency\`.
 
-After maintenance.idleStopHours (default 6) with no Stim command, native run,
-Metro bundle or HMR request, agent-device command or live view, automatic
-maintenance stops the workspace as stim stop does. Device and app logs do not
-count. A device hosted on a remote Mac stops with it, and stim-server stops a hosted
-session whose client has been gone that long. After a long pause, run stim ios or android again before driving the
-app; see \`stim guide cleanup\`.
+After idle.minutes (default 15) with no Stim command, native run, Metro
+request, agent-device action or input to its devices, the stim-daemon puts the
+workspace in the idle stage: Metro stops with its port kept, its owned devices
+shut down and its regenerable build outputs are deleted. Device and app logs do
+not count. stim status shows the stage; after a pause, run stim revive to
+restart Metro, boot the device and relaunch the app before driving it. A device
+hosted on a remote Mac keeps its workspace out of the idle stage, and
+stim-server stops a hosted session whose client has been gone for
+maintenance.idleStopHours; see \`stim guide cleanup\`.
 
 Treat a refusal as an ownership or state mismatch: read its code and remedy.
 Never reach for --force first.
@@ -320,23 +347,26 @@ Ask the user before these actions:
   files.
 - gc --delete, because it deletes orphaned resources, removes clean linked
   worktrees whose branch or pull request is merged (or whose pull request
-  was closed), and lightens every workspace that is not building and ran
-  no ios, android or macos command in the last 15 minutes, a running dev
-  server included, by clearing its build outputs and its git-ignored
-  in-tree build directories, and deletes node_modules and ios/Pods of idle
-  linked worktrees, which the next start, ios or android restores with
-  worktree warm. Run stim gc --json first and show
-  the user the entries its sections list (guide facts gc). gc --delete
-  --cache all empties the shared build caches and those outputs instead, and
-  gc --delete --cache workspaces clears only the outputs; both inspect
-  nothing else.
+  was closed), and runs the pressure ladder to its end at high: every
+  workspace idle 2 minutes or more goes idle (stim revive resumes it),
+  parked devices are deleted, shared caches are trimmed, and workspaces idle
+  10 minutes or more go dormant, losing their owned devices. That includes
+  the workspace you run it from: an app you are not driving right now stops.
+  It never touches a workspace that is building, driven, leased, shared
+  with stim share, hosted or pinned by maintenance.keep, and keeps
+  node_modules and Pods unless --cache all. Run stim gc
+  --json first and show the user its sections and its ladder (guide facts
+  gc). gc --delete --cache all also empties the shared build caches and the
+  build outputs, and runs the ladder at critical, which deletes node_modules
+  and ios/Pods of idle linked worktrees (worktree warm restores them).
+  gc --delete --cache workspaces clears only the outputs.
 - gc --delete --worktrees, because it runs worktree remove on every clean,
   idle linked worktree Stim manages, across projects.
-- settings set maintenance.mode on in a home where it is off or report, because
-  it lets Stim itself clear build outputs, trim caches and remove finished
-  worktrees later, with no command from you. It is on by default outside CI
-  and scoped STIM_HOME homes. maintenance.keep true pins a workspace against
-  that; maintenance.mode report or off stops it.
+- settings set daemon.mode on in a home where it is off or report, because
+  it lets Stim itself stop idle workspaces, delete their build outputs and
+  devices, trim caches and remove finished worktrees later, with no command
+  from you. It is on by default outside CI. maintenance.keep true pins a
+  workspace against that; daemon.mode report or off stops it.
 - stop when the workspace owns an EAS session, because it irreversibly ends
   that remote session. For a local device, stop shuts it down but does not
   delete it. An explicit stop shuts down a Stim-owned simulator even when
@@ -381,13 +411,14 @@ Read the matching guide before acting in these situations:
 | Running under a sandbox                               | stim guide errors sandbox        |
 | Release configuration or ...Release variant           | stim guide lifecycle release     |
 | Web app in an owned Chrome (stim web)                 | stim guide web                   |
+| User asks to share the running app (stim share)       | stim guide share                 |
 | Web or API server ports                               | stim guide ports                 |
 | Remote device, custom Metro, or tunnel                | stim guide metro                 |
 | Metro stopped and no one ran stim stop                | stim guide metro                 |
 | App shows could not connect or blank after a pause    | stim guide metro                 |
 | Cache miss, bypass, or fingerprint exclusions         | stim guide lifecycle builds      |
 | Capacity limits                                       | stim guide lifecycle concurrency |
-| budget lines, reclaimed field, or low disk            | stim guide lifecycle budget      |
+| Pressure level, STIM_LOW_DISK, or the dormant stage   | stim guide lifecycle budget      |
 | Cache statistics from stim stats                      | stim guide facts stats           |
 | Worktree carry-over                                   | stim guide lifecycle options     |
 | Doctor finding: seed checkout or cross-volume copy    | stim guide lifecycle options     |
@@ -425,7 +456,7 @@ FULL TOPIC LIST
   stim guide lifecycle readiness  # add recommended app readiness logs; no package required
   stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints
   stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits
-  stim guide lifecycle budget     # disk and memory budgets, automatic reclaim
+  stim guide lifecycle budget     # pressure level, the ladder, the dormant stage
   stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image, --device-profile
   stim guide lifecycle devices    # ios --device and android --device on a physical phone
   stim guide lifecycle tools      # device location|permission|push|network on the owned simulator or emulator
@@ -435,6 +466,7 @@ FULL TOPIC LIST
   stim guide facts devmenu        # the Expo dev menu or Tools button over the app
   stim guide macos                # Swift Package Debug apps, logs, local preview, --remote on another Mac
   stim guide web                  # stim web: owned Chrome, page logs, launched, teardown
+  stim guide share                # stim share: public password-protected link, security model
   stim guide ports                # named ports for web and API servers
   stim guide metro                # supervisor, custom Metro, tunnels, and remote devices
   stim guide logs                 # filters, record shape, and capture limits

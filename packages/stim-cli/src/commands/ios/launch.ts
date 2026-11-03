@@ -593,7 +593,6 @@ interface FinishIosRunArgs {
   lease: RunLease | null;
   releaseLease: () => void;
   recordRun: ReportIosResultArgs['recordRun'];
-  reclaimed: ReportIosResultArgs['reclaimed'];
   devServer: ReportIosResultArgs['devServer'];
   enterPhase: (phase: BuildPhase) => void;
   enterActivity: BuildProgress['activity'];
@@ -893,7 +892,6 @@ export async function finishIosRun({
   lease,
   releaseLease,
   recordRun,
-  reclaimed,
   devServer,
   enterPhase,
   enterActivity,
@@ -1352,7 +1350,6 @@ export async function finishIosRun({
     webPreviewUrl: remoteDevice?.webPreviewUrl() ?? null,
     lease: physical ? leaseFacts : undefined,
     recordRun,
-    reclaimed,
     devServer,
     links: await workspaceLinks(root, { platform: 'ios', slot }),
   });

@@ -137,6 +137,12 @@ final class ServerController: ObservableObject {
     return bootstrap
   }
 
+  /// Whether Desktop started the server it is running, which quitting stops. An adopted server keeps running.
+  var runsOwnedServer: Bool {
+    guard case .running(_, owned: true) = state else { return false }
+    return process?.isRunning == true
+  }
+
   static let devicesInterval: Duration = .seconds(10)
   static let inactiveDevicesInterval: Duration = .seconds(60)
 

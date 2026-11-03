@@ -25,7 +25,7 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.notifiesDiskPressure) private var notifiesPressure = true
   @AppStorage(NotificationSettings.stuckMinutesKey) private var stuckMinutes = Oversight.defaultStuckMinutes
   @AppStorage(NotificationSettings.quietHoursKey) private var quietHours = "off"
-  @EnvironmentObject private var autopilot: AutopilotRunner
+  @EnvironmentObject private var pressure: DaemonPressureMonitor
   @EnvironmentObject private var onboarding: Onboarding
   @ObservedObject private var updater = AppUpdater.shared
   @State private var launchesAtLogin = SMAppService.mainApp.status == .enabled
@@ -112,7 +112,8 @@ struct AppPreferencesView: View {
       }
 
       MaintenanceSection(
-        maintenance: autopilot.cliMaintenance, statusLoaded: autopilot.statusLoaded, settings: settings)
+        maintenance: pressure.cliMaintenance, daemon: pressure.daemon, statusLoaded: pressure.statusLoaded,
+        settings: settings)
 
       CleanupHistorySection(history: history)
 
@@ -146,7 +147,7 @@ struct AppPreferencesView: View {
         ForEach(StatusEvent.Kind.allCases, id: \.self) { kind in
           NotificationToggle(kind: kind)
         }
-        Toggle("Free disk falls under the Stim budget", isOn: $notifiesPressure)
+        Toggle("The pressure level needs attention", isOn: $notifiesPressure)
           .disabled(!Notifier.isAvailable)
           .onChange(of: notifiesPressure) { _, on in if on { Notifier.requestAuthorization() } }
         Stepper("Remote session reminder after \(remoteMinutes) min", value: $remoteMinutes, in: 5...240, step: 5)
@@ -185,11 +186,19 @@ struct AppPreferencesView: View {
       Section {
         Toggle("Automatically check for updates", isOn: $updater.automaticallyChecksForUpdates)
           .disabled(!updater.isAvailable)
+        Toggle("Get prerelease updates", isOn: $updater.prereleaseUpdates)
+          .disabled(!updater.isAvailable)
       } header: {
         Text("Updates")
       } footer: {
         if !updater.isAvailable {
           Text("This build has no update key, so it never checks for updates.").foregroundStyle(Palette.tertiary)
+        } else {
+          Text(
+            "Prereleases are notarized builds of every Desktop change on main, so they can be unfinished. "
+              + "Turning this off keeps the installed build until a newer stable release."
+          )
+          .foregroundStyle(Palette.tertiary)
         }
       }
 

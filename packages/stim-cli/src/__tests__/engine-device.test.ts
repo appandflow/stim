@@ -11,10 +11,10 @@ import {
   deviceCapacityRefusal,
   countLiveOwnedDevices,
   withDeviceBootAdmission,
+  type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
-import { ClaimRefusedError, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { ClaimRefusedError, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
-import { enforceBudget } from '../budget.ts';
 import {
   allConsolePortsAndSerials,
   getProject,
@@ -28,6 +28,7 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { workspaceId, workspaceLogsDir } from '../workspace/paths.ts';
 import { decodeStats, statsFile } from '@stim-cli/core/state';
+import * as iosDevices from '../devices/ios.ts';
 import { createIosSimSnapshot, ownedSimName } from '../devices/ios.ts';
 import { makeAdbDevices, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
 import { androidBuildOptions } from '../commands/android/support.ts';
@@ -331,6 +332,66 @@ describe('ensureBooted: ios', () => {
     },
   );
 
+  test.each([
+    ['none', false],
+    ['siniulator', true],
+  ] as const)(
+    'boots an owned sim with simulatorApp %s and opens a viewer only when one is chosen',
+    async (simulatorApp, opens) => {
+      let listCalls = 0;
+      let springBoardCalls = 0;
+      const commands: string[] = [];
+      const run = (cmd: string) => {
+        commands.push(cmd);
+        if (cmd.includes('list devices')) {
+          listCalls += 1;
+          const state = listCalls >= 3 ? 'Booted' : 'Shutdown';
+          return simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]);
+        }
+        return '';
+      };
+      setExecutor({
+        run,
+        runQuiet: () => '',
+        runFileQuiet: (file, args = []) => {
+          commands.push([file, ...args].join(' '));
+          return '';
+        },
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+          }
+          if (file === 'xcrun' && args[1] === 'spawn' && args[3] === 'notifyutil') {
+            return springBoardCalls++ === 0 ? springBoardStarting : springBoardStarted;
+          }
+          return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+            ? run([file, ...args].join(' '))
+            : simctlSpawnStub(file, args);
+        },
+        spawn: (cmd: string, args: readonly string[] = []) => {
+          commands.push([cmd, ...args].join(' '));
+          return makeExitingChild();
+        },
+      });
+      const booting = ensureBooted({
+        projectPath: tmpHome,
+        platform: 'ios',
+        simulatorApp,
+        device: { deviceUdid: 'U1', owned: true },
+        timeoutMs: 5000,
+        pollMs: 5,
+        out: () => {},
+      });
+      await vi.waitUntil(() => springBoardCalls > 0);
+      await vi.advanceTimersToNextTimerAsync();
+      const result = await vi.waitUntil(() => booting);
+      expect(result).toEqual({ ok: true, udid: 'U1' });
+      expect(commands.filter((c) => c === 'xcrun simctl boot U1')).toHaveLength(1);
+      expect(commands.some((c) => c.startsWith('open '))).toBe(opens);
+      expect(deviceLog().some((record) => record.phase === 'viewer_opened')).toBe(opens);
+    },
+  );
+
   test('reports boot setup failures instead of treating the Booted state as ready', async () => {
     setExecutor({
       run: (cmd) => {
@@ -423,6 +484,7 @@ describe('ensureBooted: ios', () => {
 describe('ensureBooted: android', () => {
   beforeEach(() => {
     upsertProject(tmpHome, {});
+    vi.spyOn(iosDevices, 'listAllIosSimsAsync').mockResolvedValue([]);
   });
 
   test.each([
@@ -849,14 +911,32 @@ function projectDir() {
   return dir;
 }
 
+function holdBootMarkers() {
+  return [0, 1].map((n) => {
+    const marker = tryAcquireClaim({
+      root: join(tmpHome, 'device-boots'),
+      mode: 'shared',
+      label: 'device boot',
+      details: { platform: 'ios', key: `booting-${n}`, displayName: `other-${n}` },
+    }).acquired;
+    assert(marker);
+    return marker;
+  });
+}
+
+const BOOT_SLOTS_FULL =
+  /waiting for a boot slot \(2\/2 boots in flight\) held by other-\d, other-\d: queue position 1 of 1/;
+
 function iosExecutor(devices: SimEntry[]) {
   const run: string[] = [];
   const files: string[][] = [];
   const spawned: string[] = [];
+  const resetDeadlines: Record<string, number | undefined> = {};
   return {
     run,
     files,
     spawned,
+    resetDeadlines,
     exec: {
       runFileQuiet: () => '',
       run(cmd: string) {
@@ -881,8 +961,10 @@ function iosExecutor(devices: SimEntry[]) {
           return null;
         }
       },
-      runFile(file: string, args: string[] = []) {
+      runFile(file: string, args: string[] = [], opts?: { timeoutMs?: number }) {
         files.push([file, ...args]);
+        if (args[0] === 'simctl' && (args[1] === 'privacy' || args[1] === 'keychain'))
+          resetDeadlines[args[1]] = opts?.timeoutMs;
         if (file === 'xcrun' && args[0] === 'simctl' && ['list', 'boot', 'create'].includes(args[1] ?? '')) {
           const result = this.run!([file, ...args].join(' '));
           if (args[1] === 'create')
@@ -996,6 +1078,298 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
+  test('a third creation waits in the boot queue while two create-and-boot sequences hold the boot slots', async () => {
+    const roots = [projectDir(), projectDir(), projectDir()];
+    process.env.STIM_MAX_DEVICES = '8';
+    const ended = new AbortController();
+    const { exec } = iosExecutor([]);
+    let nextUdid = 0;
+    const creating: { run: number; finish: () => void; fail: (error: Error) => void }[] = [];
+    const executor = {
+      ...exec,
+      run(cmd: string) {
+        if (cmd.includes('simctl create')) return `CREATED-${++nextUdid}`;
+        return exec.run(cmd);
+      },
+      async runFileAsync(file: string, args: string[] = [], opts?: { timeoutMs?: number }) {
+        if (args[1] === 'create') {
+          ended.signal.throwIfAborted();
+          const run = Number(args[2]?.match(/^stim-app-(\d)/)?.[1]);
+          await new Promise<void>((finish, fail) => creating.push({ run, finish, fail }));
+        }
+        return executor.runFile(file, args, opts);
+      },
+    };
+    setExecutor(executor);
+    const boots = () => readClaimSet(join(tmpHome, 'device-boots')).live;
+    const waits = () => readClaimSet(join(tmpHome, 'device-waits')).live;
+    let clock = 0;
+    const sleepers: (() => void)[] = [];
+    const lines: string[][] = [[], [], []];
+    const runs = roots.map((root, run) =>
+      ensureOwnedDevice({
+        platform: 'ios',
+        projectPath: root,
+        label: `app-${run}`,
+        settings: {},
+        out: (line) => lines[run]?.push(line),
+        flags: {
+          deviceSlotWait: {
+            now: () => clock,
+            sleep: () =>
+              new Promise<void>((resolve, reject) => {
+                sleepers.push(resolve);
+                ended.signal.addEventListener('abort', () => reject(ended.signal.reason), { once: true });
+              }),
+          },
+        },
+      }),
+    );
+    try {
+      await vi.waitFor(() => {
+        expect(sleepers).toHaveLength(1);
+        expect(creating).toHaveLength(1);
+      });
+      const third = lines.findIndex((out) => out.some((line) => line.includes('waiting for a boot slot')));
+      expect(boots()).toHaveLength(2);
+      expect(waits()).toHaveLength(1);
+      clock += 10_000;
+      sleepers.shift()?.();
+      await vi.waitFor(() => expect(sleepers).toHaveLength(1));
+      expect(lines[third]?.filter((line) => line.includes('waiting for'))).toEqual([
+        expect.stringMatching(/waiting for a boot slot \(2\/2 boots in flight\).*queue position 1 of 1, 0s elapsed/),
+        expect.stringMatching(/waiting for a boot slot \(2\/2 boots in flight\).*queue position 1 of 1, 10s elapsed/),
+      ]);
+
+      const [first] = creating;
+      assert(first);
+      first.finish();
+      await (
+        await runs[first.run]
+      )?.booting?.done;
+      expect(boots()).toHaveLength(1);
+      await vi.waitFor(() => expect(creating).toHaveLength(2));
+      expect(creating.map((entry) => entry.run)).not.toContain(third);
+
+      sleepers.shift()?.();
+      await vi.waitFor(() => expect(waits()).toHaveLength(0));
+      expect(boots()).toHaveLength(2);
+      creating[1]?.finish();
+      await vi.waitFor(() => expect(creating).toHaveLength(3));
+      expect(creating[2]?.run).toBe(third);
+      creating[2]?.finish();
+      const devices = await Promise.all(runs);
+      await Promise.all(devices.map((device) => device.booting?.done));
+      expect(new Set(devices.map((device) => device.deviceUdid)).size).toBe(3);
+      expect(boots()).toEqual([]);
+    } finally {
+      ended.abort(new Error('the test ended'));
+      for (const entry of creating) entry.fail(new Error('the test ended'));
+      await Promise.allSettled(runs.map(async (device) => (await device).booting?.done));
+      delete process.env.STIM_MAX_DEVICES;
+      for (const root of roots) rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a new simulator is created only once a boot slot frees, and --no-wait refuses before creating it', async () => {
+    const root = projectDir();
+    process.env.STIM_MAX_DEVICES = '8';
+    const held = holdBootMarkers();
+    const { run, exec } = iosExecutor([]);
+    setExecutor(exec);
+    const created = () => run.some((cmd) => cmd.includes('simctl create'));
+    const sleepers: (() => void)[] = [];
+    const lines: string[] = [];
+    const ensure = (deviceSlotWait: DeviceSlotWaitPolicy) =>
+      ensureOwnedDevice({
+        platform: 'ios',
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        out: (line) => lines.push(line),
+        flags: { deviceSlotWait },
+      });
+    try {
+      await expect(ensure({ noWait: true })).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+      expect(created()).toBe(false);
+      expect(getProject(root)?.platforms?.ios).toBeUndefined();
+
+      const device = ensure({ sleep: () => new Promise<void>((resolve) => sleepers.push(resolve)) });
+      await vi.waitFor(() => expect(sleepers).toHaveLength(1));
+      expect(lines).toContainEqual(expect.stringMatching(BOOT_SLOTS_FULL));
+      expect(created()).toBe(false);
+      releaseClaim(held[0]);
+      sleepers.shift()?.();
+      const sim = await device;
+      expect(sim).toMatchObject({ deviceUdid: 'NEW-UDID', created: true });
+      expect(created()).toBe(true);
+      await sim.booting?.done;
+      expect(readClaimSet(join(tmpHome, 'device-boots')).live.map((holder) => holder.details.key)).toEqual([
+        'booting-1',
+      ]);
+    } finally {
+      delete process.env.STIM_MAX_DEVICES;
+      for (const marker of held) releaseClaim(marker);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a run that accepts a pending creation gets it while the boot queue is full, and creates only once a slot frees', async () => {
+    const root = projectDir();
+    process.env.STIM_MAX_DEVICES = '8';
+    const held = holdBootMarkers();
+    const { run, exec } = iosExecutor([]);
+    setExecutor(exec);
+    const created = () => run.some((cmd) => cmd.includes('simctl create'));
+    const sleepers: (() => void)[] = [];
+    const ensure = (deviceSlotWait: DeviceSlotWaitPolicy) =>
+      ensureOwnedDevice({
+        platform: 'ios',
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        flags: { deviceSlotWait, allowPendingCreation: true },
+      });
+    try {
+      await expect(ensure({ noWait: true })).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+      expect(created()).toBe(false);
+
+      const pending = await ensure({ sleep: () => new Promise<void>((resolve) => sleepers.push(resolve)) });
+      expect(pending.deviceUdid).toBeUndefined();
+      const creating = pending.creating;
+      assert(creating);
+      expect(creating.runtimeId).toBe('com.apple.CoreSimulator.SimRuntime.iOS-26-2');
+      expect(created()).toBe(false);
+      expect(getProject(root)?.platforms?.ios).toBeUndefined();
+
+      releaseClaim(held[0]);
+      sleepers.shift()?.();
+      const sim = await creating.created;
+      expect(sim).toMatchObject({ deviceUdid: 'NEW-UDID', created: true });
+      expect(created()).toBe(true);
+      await sim.booting?.done;
+    } finally {
+      delete process.env.STIM_MAX_DEVICES;
+      for (const marker of held) releaseClaim(marker);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a run that accepts a pending creation still gets the created simulator when no boot waits', async () => {
+    const root = projectDir();
+    const { exec } = iosExecutor([]);
+    setExecutor(exec);
+    try {
+      const sim = await ensureOwnedDevice({
+        platform: 'ios',
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        flags: { allowPendingCreation: true },
+      });
+      expect(sim).toMatchObject({ deviceUdid: 'NEW-UDID', created: true });
+      expect(sim.creating).toBeUndefined();
+      await sim.booting?.done;
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a run abandoned after its boot slot was granted creates no simulator and frees the slot', async () => {
+    const root = projectDir();
+    const { run, exec } = iosExecutor([]);
+    setExecutor(exec);
+    const abandon = new AbortController();
+    try {
+      await expect(
+        ensureOwnedDevice({
+          platform: 'ios',
+          projectPath: root,
+          label: 'app',
+          settings: {},
+          flags: { deviceSlotWait: { signal: abandon.signal, onBootStart: () => abandon.abort() } },
+        }),
+      ).rejects.toThrow('aborted');
+      expect(run.some((cmd) => cmd.includes('simctl create'))).toBe(false);
+      expect(readClaimSet(join(tmpHome, 'device-boots')).live).toEqual([]);
+      expect(getProject(root)?.platforms?.ios).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a pending creation that fails after the run queued rejects with its cause and frees the slot', async () => {
+    const root = projectDir();
+    process.env.STIM_MAX_DEVICES = '8';
+    const held = holdBootMarkers();
+    const { exec } = iosExecutor([]);
+    const executor = {
+      ...exec,
+      async runFileAsync(file: string, args: string[] = [], opts?: { timeoutMs?: number }) {
+        if (args[1] === 'create') throw new Error('simctl create timed out');
+        return executor.runFile(file, args, opts);
+      },
+    };
+    setExecutor(executor);
+    const sleepers: (() => void)[] = [];
+    try {
+      const pending = await ensureOwnedDevice({
+        platform: 'ios',
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        flags: {
+          allowPendingCreation: true,
+          deviceSlotWait: { sleep: () => new Promise<void>((resolve) => sleepers.push(resolve)) },
+        },
+      });
+      const creating = pending.creating;
+      assert(creating);
+      const outcome = creating.created.then(
+        () => 'created',
+        (error: Error) => error.message,
+      );
+      releaseClaim(held[0]);
+      sleepers.shift()?.();
+      await expect(outcome).resolves.toBe('simctl create timed out');
+      expect(readClaimSet(join(tmpHome, 'device-boots')).live.map((holder) => holder.details.key)).toEqual([
+        'booting-1',
+      ]);
+      expect(getProject(root)?.platforms?.ios).toBeUndefined();
+    } finally {
+      delete process.env.STIM_MAX_DEVICES;
+      for (const marker of held) releaseClaim(marker);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a simulator creation that fails inside its boot slot releases the slot and records no device', async () => {
+    const root = projectDir();
+    const { exec } = iosExecutor([]);
+    let slotsWhileCreating: number | null = null;
+    const executor = {
+      ...exec,
+      async runFileAsync(file: string, args: string[] = [], opts?: { timeoutMs?: number }) {
+        if (args[1] === 'create') {
+          slotsWhileCreating = readClaimSet(join(tmpHome, 'device-boots')).live.length;
+          throw new Error('simctl create timed out');
+        }
+        return executor.runFile(file, args, opts);
+      },
+    };
+    setExecutor(executor);
+    try {
+      await expect(
+        ensureOwnedDevice({ platform: 'ios', projectPath: root, label: 'app', settings: {} }),
+      ).rejects.toThrow('simctl create timed out');
+      expect(slotsWhileCreating).toBe(1);
+      expect(readClaimSet(join(tmpHome, 'device-boots')).live).toEqual([]);
+      expect(getProject(root)?.platforms?.ios).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test.each([
     { collision: false, stale: false },
     { collision: true, stale: false },
@@ -1041,7 +1415,7 @@ describe('ensureOwnedDevice: ios', () => {
           });
         if (stale) setDevice(root, 'ios', { deviceUdid: 'MISSING', owned: true });
         const name = `stim-app (iPhone 17 Pro 26.2)${collision ? ` ${workspaceId(root)}` : ''}`;
-        const { run, files, exec } = iosExecutor(devices);
+        const { run, files, resetDeadlines, exec } = iosExecutor(devices);
         setExecutor(exec);
         const device = await ensureOwnedDevice({
           platform: 'ios',
@@ -1065,6 +1439,7 @@ describe('ensureOwnedDevice: ios', () => {
         expect(run).toContain('xcrun simctl boot U1');
         expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
         expect(files).toContainEqual(['xcrun', 'simctl', 'keychain', 'U1', 'reset']);
+        expect(resetDeadlines).toEqual({ privacy: 180_000, keychain: 180_000 });
         expect(getProject(root)?.platforms?.ios).toMatchObject({ schemeApprovals });
       } finally {
         delete process.env.STIM_POOL_IOS_PARKED_MAX;
@@ -1170,7 +1545,7 @@ describe('ensureOwnedDevice: ios', () => {
         adopted: true,
         adoptionPending: true,
       });
-      const { files, exec } = iosExecutor([
+      const { files, resetDeadlines, exec } = iosExecutor([
         {
           udid: 'U1',
           name: 'stim-app (iPhone 17 Pro 26.2)',
@@ -1189,6 +1564,7 @@ describe('ensureOwnedDevice: ios', () => {
       });
       expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
       expect(files).toContainEqual(['xcrun', 'simctl', 'keychain', 'U1', 'reset']);
+      expect(resetDeadlines).toEqual({ privacy: 180_000, keychain: 180_000 });
       expect(getProject(root)?.platforms?.ios?.adoptionPending).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -1243,7 +1619,7 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
-  test('the budget gate, capacity check and device setup of a cache hit share one simctl list', async () => {
+  test('the capacity check and device setup of a cache hit share one simctl list', async () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app (iPhone 17 Pro 26.2)' });
@@ -1258,15 +1634,13 @@ describe('ensureOwnedDevice: ios', () => {
       ]);
       setExecutor(exec);
       const simSnapshot = createIosSimSnapshot();
-      const limits = { minFreeDiskMb: 0, hardFloorDiskMb: 0, maxCommittedMemoryMb: 1_000_000, maxLiveWorkspaces: 10 };
-      const outcome = await enforceBudget({ root, note: () => {}, budget: limits, simSnapshot });
-      expect(outcome.status).toBe('ok');
       expect(
         await checkDeviceCapacity({
           platform: 'ios',
           project: getProject(root),
           max: 5,
-          sims: () => simSnapshot.read().filter((sim) => sim.available),
+          sims: async () =>
+            (simSnapshot.readAsync ? await simSnapshot.readAsync() : simSnapshot.read()).filter((sim) => sim.available),
           adb: () => makeAdbDevices(),
           booting: [],
         }),
@@ -1397,7 +1771,6 @@ describe('ensureOwnedDevice: ios', () => {
           note: (line) => notes.push(String(line)),
           flags: {
             deviceSlotWait: {
-              reclaimIdleMinutes: 0,
               sleep: async () => {
                 waits++;
                 if (when === 'during admission') sim.name = 'Renamed-By-User';
@@ -1499,6 +1872,111 @@ describe('ensureOwnedDevice: ios', () => {
     });
   });
 
+  test.each([
+    {
+      name: 'slims a shut-down simulator as its boot',
+      settings: { ios: { simslim: 'on' } },
+      missing: false,
+      recorded: { profile: 'default', springBoardPid: 4242 },
+    },
+    {
+      name: 'boots stock when SimSlim is not installed',
+      settings: { ios: { simslim: 'on' } },
+      missing: true,
+      recorded: undefined,
+    },
+    {
+      name: 'applies a changed profile to a stopped simulator as its boot',
+      settings: { ios: { simslimProfile: 'simslim.json' } },
+      missing: false,
+      applied: { simslimManaged: true, simslimApplied: { profile: 'default', springBoardPid: 1111 } },
+      recorded: { profile: expect.stringMatching(/^profile:/), springBoardPid: 4242 },
+    },
+  ])('$name', async ({ settings, missing, applied, recorded }) => {
+    const root = projectDir();
+    try {
+      writeFileSync(join(root, 'simslim.json'), '{}\n');
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app', ...applied });
+      const { run, exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
+      const events: string[] = [];
+      setExecutor({
+        ...exec,
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            events.push('mute');
+            return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+          }
+          if (file === 'xcrun' && args.includes('notifyutil')) return 'com.apple.springboard.finishedstartup 4242';
+          return exec.runFile(file, args);
+        },
+        spawn(cmd, args = []) {
+          if (args[1] === 'boot') events.push('simctl boot');
+          return exec.spawn(cmd, args);
+        },
+      });
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings,
+        reconcileIosSimulator: async (args) => {
+          const phases = deviceLog(root).map((record) => record.phase);
+          events.push(`reconcile after ${phases.join(',')}`);
+          if (missing) return { managed: false, profile: null, notInstalled: true };
+          return { managed: true, profile: args.profile ?? null };
+        },
+      });
+      expect(await ensureBooted({ platform: 'ios', projectPath: root, device, timeoutMs: 5000, pollMs: 5 })).toEqual({
+        ok: true,
+        udid: 'U1',
+      });
+
+      expect(events).toEqual(['reconcile after boot_requested', 'simctl boot', 'mute']);
+      expect(run.filter((command) => /simctl boot/.test(command))).toHaveLength(1);
+      const phases = deviceLog(root).map((record) => record.phase);
+      expect(phases.filter((phase) => phase === 'boot_requested')).toHaveLength(1);
+      expect(phases).not.toContain('simslim_reboot');
+      expect(getProject(root)?.platforms?.ios?.simslimApplied).toEqual(recorded);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a SimSlim claim refusal before boot keeps its code and remedy', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { run, exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
+      setExecutor(exec);
+      const refusal = new ClaimRefusedError({
+        root: join(tmpHome, 'simslim-locks', 'U1.lock'),
+        claimPath: join(tmpHome, 'simslim-locks', 'U1.lock', 'claim'),
+        label: 'SimSlim for U1',
+        reason: 'another SimSlim operation is still using this simulator',
+      });
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslim: 'on' } },
+        reconcileIosSimulator: async () => {
+          throw refusal;
+        },
+      });
+      expect(await ensureBooted({ platform: 'ios', projectPath: root, device, timeoutMs: 5000, pollMs: 5 })).toEqual({
+        failed: true,
+        code: 'STIM_CLAIM_REFUSED',
+        reason: refusal.message,
+        remedy: expect.stringContaining(refusal.removeCommand),
+      });
+      expect(run.some((command) => /simctl boot/.test(command))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('a legacy shut-down sim (no owned flag) is reported, never booted', async () => {
     const root = projectDir();
     try {
@@ -1532,6 +2010,7 @@ describe('ensureOwnedDevice: android', () => {
   let prevFallbackRoots: Record<string, string | undefined>;
 
   beforeEach(() => {
+    vi.spyOn(iosDevices, 'listAllIosSimsAsync').mockResolvedValue([]);
     androidHome = mkdtempSync(join(tmpdir(), 'stim-test-sdk-'));
     mkdirSync(join(androidHome, 'system-images', 'android-36', 'google_apis', 'arm64-v8a'), { recursive: true });
     mkdirSync(join(androidHome, 'system-images', 'android-36', 'google_apis', 'x86_64'), { recursive: true });
@@ -1918,6 +2397,75 @@ describe('ensureOwnedDevice: android', () => {
       expect(getProject(other)?.platforms?.android).toMatchObject({ avdName: 'stim-app', owned: true });
     } finally {
       rmSync(other, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a new emulator is created only once a boot slot frees, and --no-wait refuses before creating it', async () => {
+    const root = projectDir();
+    process.env.STIM_MAX_DEVICES = '8';
+    const held = holdBootMarkers();
+    const { run, exec } = androidExecutor();
+    setExecutor(exec);
+    const created = () => run.some((cmd) => cmd.includes('create'));
+    const sleepers: (() => void)[] = [];
+    const lines: string[] = [];
+    const ensure = (deviceSlotWait: DeviceSlotWaitPolicy) =>
+      ensureOwnedDevice({
+        platform: 'android',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        out: (line) => lines.push(line),
+        flags: { deviceSlotWait },
+      });
+    try {
+      await expect(ensure({ noWait: true })).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+      expect(created()).toBe(false);
+      expect(getProject(root)?.platforms?.android).toBeUndefined();
+
+      const device = ensure({ now: () => 0, sleep: () => new Promise<void>((resolve) => sleepers.push(resolve)) });
+      await vi.waitFor(() => expect(sleepers).toHaveLength(1));
+      expect(lines).toContainEqual(expect.stringMatching(BOOT_SLOTS_FULL));
+      expect(created()).toBe(false);
+      releaseClaim(held[0]);
+      sleepers.shift()?.();
+      await expect(device).resolves.toMatchObject({ avdName: 'stim-app', created: true, setup: true });
+      expect(created()).toBe(true);
+      expect(readClaimSet(join(tmpHome, 'device-boots')).live.map((holder) => holder.details.key)).toEqual([
+        'booting-1',
+      ]);
+    } finally {
+      delete process.env.STIM_MAX_DEVICES;
+      for (const marker of held) releaseClaim(marker);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an AVD creation that fails inside its boot slot releases the slot', async () => {
+    const root = projectDir();
+    let slotsWhileCreating: number | null = null;
+    const { exec } = androidExecutor({
+      createAvdError: 'Error: Package path is not valid.',
+      beforeCreateAvdError: () => {
+        slotsWhileCreating = readClaimSet(join(tmpHome, 'device-boots')).live.length;
+      },
+    });
+    setExecutor(exec);
+    try {
+      await expect(
+        ensureOwnedDevice({
+          platform: 'android',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+        }),
+      ).rejects.toThrow('Package path is not valid');
+      expect(slotsWhileCreating).toBe(1);
+      expect(readClaimSet(join(tmpHome, 'device-boots')).live).toEqual([]);
+    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });

@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import Sparkle
+import StimKit
 
 /// Sparkle's updater, started only in a bundled app whose Info.plist carries the appcast's EdDSA public
 /// key. Builds without the key, which is every Stim Dev build, every `scripts/bundle.sh --release` without
@@ -26,6 +27,20 @@ final class AppUpdater: ObservableObject {
     }
   }
 
+  var prereleaseUpdates: Bool {
+    get { Self.prereleaseUpdatesEnabled() }
+    set {
+      objectWillChange.send()
+      UserDefaults.standard.set(newValue, forKey: AppPreferences.Key.prereleaseUpdates)
+    }
+  }
+
+  fileprivate static func prereleaseUpdatesEnabled() -> Bool {
+    UserDefaults.standard.object(forKey: AppPreferences.Key.prereleaseUpdates) as? Bool
+      ?? UpdateChannel.prereleaseUpdatesDefault(
+        bundleVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
+  }
+
   private init() {
     let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String ?? ""
     guard Bundle.main.bundleURL.pathExtension == "app", !key.trimmingCharacters(in: .whitespaces).isEmpty else {
@@ -49,7 +64,7 @@ final class AppUpdater: ObservableObject {
   }
 }
 
-/// Forwards the two Sparkle delegate callbacks the footer needs into plain closures.
+/// Forwards the Sparkle delegate callbacks Desktop needs.
 /// `SPUUpdaterDelegate` requires `NSObject` conformance, which `AppUpdater` does not have.
 @MainActor
 private final class UpdaterDelegateForwarder: NSObject, SPUUpdaterDelegate {
@@ -62,5 +77,9 @@ private final class UpdaterDelegateForwarder: NSObject, SPUUpdaterDelegate {
 
   func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
     onNoUpdate?()
+  }
+
+  func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+    AppUpdater.prereleaseUpdatesEnabled() ? [UpdateChannel.prerelease] : []
   }
 }

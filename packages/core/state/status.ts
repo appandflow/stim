@@ -1,10 +1,17 @@
 import type { HostedAndroidStatus } from './hosted-android.ts';
 import type { HostedIosStatus } from './hosted-ios.ts';
 import type { MaintenanceStatus } from './maintenance.ts';
+import type { DaemonStatus } from './daemon.ts';
 import type { ArchivedWorkspace, ArchivedUsage } from './archive.ts';
 import type { MacosAppState } from './macos.ts';
 import type { TunnelMode, WebViewport } from './settings-registry.ts';
-import type { DeviceIdleShutdownRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
+import type {
+  DeviceIdleShutdownRecord,
+  DormantStageRecord,
+  IdleStageRecord,
+  IdleStopRecord,
+  MetroLastStop,
+} from './workspace-state.ts';
 export type StatsPlatform = 'ios' | 'android';
 
 /** A platform whose build reports phases: the stats platforms and `macos`. */
@@ -40,6 +47,10 @@ export interface BuildWaitingFor {
   inUse: number;
   max: number;
   since: string;
+  /** The run's 1-based place in its admission queue; absent from records written before the queue existed. */
+  position?: number;
+  /** What holds it: `build slots`, `booted devices`, `boots in flight`, `memory`, or `its turn`. */
+  resource?: string;
 }
 
 export interface BuildReport {
@@ -573,22 +584,32 @@ export const WORKSPACE_PHASES = ['warming', 'ready', 'live', 'idle'] as const;
 
 export type WorkspacePhase = (typeof WORKSPACE_PHASES)[number];
 
-/** A folder's size on disk as `status --watch` last measured it. */
+/**
+ * A folder's size on disk as `status --watch` last measured it. `bytes` counts every allocated block, copy-on-write
+ * clones in full. `privateBytes`, measured on APFS for dependency trees, DerivedData and CMake output, is what deleting the folder
+ * would free: blocks no clone or hard link outside it shares. It is absent when the volume or the machine cannot tell. `signature` is the
+ * dependency tree's install signature at measurement time.
+ */
 export interface DiskMeasure {
   bytes: number;
   measuredAt: string;
+  privateBytes?: number;
+  signature?: string;
 }
 
 /**
  * An environment's disk use as `status --watch` last measured it. `worktreeBytes` is the git worktree folder, or the
  * workspace folder outside one, node_modules included. `nodeModulesBytes` is node_modules at the worktree root and,
- * when different, at the workspace path, and is part of `worktreeBytes`. `buildBytes` is Stim's own folder for the
+ * when different, at the workspace path, and is part of `worktreeBytes`; `nodeModulesPrivateBytes` is the part of it
+ * no copy-on-write clone or outside hard link shares, null when it is unknown and absent from Stim versions that do
+ * not measure it. `buildBytes` is Stim's own folder for the
  * workspace: Xcode derived data, Gradle outputs and logs. A figure is null until it was measured; `measuredAt` is the
  * oldest measurement.
  */
 export interface EnvironmentDisk {
   worktreeBytes: number | null;
   nodeModulesBytes: number | null;
+  nodeModulesPrivateBytes?: number | null;
   buildBytes: number | null;
   measuredAt: string;
 }
@@ -670,6 +691,10 @@ export interface EnvironmentState {
   hidden?: true;
   /** Where the workspace is, from `workspaceStage`; `stim status --json` always sets it. */
   stage?: WorkspaceStage;
+  /** Present while the workspace is in the idle stage: no activity since the daemon stopped it. */
+  idleStage?: IdleStageRecord;
+  /** Present while the workspace is dormant: no Stim command since the daemon deleted its owned devices. */
+  dormantStage?: DormantStageRecord;
   /** The step a `warming` workspace's warm is in; absent in every other phase. */
   warmStep?: WarmStep;
   /**
@@ -871,6 +896,7 @@ export interface MachineUsageState {
 /** The payload `stim status --json` prints, and `status --watch --json` prints on each change. */
 export interface StatusPayload {
   maintenance?: MaintenanceStatus;
+  daemon?: DaemonStatus;
   archived?: ArchivedWorkspace[];
   archivedUsage?: ArchivedUsage;
   environments: (EnvironmentState & { labelOnly?: true })[];

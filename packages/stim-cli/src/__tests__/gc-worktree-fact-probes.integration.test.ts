@@ -54,6 +54,7 @@ beforeEach(() => {
   executor.runFile('git', ['-C', root, 'worktree', 'add', '-q', '-b', 'feature', linked], { timeoutMs: 5000 });
   writeFileSync(join(linked, 'tracked.txt'), 'changed');
   upsertProject(root, { metroPort: null });
+  upsertProject(linked, { metroPort: null });
   setExecutor({ ...executor, findExecutable: (name) => (name === 'gh' ? null : executor.findExecutable(name)) });
 });
 

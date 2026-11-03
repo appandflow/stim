@@ -714,6 +714,16 @@ to the inner panel the screen shows. The session ends when you turn
 Control off, leave the view, lose the connection, or after 5 minutes without
 input; the banner says why.
 
+On an iOS simulator, an Android emulator or an Android phone, when the server lists
+`device-clipboard`, **More** also has **Paste from Phone** and **Copy Device
+Clipboard** while Control is on. Paste reads the phone's clipboard when you tap it
+(iOS asks to allow the paste), sets the device clipboard to that text and pastes it
+into the focused field; text over 8 KiB is not sent, and a note says so. On iOS the
+note after a paste adds that the device may show a paste suggestion to tap, which
+simulators slimmed by `simslimProfile` cannot show. Copy reads the device clipboard
+into the phone's and a note confirms it. Text only; nothing syncs by itself, and the
+app never logs the text. A web page, a Mac app and a physical iPhone have neither action.
+
 After a rotate, a note over the screen says "Rotated to landscape" (or
 portrait) once the picture turns. When it has not turned after 2.5 seconds,
 the note says the screen stayed as it was and that the app in front may not
@@ -1057,6 +1067,8 @@ for a platform, and the mock server refuses a reload without one, like
 `stim reload`. Start it with
 `pnpm run mock-server --read` to see a read-only pairing, which gets no
 actions.
+It keeps one clipboard for `input.clipboard.set` and `input.clipboard.get`, so the
+paste and copy actions round-trip.
 
 A phone that asks iOS devices for H.264 gets video from
 `mock-server/fixtures/recording-ios.seg`. That is 60 seconds of an iOS
@@ -1811,13 +1823,11 @@ Or go back to a specific update that worked:
 gh workflow run mobile-release.yml --ref main -f mode=republish -f group=<group>
 ```
 
-Both runs wait for approval in the `release` environment. They queue apart
-from the publishing modes, so a build in progress does not hold them up. A
-publishing run that is still in progress or waiting for approval can publish
-after the rollback and undo it, so cancel it first
-(`gh run cancel <run-id>`). Approve them as in
-step 7 of [RELEASE.md](../../RELEASE.md#4-cut-the-release), with the run id
-from `gh run list --workflow mobile-release.yml --limit 1`. The run log's
+Both runs use the `release` environment, which has no required reviewers for
+now. They queue apart from the publishing modes, so a build in progress does
+not hold them up. A publishing run that is still in progress can publish after
+the rollback and undo it, so cancel it first (`gh run cancel <run-id>`); find
+the run id with `gh run list --workflow mobile-release.yml --limit 1`. The run log's
 notice names the runtime and group it acted on. `republish` warns when the
 group's runtime is not the latest production build's, because only builds on
 that runtime get it. When the group is on a branch other than `production`,

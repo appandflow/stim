@@ -1,13 +1,13 @@
 import { createStim } from '../api.ts';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { runGc, withGcMaintenanceClaim } from '../commands/gc.ts';
 import { withAmbientContext } from '@stim-cli/core';
-import { maintenanceStateFile, type MaintenancePass } from '@stim-cli/core/state';
+import { daemonSnapshotFile } from '@stim-cli/core/state';
 import { testContext } from './_context.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -535,7 +535,7 @@ test.skipIf(process.platform === 'win32')(
     mkdirSync(join(distribution, 'bin'), { recursive: true });
     mkdirSync(gradleHome);
     writeFileSync(launcher, 'fixture launcher');
-    const context = testContext({ home, env: { ...process.env, STIM_HOME: undefined, STIM_MAINTENANCE: 'off' } });
+    const context = testContext({ home, env: { ...process.env, STIM_HOME: undefined, STIM_DAEMON: 'off' } });
     let pressured = false;
     let warning = false;
     let pressureReads = 0;
@@ -545,14 +545,13 @@ test.skipIf(process.platform === 'win32')(
     let replacedSecond = false;
     let present = true;
     let stops = 0;
-    const configure = (level = 'warning') =>
+    const configure = () =>
       withAmbientContext(context, () =>
         saveConfig({
           projects: {},
           repos: {},
           iosSimulatorApp: 'stim-desktop',
           androidEmulatorApp: 'stim-desktop',
-          maintenance: { memoryPressureLevel: level, minAvailableMemoryGb: pressured ? Number.MAX_SAFE_INTEGER : 0 },
         }),
       );
     vi.spyOn(hostMemory, 'readHostMemoryPressureAsync').mockImplementation(async () => {
@@ -599,69 +598,42 @@ test.skipIf(process.platform === 'win32')(
     expect(healthy.actionable).toBe(false);
     expect(stops).toBe(0);
 
+    const snapshotFile = withAmbientContext(context, daemonSnapshotFile);
+    const writeSnapshot = (pressure: { memory: string; memoryWarningSince: string | null }) => {
+      mkdirSync(dirname(snapshotFile), { recursive: true });
+      writeFileSync(
+        snapshotFile,
+        JSON.stringify({
+          version: 1,
+          pid: 1,
+          startedAt: new Date().toISOString(),
+          mode: 'on',
+          tickAt: new Date().toISOString(),
+          tickMs: 1,
+          intervalMs: 60_000,
+          measurement: {},
+          workspaces: [],
+          pressure: { level: pressure.memory, disk: 'normal', reasons: [], ...pressure },
+        }),
+      );
+    };
     const warningObservations = [];
     if (process.platform === 'darwin') {
       warning = true;
-      const file = withAmbientContext(context, maintenanceStateFile);
-      mkdirSync(dirname(file), { recursive: true });
-      const old = Date.now() - 7 * 24 * 60 * 60_000;
-      const completed: MaintenancePass = {
-        startedAt: old - 1000,
-        durationMs: 1000,
-        trigger: 'fixture',
-        mode: 'report',
-        freedBytes: 0,
-        actions: 0,
-        stopped: 0,
-        blocked: [],
-      };
-      const history = {
-        version: 1,
-        lastAt: { pressure: old },
-        sizes: [],
-        recent: [],
-        plan: [],
-        lastPass: completed,
-        pressure: { disk: [], memory: { level: 'warning', availableBytes: null, pressured: true }, warningSince: old },
-      };
-      writeFileSync(file, JSON.stringify(history));
       warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
-      const recent = Date.now() - 1000;
-      history.lastAt.pressure = recent;
-      writeFileSync(file, JSON.stringify(history));
+      writeSnapshot({ memory: 'normal', memoryWarningSince: new Date(Date.now() - 60_000).toISOString() });
       warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
-      completed.startedAt = recent - 1000;
-      completed.blocked = ['pressure check failed'];
-      writeFileSync(file, JSON.stringify(history));
+      writeSnapshot({ memory: 'normal', memoryWarningSince: new Date(Date.now() - 11 * 60_000).toISOString() });
       warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
-      completed.startedAt = recent + 500;
-      completed.blocked = [];
-      writeFileSync(file, JSON.stringify(history));
-      warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
-      completed.startedAt = recent - 1000;
-      const fresh = JSON.stringify(history);
-      writeFileSync(file, fresh);
-      warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
-      warningObservations.push(readFileSync(file, 'utf8') === fresh);
-      rmSync(file);
+      rmSync(snapshotFile);
       warning = false;
     }
-    expect(warningObservations).toEqual(process.platform === 'darwin' ? [false, false, false, false, true, true] : []);
+    expect(warningObservations).toEqual(process.platform === 'darwin' ? [false, false, true] : []);
 
     pressured = true;
     configure();
+    writeSnapshot({ memory: 'critical', memoryWarningSince: null });
     expect((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable).toBe(true);
-    pressureReads = 0;
-    duringPressure = () => {
-      if (pressureReads === 2) configure('off');
-    };
-    const optedOut = await client.collectGarbage({ cache: 'gradle-daemons', delete: true });
-    expect(optedOut.report.results).toContainEqual(
-      expect.objectContaining({ status: 'kept', detail: expect.stringContaining('off') }),
-    );
-    expect(stops).toBe(0);
-
-    configure();
     pressureReads = 0;
     const lock = withAmbientContext(context, () => buildLockPath('ios', 'owned'));
     const birth = captureProcessIdentity(process.pid);

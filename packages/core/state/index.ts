@@ -1,4 +1,5 @@
 export * from './agent-actions.ts';
+export * from './agent-presence.ts';
 export * from './agent-device-usage.ts';
 export * from './swiftpm-cache-usage.ts';
 export * from './machine-cache-usage.ts';
@@ -31,6 +32,7 @@ export * from './status-measures.ts';
 export * from './stim-build.ts';
 export * from './workspace-state.ts';
 export * from './viewers.ts';
+export * from './daemon.ts';
 export * from './stats.ts';
 export * from './device-host.ts';
 export * from './hosted-app.ts';

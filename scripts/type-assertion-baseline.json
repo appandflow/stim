@@ -45,8 +45,8 @@
       "nonNull": 8
     },
     "test": {
-      "as": 17,
-      "nonNull": 6
+      "as": 14,
+      "nonNull": 4
     }
   },
   "packages/cache": {
@@ -55,7 +55,7 @@
       "nonNull": 2
     },
     "test": {
-      "as": 2,
+      "as": 0,
       "nonNull": 0
     }
   },
@@ -75,8 +75,8 @@
       "nonNull": 5
     },
     "test": {
-      "as": 5,
-      "nonNull": 17
+      "as": 2,
+      "nonNull": 10
     }
   },
   "packages/core": {
@@ -85,8 +85,8 @@
       "nonNull": 49
     },
     "test": {
-      "as": 34,
-      "nonNull": 44
+      "as": 29,
+      "nonNull": 20
     }
   },
   "packages/expo-build-cache": {
@@ -105,31 +105,41 @@
       "nonNull": 0
     },
     "test": {
-      "as": 14,
-      "nonNull": 2
+      "as": 4,
+      "nonNull": 1
     }
   },
   "packages/server": {
     "src": {
-      "as": 306,
-      "nonNull": 121
+      "as": 310,
+      "nonNull": 120
     },
     "test": {
-      "as": 253,
-      "nonNull": 405
+      "as": 264,
+      "nonNull": 387
     }
   },
   "packages/stim-cli": {
     "src": {
-      "as": 835,
-      "nonNull": 341
+      "as": 831,
+      "nonNull": 340
     },
     "test": {
-      "as": 543,
-      "nonNull": 810
+      "as": 437,
+      "nonNull": 608
     }
   },
   "packages/transport": {
+    "src": {
+      "as": 0,
+      "nonNull": 0
+    },
+    "test": {
+      "as": 0,
+      "nonNull": 0
+    }
+  },
+  "packages/transport-local": {
     "src": {
       "as": 0,
       "nonNull": 0

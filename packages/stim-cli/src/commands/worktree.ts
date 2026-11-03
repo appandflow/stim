@@ -3,6 +3,8 @@ import { runProcessOperation } from '../cli-operation.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { existsSync, realpathSync, rmSync } from 'fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
+import { inspectPodsFlavor } from '../diagnostics/doctor-pods-flavor.ts';
+import { iosConfigurationSetting } from './ios/support.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact, shortHash, shortUdid } from '../command-output.ts';
@@ -46,7 +48,8 @@ import {
   type WorktreeArchive,
 } from '../workspace/worktree-archive.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
-import { currentDiskLevel, measureDiskAsync } from '../maintenance/measure.ts';
+import { measureDisk, measureDiskAsync } from '../maintenance/measure.ts';
+import { diskPressure, diskThresholds } from '../daemon/pressure.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
@@ -88,15 +91,23 @@ interface WorktreeSettings {
   worktree?: { exclude?: string[] };
 }
 
+function packageManagerInstall(installRoot: string): string {
+  if (existsSync(resolve(installRoot, 'pnpm-lock.yaml'))) return 'pnpm install';
+  if (existsSync(resolve(installRoot, 'yarn.lock'))) return 'yarn install';
+  if (existsSync(resolve(installRoot, 'bun.lock')) || existsSync(resolve(installRoot, 'bun.lockb')))
+    return 'bun install';
+  return existsSync(resolve(installRoot, 'package-lock.json')) ? 'npm ci' : 'npm install';
+}
+
 export function dependencyInstallCommand(target: string, dir = '.'): string {
   const installRoot = resolve(target, dir);
-  let command = 'npm install';
-  if (existsSync(resolve(installRoot, 'pnpm-lock.yaml'))) command = 'pnpm install';
-  else if (existsSync(resolve(installRoot, 'yarn.lock'))) command = 'yarn install';
-  else if (existsSync(resolve(installRoot, 'bun.lock')) || existsSync(resolve(installRoot, 'bun.lockb')))
-    command = 'bun install';
-  else if (existsSync(resolve(installRoot, 'package-lock.json'))) command = 'npm ci';
-  return `cd '${installRoot.replaceAll("'", "'\\''")}' && ${command}`;
+  return `cd '${installRoot.replaceAll("'", "'\\''")}' && ${packageManagerInstall(installRoot)}`;
+}
+
+function cloneReplacementNote(target: string, dirs: string[]): string {
+  return dirs.some((dir) => packageManagerInstall(resolve(target, dir)) === 'npm ci')
+    ? ' `npm ci` deletes node_modules first, so it replaces the clone, which shares its disk with the source checkout, with a private copy of every package.'
+    : '';
 }
 
 function relocateCarriedPods(root: string, target: string, copied: string[], out: (line: string) => void): void {
@@ -162,7 +173,13 @@ function checkNativeDir(
   };
 }
 
-function reportCarriedStateHealth(root: string, target: string, copied: string[], out: (line: string) => void): void {
+function reportCarriedStateHealth(
+  root: string,
+  target: string,
+  copied: string[],
+  configuration: string,
+  out: (line: string) => void,
+): void {
   const outOfSync = depsOutOfSync(root, target, copied);
   for (const d of outOfSync.filter((dependency) => dependency.reason === 'installed')) {
     const where = d.dir === '.' ? d.lockfile : `${d.dir}/${d.lockfile}`;
@@ -171,7 +188,7 @@ function reportCarriedStateHealth(root: string, target: string, copied: string[]
       chalk.yellow(
         phaseLine(
           'carry',
-          `carried ${modules} was installed from a different ${d.lockfile} than the ${where} on disk here. node_modules is gitignored and cloned from the source checkout; ${d.lockfile} is tracked, so the two can disagree. Run \`${dependencyInstallCommand(target, d.dir)}\` before building, or pod install and native builds see the wrong package versions.`,
+          `carried ${modules} was installed from a different ${d.lockfile} than the ${where} on disk here. node_modules is gitignored and cloned from the source checkout; ${d.lockfile} is tracked, so the two can disagree. Run \`${dependencyInstallCommand(target, d.dir)}\` before building, or pod install and native builds see the wrong package versions.${cloneReplacementNote(target, [d.dir])}`,
         ),
       ),
     );
@@ -184,7 +201,10 @@ function reportCarriedStateHealth(root: string, target: string, copied: string[]
       chalk.yellow(
         phaseLine(
           'carry',
-          `carried dependencies may be stale: they do not match ${manifests}. Run ${remedies.map((command) => `\`${command}\``).join(' and ')} before building.`,
+          `carried dependencies may be stale: they do not match ${manifests}. Run ${remedies.map((command) => `\`${command}\``).join(' and ')} before building.${cloneReplacementNote(
+            target,
+            staleDeps.map((dependency) => dependency.dir),
+          )}`,
         ),
       ),
     );
@@ -202,6 +222,12 @@ function reportCarriedStateHealth(root: string, target: string, copied: string[]
         ),
       ),
     );
+  }
+  for (const rel of copied) {
+    if (rel !== 'Pods' && !rel.endsWith('/Pods')) continue;
+    const iosDir = rel.slice(0, -'Pods'.length);
+    const flavor = inspectPodsFlavor(join(root, iosDir), join(target, iosDir), configuration);
+    if (flavor) out(chalk.yellow(phaseLine('carry', `carried ${rel}: ${flavor.detail} ${flavor.fix}`)));
   }
 }
 
@@ -397,7 +423,7 @@ export async function warmWorktreeTarget(opts: {
             if (result.copied.length) {
               out(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
               relocateCarriedPods(root, target, result.copied, out);
-              reportCarriedStateHealth(root, target, result.copied, out);
+              reportCarriedStateHealth(root, target, result.copied, iosConfigurationSetting(settings) ?? 'Debug', out);
             }
             out(
               phaseLine(
@@ -730,7 +756,10 @@ async function reclaimAll(
   const removedWorkspaceDirs: string[] = [];
   const failedWorkspaceDirs: string[] = [];
   operation?.signal.throwIfAborted();
-  const pressure = currentDiskLevel(operation ? await measureDiskAsync(operation) : undefined);
+  const pressure = diskPressure(
+    operation ? await measureDiskAsync(operation) : measureDisk(),
+    diskThresholds(loadConfig(), operation?.env).thresholds,
+  ).level;
   for (const key of keys) {
     operation?.signal.throwIfAborted();
     let r: ReclaimResult;
@@ -738,7 +767,7 @@ async function reclaimAll(
       r = await reclaimProject(key, {
         archive: removedBy ? { removedBy } : undefined,
         deleteOwnedDevices: true,
-        parkOwnedDevices: pressure < 2,
+        parkOwnedDevices: pressure === 'normal',
         preserveProjectRecord: preserveRootProject && key === rootPath,
         stopRequester: { by: 'stim worktree remove' },
         operation,
@@ -772,8 +801,8 @@ async function reclaimAll(
       for (const resource of r.failedDevices) retainedResources.push({ ...resource, project: key });
     }
   }
-  if (pressure >= 2 && deletedDevices.length)
-    poolNotes.push(`disk pressure level ${pressure}: deleted the owned devices instead of parking them`);
+  if (pressure !== 'normal' && deletedDevices.length)
+    poolNotes.push(`disk pressure ${pressure}: deleted the owned devices instead of parking them`);
   for (const key of keys) {
     if (keptEntries.includes(key)) continue;
     const tunnel = readMetroTunnel(key);

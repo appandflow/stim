@@ -26,7 +26,7 @@ import { join } from 'node:path';
 import { artifactCachePolicy, optimizationBuildProfile } from '../optimizations.ts';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
-import { formatDuration, phaseLine, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
+import { phaseLine, stepClock, stepTimer } from '../command-output.ts';
 import { waitFlagConflict, leaseExpiryText, type RunLease } from '../engine/device-lease-run.ts';
 import { parseMachine } from '@stim-cli/core/state';
 import {
@@ -41,7 +41,6 @@ import {
 import { finishHostedIosRun } from './ios/hosted.ts';
 import type { CompilationCacheActivity, DevServerStart } from '../engine/build-facts.ts';
 import {
-  deviceReclaimIdleMinutesSetting,
   iosLanHostSetting,
   iosLanHostSettingError,
   iosSigningIdentitySetting,
@@ -59,7 +58,7 @@ import type { IosCommandOptions, IosBootLike, FailArgs, BuildFailureFields } fro
 import { type IosDeps, DEFAULT_DEPS } from './ios/dependencies.ts';
 import { DEFAULT_METRO_PORT } from '../engine/app-install.ts';
 import { createIosSimSnapshot } from '../devices/ios.ts';
-import { didSetUpDevice, ensureOwnedDevice } from '../engine/device.ts';
+import { ensureOwnedDevice } from '../engine/device.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { REMOTE_SESSION_ERROR, binOnPath } from '../engine/device-remote.ts';
 import {
@@ -76,7 +75,6 @@ import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { setRemoteLogSink } from '../remote-log.ts';
 import { parseBuildMachineOption } from '../offload/selection.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import type { ReclaimedStep } from '../budget.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { printLightenedFailure, restoreLightenedDependencies } from '../workspace/lightened.ts';
@@ -85,7 +83,6 @@ import { ensureDevServer, isPhysicalDeviceRequest, type MobileRuntimePreparation
 import {
   PLATFORM,
   buildLogFile,
-  deviceLabel,
   resolveConfiguration,
   resolveDeviceType,
   resolveSchemeSelection,
@@ -93,6 +90,10 @@ import {
   resolveSimulatorAppFlag,
   resolveIosWait,
   createIosDeviceWaitRun,
+  iosDeviceSettler,
+  pendOwnedDevice,
+  startWhenCreated,
+  type PendingOwnedDevice,
   deviceModelRefusal,
   iosProjectPathError,
   isReleaseConfiguration,
@@ -188,7 +189,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--simulator-app <app>',
-      'Open the owned simulator in xcode, siniulator, or stim-desktop for this run, overriding the machine iosSimulatorApp setting. Also opens an already running simulator; local simulators only.',
+      'Open the owned simulator in xcode, siniulator, or stim-desktop for this run, or none to open no viewer, overriding the machine iosSimulatorApp setting. Also opens an already running simulator; local simulators only.',
     )
     .option(
       '--device [udid]',
@@ -207,7 +208,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--wait <seconds>',
-      'How long to wait for another workspace to release the phone it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, wait for an owned-device slot (default 600 seconds; --no-wait refuses immediately).',
+      'How long to wait for another workspace to release the phone it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, bound the owned-device slot wait; without --wait, a queued run waits while the devices ahead of it are listed, and refuses after 90 minutes or once the devices cannot be counted for max(10 minutes, position x 5 minutes) (--no-wait refuses immediately).',
     )
     .option(
       '--no-wait',
@@ -320,6 +321,7 @@ function iosProjectTargetRefusal(
 
 function iosArtifactTargetInputs({
   udid,
+  pendingDevice,
   physical,
   remote,
   hosted,
@@ -330,6 +332,8 @@ function iosArtifactTargetInputs({
   settings,
 }: {
   udid: string;
+  /** The simulator this run is still waiting to create, which a build cannot name by udid. */
+  pendingDevice: PendingOwnedDevice | null;
   physical: boolean;
   remote: boolean;
   hosted: Awaited<ReturnType<IosDeps['prepareHostedIos']>> | null;
@@ -339,16 +343,18 @@ function iosArtifactTargetInputs({
   metroPort: number | null;
   settings: ReturnType<IosDeps['resolveSettings']>;
 }): Pick<IosArtifactContext, 'target' | 'device'> {
+  const unbound = pendingDevice !== null;
+  const pendingRuntimeId = pendingDevice?.runtimeId ?? null;
   return {
     target: {
-      udid,
-      destination: remote || hosted ? 'generic/platform=iOS Simulator' : null,
+      udid: unbound ? null : udid,
+      destination: remote || hosted || unbound ? 'generic/platform=iOS Simulator' : null,
       sdk: physical ? 'iphoneos' : 'iphonesimulator',
       // Xcode narrows a local simulator build to the booted device's arch only when the configuration sets
       // ONLY_ACTIVE_ARCH=YES, which Debug does and Release does not by default.
-      arch: remote || hosted || isReleaseConfiguration(configuration) ? simulatorArch : null,
+      arch: remote || hosted || unbound || isReleaseConfiguration(configuration) ? simulatorArch : null,
       keyArch: simulatorArch,
-      offloadRuntime: () => hosted?.choice.runtimeId ?? (remote ? null : simulatorRuntime(udid)),
+      offloadRuntime: () => hosted?.choice.runtimeId ?? (remote ? null : (pendingRuntimeId ?? simulatorRuntime(udid))),
       hostedArchitecture: hosted?.choice.architecture,
       offloadRefusal: physical ? 'device builds build here' : remote ? '--remote builds build here' : null,
     },
@@ -479,7 +485,6 @@ async function runIos(
   const recordRun = deviceWaitRun.record;
 
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
-  let reclaimed: ReclaimedStep[] = [];
   let buildMachine = 'auto';
   let devicePlacement: DevicePlacement | undefined;
   let builtConfiguration: string | null = null;
@@ -543,7 +548,6 @@ async function runIos(
           ...(devicePlacement ? { devicePlacement } : {}),
           ...(compilationCache.status === 'not-run' ? {} : { compilationCache }),
           ...(lease === undefined ? {} : { lease }),
-          ...(reclaimed.length ? { reclaimed } : {}),
         }),
       );
     }
@@ -648,7 +652,6 @@ async function runIos(
   const deviceSlotWait = {
     automatic: false,
     waitMs: deviceSlotWaitMs,
-    reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     ...deviceWaitRun.policy,
     onWait: (ms: number) => {
       deviceWaitRun.policy.onWait?.(ms);
@@ -770,11 +773,9 @@ async function runIos(
       note,
       Boolean(hostedTarget),
       remoteSelection.budget,
-      simSnapshot,
       context.env,
       onReclaim,
     );
-    reclaimed = budget.reclaimed;
     if (budget.refusal) return fail(budget.refusal);
     const backendConnection = await connectIosBackend(root, remoteBackend, opts.deviceType, d, context.env, context);
     if ('failure' in backendConnection) return fail(backendConnection.failure);
@@ -865,7 +866,8 @@ async function runIos(
         platform: PLATFORM,
         project: proj,
         max: limits.maxDevices,
-        sims: () => simSnapshot.read().filter((sim) => sim.available),
+        sims: async () =>
+          (simSnapshot.readAsync ? await simSnapshot.readAsync() : simSnapshot.read()).filter((sim) => sim.available),
       });
       if (capacity) {
         const { max: fullMax, ...refusal } = capacity;
@@ -887,6 +889,7 @@ async function runIos(
     metroPort = runtimePreparation.metroPort;
 
     let device: Awaited<ReturnType<typeof ensureOwnedDevice>>;
+    let pendingDevice: PendingOwnedDevice | null = null;
     if (physicalDevice) {
       device = { deviceUdid: physicalDevice.udid, deviceName: physicalDevice.name, owned: false } as Awaited<
         ReturnType<typeof ensureOwnedDevice>
@@ -894,7 +897,17 @@ async function runIos(
     } else if (hostedTarget) {
       device = { owned: false, deviceName: hostedTarget.choice.deviceType, runtime: hostedTarget.choice.runtime };
     } else {
-      const prepare = stepClock(d.now);
+      const settleDevice = iosDeviceSettler({
+        prepare: stepClock(d.now),
+        phase,
+        progress,
+        deviceWaitRun,
+        remote: Boolean(remoteDevice),
+        onSettled: (prepared) => {
+          device = prepared;
+          builtDevice = iosLedgerDevice(prepared);
+        },
+      });
       try {
         device = await d.ensureOwnedDevice({
           platform: PLATFORM,
@@ -909,6 +922,7 @@ async function runIos(
             runtimeFlag: resolveRuntime(opts.runtime, null),
             simulatorApp,
             expectedDevice: opts.expectedDevice,
+            allowPendingCreation: true,
           },
           note,
           out: note,
@@ -917,15 +931,7 @@ async function runIos(
       } catch (e) {
         return fail(ownedSimFailure(e));
       }
-      deviceWaitRun.booting(device.booting);
-      progress.deviceSetup(didSetUpDevice(device, Boolean(remoteDevice)));
-      const prepareMs = prepare();
-      if (device.created || prepareMs >= SLOW_STEP_MS) {
-        phase(
-          'device',
-          `${deviceLabel(device, device.deviceUdid)} ${device.created ? 'created' : 'prepared'} (${formatDuration(prepareMs)})`,
-        );
-      }
+      pendingDevice = pendOwnedDevice(device, settleDevice, deviceWaitRun);
     }
 
     builtDevice = iosLedgerDevice(device);
@@ -972,7 +978,6 @@ async function runIos(
           onReclaim,
           readState: d.readWorkspaceState,
         });
-        reclaimed = [...reclaimed, ...gate.reclaimed];
         if (!gate.ok) {
           return {
             ok: false,
@@ -1151,7 +1156,8 @@ async function runIos(
       // A remote device boots after the build: agent-device's daemon exits five
       // minutes after its last request while no session is open, and nothing
       // restarts it on an EAS host (https://github.com/appandflow/stim/issues/1212).
-      const localBoot = remoteDevice || hostedTarget ? null : startBoot();
+      const localBoot = remoteDevice || hostedTarget || pendingDevice ? null : startBoot();
+      const deviceCreated = startWhenCreated(pendingDevice, startBoot);
       udid = (device.deviceUdid as string | undefined) ?? (await localBoot) ?? '';
       const simulatorArch = simulatorBuildArch({
         physical,
@@ -1178,6 +1184,7 @@ async function runIos(
               buildProfile,
               ...iosArtifactTargetInputs({
                 udid,
+                pendingDevice,
                 physical,
                 remote: Boolean(remoteDevice),
                 hosted: hostedTarget,
@@ -1255,7 +1262,6 @@ async function runIos(
           closeWriter: () => writer?.close(),
           devicePlacement,
           recordRun: (outcome) => recordRun({ ...outcome, remoteDevice: true }),
-          reclaimed,
           devServer,
           fail,
           note,
@@ -1265,7 +1271,12 @@ async function runIos(
           selectors,
           logWriter,
         });
-      if (!localBoot) {
+      if (deviceCreated) {
+        progress.step('device');
+        const created = await deviceCreated.then(() => device.deviceUdid ?? '', ownedSimFailure);
+        if (typeof created !== 'string') return fail(created);
+        udid = created;
+      } else if (!localBoot) {
         progress.step('device');
         udid = await startBoot();
       }
@@ -1351,7 +1362,6 @@ async function runIos(
           releaseLease,
           devicePlacement,
           recordRun: (outcome) => recordRun({ ...outcome, remoteDevice: Boolean(remoteDevice) }),
-          reclaimed,
           devServer,
           enterPhase: progress.step,
           enterActivity: progress.activity,

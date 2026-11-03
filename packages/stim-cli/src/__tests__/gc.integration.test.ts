@@ -97,6 +97,7 @@ vi.mock('../devices/machine-cache-usage.ts', () => ({
     gradle: { home: '', unusedVersions: [], usedVersions: [], unreadableProjects: [], modules: null },
     simRuntimes: { checked: true, runtimes: [] },
     deviceSupport: { entries: [], remedy: '' },
+    orphanedDerivedData: [],
     runnerBuilds: { agentDeviceVersion: null, xcodeBuildVersion: null, groups: [], remedy: '' },
   }),
 }));
@@ -2623,7 +2624,7 @@ test('gc --json lists every device with its owner and every runtime and system i
         (c) =>
           !c.includes(' list ') &&
           !/ -?-version$/.test(c) &&
-          c !== '/usr/sbin/sysctl -n kern.memorystatus_vm_pressure_level',
+          !['/usr/sbin/sysctl -n kern.memorystatus_vm_pressure_level', 'vm_stat', 'adb devices'].includes(c),
       ),
     ).toEqual([]);
   } finally {
@@ -2900,7 +2901,7 @@ test('gc reports a live project whose recorded sim is gone, and --delete clears 
 
 test('a recorded sim that IS on the machine is not a stale record', async () => {
   const livePath = join(fakeHome, 'live-project');
-  usedDaysAgo(livePath, 1);
+  usedDaysAgo(livePath, 0);
   saveConfig({
     version: 2,
     projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-HERE', owned: true } } } },
@@ -2937,7 +2938,7 @@ test('--older-than without --delete only reports the stale device', async () => 
 
 test('a device whose project is still being worked in is never reaped by --older-than', async () => {
   const livePath = join(fakeHome, 'live-project');
-  usedDaysAgo(livePath, 1);
+  usedDaysAgo(livePath, 0);
   saveConfig({
     version: 2,
     projects: { [livePath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-LIVE', owned: true } } } },
@@ -3426,13 +3427,14 @@ describe('gc --json', () => {
     const payload = JSON.parse(stdout[0] ?? '');
     expect(payload).toMatchObject({
       mode: 'dry-run',
-      idle: null,
       cacheScope: null,
       olderThan: null,
       actionable: true,
       failures: null,
     });
     expect(payload.maintenance).toMatchObject({ mode: 'off' });
+    expect(payload.ladder.levels.map((level: { level: string }) => level.level)).toEqual(['high', 'critical']);
+    expect(payload.ladder.workspaces).toEqual(expect.any(Array));
     expect(payload.sections).not.toHaveProperty('maintenance');
     expect(payload.sections.deadProjects).toEqual([{ path: deadPath() }]);
     expect(payload.sections.orphanedPorts).toEqual([{ project: deadPath(), label: 'web', port: 8102 }]);
@@ -3450,8 +3452,10 @@ describe('gc --json', () => {
       'parkedEmulators',
       'parkedHostedDevices',
       'hostedAppStorage',
+      'otherHomes',
       'orphanedDevices',
       'unverifiedDevices',
+      'simulatorLaunchdFolders',
       'staleDevices',
       'finishedDevices',
       'ownedDeviceDisk',
@@ -3459,7 +3463,6 @@ describe('gc --json', () => {
       'staleLedgerEntries',
       'staleEasLedgerEntries',
       'staleStatusCaches',
-      'idleDevices',
       'orphanedEasSessions',
       'staleBuildLocks',
       'staleBuildSlots',
@@ -3471,7 +3474,6 @@ describe('gc --json', () => {
       'easSessionSweepNotices',
       'skipped',
       'workspaceLogs',
-      'worktreeDependencies',
       'recordings',
       'workspaceBuildOutputs',
       'caches',
@@ -3894,6 +3896,11 @@ test('an expired lease counts as something to reclaim', () => {
   expect(lines).toMatch(/Expired device leases \(1\)/);
   expect(lines).toMatch(/Old iPhone/);
   expect(lines).toMatch(/\/w\/dead/);
+});
+
+test('with nothing else to reclaim, a --delete run says the pressure ladder still runs after the report', () => {
+  expect(formatGcReport({ ladderRun: 'high' })[0]).toBe('Nothing to reclaim before the pressure ladder runs at high.');
+  expect(formatGcReport({})[0]).toBe('Nothing to reclaim.');
 });
 
 test('a kept lease file alone is not something to reclaim', () => {

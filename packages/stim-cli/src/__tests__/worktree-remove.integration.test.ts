@@ -1,4 +1,4 @@
-import { readArchives, type DiskPressureLevel } from '@stim-cli/core/state';
+import { readArchives } from '@stim-cli/core/state';
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import {
   existsSync,
@@ -1833,16 +1833,18 @@ test('action: removal releases this workspace lease and leaves another workspace
   ).toBe(true);
 });
 
-const PARKING_PRESSURE: [DiskPressureLevel, boolean][] = [
-  [0, false],
-  [2, true],
+const PARKING_PRESSURE: [number, boolean][] = [
+  [100, false],
+  [10, true],
 ];
 
 test.each(PARKING_PRESSURE)(
-  'action: at disk pressure level %i with parking enabled, removal parks the owned simulator unless the disk is short',
-  async (level, deletes) => {
+  'action: with %i GB free and parking enabled, removal parks the owned simulator unless disk pressure is high',
+  async (freeGb, deletes) => {
     vi.stubEnv('STIM_POOL_IOS_PARKED_MAX', '3');
-    vi.spyOn(measurements, 'currentDiskLevel').mockReturnValue(level);
+    const disk = [{ volume: '/', freeMb: freeGb * 1024 }];
+    vi.spyOn(measurements, 'measureDisk').mockReturnValue(disk);
+    vi.spyOn(measurements, 'measureDiskAsync').mockResolvedValue(disk);
     upsertProject(mainDir, {
       metroPort: 8081,
       platforms: { ios: { deviceUdid: 'U9', owned: true, deviceName: 'stim-main' } },
@@ -1864,7 +1866,7 @@ test.each(PARKING_PRESSURE)(
     }
 
     const output = errs.join('\n');
-    expect(output.includes('disk pressure level 2: deleted the owned devices instead of parking them')).toBe(deletes);
+    expect(output.includes('disk pressure high: deleted the owned devices instead of parking them')).toBe(deletes);
     expect(/could not park|parked stim/.test(output)).toBe(!deletes);
     expect(exec.calls.run.some((c) => /xcrun simctl delete U9/.test(c))).toBe(true);
   },

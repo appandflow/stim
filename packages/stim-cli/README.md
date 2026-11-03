@@ -28,6 +28,7 @@ npx stim <command>
 stim doctor
 stim start
 stim ios                  # or: stim android, or: stim web
+stim agent-device snapshot -i --json   # drive the workspace device with agent-device
 stim logs --errors
 stim stop
 ```

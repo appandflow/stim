@@ -2,8 +2,12 @@ import { realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, vi } from 'vitest';
-import { EAS_TEST_GUARD_ROOT_ENV } from './packages/stim-cli/src/engine/eas-machine-root-guard-env.ts';
+import {
+  EAS_TEST_GUARD_ROOT_ENV,
+  STIM_HOMES_TEST_GUARD_ROOT_ENV,
+} from './packages/stim-cli/src/engine/eas-machine-root-guard-env.ts';
 import { TEMP_LEFTOVERS_TEST_GUARD_ENV } from './packages/stim-cli/src/commands/gc/temp-leftovers-guard-env.ts';
+import { HOME_PASSES_TEST_GUARD_ENV } from './packages/stim-cli/src/daemon/passes-guard-env.ts';
 
 // The machine running the suite may legitimately export STIM_* overrides
 // (this machine relocates the shared caches to an external SSD via
@@ -13,9 +17,13 @@ for (const key of Object.keys(process.env)) {
   if (key.startsWith('STIM_')) delete process.env[key];
 }
 
+process.env.STIM_DAEMON = 'off';
+process.env[HOME_PASSES_TEST_GUARD_ENV] = '1';
+
 // Must run before a test can redirect HOME, so this captures the real root
 // (see assertEasMachineRootWritable in eas-session-ledger.ts).
 process.env[EAS_TEST_GUARD_ROOT_ENV] = join(homedir(), '.stim', 'machine', 'eas');
+process.env[STIM_HOMES_TEST_GUARD_ROOT_ENV] = join(homedir(), '.stim', 'machine', 'homes');
 
 // gc never sweeps the real TMPDIR from a test, even one that mocks the STIM_HOME scope away.
 process.env[TEMP_LEFTOVERS_TEST_GUARD_ENV] = realpathSync(tmpdir());

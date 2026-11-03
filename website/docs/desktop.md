@@ -41,6 +41,23 @@ brew install --cask appandflow/tap/stim
   or use `npx stim`. The setup guide offers this optional installation.
 - Xcode 27 for live simulator screens.
 
+### Prerelease updates
+
+Every merge to `main` that changes Desktop also builds a notarized prerelease, so you can try a change
+before the next release. In **Settings > App > Updates**, turn on **Get prerelease updates**. Desktop then
+offers these builds like any update, and **Check for Updates...** includes them. The setting is off by
+default, and a stable build with it off never sees a prerelease. Turning it off later keeps the installed
+build until a newer stable release arrives. You can also download a prerelease from the
+[GitHub releases](https://github.com/appandflow/stim/releases) marked as such; a build downloaded that way
+starts with the setting on. A prerelease is versioned like `0.3.0-next.<UTC commit time>.g<commit>`, can be
+unfinished, and is not offered through Homebrew or the **Download** button. Only the newest few are kept.
+
+Ask your agent to turn it on for you:
+
+```text
+Open Stim Desktop's Settings > App > Updates and turn on Get prerelease updates.
+```
+
 Setup fixes and device lease releases in the inbox run through the bundled local server. Doctor asks for confirmation before repairing project state.
 
 Hosted iOS simulators and Android emulators started with
@@ -366,7 +383,11 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   for owned work. Shared Watchman, Gradle and Kotlin reclaim actions describe their category-wide
   scope in a confirmation. Worktree rows use the same trailing menu presentation.
   **Review cleanup** opens **Storage**, where you can inspect devices, caches,
-  repositories and cleanup candidates before choosing what to free. The summary
+  repositories and cleanup candidates before choosing what to free. The Machine
+  page also shows the `stim-daemon`'s pressure level and its last three
+  actions; while the level is high or critical it shows why, the sidebar marks
+  Machine, and **Free Disk Space** runs `stim gc --delete`, which runs the
+  pressure ladder to its end at high. The summary
   includes optional caches, so it is not an amount selected for deletion.
   The cleanup checklist shows a selected-row count; changing checkboxes performs no cleanup.
   Mixed cleanup confirmations name the selected items and consequences before command details.
@@ -413,9 +434,22 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   report and shows its age and the error. If the server lacks storage-report
   support, update Stim and restart its local server. Storage reads share the
   same response limit and do not retry through the CLI.
+- **Web shares.** A running simulator or emulator's menu has **Share...**, which
+  makes the same public link as [`stim share`](./share.md): view only or with
+  control, an expiry from 15 minutes to 8 hours, and a generated, chosen or no
+  password. A share with control and a password can also have a separate
+  view-only password (generated or chosen), shown as **View password** next to
+  the control one. The link and generated passwords appear once, each with a Copy button;
+  Desktop does not keep them. **Settings > Web Shares** lists the live shares with
+  their viewers and time left ("View and control, view password" for a share with
+  two passwords). **Stop** on a row ends that one share; a workspace with
+  several shares also has **Stop All**. A stim-server older than this (without the
+  `share-stop-id` feature) has only the workspace-wide **Stop**, which ends every share of
+  the workspace. Quitting
+  Desktop asks first while the server it started holds live shares, since quitting ends them.
 - **Cleanup history.** **Settings > App > Cleanup History** lists every run that deleted
   or changed something, newest first: `stim gc` from this app, an agent or a terminal,
-  automatic maintenance, and the budget check before a build. A row shows what started
+  and automatic maintenance. A row shows what started
   the run, when, how many items it cleared, kept and failed, and the bytes freed; expand it
   for each item's path and the reason a kept or failed item was left. It reads
   `stim logs --source gc --json`, so it needs a Stim version that writes the gc log.
@@ -470,11 +504,14 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   stay centered, fill available width up to 640 points, and form extra columns
   only when full-width cards fit.
 - **Notifications and cleanup.** Alerts for stuck agents and builds that keep failing.
-  Cleanup is Stim's own automatic maintenance, which runs from the CLI whether
-  Desktop is open or not; **Settings > App > Automatic Maintenance** shows its
-  mode and last pass, and sets how long something stays unused before it is
-  cleaned up (`maintenance.olderThanDays`) and when idle devices shut down
-  (`devices.idleShutdownMinutes`), and whether idle unmerged worktrees are
+  Cleanup is the `stim-daemon`'s, which runs from the CLI whether Desktop is
+  open or not; Desktop reads its mode, pressure level and last actions from the
+  status stim-server serves, and runs no timer and keeps no thresholds of its
+  own. **Settings > App > Automatic Maintenance** shows the daemon mode, the
+  level, the last actions and the last maintenance pass, and sets how long
+  something stays unused before it is cleaned up (`maintenance.olderThanDays`),
+  when idle workspaces stop (**Stop idle workspaces after**, which writes
+  `idle.minutes`), and whether idle unmerged worktrees are
   removed (`maintenance.removeIdleWorktrees`, off by default). The worktree
   switch, **Never** for the cleanup age and Cleanup History need a Stim newer
   than 1.25.0; with an older one they say to update Stim. See
@@ -594,9 +631,18 @@ Turn it off with **Sync clipboard** in the options popover (the sliders button),
 which also has **Paste Mac Clipboard** and **Copy Device Clipboard** for one-off
 transfers. Syncing only sets the device clipboard; to insert text, paste in the
 guest. An iOS simulator shows its own "Allow Paste" prompt for text that came from
-another source; click **Allow Paste** in the viewer. Unicode and line breaks are
-preserved. Physical devices, hosted and remote sessions and replay never sync, so
-no clipboard text crosses the network or reaches another machine.
+another source; click **Allow Paste** in the viewer. After a paste on an iOS simulator
+Desktop shows a notice that says to tap the paste suggestion on the device if nothing
+appears. Unicode and line breaks are preserved.
+
+A device Desktop shows through stim-server has the same options once **Control** is on, with sync on by default, so the current Mac text is sent to the device's machine as soon as Control starts:
+a hosted iOS or Android session, a device of a paired machine, or a leased Android phone.
+Sync, **Paste Mac Clipboard** and **Copy Device Clipboard** work the same way, with one limit: the device takes at most 8 KiB
+of text from the Mac. A larger item is not synced and a notice says so, and **Paste Mac Clipboard**
+tells you the size. The server that owns the device must be recent enough; otherwise the section is
+disabled and names the server to update. The text crosses the network to the Mac that runs the device,
+over the tailnet for a hosted session. A leased iPhone, macOS apps, web pages, remote
+previews and replay never sync.
 
 Overview opens first. The **Active** section comes first, with the same grid of live workspace
 cards as the Active workspaces page (see below). With nothing running, it says where active projects will appear. **Idle projects** follow as compact

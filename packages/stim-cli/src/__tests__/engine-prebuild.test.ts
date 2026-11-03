@@ -3,7 +3,14 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PREBUILD_ERROR, planPrebuild, planPrebuildAsync, recordPrebuild, runPrebuild } from '../engine/prebuild.ts';
+import {
+  PREBUILD_ERROR,
+  planPrebuild,
+  planPrebuildAsync,
+  prebuildRecordStatus,
+  recordPrebuild,
+  runPrebuild,
+} from '../engine/prebuild.ts';
 import { makeChildProcess, makeWriter } from './_factories.ts';
 
 type WriteRecord = { src: string; level: string; msg: string; event?: string };
@@ -63,6 +70,18 @@ describe('the decision', () => {
       }
     },
   );
+});
+
+describe('the prebuild record', () => {
+  test.each([
+    ['an unfinished prebuild', null, null, { kind: 'unfinished' }],
+    ['no record', undefined, null, { kind: 'unrecorded' }],
+    ['a record equal to the fingerprint', 'abc', 'abc', { kind: 'current', generatedFrom: 'abc' }],
+    ['a record of another fingerprint', 'abc', 'abd', { kind: 'moved', recorded: 'abc', current: 'abd' }],
+    ['a fingerprint that could not be computed', 'abc', null, { kind: 'unfingerprintable', recorded: 'abc' }],
+  ])('%s', (_name, recorded, current, status) => {
+    expect(prebuildRecordStatus(recorded, current)).toEqual(status);
+  });
 });
 
 function fakeExpoChild({

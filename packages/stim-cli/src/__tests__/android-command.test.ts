@@ -554,7 +554,6 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       ok: false as const,
       error: { code: 'STIM_METRO_TIMEOUT', message: 'The dev server did not answer.', remedy: 'Run `stim logs`.' },
       lines: [],
-      reclaimed: [],
     }),
     verifyLaunched: async (args: VerifyArgs = {}) => {
       calls.verify.push(args);
@@ -633,7 +632,6 @@ test.each([false, true])('the Android API preserves retained Metro cleanup after
           error: { code: 'STIM_CLAIM_UNAVAILABLE', message: 'Metro cleanup is unresolved.', remedy: 'Recover Metro.' },
           retainedClaimRoots,
           lines: [],
-          reclaimed: [],
         };
       },
     }).run(),
@@ -2360,7 +2358,6 @@ const devServerStarted = (port = 8082, alreadyRunning = false) => ({
   ok: true as const,
   facts: { port, supervisorPid: 4242, mode: 'bare-inproc', logsDir: '/logs', alreadyRunning },
   waited: '(2.0s)',
-  reclaimed: [],
 });
 
 describe('metro is verified before any build work', () => {
@@ -2372,7 +2369,6 @@ describe('metro is verified before any build work', () => {
       ok: false as const,
       error: { code: 'STIM_BAD_ARG', message: 'The old dev server is running.', remedy: 'Run `stim stop`.' },
       lines: [],
-      reclaimed: [],
     }));
     const h = harness({ startServer: start });
     const result = await h.run();
@@ -2470,7 +2466,6 @@ describe('metro is verified before any build work', () => {
         ok: false as const,
         error: { code: 'STIM_SUPERVISOR_EXITED', message: 'The supervisor exited (code 1).', remedy: 'Fix it.' },
         lines: ['metro: SyntaxError in metro.config.js'],
-        reclaimed: [],
       }),
       fingerprint: never('the fingerprint'),
       build: never('the build'),
@@ -4473,28 +4468,16 @@ describe('concurrency limits', () => {
     expect(recordCapacityRefusal).not.toHaveBeenCalled();
   });
 
-  test('a budget refusal stops before any device or build and reports what was reclaimed', async () => {
-    const reclaimed = [{ step: 'idle-dev-servers' as const, targets: ['/w/b'], failures: 0, freedMb: 0 }];
+  test('a disk floor refusal stops before any device or build', async () => {
     const h = harness({
       json: true,
-      checkBudget: async () => ({
-        reclaimed,
-        refusal: { code: 'STIM_LOW_DISK', message: 'low', remedy: 'stim gc' },
-      }),
+      checkBudget: async () => ({ refusal: { code: 'STIM_LOW_DISK', message: 'low', remedy: 'stim gc' } }),
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
-    expect(JSON.parse(h.stdout[0]!)).toMatchObject({ code: 'STIM_LOW_DISK', reclaimed });
+    expect(JSON.parse(h.stdout[0]!)).toMatchObject({ code: 'STIM_LOW_DISK' });
     expect(h.calls.ensureDevice.length).toBe(0);
     expect(h.calls.build.length).toBe(0);
-  });
-
-  test('a run that reclaimed first reports the steps in its success payload', async () => {
-    const reclaimed = [{ step: 'stale-cache-entries' as const, targets: ['Gradle'], failures: 0, freedMb: 512 }];
-    const h = harness({ json: true, checkBudget: async () => ({ reclaimed, refusal: null }) });
-    const result = await h.run();
-    expect(result.ok).toBe(true);
-    expect(JSON.parse(h.stdout.at(-1)!)).toMatchObject({ reclaimed });
   });
 
   test('maxBuilds takes a slot to build and releases it, with the right args', async () => {
@@ -6796,7 +6779,7 @@ describe('run statistics', () => {
       waitedForBuild: false,
       durationMs: expect.any(Number),
       coldBuildMs: 161000,
-      placement: { decision: 'here', reason: 'no remote machine is paired' },
+      placement: { decision: 'here', reason: 'no remote machine is paired', slotWaitMs: 0 },
     });
     expect((runs[0]?.run.durationMs as number) > 0).toBe(true);
     expect(runs[0]?.now).toBe(clock);
@@ -6846,7 +6829,7 @@ describe('run statistics', () => {
     const { runs, recordStats } = recorder();
 
     expect((await runWithBuild('local', { recordStats })).ok).toBe(true);
-    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: '--remote-build local' });
+    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: '--remote-build local', slotWaitMs: 0 });
   });
 
   test('a fallback that no machine caused counts against none', async () => {
@@ -6857,6 +6840,7 @@ describe('run statistics', () => {
     expect(runs[0]?.run.placement).toEqual({
       decision: 'fell-back',
       reason: expect.stringMatching(/^this app is not in a git checkout/),
+      slotWaitMs: 0,
     });
   });
 
@@ -7968,8 +7952,7 @@ describe('named Android hosting placement', () => {
         startedAt: '2026-10-06T12:00:00Z',
       });
       writeWorkspaceState(root, { lastAndroidBuild: baseline });
-      const checkBudget = vi.fn<() => Promise<{ reclaimed: []; refusal: null }>>(async () => ({
-        reclaimed: [],
+      const checkBudget = vi.fn<() => Promise<{ refusal: null }>>(async () => ({
         refusal: null,
       }));
       const h = harness({
@@ -8033,8 +8016,7 @@ describe('named Android hosting placement', () => {
     'auto validates %j before probing or reclaiming',
     async (flags) => {
       const automatic = vi.fn<typeof automaticDevicePlacement>();
-      const budget = vi.fn<() => Promise<{ reclaimed: []; refusal: null }>>(async () => ({
-        reclaimed: [],
+      const budget = vi.fn<() => Promise<{ refusal: null }>>(async () => ({
         refusal: null,
       }));
       const h = harness({
@@ -8079,7 +8061,6 @@ describe('named Android hosting placement', () => {
           budget: async () => 'disk shortfall',
         }),
       checkBudget: async () => ({
-        reclaimed: [],
         refusal: { code: 'STIM_LOW_DISK', message: 'disk shortfall', remedy: 'Free disk space.' },
       }),
     });
@@ -8115,7 +8096,7 @@ describe('named Android hosting placement', () => {
         }),
       checkBudget: async () => {
         budgetChecks += 1;
-        return { reclaimed: [], refusal: null };
+        return { refusal: null };
       },
     });
     const result = await h.run();

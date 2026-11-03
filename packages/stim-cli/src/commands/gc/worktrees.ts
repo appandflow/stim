@@ -2,7 +2,7 @@ import type { StimContext } from '@stim-cli/core';
 import { existsSync, readdirSync, statSync } from 'fs';
 import { isAbsolute, join } from 'path';
 import chalk from 'chalk';
-import { machineNumber } from '../../budget.ts';
+import { machineNumber } from '../../machine-number.ts';
 import { formatLongDuration, plural } from '../../command-output.ts';
 import { ownedAvdSerialResolver, ownedAvdSerialResolverAsync, type ResolvedAvdSerial } from '../../devices/android.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
@@ -62,7 +62,7 @@ import { recordPullRequestLookup } from '../../status-measures.ts';
 import { worktreeArchiveLimits } from '../../archive.ts';
 import { stimCliEntries, stimCliUseOf } from '../../workspace/service-guard.ts';
 import { uncommittedActivityOf, type WorktreeArchive } from '../../workspace/worktree-archive.ts';
-import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
+import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
 import { eachLimited, readConcurrency } from './limited.ts';
@@ -94,6 +94,8 @@ export interface WorktreeFacts {
   source: 'source' | 'linked' | { refusal: string };
   bare: boolean;
   locked: boolean;
+  /** A scoped STIM_HOME does not list this worktree, so its registry cannot say the worktree is this home's. */
+  unregistered?: boolean;
   nested?: string[];
   porcelain: string[] | null;
   unpushed: string[] | null;
@@ -112,6 +114,7 @@ export type WorktreeSkipCode =
   | 'bare-repository'
   | 'source-checkout-unknown'
   | 'source-checkout'
+  | 'not-registered'
   | 'locked'
   | 'nested-worktree'
   | 'in-use'
@@ -135,7 +138,11 @@ interface WorktreeSkip {
 
 export interface WorktreeBuildState {
   bytes: number | null;
-  dirs: { path: string; bytes: number | null }[];
+  /**
+   * `privateBytes` is what deleting the directory would free, for node_modules, Pods, DerivedData and CMake output on
+   * APFS; else null. `reportOnly` marks xcodebuild output under a name other than `.dd`, which Stim never deletes.
+   */
+  dirs: { path: string; bytes: number | null; privateBytes: number | null; reportOnly?: true }[];
 }
 
 export interface UnlistedWorktreeDir {
@@ -165,8 +172,6 @@ export interface WorktreeSweep {
   graceMs: number;
   now: number;
   noOwnCommitsIdleMs: number | null;
-  /** The sweep removes worktrees with no commits of their own on the disk pressure window. */
-  underPressure?: boolean;
   worktrees: WorktreeCandidate[];
   unlisted?: UnlistedWorktreeDir[];
 }
@@ -277,6 +282,9 @@ function removalBlocker(
     return skip('source-checkout-unknown', `source checkout unknown: ${facts.source.refusal}`);
   }
   if (facts.source === 'source') return skip('source-checkout', 'source checkout');
+  if (facts.unregistered) {
+    return skip('not-registered', 'not registered in this Stim home: STIM_HOME scopes this config');
+  }
   if (facts.locked) return skip('locked', LOCKED_REASON);
   if (facts.nested?.length) return skip('nested-worktree', `contains the worktree ${facts.nested.join(', ')}`);
   if (facts.inUse.length) return skip('in-use', `in use: ${facts.inUse.join('; ')}`);
@@ -319,12 +327,11 @@ function removalBlocker(
 
 /**
  * Why gc removes a worktree it did not skip: `merged into origin/main`, `PR #12 closed`, `idle 9d`,
- * `no commits of its own beyond origin/main, idle 9d`, or, under disk pressure,
- * `no commits of its own beyond origin/main, inactive for 12m under disk pressure`.
+ * `no commits of its own beyond origin/main, idle 9d`.
  */
 export function worktreeRemovalReason(
   candidate: Pick<WorktreeCandidate, 'merge' | 'pullRequest' | 'idleDays' | 'activity' | 'dirty'>,
-  sweep: Pick<WorktreeSweep, 'now' | 'noOwnCommitsIdleMs' | 'underPressure'>,
+  sweep: Pick<WorktreeSweep, 'now' | 'noOwnCommitsIdleMs'>,
 ): string {
   const { merge, activity } = candidate;
   const archived = candidate.dirty ? `, ${plural(candidate.dirty, 'uncommitted file')} archived first` : '';
@@ -334,7 +341,6 @@ export function worktreeRemovalReason(
   if (merge && hasNoOwnCommits(merge)) {
     if (sweep.noOwnCommitsIdleMs !== null && activity) {
       const age = Math.max(0, sweep.now - activity.at);
-      if (sweep.underPressure) return `${merge.detail}, inactive for ${formatLongDuration(age)} under disk pressure`;
       return age >= DAY_MS
         ? `${merge.detail}, idle ${activityIdleDays(activity, sweep.now)}d`
         : `${merge.detail}, inactive for ${formatLongDuration(age)}`;
@@ -583,10 +589,15 @@ async function porcelainOf(
   return lines?.length ? lines : null;
 }
 
-export function candidateRoots(): string[] {
+export function listedRoots(): string[] {
   const registered = Object.keys(loadConfig()?.projects ?? {}).filter(isAbsolute);
   const recorded = listWorkspaceDirs().flatMap((entry) => (entry.projectRoot ? [entry.projectRoot] : []));
-  return [...new Set([...registered, ...recorded, ...linkedWorktreesOf(registered)])]
+  return [...new Set([...registered, ...recorded])];
+}
+
+export function candidateRoots(): string[] {
+  const registered = Object.keys(loadConfig()?.projects ?? {}).filter(isAbsolute);
+  return [...new Set([...listedRoots(), ...linkedWorktreesOf(registered)])]
     .filter((root) => existsSync(root))
     .toSorted();
 }
@@ -719,8 +730,7 @@ interface Inspected {
  * Classifies each linked worktree of a registered project or its repository. A merged one is removable, a dirty one
  * after archiving its uncommitted work when archives are on; with `idle`, so is one unused for `olderThan` days. One
  * with no commits of its own beyond the default branch is removable once its last activity is older than the grace
- * period and `maintenance.protectRecentHours`, or, `underPressure`, than the grace period alone; never younger than 5
- * minutes. Device use is read last, in one pass against one simulator list and one AVD resolver, so
+ * period and `maintenance.protectRecentHours`; never younger than 5 minutes. Device use is read last, in one pass against one simulator list and one AVD resolver, so
  * the resolver's time budget covers only device reads. Pull requests are asked once per repository, sequentially
  * with an operation and concurrently otherwise. Merge state is checked only where it decides the verdict, after one fetch per repository.
  * Without `refresh`, it runs no fetch and no `gh`: merge state comes from the existing remote-tracking ref and pull
@@ -731,7 +741,6 @@ export async function collectWorktreeSweep({
   olderThan,
   now,
   graceMs,
-  underPressure = false,
   refresh = true,
   operation,
 }: {
@@ -739,18 +748,13 @@ export async function collectWorktreeSweep({
   olderThan: number | null;
   now: number;
   graceMs?: number;
-  underPressure?: boolean;
   refresh?: boolean;
   operation?: StimContext;
 }): Promise<WorktreeSweep> {
   const days = idle ? (olderThan ?? DEFAULT_WORKTREE_IDLE_DAYS) : null;
   const grace: WorktreeGrace = { ms: graceMs ?? graceMsSetting(operation), now };
   const freshMs = refresh ? 0 : reportFreshMs(operation);
-  const noOwnCommitsIdleMs = Math.max(
-    grace.ms,
-    underPressure ? 0 : protectRecentMs(operation),
-    NO_OWN_COMMITS_PRESSURE_FLOOR_MS,
-  );
+  const noOwnCommitsIdleMs = Math.max(grace.ms, protectRecentMs(operation), NO_OWN_COMMITS_PRESSURE_FLOOR_MS);
   const cli = stimCliEntries(operation?.env);
   const groups = new Map<string, string[]>();
   operation?.signal.throwIfAborted();
@@ -783,6 +787,8 @@ export async function collectWorktreeSweep({
     }
     groups.set(entry.path, [...(groups.get(entry.path) ?? []), root]);
   }
+  const scoped = deviceSweepIsScoped(operation?.env);
+  const registry = new Set(listedRoots());
   const inspected: Inspected[] = [];
   await eachLimited([...[...groups].entries()], readConcurrency(operation), async ([index, [path, roots]]) => {
     operation?.signal.throwIfAborted();
@@ -794,7 +800,7 @@ export async function collectWorktreeSweep({
     const gitAnswered = linked ? await unlessTimedOut(() => hasUncommittedWorkAsync(path, read), null) : null;
     const porcelain = await porcelainOf(path, gitAnswered, operation);
     const dirty = linked ? dirtyLines(porcelain).length : 0;
-    const archiveDirty = dirty > 0 && !underPressure && !('refusal' in worktreeArchiveLimits(path, operation?.env));
+    const archiveDirty = dirty > 0 && !('refusal' in worktreeArchiveLimits(path, operation?.env));
     let activity = linked ? await worktreeActivityOfAsync(path, keys, operation) : null;
     if (activity && archiveDirty) {
       const edited = await uncommittedActivityOf(path, operation);
@@ -805,6 +811,7 @@ export async function collectWorktreeSweep({
       source: 'refusal' in source ? source : linked ? 'linked' : 'source',
       bare: Boolean(entry?.bare),
       locked: Boolean(entry?.locked),
+      unregistered: scoped && !roots.some((root) => registry.has(root)),
       nested: entry ? nestedWorktrees(entries, entry.path) : [],
       porcelain,
       unpushed: linked ? await unlessTimedOut(() => unpushedCommitsAsync(path, read), null) : null,
@@ -876,7 +883,6 @@ export async function collectWorktreeSweep({
     graceMs: grace.ms,
     now,
     noOwnCommitsIdleMs,
-    underPressure,
     worktrees: listed,
   };
 }

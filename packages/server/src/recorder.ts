@@ -75,24 +75,39 @@ interface Target extends FrameTarget {
   platform: RecordingPlatform;
 }
 
-function targetKey(target: Pick<FrameTarget, 'workspace' | 'platform' | 'slot'>): string {
+export function targetKey(target: Pick<FrameTarget, 'workspace' | 'platform' | 'slot'>): string {
   return JSON.stringify([target.workspace, target.platform, target.slot ?? 'default']);
 }
 
-function isDriven(activity: DeviceActivity | undefined): boolean {
-  return activity?.state === 'driven';
+function isDriven(activity: DeviceActivity | undefined, shared: boolean): boolean {
+  if (activity?.state !== 'driven') return false;
+  return !(
+    shared &&
+    activity.driver?.tool === 'stim device lock' &&
+    activity.basis.every((basis) => basis === 'device-lock')
+  );
 }
 
-/** Each recordable device slot of an environment, and whether an automation tool drives it now. */
-function environmentTargets(environment: EnvironmentState): { target: Target; driven: boolean }[] {
+/**
+ * Each recordable device slot of an environment, and whether an automation tool drives it now. A device in
+ * `unrecorded` whose only driver is a `stim device lock` lease, the one a web share's control holds, does not count.
+ */
+function environmentTargets(
+  environment: EnvironmentState,
+  unrecorded: ReadonlySet<string>,
+): { target: Target; driven: boolean }[] {
   const workspace = environment.path;
   const slots = [{ slot: 'default', ios: environment.ios, android: environment.android }, ...(environment.slots ?? [])];
+  const driven = (target: Target, activity: DeviceActivity | undefined) => ({
+    target,
+    driven: isDriven(activity, unrecorded.has(targetKey(target))),
+  });
   return [
     ...slots.flatMap(({ slot, ios, android }) => [
-      { target: { workspace, platform: 'ios' as const, slot }, driven: isDriven(ios?.activity) },
-      { target: { workspace, platform: 'android' as const, slot }, driven: isDriven(android?.activity) },
+      driven({ workspace, platform: 'ios', slot }, ios?.activity),
+      driven({ workspace, platform: 'android', slot }, android?.activity),
     ]),
-    { target: { workspace, platform: 'web' as const, slot: 'default' }, driven: isDriven(environment.web?.activity) },
+    driven({ workspace, platform: 'web', slot: 'default' }, environment.web?.activity),
   ];
 }
 
@@ -217,6 +232,7 @@ export class Recorder {
   private readonly subscribeStatus: (listener: FeedListener) => () => void;
   private readonly limits: RecordLimits;
   private readonly now: () => number;
+  private readonly unrecorded: () => ReadonlySet<string>;
   private readonly viewers = new Map<string, number>();
   private readonly sessions = new Map<string, DeviceRecording>();
   private unsubscribe: (() => void) | null = null;
@@ -233,8 +249,11 @@ export class Recorder {
     subscribeStatus: (listener: FeedListener) => () => void;
     limits?: Partial<RecordLimits>;
     now?: () => number;
+    /** {@link targetKey}s of the devices web shares control, whose share lease alone is not recorded. */
+    unrecordedTargets?: () => ReadonlySet<string>;
   }) {
     this.frames = options.frames;
+    this.unrecorded = options.unrecordedTargets ?? (() => new Set());
     this.subscribeStatus = options.subscribeStatus;
     this.limits = { ...DEFAULT_RECORD_LIMITS, ...options.limits };
     this.now = options.now ?? Date.now;
@@ -293,6 +312,11 @@ export class Recorder {
     };
   }
 
+  /** Decides again what to record from the last status, after what `unrecordedTargets` returns changed. */
+  refresh(): void {
+    this.evaluate();
+  }
+
   /** `recording.enabled` for `workspace` as the last status showed it; true before the first status. */
   enabled(workspace: string): boolean {
     const environment = this.payload?.environments?.find((candidate) => candidate.path === workspace);
@@ -337,12 +361,13 @@ export class Recorder {
     const payload = this.payload;
     if (this.closed || !payload || !Array.isArray(payload.environments) || !this.owns()) return;
     const wanted = new Map<string, Device>();
+    const unrecorded = this.unrecorded();
     for (const environment of payload.environments) {
       if (environment.recording?.enabled === false) {
         this.forget(environment.path);
         continue;
       }
-      for (const { target, driven } of environmentTargets(environment)) {
+      for (const { target, driven } of environmentTargets(environment, unrecorded)) {
         const key = targetKey(target);
         if (!driven && !this.viewers.has(key)) continue;
         const current = this.sessions.get(key);

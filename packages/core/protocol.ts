@@ -98,7 +98,12 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-run` streams platform build/install/launch progress and facts on the proved local Desktop connection.
  * `desktop-build` streams build-only progress and artifact facts on the proved local Desktop connection.
  * `desktop-plan` reads next-build reports for selected folders on the proved local Desktop connection.
+ * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
+ * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
+ * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
+ * `device-clipboard` is `input.clipboard.set` and `input.clipboard.get` (and `device-host.input.clipboard.*`): set the clipboard
+ * of an iOS simulator, an Android emulator or an Android phone, optionally pasting it, and read it back.
  */
 export const FEATURES = [
   'physical-ios',
@@ -164,6 +169,10 @@ export const FEATURES = [
   'desktop-worktree-remove',
   'desktop-worktree-warm',
   'desktop-plan',
+  'share-stop-id',
+  'presence',
+  'device-clipboard',
+  'share-view-password',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -230,6 +239,8 @@ export const METHODS = [
   'input.scroll',
   'input.key',
   'input.window',
+  'input.clipboard.set',
+  'input.clipboard.get',
   'push.register',
   'push.unregister',
   'notifications.list',
@@ -271,6 +282,8 @@ export const METHODS = [
   'device-host.input.rotate',
   'device-host.input.posture',
   'device-host.input.window',
+  'device-host.input.clipboard.set',
+  'device-host.input.clipboard.get',
   'server.update.status',
   'server.update.start',
   'server.update.chunk',
@@ -278,6 +291,10 @@ export const METHODS = [
   'machines.update.status',
   'device-host.sessions',
   'device-host.sessions.stop',
+  'share.start',
+  'share.stop',
+  'share.list',
+  'presence.publish',
 ] as const;
 
 /**
@@ -330,6 +347,8 @@ export const DEVICE_HOST_METHODS = [
   'device-host.input.rotate',
   'device-host.input.posture',
   'device-host.input.window',
+  'device-host.input.clipboard.set',
+  'device-host.input.clipboard.get',
 ] as const;
 
 export type Method = (typeof METHODS)[number];
@@ -339,14 +358,16 @@ export const PUSH_TOKEN_PATTERN = '^(Expo|Exponent)PushToken\\[[^\\]\\s]{1,256}\
 /**
  * `unauthorized`, `pairing-expired` and `protocol-unsupported` refuse the client until it pairs again or
  * updates; `unknown-secret` means the server does not hold the pairing token or setup ticket (yet), so a client with a
- * setup ticket retries until setup runs; clients retry the others. A network connection's refusals during the
- * handshake arrive as the WebSocket close reason.
+ * setup ticket retries until setup runs; `home-unavailable` means the server cannot read its Stim home, so it cannot
+ * tell whether it knows the client, and is never a revocation; clients retry the others. A network connection's
+ * refusals during the handshake arrive as the WebSocket close reason.
  */
 export const ERROR_CODES = [
   'unauthorized',
   'pairing-expired',
   'protocol-unsupported',
   'unknown-secret',
+  'home-unavailable',
   'bad-request',
   'unknown-method',
   'already-authenticated',
@@ -558,6 +579,8 @@ export interface FrameTarget {
    */
   at?: number;
   rate?: FramesSeekParams['rate'];
+  /** Asks for `presence` events about who acts on the device; the server lists the `presence` feature. */
+  presence?: boolean;
 }
 
 export const VIDEO_CODECS = ['h264'] as const;
@@ -627,6 +650,14 @@ export interface ReplayMarker {
   kind: (typeof REPLAY_MARKER_KINDS)[number];
   command?: string;
   label: string;
+  /**
+   * Where an agent action landed, as fractions 0-1 of the screen in the orientation its agent-device snapshot
+   * measured: the point, or the start of a scroll or swipe, and `x2`/`y2` its end. Absent without a measured screen.
+   */
+  x?: number;
+  y?: number;
+  x2?: number;
+  y2?: number;
 }
 
 /**
@@ -866,12 +897,19 @@ export type TouchPhase = (typeof TOUCH_PHASES)[number];
  * `x` and `y` are fractions of the upright screen, origin top-left; on a web page, of its viewport, where a
  * drag scrolls. `display` is 0 for the main display; without it, an iPhone Duo's touch goes to the panel its
  * frames show.
+ *
+ * `x2` and `y2`, given together, add a second finger at its own point, for a pinch or a two-finger pan on an iOS
+ * simulator or an Android device. A two-finger gesture sends `down`, any `move`s and `up` each with both points,
+ * and never changes the number of fingers between its `down` and its `up`. A web page, a native macOS app and an
+ * iPhone Duo take one finger only.
  */
 export interface InputTouchParams {
   session: string;
   phase: TouchPhase;
   x: number;
   y: number;
+  x2?: number;
+  y2?: number;
   display?: number;
   /** The revision of the composed Duo image actually displayed by the client. */
   duoRevision?: string;
@@ -961,6 +999,37 @@ export interface InputTextParams {
 export const INPUT_BUTTONS = ['home', 'lock', 'back', 'app-switch'] as const;
 
 export type InputButton = (typeof INPUT_BUTTONS)[number];
+
+/**
+ * The most UTF-8 bytes of text `input.clipboard.set` takes. A request is one message of at most
+ * `MAX_CLIENT_MESSAGE_BYTES` (64 KiB), and JSON escapes a control character in up to six bytes.
+ */
+export const MAX_CLIPBOARD_BYTES = 8192;
+
+/** The most UTF-8 bytes of device clipboard text `input.clipboard.get` returns. */
+export const MAX_CLIPBOARD_READ_BYTES = 65536;
+
+/**
+ * Replaces the clipboard of an iOS simulator, an Android emulator or an Android phone with `text`, any Unicode text of
+ * at most {@link MAX_CLIPBOARD_BYTES} bytes of UTF-8. With `paste`, the device then pastes it into its focused field
+ * (Command-V on an iOS simulator, a paste key event on Android). A web page, a native macOS app and a physical iPhone
+ * refuse it. It takes ten inputs of a connection's input budget, not the characters of `input.text`. Stim never logs
+ * or records `text`.
+ */
+export interface InputClipboardSetParams {
+  session: string;
+  text: string;
+  paste?: boolean;
+}
+
+/** Reads the device clipboard's text; a clipboard over {@link MAX_CLIPBOARD_READ_BYTES} bytes of UTF-8 is refused, not cut. */
+export interface InputClipboardGetParams {
+  session: string;
+}
+
+export interface InputClipboardGetResult {
+  text: string;
+}
 
 export interface InputButtonParams {
   session: string;
@@ -1626,7 +1695,44 @@ export interface HostedSessionRow {
   workspace: string;
 }
 
+/** A live web share, as `share.list` lists it; never its URL token or password. */
+export interface WebShareRow {
+  id: string;
+  workspace: string;
+  platform: 'ios' | 'android';
+  slot: string;
+  physical: boolean;
+  control: boolean;
+  expiresAt: string;
+  viewers: number;
+  /** How viewers get in: a generated password, one the person set, or the URL alone. */
+  auth: 'generated' | 'set' | 'none';
+  /** How a separate view-only password was made; null when the share has none. */
+  viewAuth: 'generated' | 'set' | null;
+}
+
+export interface WebShareStartParams {
+  workspace: string;
+  platform: 'ios' | 'android';
+  slot?: string;
+  physical?: boolean;
+  control?: boolean;
+  expiresMinutes?: number;
+  /** 8 to 128 characters; never sent back. Without it, and without `passwordless`, the server generates one. */
+  password?: string;
+  passwordless?: boolean;
+  /** A second, view-only password next to the control one; only with `control` and a password. Never sent back. */
+  view?: { password?: string };
+}
+
 export interface Methods {
+  'share.start': {
+    params: WebShareStartParams;
+    result: WebShareRow & { url: string; password?: string; viewPassword?: string; warning?: string };
+  };
+  'share.stop': { params: { workspace: string; id?: string }; result: { stopped: WebShareRow[] } };
+  'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
+  'presence.publish': { params: PresencePublishParams; result: Record<string, never> };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };
   'device-host.sessions.stop': { params: { session: string }; result: { id: string; state: 'stopping' | 'stopped' } };
   'machines.update.start': { params: { machine: string }; result: ServerUpdateProgress };
@@ -1689,6 +1795,8 @@ export interface Methods {
   'device-host.input.rotate': Methods['input.rotate'];
   'device-host.input.posture': Methods['input.posture'];
   'device-host.input.window': Methods['input.window'];
+  'device-host.input.clipboard.set': Methods['input.clipboard.set'];
+  'device-host.input.clipboard.get': Methods['input.clipboard.get'];
   hello: { params: HelloParams; result: HelloResult };
   'desktop.authenticate': { params: { proof: string }; result: { authorized: true } };
   'desktop.reports.get': { params: DesktopReportTarget; result: DesktopReportSnapshot };
@@ -1734,7 +1842,7 @@ export interface Methods {
     result: SubscribeResult;
   };
   'desktop.gc.subscribe': {
-    params: { cwd: string; cache?: string; olderThan?: number; worktrees?: boolean; delete?: boolean; idleMs?: number };
+    params: { cwd: string; cache?: string; olderThan?: number; worktrees?: boolean; delete?: boolean };
     result: SubscribeResult;
   };
   'desktop.worktree.warm.subscribe': {
@@ -1781,6 +1889,8 @@ export interface Methods {
   'input.scroll': { params: InputScrollParams; result: Record<string, never> };
   'input.key': { params: InputKeyParams; result: Record<string, never> };
   'input.window': { params: InputWindowParams; result: Record<string, never> };
+  'input.clipboard.set': { params: InputClipboardSetParams; result: Record<string, never> };
+  'input.clipboard.get': { params: InputClipboardGetParams; result: InputClipboardGetResult };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
   'notifications.list': { params?: NotificationsListParams; result: NotificationsListResult };
@@ -1945,6 +2055,73 @@ export interface FrameDelayedEvent {
   subscription: string;
   delayed: boolean;
   reason?: string;
+}
+
+/** A point or rectangle as fractions 0-1 of the screen, in the orientation the agent measured it. */
+export interface PresencePoint {
+  x: number;
+  y: number;
+}
+
+export interface PresenceRect extends PresencePoint {
+  width: number;
+  height: number;
+}
+
+/** A completed agent gesture, replayed by the client over `durationMs`. */
+export interface PresenceGesture {
+  kind: 'tap' | 'swipe';
+  from: PresencePoint;
+  to?: PresencePoint;
+  durationMs: number;
+  /** The element the agent acted on, when its last snapshot's rect for it contains the point. */
+  target?: PresenceRect;
+}
+
+/** A human finger on the device: `x` and `y` are fractions of the upright screen, as `input.touch`'s. */
+export interface PresenceTouch {
+  phase: TouchPhase;
+  x: number;
+  y: number;
+  /** A second finger, when the input carries one. */
+  second?: PresencePoint;
+  display?: number;
+  /** Epoch milliseconds on the device's machine. */
+  at: number;
+}
+
+/** One source of input on a device. `color` is a palette index 0-7: 0 is the host's, 1 the agent's. */
+export interface PresenceParticipant {
+  id: string;
+  kind: 'viewer' | 'host' | 'agent';
+  name: string;
+  color: number;
+  /** A viewer that cannot send input. */
+  viewOnly?: true;
+  /** Null when the participant left; absent when only its name or color changed. */
+  touch?: PresenceTouch | null;
+  gesture?: PresenceGesture;
+}
+
+/** Participants of a `presence: true` subscription's device that changed, oldest change first; the first lists all. */
+export interface PresenceEvent {
+  event: 'presence';
+  subscription: string;
+  participants: PresenceParticipant[];
+}
+
+/**
+ * `stim agent-device` reporting an agent-device command on a workspace device, over the local Unix socket only:
+ * `start` when it runs, `end` when it exits with the gesture it performed, if any.
+ */
+export interface PresencePublishParams {
+  workspace: string;
+  platform: 'ios' | 'android';
+  slot?: string;
+  physical?: boolean;
+  command: string;
+  phase: 'start' | 'end';
+  gesture?: PresenceGesture;
 }
 
 export const CONTROL_END_REASONS = ['idle', 'taken-over', 'device-gone', 'forbidden', 'failed'] as const;
@@ -2248,6 +2425,7 @@ export type ServerEvent =
   | DeviceFrameEvent
   | MacosWindowsEvent
   | FrameDelayedEvent
+  | PresenceEvent
   | ReplayEndedEvent
   | ErrorEvent
   | ControlEndedEvent;

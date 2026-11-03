@@ -139,6 +139,18 @@ test('a build-only grant, an uncertain answer and a revocation keep the hosting 
   expect(readDeviceHostMachines()[0]).toMatchObject({ state: 'approved', serverKey: SERVER_KEY });
 });
 
+test('a worker that cannot read its Stim home is unavailable, never revoked, and is not asked again', async () => {
+  await approvedHosting();
+  const { io, calls } = fakeIo([{ error: { code: 'home-unavailable', message: 'The Stim home is unreadable.' } }]);
+  const result = await inspectDeviceHostMachines({ fix: true }, io, ['mini']);
+  expect(result.machines[0]).toMatchObject({
+    state: 'unreachable',
+    diagnosis: { code: 'server-not-ready', message: expect.stringContaining('cannot read its Stim home') },
+  });
+  expect(calls).toHaveLength(1);
+  expect(readDeviceHostMachines()[0]).toMatchObject({ state: 'approved', serverKey: SERVER_KEY });
+});
+
 test.each(['{"version":2,"machines":[{"ticket":"private"}]}', '{bad', '{"version":2,"machines":null}'])(
   'malformed credentials are retained and block all approval traffic: %s',
   async (text) => {

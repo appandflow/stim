@@ -396,7 +396,7 @@ function findWorkspace(cwd: string): Promise<string | null> {
   return findCommandWorkspaceAsync(cwd, repoRootAsync, writeNote);
 }
 
-function defaultDeps(context: StimContext): ReviveDeps {
+export function reviveDeps(context: StimContext): ReviveDeps {
   return {
     findWorkspace,
     getProject,
@@ -478,7 +478,7 @@ export function registerRevive(program: Command, overrides: Partial<ReviveDeps> 
           root,
           note: writeNote,
           requestedDevice: context.env.AGENT_DEVICE_BOOT_HOOK_DEVICE_ID || null,
-          deps: { ...defaultDeps(context), ...overrides },
+          deps: { ...reviveDeps(context), ...overrides },
         }),
       );
       if (!result.ok) {

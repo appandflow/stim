@@ -18,15 +18,11 @@ import { parseNdjsonText } from '../ndjson.ts';
 import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { supervisorError } from '../supervisor/errors.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import {
-  DEVICE_METRO_IDLE_STOP_REASON,
-  deviceViewersDir,
-  readDeviceIdleShutdowns,
-  readIdleStop,
-} from '@stim-cli/core/state';
+import { daemonClaimRoot, deviceViewersDir, readDeviceIdleShutdowns, readIdleStop } from '@stim-cli/core/state';
 import * as ios from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import { workspaceIdleProbe, type IdleProbe } from '../supervisor/idle-stop.ts';
+import { serveShareList, shareRow } from './_share-list-server.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { startBuildProgress } from '../engine/build-progress.ts';
 import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
@@ -377,19 +373,27 @@ describe('runSupervisor', () => {
     }
   });
 
-  const requestStop = (processToken: unknown) =>
+  const requestStop = (processToken: unknown, extra: { idleMinutes?: number } = {}) =>
     writeWorkspaceState(root, {
-      devServerStopRequest: { processToken, by: 'stim stop', pid: 4242, at: '2026-09-26T20:00:00.000Z' },
+      devServerStopRequest: { processToken, by: 'stim stop', pid: 4242, at: '2026-09-26T20:00:00.000Z', ...extra },
     });
 
   const requested = { reason: 'requested', by: 'stim stop', byPid: 4242 };
 
   test.each([
-    ['this supervisor', true, requested, 'info', /stop requested by stim stop \(pid 4242\)/],
-    ['an earlier supervisor', false, { reason: 'signal', signal: 'SIGTERM' }, 'warn', /from outside Stim/],
+    ['this supervisor', true, requested, 'info', /stop requested by stim stop \(pid 4242\)/, {}],
+    ['an earlier supervisor', false, { reason: 'signal', signal: 'SIGTERM' }, 'warn', /from outside Stim/, {}],
+    [
+      'the idle stop of this supervisor',
+      true,
+      { reason: 'idle', idleMinutes: 15 },
+      'info',
+      /idle for 15 minutes/,
+      { idleMinutes: 15 },
+    ],
   ])(
     'a SIGTERM after a stop request for %s is attributed only when the token matches',
-    async (_, matches, stop, level, msg) => {
+    async (_, matches, stop, level, msg, extra) => {
       const before = process.listeners('SIGTERM');
       const exits: number[] = [];
       await runSupervisor({
@@ -400,7 +404,7 @@ describe('runSupervisor', () => {
         startBare: async () => fakeServer().handle,
       });
       try {
-        requestStop(matches ? readWorkspaceState(root)?.supervisor?.processToken : 'upid1.earlier');
+        requestStop(matches ? readWorkspaceState(root)?.supervisor?.processToken : 'upid1.earlier', extra);
         process.listeners('SIGTERM').find((listener) => !before.includes(listener))?.('SIGTERM');
         await vi.waitFor(() => expect(exits).toEqual([0]));
         expect(readWorkspaceState(root)).toEqual({ devServerStop: { ...stop, at: expect.any(String) } });
@@ -502,6 +506,7 @@ describe('idle stop', () => {
       startBare: async ({ writer }) => {
         seen.writer = writer ?? null;
         return {
+          observesRequests: true,
           close() {
             seen.closed += 1;
             return close();
@@ -535,21 +540,20 @@ describe('idle stop', () => {
     return outputs;
   }
 
-  test('a bundle request, an Expo client log line, a Stim command and a client log write each restart the clock', async () => {
+  test('a bundle request and a Stim command restart the clock, while dev server output and the client log do not', async () => {
     const seen = await startIdleSupervisor();
     await vi.advanceTimersByTimeAsync(50 * MINUTE);
     seen.writer?.write({ src: 'metro', event: 'bundle_response_started', platform: 'ios', requestId: 'r1' });
     seen.writer?.write({ src: 'metro', event: 'bundle_response_finished', platform: 'ios', requestId: 'r1' });
     await vi.advanceTimersByTimeAsync(50 * MINUTE);
-    seen.writer?.write({ src: 'metro', event: 'expo_stdout', msg: ' LOG  hello', raw: true });
-    await vi.advanceTimersByTimeAsync(50 * MINUTE);
     recordWorkspaceUse(root);
     await vi.advanceTimersByTimeAsync(50 * MINUTE);
+    seen.writer?.write({ src: 'metro', event: 'expo_stdout', msg: ' LOG  hello', raw: true });
     const clientLog = join(workspaceLogsDir(root), 'client.ndjson');
     writeFileSync(clientLog, '{}\n');
     const at = new Date(Date.now());
     utimesSync(clientLog, at, at);
-    await vi.advanceTimersByTimeAsync(59 * MINUTE);
+    await vi.advanceTimersByTimeAsync(9 * MINUTE);
     expect(seen.closed).toBe(0);
 
     await vi.advanceTimersByTimeAsync(2 * MINUTE);
@@ -563,10 +567,10 @@ describe('idle stop', () => {
     expect(seen.closed).toBe(0);
   });
 
-  test('the workspace probe blocks during a build and while a workspace device is driven', () => {
+  test('the workspace probe blocks during a build and while a workspace device is driven', async () => {
     useProbeHost({ ps: '' });
     const probe = workspaceIdleProbe(root);
-    expect(probe.blocker()).toBe(null);
+    expect(await probe.blocker()).toBe(null);
 
     const attempt = tryAcquireClaim({
       root: join(tmpHome, 'native-run.lock'),
@@ -575,41 +579,41 @@ describe('idle stop', () => {
     });
     assert(attempt.acquired);
     startBuildProgress({ root, platform: 'ios', slot: 'default', claim: attempt.acquired });
-    expect(probe.blocker()).toBe('a build is in progress');
+    expect(await probe.blocker()).toBe('a build is in progress');
     releaseClaim(attempt.acquired);
-    expect(probe.blocker()).toBe(null);
+    expect(await probe.blocker()).toBe(null);
 
     upsertProject(root, { platforms: { ios: { deviceUdid: 'STIM-IDLE-TEST-UDID', owned: true } } });
-    expect(probe.blocker()).toBe(null);
+    expect(await probe.blocker()).toBe(null);
     takeLease({ root, platform: 'ios', id: 'STIM-IDLE-TEST-UDID', kind: 'declared' });
-    expect(probe.blocker()).toMatch(/^ios device STIM-IDLE-TEST-UDID is leased by stim device lock until /);
+    expect(await probe.blocker()).toMatch(/^ios device STIM-IDLE-TEST-UDID is leased by stim device lock until /);
   });
 
   test('a physical device this workspace locks blocks the stop until the lease expires', async () => {
     useProbeHost({ ps: '' });
     const probe = workspaceIdleProbe(root);
     takeLease({ root, platform: 'android', id: 'PHYSICAL-SERIAL', kind: 'declared', durationMs: 30 * MINUTE });
-    expect(probe.blocker()).toMatch(/^android device PHYSICAL-SERIAL is leased by stim device lock until /);
+    expect(await probe.blocker()).toMatch(/^android device PHYSICAL-SERIAL is leased by stim device lock until /);
 
     vi.setSystemTime(Date.now() + 30 * MINUTE);
-    expect(probe.blocker()).toBe(null);
+    expect(await probe.blocker()).toBe(null);
 
     writeFileSync(deviceLeasePath('android', 'PHYSICAL-SERIAL'), '{');
-    expect(probe.blocker()).toBe('android device PHYSICAL-SERIAL has a lease that cannot be read');
+    expect(await probe.blocker()).toBe('android device PHYSICAL-SERIAL has a lease that cannot be read');
     rmSync(deviceLeasePath('android', 'PHYSICAL-SERIAL'));
-    expect(probe.blocker()).toBe(null);
+    expect(await probe.blocker()).toBe(null);
   });
 
-  test('on Windows, where ps does not exist, only the missing host driver probe is ignored', () => {
+  test('on Windows, where ps does not exist, only the missing host driver probe is ignored', async () => {
     upsertProject(root, { platforms: { android: { serial: 'emulator-5554', owned: true } } });
     const adb = useProbeHost({ ps: null, adb: '  PID ARGS\n  1 init\n' });
-    expect(workspaceIdleProbe(root, { platform: 'darwin' }).blocker()).toBe(
+    expect(await workspaceIdleProbe(root, { platform: 'darwin' }).blocker()).toBe(
       'android device emulator-5554 has unknown activity (driver-process)',
     );
-    expect(workspaceIdleProbe(root, { platform: 'win32' }).blocker()).toBe(null);
+    expect(await workspaceIdleProbe(root, { platform: 'win32' }).blocker()).toBe(null);
 
     adb.output = null;
-    expect(workspaceIdleProbe(root, { platform: 'win32' }).blocker()).toBe(
+    expect(await workspaceIdleProbe(root, { platform: 'win32' }).blocker()).toBe(
       'android device emulator-5554 has unknown activity (instrumentation)',
     );
   });
@@ -647,7 +651,15 @@ describe('device idle shutdown', () => {
     deviceMinutes = 2,
     metroMinutes = 0,
     due = () => true,
-  }: { deviceMinutes?: number; metroMinutes?: number; due?: () => boolean } = {}) {
+    observesRequests = true,
+    probe = quiet,
+  }: {
+    deviceMinutes?: number;
+    metroMinutes?: number;
+    due?: () => boolean;
+    observesRequests?: boolean;
+    probe?: IdleProbe;
+  } = {}) {
     const seen = { closed: 0, checks: 0, shutDowns: [] as number[] };
     const deviceIdle: DeviceIdleOps = {
       due: () => {
@@ -668,10 +680,11 @@ describe('device idle shutdown', () => {
       attachSignals: false,
       onExit: () => {},
       idleStopMinutes: metroMinutes,
-      idleProbe: quiet,
+      idleProbe: probe,
       deviceIdleMinutes: deviceMinutes,
       deviceIdle,
       startBare: async () => ({
+        observesRequests,
         close() {
           seen.closed += 1;
         },
@@ -696,6 +709,87 @@ describe('device idle shutdown', () => {
     expect(seen.shutDowns).toHaveLength(1);
   });
 
+  test('stops neither the dev server nor devices while its requests are invisible to Stim', async () => {
+    const seen = await startDeviceIdleSupervisor({ deviceMinutes: 1, metroMinutes: 2, observesRequests: false });
+    await vi.advanceTimersByTimeAsync(10 * MINUTE);
+    expect(seen.shutDowns).toEqual([]);
+    expect(seen.closed).toBe(0);
+  });
+
+  test('stops neither the dev server nor devices on its own while a home daemon holds its claim', async () => {
+    const seen = await startDeviceIdleSupervisor({ deviceMinutes: 1, metroMinutes: 2 });
+    const daemon = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive' }).acquired;
+    assert(daemon);
+    await vi.advanceTimersByTimeAsync(10 * MINUTE);
+    expect(seen.shutDowns).toEqual([]);
+    expect(seen.closed).toBe(0);
+
+    releaseClaim(daemon);
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    expect(seen.shutDowns.length).toBeGreaterThan(0);
+    expect(seen.closed).toBe(1);
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'stops neither the dev server nor devices while a web share of the workspace is live',
+    async () => {
+      let shares = [shareRow(root, '2099-01-01T00:00:00.000Z')];
+      let asked = 0;
+      const server = await serveShareList(() => {
+        asked++;
+        return { shares };
+      });
+      onTestFinished(() => server.close());
+      let shutDowns: number[] = [];
+      const seen = await startDeviceIdleSupervisor({
+        deviceMinutes: 1,
+        metroMinutes: 2,
+        probe: workspaceIdleProbe(root),
+        due: () => shutDowns.length === 0,
+      });
+      shutDowns = seen.shutDowns;
+      await vi.advanceTimersByTimeAsync(3 * MINUTE);
+      expect(seen.shutDowns).toEqual([]);
+      expect(seen.closed).toBe(0);
+      await vi.waitFor(() => expect(asked).toBeGreaterThanOrEqual(2));
+      await vi.advanceTimersByTimeAsync(MINUTE);
+      await vi.waitFor(() => expect(asked).toBeGreaterThanOrEqual(4));
+      expect(seen.shutDowns).toEqual([]);
+      expect(seen.closed).toBe(0);
+
+      shares = [];
+      await vi.waitFor(
+        async () => {
+          await vi.advanceTimersByTimeAsync(MINUTE);
+          expect(seen.closed).toBe(1);
+        },
+        { timeout: 5000 },
+      );
+      expect(seen.shutDowns.length).toBeGreaterThan(0);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    "keeps devices up when a share goes live between the device watcher's first read and its locked one",
+    async () => {
+      let asked = 0;
+      const server = await serveShareList(() => ({
+        shares: asked++ === 0 ? [] : [shareRow(root, '2099-01-01T00:00:00.000Z')],
+      }));
+      onTestFinished(() => server.close());
+      const seen = await startDeviceIdleSupervisor({ deviceMinutes: 1 });
+      await vi.waitFor(
+        async () => {
+          if (asked >= 3) return;
+          await vi.advanceTimersByTimeAsync(MINUTE);
+          throw new Error(`the share list was read ${asked} times`);
+        },
+        { timeout: 4000 },
+      );
+      expect(seen.shutDowns).toEqual([]);
+    },
+  );
+
   test("Metro's idle stop first shuts down devices idle for metro.idleStopMinutes when that is shorter", async () => {
     const seen = await startDeviceIdleSupervisor({ deviceMinutes: 90, metroMinutes: 60, due: () => false });
     await vi.advanceTimersByTimeAsync(60 * MINUTE);
@@ -709,7 +803,7 @@ describe('device idle shutdown', () => {
     expect(seen.closed).toBe(1);
     expect(seen.shutDowns).toEqual([]);
     expect(readMetroLog().find((record) => record.event === 'supervisor_idle_stopped')?.msg).toContain(
-      'devices.idleShutdownMinutes is 0, so no device was shut down',
+      'idle.minutes is 0 for devices, so no device was shut down',
     );
   });
 
@@ -745,15 +839,17 @@ describe('device idle shutdown', () => {
     });
 
     function bootedSims(...udids: string[]) {
-      vi.spyOn(ios, 'listAllIosSims').mockReturnValue(
-        udids.map((udid) => ({
-          udid,
-          name: `stim-${udid}`,
-          state: 'Booted',
-          runtime: 'iOS 27.0',
-          deviceTypeIdentifier: 'iPhone',
-          available: true,
-        })),
+      vi.spyOn(ios, 'listAllIosSims').mockImplementation(() =>
+        udids
+          .filter((udid) => !tornDown.includes(udid))
+          .map((udid) => ({
+            udid,
+            name: `stim-${udid}`,
+            state: 'Booted',
+            runtime: 'iOS 27.0',
+            deviceTypeIdentifier: 'iPhone',
+            available: true,
+          })),
       );
     }
 
@@ -780,14 +876,14 @@ describe('device idle shutdown', () => {
         onExit: () => {},
         idleStopMinutes: 15,
         deviceIdleMinutes: 15,
-        startBare: async () => ({ close() {} }),
+        startBare: async () => ({ observesRequests: true, close() {} }),
       });
       assert(running);
     }
 
     const idleStopMessage = () => readMetroLog().find((record) => record.event === 'supervisor_idle_stopped')?.msg;
 
-    test('with both windows at 15, a Debug app logging 11 minutes before the stop no longer keeps its simulator booted', async () => {
+    test('a Debug app logging 11 minutes before the window does not keep its simulator booted', async () => {
       upsertProject(root, { metroPort: 8097, platforms: { ios: { deviceUdid: 'DEBUG', owned: true } } });
       writeWorkspaceState(root, { launches: { ios: launch('DEBUG', false) } });
       bootedSims('DEBUG');
@@ -798,39 +894,44 @@ describe('device idle shutdown', () => {
       await vi.advanceTimersByTimeAsync(11 * MINUTE);
 
       expect(tornDown).toEqual(['DEBUG']);
-      const events = readMetroLog().map((record) => record.event);
-      expect(events.indexOf('device_idle_shutdown')).toBeGreaterThan(-1);
-      expect(events.indexOf('device_idle_shutdown')).toBeLessThan(events.indexOf('supervisor_idle_stopped'));
-      expect(idleStopMessage()).toContain('shut down simulator stim-DEBUG');
+      expect(readMetroLog().map((record) => record.event)).toContain('device_idle_shutdown');
       expect(readDeviceIdleShutdowns(readWorkspaceState(root)).ios).toEqual(
-        expect.objectContaining({ idleMinutes: 15, reason: DEVICE_METRO_IDLE_STOP_REASON }),
+        expect.objectContaining({ idleMinutes: 15 }),
       );
     });
 
-    test('a simulator a stim-server client is viewing stays booted, and the stop says why', async () => {
-      upsertProject(root, { metroPort: 8097, platforms: { ios: { deviceUdid: 'VIEWED', owned: true } } });
-      writeWorkspaceState(root, { launches: { ios: launch('VIEWED', false) } });
-      bootedSims('VIEWED');
+    test('a simulator a stim-server client sent input to stays booted, and one it only streams frames of does not', async () => {
+      upsertProject(root, {
+        metroPort: 8097,
+        platforms: { ios: { deviceUdid: 'VIEWED', owned: true } },
+        deviceSlots: { touched: { ios: { deviceUdid: 'TOUCHED', owned: true } } },
+      });
+      writeWorkspaceState(root, {
+        launches: { ios: launch('VIEWED', false), 'ios:touched': launch('TOUCHED', false) },
+      });
+      bootedSims('VIEWED', 'TOUCHED');
+      await startSupervisor();
+      await vi.advanceTimersByTimeAsync(11 * MINUTE);
       mkdirSync(deviceViewersDir(), { recursive: true });
       writeFileSync(
         join(deviceViewersDir(), 'server.json'),
         JSON.stringify({
           pid: process.pid,
           processToken: captureProcessToken(process.pid),
-          devices: [{ platform: 'ios', id: 'VIEWED' }],
+          devices: [
+            { platform: 'ios', id: 'VIEWED' },
+            { platform: 'ios', id: 'TOUCHED', lastInputAt: new Date(Date.now()).toISOString() },
+          ],
         }),
       );
-      await startSupervisor();
+
       await vi.advanceTimersByTimeAsync(4 * MINUTE);
-      writeDeviceLogs([undefined]);
 
-      await vi.advanceTimersByTimeAsync(11 * MINUTE);
-
-      expect(tornDown).toEqual([]);
-      expect(idleStopMessage()).toContain('kept simulator stim-VIEWED up: a stim-server client is viewing it');
+      expect(tornDown).toEqual(['VIEWED']);
+      expect(idleStopMessage()).toContain('kept simulator stim-TOUCHED up: a stim-server client sent it input');
     });
 
-    test('device logs still keep a Release launch, whose app runs without Metro, and a slot with no recorded launch', async () => {
+    test('device logs keep no simulator up, whatever its last launch', async () => {
       upsertProject(root, {
         metroPort: 8097,
         platforms: { ios: { deviceUdid: 'RELEASE', owned: true } },
@@ -849,13 +950,7 @@ describe('device idle shutdown', () => {
 
       await vi.advanceTimersByTimeAsync(MINUTE);
 
-      expect(tornDown).toEqual(['DEBUG']);
-      expect(idleStopMessage()).toEqual(
-        expect.stringContaining(
-          'kept simulator stim-RELEASE up: its last launch, a Release build, runs without Metro, and it logged',
-        ),
-      );
-      expect(idleStopMessage()).toContain('kept simulator stim-BARE up: no launch is recorded on its slot');
+      expect(tornDown.toSorted()).toEqual(['BARE', 'DEBUG', 'RELEASE']);
     });
   });
 });

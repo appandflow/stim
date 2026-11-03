@@ -1,7 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync, type Dirent } from 'node:fs';
 import { isJsonObject } from '@stim-cli/core/state';
 import { forgetCreatedDeviceAsync, recordCreatedDeviceAsync } from './created-devices.ts';
 import { isStimOwnedSim } from './device-ownership.ts';
@@ -400,6 +400,7 @@ export async function bootIosSim(
     label = udid,
     out = () => {},
     onPhase,
+    beforeBoot,
   }: {
     timeoutMs?: number;
     attemptMs?: number;
@@ -409,12 +410,13 @@ export async function bootIosSim(
     label?: string;
     out?: (message: string) => void;
     onPhase?: (event: IosBootEvent) => void;
+    beforeBoot?: (onLine: (line: string) => void) => Promise<void>;
   } = {},
 ): Promise<void> {
   const exec = getExecutor();
   const viewer = configuredIosSimulatorViewer(simulatorApp, env);
   const started = Date.now();
-  const deadline = started + timeoutMs;
+  let deadline = started + timeoutMs;
   let worst: HostMemoryPressure | null = null;
   let unknown = 0;
   let sampledAt = started;
@@ -451,9 +453,17 @@ export async function bootIosSim(
   sample();
   const monitor = setInterval(report, 15000);
   monitor.unref();
+  let hookError: unknown;
   try {
+    onPhase?.({ phase: 'boot_requested' });
+    if (beforeBoot) {
+      await beforeBoot(onLine).catch((error: unknown) => {
+        hookError = error;
+        throw error;
+      });
+      deadline = Date.now() + timeoutMs;
+    }
     try {
-      onPhase?.({ phase: 'boot_requested' });
       await awaitBootCommand(['simctl', 'boot', udid], Math.max(1, deadline - Date.now()), onLine);
       phase = 'waiting for boot completion';
     } catch (e) {
@@ -500,6 +510,7 @@ export async function bootIosSim(
     }
     if (springBoard.state === 'started') onPhase?.({ phase: 'springboard_started', pid: springBoard.pid });
   } catch (error) {
+    if (error === hookError) throw error;
     const named = memoryCulpritAdvice(await memoryCulpritsUnderAsync(sample(), exec));
     throw new Error(
       `${(error as Error)?.message || error} Last boot output: ${phase}. Highest observed memory pressure: ${worst ?? 'unknown'}; unavailable samples: ${unknown}.${coverage()}${named ? ` ${named}` : ''} ${recovery} These observations do not establish an OOM crash.`,
@@ -508,10 +519,7 @@ export async function bootIosSim(
   } finally {
     clearInterval(monitor);
   }
-  if (openViewer) {
-    await viewer.open(udid);
-    onPhase?.({ phase: 'viewer_opened' });
-  }
+  if (openViewer && (await viewer.open(udid))) onPhase?.({ phase: 'viewer_opened' });
 }
 
 export async function shutdownIosSim(udid: string, operation?: StimContext): Promise<void> {
@@ -721,12 +729,16 @@ export async function eraseIosSim(udid: string, operation?: StimContext): Promis
   });
 }
 
+// `simctl privacy reset all` took 52 s on a stock iOS 26.5 simulator minutes
+// after its boot (#4819).
+const SIMCTL_RESET_OPTIONS = { timeoutMs: 180_000, killSignal: 'SIGKILL' } as const;
+
 export async function resetIosPrivacy(udid: string): Promise<void> {
-  await getExecutor().runFileAsync('xcrun', ['simctl', 'privacy', udid, 'reset', 'all'], SIMCTL_OPTIONS);
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'privacy', udid, 'reset', 'all'], SIMCTL_RESET_OPTIONS);
 }
 
 export async function resetIosKeychain(udid: string): Promise<void> {
-  await getExecutor().runFileAsync('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_OPTIONS);
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_RESET_OPTIONS);
 }
 
 const CLEARED_CONTAINER_DIRS = ['Documents', 'Library', 'tmp', 'SystemData'];
@@ -829,7 +841,53 @@ export function resolveOwnedIosSim(udid: string, listed: IosSimRecord[] = listAl
   return { sim };
 }
 
-export async function deleteIosSim(udid: string, operation?: StimContext): Promise<void> {
+/**
+ * CoreSimulator's launchd_sim keeps a simulator's launchd overrides (the SimSlim disabled.plist) and
+ * launchd.log under /private/var/tmp, keyed by UDID and outside the device directory; `simctl delete`
+ * leaves that folder behind (Xcode 27).
+ */
+const IOS_LAUNCHD_OVERRIDES_ROOT = '/private/var/tmp';
+const IOS_LAUNCHD_OVERRIDES_FOLDER =
+  /^com\.apple\.CoreSimulator\.SimDevice\.([0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})$/;
+
+function iosLaunchdOverridesFolder(udid: string, root: string): string | null {
+  const name = `com.apple.CoreSimulator.SimDevice.${udid}`;
+  return IOS_LAUNCHD_OVERRIDES_FOLDER.test(name) ? join(root, name) : null;
+}
+
+export function listIosLaunchdOverridesFolders(
+  root: string = IOS_LAUNCHD_OVERRIDES_ROOT,
+): { udid: string; path: string }[] {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const folders: { udid: string; path: string }[] = [];
+  for (const entry of entries) {
+    const udid = IOS_LAUNCHD_OVERRIDES_FOLDER.exec(entry.name)?.[1];
+    if (udid !== undefined && entry.isDirectory()) folders.push({ udid, path: join(root, entry.name) });
+  }
+  return folders.toSorted((a, b) => a.udid.localeCompare(b.udid));
+}
+
+function removeIosLaunchdOverrides(udid: string, root: string, operation: StimContext | undefined): void {
+  const folder = iosLaunchdOverridesFolder(udid, root);
+  if (folder === null) return;
+  try {
+    rmSync(folder, { recursive: true, force: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    operation?.output('stderr', `warning: could not remove ${folder}: ${message}\n`);
+  }
+}
+
+export async function deleteIosSim(
+  udid: string,
+  operation?: StimContext,
+  { launchdOverridesRoot = IOS_LAUNCHD_OVERRIDES_ROOT }: { launchdOverridesRoot?: string } = {},
+): Promise<void> {
   const result = resolveOwnedIosSim(udid, await listAllIosSimsAsync({ operation, signal: operation?.signal }));
   if (result.missing) return;
   if (result.notOwned) {
@@ -841,12 +899,17 @@ export async function deleteIosSim(udid: string, operation?: StimContext): Promi
     ...SIMCTL_OPTIONS,
     cwd: operation?.cwd,
   });
+  removeIosLaunchdOverrides(udid, launchdOverridesRoot, operation);
   await forgetCreatedDeviceAsync('ios', udid);
 }
 
 const PARKED_DELETE_TIMEOUT_MS = 30000;
 
-export async function deleteParkedIosSim(udid: string, operation?: StimContext): Promise<void> {
+export async function deleteParkedIosSim(
+  udid: string,
+  operation?: StimContext,
+  { launchdOverridesRoot = IOS_LAUNCHD_OVERRIDES_ROOT }: { launchdOverridesRoot?: string } = {},
+): Promise<void> {
   const sim = (
     await listAllIosSimsAsync({
       includeUnavailable: true,
@@ -863,6 +926,7 @@ export async function deleteParkedIosSim(udid: string, operation?: StimContext):
     timeoutMs: PARKED_DELETE_TIMEOUT_MS,
     cwd: operation?.cwd,
   });
+  removeIosLaunchdOverrides(udid, launchdOverridesRoot, operation);
   await forgetCreatedDeviceAsync('ios', udid);
 }
 

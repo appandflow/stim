@@ -5,10 +5,12 @@ import type { StimContext } from '@stim-cli/core';
 import { lastNativeUseFrom, type MaintenanceAction } from '@stim-cli/core/state';
 import {
   candidateRoots,
+  listedRoots,
   candidateRootsAsync,
   worktreeActivityOf,
   worktreeActivityOfAsync,
 } from '../commands/gc/worktrees.ts';
+import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { recentNativeUseReason, workspaceBuildReasons } from '../commands/gc/workspaces.ts';
 import { reclaimKeys } from '../commands/worktree.ts';
@@ -16,7 +18,12 @@ import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
 import { childEnvironment } from '../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { ARTIFACT_DIRS, type ArtifactKind } from '../workspace/regenerable-dirs.ts';
+import {
+  ARTIFACT_DIRS,
+  discoveredBuildDirs,
+  isBuildDirPath,
+  type ArtifactKind,
+} from '../workspace/regenerable-dirs.ts';
 import {
   readRunningProcesses,
   readRunningProcessesAsync,
@@ -35,8 +42,7 @@ import {
   type SourceCheckout,
   type WorktreeEntry,
 } from '../workspace/worktree.ts';
-import { measureDisk } from './measure.ts';
-import { lowestFree } from './pressure.ts';
+import { lowestFree, measureDisk } from './measure.ts';
 
 const PACKAGE_PARENTS = ['apps', 'packages'];
 const SCAN_DEPTH: Record<ArtifactKind, number> = { build: 3, dependencies: 1 };
@@ -73,9 +79,15 @@ function pathExists(path: string): boolean {
   }
 }
 
+function scopedRoots(roots: string[], env?: NodeJS.ProcessEnv): string[] {
+  if (!deviceSweepIsScoped(env)) return roots;
+  const registry = new Set(listedRoots());
+  return roots.filter((root) => registry.has(root));
+}
+
 export function artifactWorktrees(): ArtifactWorktree[] {
   const found = new Map<string, ArtifactWorktree>();
-  for (const root of candidateRoots()) {
+  for (const root of scopedRoots(candidateRoots())) {
     const entry = artifactWorktree(root, listWorktrees(root));
     if (entry) found.set(entry.path, entry);
   }
@@ -93,9 +105,12 @@ function artifactWorktree(
   return { path: entry.path, linked: entry.path !== source.path, locked: Boolean(entry.locked), keys };
 }
 
-async function artifactWorktreesAsync(signal: AbortSignal, operation?: StimContext): Promise<ArtifactWorktree[]> {
+export async function artifactWorktreesAsync(
+  signal: AbortSignal,
+  operation?: StimContext,
+): Promise<ArtifactWorktree[]> {
   const found = new Map<string, ArtifactWorktree>();
-  for (const root of await candidateRootsAsync(operation)) {
+  for (const root of scopedRoots(await candidateRootsAsync(operation), operation?.env)) {
     signal.throwIfAborted();
     const { entries, ...source } = await resolveSourceCheckoutAsync(root, {
       env: operation?.env,
@@ -106,6 +121,17 @@ async function artifactWorktreesAsync(signal: AbortSignal, operation?: StimConte
     if (entry) found.set(entry.path, entry);
   }
   return [...found.values()];
+}
+
+/** The directories of `kind` that `base` may hold: the fixed names, and for build output the discovered ones. */
+function artifactPaths(base: string, kind: ArtifactKind): string[] {
+  return [...ARTIFACT_DIRS[kind].map((dir) => join(base, dir)), ...(kind === 'build' ? discoveredBuildDirs(base) : [])];
+}
+
+function isKnownDir(kind: ArtifactKind, path: string): boolean {
+  return kind === 'build'
+    ? isBuildDirPath(path)
+    : ARTIFACT_DIRS[kind].some((dir) => path.endsWith(`${sep}${dir.split('/').join(sep)}`));
 }
 
 export function appRoots(worktree: ArtifactWorktree, kind: ArtifactKind): string[] {
@@ -194,7 +220,7 @@ function keptReason(
   const written = reads ? reads.written : newestWrite(path, SCAN_DEPTH[kind]);
   if (!activity || written === null) return 'its last activity cannot be read';
   const last = Math.max(activity.at, written);
-  if (now - last < windowMs) return `used within the last ${Math.round(windowMs / 60_000)} minutes`;
+  if (windowMs > 0 && now - last < windowMs) return `used within the last ${Math.round(windowMs / 60_000)} minutes`;
   return null;
 }
 
@@ -264,9 +290,8 @@ export async function collectArtifactsAsync(
         }
       }
     for (const base of bases)
-      for (const dir of ARTIFACT_DIRS[kind]) {
+      for (const path of artifactPaths(base, kind)) {
         signal.throwIfAborted();
-        const path = join(base, dir);
         try {
           await pathStat(path);
         } catch {
@@ -311,8 +336,7 @@ export function collectArtifacts(
     const root = canonicalPath(worktree.path);
     const protectedHere = options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`);
     for (const base of appRoots(worktree, kind))
-      for (const dir of ARTIFACT_DIRS[kind]) {
-        const path = join(base, dir);
+      for (const path of artifactPaths(base, kind)) {
         try {
           statSync(path);
         } catch {
@@ -340,6 +364,8 @@ export async function clearArtifact(
     /** Keep dependencies that worktree warm could not restore, instead of deleting them without a restore record. */
     requireRestorable?: boolean;
     restoreCache?: Parameters<typeof restoreProblem>[1];
+    /** Why the workspace is no longer idle, asked again under its native-run claim; null when it still is. */
+    recheck?: (workspace: string) => Promise<string | null>;
   },
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
   const worktree = options.worktrees
@@ -350,7 +376,7 @@ export async function clearArtifact(
     );
   if (kind === 'dependencies' && worktree && !worktree.linked)
     return { status: 'kept', bytes: 0, detail: 'it is in the source checkout' };
-  if (!worktree || !ARTIFACT_DIRS[kind].some((dir) => action.target.endsWith(`${sep}${dir.split('/').join(sep)}`)))
+  if (!worktree || !isKnownDir(kind, action.target))
     return { status: 'kept', bytes: 0, detail: 'it is no longer a regenerable directory of a known worktree' };
   const root = canonicalPath(worktree.path);
   if (options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`))
@@ -373,6 +399,8 @@ export async function clearArtifact(
       ...(key ? { locked: key } : {}),
     });
     if (reason) return reason;
+    const late = key && options.recheck ? await options.recheck(key) : null;
+    if (late) return late;
     const record = kind === 'dependencies' && !unrestorable;
     if (record) recordLightened(candidate.keys, candidate.path);
     rmSync(candidate.path, { recursive: true, force: true });

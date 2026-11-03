@@ -43,7 +43,7 @@ struct RootView: View {
   @ObservedObject private var actions: ActionCenter
   @ObservedObject private var operations: OperationLog
   @ObservedObject private var inbox = NotificationInbox.shared
-  private let autopilot: AutopilotRunner
+  private let pressure: DaemonPressureMonitor
   private let onboarding: Onboarding
   private let storage: StorageStore
   private let planChecks: BuildPlanChecks
@@ -97,7 +97,7 @@ struct RootView: View {
   private let tutorialClock = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
   init(
-    environment: Task<[String: String], Never>, store: StatusStore, actions: ActionCenter, autopilot: AutopilotRunner,
+    environment: Task<[String: String], Never>, store: StatusStore, actions: ActionCenter, pressure: DaemonPressureMonitor,
     onboarding: Onboarding, gc: GcReportStore, buildMachines: BuildMachinesModel, metrics: MetricsStore,
     storage: StorageStore, planChecks: BuildPlanChecks, statsReader: StatsReader, tips: TipCoordinator
   ) {
@@ -110,7 +110,7 @@ struct RootView: View {
     self.store = store
     self.actions = actions
     operations = actions.operations
-    self.autopilot = autopilot
+    self.pressure = pressure
     self.gc = gc
     self.metrics = metrics
     self.storage = storage
@@ -134,7 +134,7 @@ struct RootView: View {
   private var content: some View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
       Sidebar(
-        store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: attributed(.click("sidebar")),
+        store: store, pressure: pressure, onboarding: onboarding, actions: actions, selection: attributed(.click("sidebar")),
         openLogs: showLogs
       )
       .toolbar(removing: .sidebarToggle)
@@ -318,6 +318,13 @@ struct RootView: View {
       ActivitySheet(run: run).environmentObject(actions)
     }
     .onQuitRequested { actions.presented = nil }
+    .sheet(item: $openRequests.shareRequest) { request in
+      ShareDeviceSheet(request: request) {
+        settingsTab = "web-shares"
+        openSettings()
+      }
+    }
+    .onQuitRequested { openRequests.shareRequest = nil }
     .modifier(SetupGuidePresenter(onboarding: onboarding, actions: actions))
     .sheet(isPresented: $nativePermissions.showsSetup) {
       NativeViewerPermissionsView(
@@ -1083,7 +1090,7 @@ struct RootView: View {
       InboxView(inbox: NotificationInbox.shared, openLogs: openErrors)
     case .machine:
       MachineView(
-        buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot, tips: tips)
+        buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, pressure: pressure, tips: tips)
     case .pairedWorkspace(let key):
       PairedWorkspaceDetail(
         store: store, key: key, environment: environment, statsReader: statsReader, inspector: inspector,

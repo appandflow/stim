@@ -280,7 +280,7 @@ export type PhoneWorktreeRow = Pick<
 >;
 export type PhoneArchivedWorkspace = NonNullable<PhoneStatusPayload['archived']>[number];
 export type PhoneArchivedSummary = State.ArchivedSummary;
-export type PhoneMachineView = Omit<State.MachineView, 'machine' | 'maintenance'> & {
+export type PhoneMachineView = Omit<State.MachineView, 'machine' | 'maintenance' | 'daemon'> & {
   machine: PhoneMachineUsageState | null;
   /**
    * Already without `recent` and `sizes`. An `Omit` here made the RPC validator generator, which mishandles `Omit` of an
@@ -495,6 +495,9 @@ export type PhoneMethods = Omit<
   | 'machines.update.status'
   | 'device-host.sessions'
   | 'device-host.sessions.stop'
+  | 'share.start'
+  | 'share.stop'
+  | 'share.list'
   | 'route.setup'
   | 'hello'
   | 'logs.query'

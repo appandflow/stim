@@ -45,6 +45,20 @@ export function extractPodDiagnostics(transcript: string): PodDiagnostics | null
   return extractPodBangBlocks(lines) || extractRubyHead(lines);
 }
 
+const POD_CONFLICT = /could not find compatible versions for pods? ((?:"[^"]+"(?:,\s*)?)+)/g;
+
+/**
+ * The pods CocoaPods names when `Podfile.lock` pins a version a pod in the Podfile no longer allows, which
+ * `pod update <name>` resolves. A subspec such as `Firebase/Core` is named by its pod.
+ */
+export function podConflictNames(transcript: string): string[] {
+  const names = new Set<string>();
+  for (const match of transcript.matchAll(POD_CONFLICT)) {
+    for (const quoted of (match[1] ?? '').matchAll(/"([^"]+)"/g)) names.add((quoted[1] ?? '').split('/')[0] ?? '');
+  }
+  return [...names].filter((name) => /^[A-Za-z0-9_]/.test(name));
+}
+
 function extractPodBangBlocks(lines: string[]): PodDiagnostics | null {
   const blocks: string[][] = [];
   for (let i = 0; i < lines.length; i += 1) {
@@ -371,6 +385,7 @@ export type PodInstallResult = {
   reason?: string;
   remedy?: string;
   command?: string;
+  conflictPods?: string[];
   notes?: string[];
   diagnosticSource?: string;
   diagnosticLines?: string[];
@@ -640,6 +655,7 @@ export async function runPodInstall(
     estimateMs = null,
     onHeartbeat = (line: string) => console.error(line),
     directory = join(root, 'ios'),
+    podArgs = ['install'],
   }: {
     spawnFn?: SpawnFn | null;
     now?: () => number;
@@ -647,6 +663,7 @@ export async function runPodInstall(
     estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
     directory?: string;
+    podArgs?: readonly string[];
   } = {},
 ): Promise<PodInstallResult> {
   const iosDir = directory;
@@ -678,7 +695,7 @@ export async function runPodInstall(
     bundler = gems.bundler;
   }
 
-  const args = bundler ? ['bundle', 'exec', 'pod', 'install'] : ['pod', 'install'];
+  const args = [...(bundler ? ['bundle', 'exec', 'pod'] : ['pod']), ...podArgs];
   const command = args.join(' ');
   const markers = readBuildMarkers(join(iosDir, 'Pods'));
   const run = await runCaptured({
@@ -714,6 +731,7 @@ export async function runPodInstall(
     const how = run.signal ? `signal ${run.signal}` : `exit code ${run.code}`;
     const transcript = run.transcript.join('\n');
     const extracted = extractPodDiagnostics(transcript);
+    const conflicts = podConflictNames(transcript);
     return {
       failed: true,
       code: DEPS_ERROR,
@@ -721,6 +739,7 @@ export async function runPodInstall(
       remedy: podFailureRemedy(root, pin, transcript),
       command,
       notes,
+      ...(conflicts.length ? { conflictPods: conflicts } : {}),
       diagnosticSource: extracted ? extracted.source : ('tail' as const),
       diagnosticLines: extracted ? extracted.lines : ([] as string[]),
       lastLines: run.transcript.slice(-LAST_LINES),

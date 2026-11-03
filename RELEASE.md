@@ -43,7 +43,8 @@ The source of truth for "what was last released" is the npm registry, not
 local git tags — a publish can fail after the tag is pushed, leaving the tag
 ahead of what's actually on npm. Post-stable, the highest published version
 can sit on either the `latest` or the `next` dist-tag, so check both and take
-the semver-higher one. Pull it and list commits since the matching tag:
+the semver-higher one, ignoring the `-next.` builds of the
+[prerelease channel](#prerelease-channel), which have no git tag. Pull it and list commits since the matching tag:
 
 ```bash
 git fetch --tags
@@ -68,7 +69,7 @@ if last=$(npm view stim dist-tags --json 2>/dev/null | node -e '
     }
     return 0;
   };
-  const versions = [latest, next].filter(Boolean);
+  const versions = [latest, next].filter((v) => v && !v.includes("-next."));
   if (!versions.length) process.exit(1);
   process.stdout.write(versions.reduce((hi, v) => (compare(v, hi) > 0 ? v : hi)));
 '); then
@@ -452,33 +453,16 @@ and repeat the affected gate rather than waiving it.
    Do not add claims here. Once the tag is remote, a correction requires a new
    version; never move or force-push the published tag.
 7. **Publish to npm.** Pushing the tag in step 5 triggers the
-   `Release` workflow, which publishes all eight packages via OIDC trusted
-   publishing (no token, `--provenance`) once the run is approved in the
-   `release` environment. If the current GitHub identity is an allowed
-   reviewer, approve the deployment directly with `gh` instead of waiting for
-   a separate human action. First resolve the pending environment ID and
-   confirm that `current_user_can_approve` is `true`, then approve it:
-
-   ```bash
-   gh api repos/appandflow/stim/actions/runs/<run-id>/pending_deployments \
-     --jq '.[] | [.environment.id, .environment.name, .current_user_can_approve] | @tsv'
-   gh api --method POST repos/appandflow/stim/actions/runs/<run-id>/pending_deployments \
-     -F 'environment_ids[]=<environment-id>' \
-     -f state=approved \
-     -f comment='Approved after exact-SHA CI and preflight passed.'
-   ```
-
-   If the current identity cannot approve, use Actions -> the waiting run ->
-   Review deployments -> check `release` -> Approve and deploy. That approval
-   replaces the OTP. ALWAYS hand the approver the direct link to the waiting
-   run -- do not make them hunt for it:
+   `Release` workflow, which publishes all the packages via OIDC trusted
+   publishing (no token, `--provenance`) in the `release` environment. That
+   environment has no required reviewers for now, so the run publishes
+   without an approval step. Find the run with:
 
    ```bash
    gh run list --workflow Release --limit 1 --json databaseId,url,status
    ```
 
-   Send the `url` (the run page has Review deployments -> `release` ->
-   Approve and deploy). The workflow packs the package tarballs with pnpm, checks
+   The workflow packs the package tarballs with pnpm, checks
    that every packed `stim` and `@stim-cli/*` dependency is exactly the tag
    version (no `workspace:`, `^` or `~`), skips an exact package version
    that already exists, computes the dist-tag (section 1) and publishes every
@@ -561,6 +545,59 @@ and repeat the affected gate rather than waiving it.
   that `vX.Y.Z` points to, so the bundled CLI and server equal the published
   packages. See [apps/desktop/RELEASING.md](./apps/desktop/RELEASING.md).
 
+## Prerelease channel
+
+Every push to `main` also starts the `Release` workflow's `next-publish` job,
+which publishes the head of `main` to the `next` dist-tag. Testers install it
+with:
+
+```bash
+npm install --global stim@next
+```
+
+- **Version.** `X.(Y+1).0-next.<UTC commit time>.g<short sha>`, where `X.Y` is
+  the version the packages carry on `main`, so `1.39.0` on `main` publishes
+  `1.40.0-next.20261103040825.g751e1f0`. It sorts above every published
+  release and below the next minor, and a plain `npm install stim` or a `^`
+  range never selects it. All the packages publish at that one version: the
+  libraries first, then `stim`, then `@stim-cli/ci` and `@stim-cli/server`.
+- **Throttle.** The job waits until `NEXT_THROTTLE_MINUTES` (5) after the
+  current `next` was published, then publishes whatever is the head of `main`
+  at that moment. GitHub keeps one run active and one pending, so under
+  constant merges a commit reaches `next` within about the throttle plus one
+  publish. A head already published is skipped. An hourly schedule is a
+  safety net, and Actions -> Release -> Run workflow on `main` publishes
+  without waiting.
+- **Gate.** The job publishes a head that passed the merge queue's
+  `merge gate`, or, for a push that bypassed the queue, the CI jobs
+  `test (node 22)`, `test (node 24)` and `published runtime (node 22.12.0)`.
+  It runs no tests of its own. Those CI jobs are still running when the push
+  starts the job, so a bypassing push usually waits for the hourly schedule
+  or a dispatch.
+- **Guards.** The job runs only on `main` of this repository, refuses a
+  version without the `-next.` suffix and publishes only with `--tag next`.
+  It never touches `latest`, so the stable dist-tag logic in section 1 is
+  unaffected.
+- **Release candidates.** A candidate also publishes to `next`. While the
+  packages on `main` carry a prerelease version (from the candidate's version
+  commit until the stable one), the job publishes nothing, so `next` stays on
+  the candidate and its `smoke` check of `dist-tags.next` is not raced. A
+  channel run that resolved `main` before the candidate's version commit can
+  still be publishing then; let it finish before pushing the candidate's tag.
+- **What `next` points to:** `npm view stim dist-tags.next`. Each run's
+  summary names the version, its commit and which packages published.
+- **Pause:** `gh variable set NEXT_PAUSED --body true` skips the job until
+  `gh variable delete NEXT_PAUSED`. Stable releases are unaffected.
+
+### Desktop prereleases
+
+Stim Desktop has its own `next` channel. A push to `main` that changes `apps/desktop/**` starts the
+`Desktop next` workflow (`.github/workflows/desktop-next.yml`), which builds, signs and notarizes the head
+of `main` through the same build steps as a stable Desktop release and publishes it as a GitHub prerelease
+and a Sparkle item on the `next` channel. See [apps/desktop/RELEASING.md](./apps/desktop/RELEASING.md#next-channel)
+for the details; this repository's variable `DESKTOP_NEXT_PAUSED` set to `true` pauses it, as `NEXT_PAUSED`
+pauses the npm channel. A stable `desktop-v*` release is unaffected.
+
 ## Stim Host releases
 
 `stim-server service install` installs the Stim Host app on a hosting Mac
@@ -573,7 +610,8 @@ signature, and it only needs a new version when the launcher changes.
    Developer ID certificate, notarizes and staples it, and attaches
    `StimHost-<version>.zip` and `SHA256SUMS` to a `host-v<version>` GitHub
    release. It uses the `release` environment and the Desktop signing and App
-   Store Connect secrets, so a person approves the run. A tag refuses to publish
+   Store Connect secrets. The environment has no required reviewers for now,
+   so the run starts without an approval step. A tag refuses to publish
    a build that is not signed and notarized; a dispatched run is a dry run.
 2. Pin the release in `RELEASE` in `packages/server/src/stim-host.ts`: the
    version and the SHA-256 from the workflow's `SHA256SUMS`. From the next

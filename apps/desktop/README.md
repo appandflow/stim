@@ -163,12 +163,9 @@ actions use typed local-server operations for the selected workspace. The comman
   default device) so the shared server and other slots keep running --
   `--slot` is per slot, not per platform, so it also stops that slot's
   Android device if the slot holds one.
-- Idle devices: when the storage preview lists idle devices, the
-  sheet offers **Shut Down Idle** with a duration (30 minutes to 1 day), then
-  runs `stim gc --idle <duration> --json` after a confirmation. That shuts the devices
-  down like `stim stop` and never deletes them. The preview marks idle and
-  unrecognized `stim-*` devices as kept, because `stim gc --delete` never
-  touches them.
+- Pressure ladder: the storage preview lists what `stim gc --delete` runs of
+  the stim-daemon's pressure ladder at high, with sizes, and marks unrecognized
+  `stim-*` devices as kept, because `stim gc --delete` never touches them.
 
 Click the toolbar's CPU, memory or disk figure for its details. Each popover
 includes **Open Machines** to open the Machines page.
@@ -539,9 +536,19 @@ manager types), files or images, and empty or over-256 KB text are not sent to t
 is written to the Mac marked transient, since its sensitivity is unknown. The popover also has
 **Paste Mac Clipboard**, which presses Command-V on an iOS simulator (iOS asks
 "Allow Paste" for text from another source) and **Copy Device Clipboard**.
-Apps on the device, and agents driving it, can read the text sent to it. Physical
-devices, hosted and remote sessions and replay never sync; a hosted device would
-receive the text over the tailnet on another Mac.
+After a paste on an iOS simulator, a notice says to tap the paste suggestion on the device
+if nothing appears. Apps on the device, and agents driving it, can read the text sent to it.
+
+A device Desktop shows through stim-server (a hosted iOS or Android session, a device of a paired
+machine, a leased Android phone) has the same section once **Control** is on, and a disabled one that names the server to update when its hello lacks the feature. Sync is on by default, so the current Mac text is sent to the device's machine as soon as Control starts. Sync, **Paste Mac
+Clipboard** and **Copy Device Clipboard** call `input.clipboard.set` and `input.clipboard.get` on the
+server that owns the device, which needs the `device-clipboard` hello feature; without it the section
+is disabled and names the server to update. The device takes at most 8 KiB of UTF-8 text from the
+Mac: a larger Mac item is not synced and shows a notice, and **Paste Mac Clipboard** refuses it with
+its size. Each call costs 10 inputs of the connection's budget. Text crosses the network, so a hosted
+device on another Mac receives it over the tailnet. Failures show their server message in a notice
+(sync) or an alert (the buttons). The paste hint above applies to iOS devices reached through the
+server too. A leased iPhone, macOS apps, web pages, remote EAS previews and replay never sync.
 
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,
@@ -606,8 +613,7 @@ Other actions open an activity sheet. While the command runs, the sheet shows a
 spinner and its latest progress line; only the CLI's progress labels (`stim
 guide lifecycle progress`) count as progress. When it finishes, the sheet
 confirms it in one line and stays open until closed. A failure shows the CLI's
-message and remedy. Cleanups run `stim gc --delete --json` or `stim gc --idle
---json`, and the sheet summarizes the payload's `results`: what was freed and
+message and remedy. Cleanups run `stim gc --delete --json`, and the sheet summarizes the payload's `results`: what was freed and
 deleted, then what gc left alone and what failed, each with its reason. It
 stays open until closed. **Command Output** is collapsed by default and contains
 the command and raw output, both while running and after completion. Launch
@@ -750,8 +756,8 @@ always lists every row, so none of the rows **Free** acts on are hidden.
 Free still previews or confirms its commands first, collapsed or not. The app
 remembers each section's choices in its own preferences.
 
-- **Headline**: free space on the fullest volume against the Stim disk budget
-  (`budget.minFreeDiskGb`), and one bar split into Stim devices (owned by a
+- **Headline**: free space on the fullest volume with the disk pressure level
+  the stim-daemon's last tick measured, and one bar split into Stim devices (owned by a
   workspace, parked or orphaned), Stim caches and outputs (shared caches,
   workspace build outputs, logs and orphaned workspace directories),
   `node_modules`, other simulators and AVDs, runtimes and system images, and
@@ -817,52 +823,51 @@ those categories as unknown.
 
 ## Automatic maintenance
 
-Stim's CLI cleans up on its own (`maintenance.mode`, on by default), on every
-Mac, whether this app runs or not: stim commands, dev server supervisors and
-this app's status watch start its passes. It shuts down owned simulators and
-emulators idle for `devices.idleShutdownMinutes`, never deleting them, and once
-a day clears the build outputs of workspaces and the cache entries unused for
-`maintenance.olderThanDays` and deletes devices parked that long. It removes
-the worktrees of merged or closed pull requests, and reclaims more space when
-free disk falls under `budget.minFreeDiskGb`. Run `stim guide cleanup` for the
-rules.
+The stim-daemon keeps the machine healthy on its own (`daemon.mode`, on by
+default), on every Mac, whether this app runs or not: `stim start`, `ios`,
+`android`, `web`, `macos` and `revive` start it, and it exits once nothing runs
+in the Stim home. A workspace with no activity for `idle.minutes` goes idle: its
+dev server stops, its owned simulators and emulators shut down and its
+regenerable build outputs are deleted, which `stim revive` brings back. After
+`idle.dormantDays` its owned devices are deleted. Once a day it clears the
+build outputs and cache entries unused for `maintenance.olderThanDays` and
+deletes devices parked that long, and it removes the worktrees of merged or
+closed pull requests. Under disk or memory pressure it runs its pressure ladder
+each minute. Run `stim guide cleanup` for the rules.
 
-The **Automatic Maintenance** section of the App preferences shows the mode
-and the last pass (when, actions and bytes freed, and why it was blocked) from
-`stim status --json`, read only. **Clean up what is unused for** sets
-`maintenance.olderThanDays` (7 days by default; Never is 0) and **Shut down
-idle devices after** sets `devices.idleShutdownMinutes` (15 minutes by
-default; Never is 0), and **Also remove clean, pushed worktrees unused that
-long** sets `maintenance.removeIdleWorktrees` (off by default; it removes
-unmerged linked worktrees no Stim command used that long, git-ignored files
-included, and only while `maintenance.removeFinishedWorktrees` is on and the
-age is not Never), all with `stim settings set ... --scope machine`. Every
-other `maintenance.*` setting is under **Stim Settings**. A `stim` whose status
-has no `maintenance` block cleans up nothing on its own; the section then says
-to update `stim`, and the app does not clean up in its place. Idle device
-shutdown without a dev server, the daily cleanup of parked devices,
-**Never** for the cleanup age and the worktree switch need a `stim` newer than
-1.25.0; with an older one the switch is disabled with an update note, and
-`on` mode does the rest. A project's own `devices.idleShutdownMinutes`
-overrides the machine value the picker writes. **Cleanup
-History** (below) lists what each cleanup removed.
+The app reads the daemon through the status stim-server serves, read only: its
+mode, the pressure level of its last tick and its last actions. It runs no timer
+and keeps no thresholds of its own. The **Automatic Maintenance** section of the
+App preferences shows the mode, the level, the last actions and the last
+maintenance pass (when, actions and bytes freed, and why it was blocked).
+**Clean up what is unused for** sets `maintenance.olderThanDays` (7 days by
+default; Never is 0), **Stop idle workspaces after** sets `idle.minutes` (15
+minutes by default; Never is 0), and **Also remove clean, pushed worktrees
+unused that long** sets `maintenance.removeIdleWorktrees` (off by default; it
+removes unmerged linked worktrees no Stim command used that long, git-ignored
+files included, and only while `maintenance.removeFinishedWorktrees` is on and
+the age is not Never), all with `stim settings set ... --scope machine`. Every
+other setting is under **Stim Settings**. A project's own `idle.minutes`
+overrides the machine value the picker writes. A `stim` whose status has no
+`daemon` block reports nothing here; the section then says to update `stim`,
+and the app does not clean up in its place. **Cleanup History** (below) lists
+what each cleanup removed.
 
-While free disk is under the budget, the Machine page shows the plan, such as
-"Clear the build outputs of 3 idle workspaces and remove 1 merged worktree to
-free about 300 MB", with a **Do it** button that runs `stim gc --delete`, and
-the sidebar marks Machine. When the CLI's maintenance is not on, or its last
-pass was blocked while disk is still under the budget, the app posts the plan
-once per episode as a notification with **Do it**. **Do it** in a notification
-runs only while disk is still under the budget, and otherwise opens Machine;
-the app removes its delivered pressure notifications once free disk is back
-above the budget. The **Free disk falls under the Stim budget** notification
-is on by default and needs the bundled app.
+The Machine page shows the daemon's level and its last three actions. While the
+level is high or critical it shows the reasons, the sidebar marks Machine, and
+**Free Disk Space** runs `stim gc --delete`, which runs the pressure ladder to
+its end at high. When the level is critical, or high while no daemon acts on it
+(`daemon.mode` is not `on`, or none runs), the app posts one notification per
+episode with **Do it**. **Do it** in a notification runs `stim gc --delete` only
+while the level is still raised, and otherwise opens Machine; the app removes
+its delivered pressure notification once the level is back to normal. The
+pressure notification is on by default and needs the bundled app.
 
 ## Cleanup History
 
 The **Cleanup History** section of the App preferences lists every run that deleted or changed
-something, newest first: `stim gc`, Stim's automatic maintenance and the budget check before a
-build, whoever started them (this app, an agent or a terminal). It runs
+something, newest first: `stim gc`, with the pressure ladder actions it runs, and Stim's automatic
+maintenance, whoever started them (this app, an agent or a terminal). It runs
 `stim logs --source gc --json` from the home directory every 30 seconds while the App tab is showing
 and never reads `$STIM_HOME`. A row shows what started the run, when, how many items it cleared,
 kept and failed, and the bytes freed; expanding it lists each item with its path and the reason a
@@ -1097,6 +1102,46 @@ and **Close** runs `stim stop --slot web`, which keeps Metro, the devices and th
 profile. A failed page load shows a "Page failed to load" pill and an
 item that reruns `stim web`, and a tool attached to the DevTools
 endpoint, such as Playwright MCP, shows as the driver.
+
+## Web shares
+
+A running iOS simulator or Android emulator on this Mac has a **Share...** item in
+its tile menu and wall context menu. The sheet takes the options
+of `stim share`: view only or **Let viewers tap, type and press buttons**, an expiry
+from 15 minutes to 8 hours (60 minutes by default), and a **Generated** password
+(the default), one you **Choose** (8 to 128 characters) or **None**, which warns
+that the link alone opens the share. With control and a password, a
+**View-only password** picker (**Off**, **Generated** or **Choose**) adds a second
+password that only watches; the sheet offers it only when the local server's hello
+lists the `share-view-password` feature, and sends it as `share.start`'s
+`view: { password? }`. It sends `share.start` over the local Unix
+socket and shows the link and, for a generated password, the password, each with a
+Copy button (**Control password** and **View password** when there are two). The password appears once: Desktop keeps neither it nor a chosen
+one, and the sheet's state is dropped when it closes. Physical devices, hosted
+devices and macOS apps have no Share item.
+
+**Stim > Settings > Web Shares** lists the server's live shares, read with
+`share.list` every 5 seconds: one section per workspace, one row per share with
+its platform, **View only**, **View and control** or **View and control, view password**,
+**No password** when it has none,
+viewers and time left. Each row has **Stop**, which sends `share.stop` with the
+workspace and the share's `id`; a workspace with several shares also has **Stop All**
+in its header, which sends the workspace alone. When the local server's hello lacks
+the `share-stop-id` feature, it would ignore `id` and end every share of the workspace,
+so Desktop sends no `id`, shows no row **Stop** and the header's **Stop** (**Stop All** when there are
+several) says it ends them all. An older server that does not answer `share.*` shows a
+message instead. The methods work only on
+the local Unix socket and need no Desktop authority.
+
+Quitting Desktop asks first when Desktop started the stim-server it runs and
+`share.list` shows live shares: an alert lists each (workspace, platform, control,
+viewers, time left) with **Cancel** (the default) and **Quit**. It shows nothing for
+an adopted server (a background service or an auto-started `stim share` server),
+which keeps running, or when the list does not answer within 2 seconds.
+
+The quit closes an open share sheet first, so a generated password still on screen is gone
+even if you then choose Cancel; stop the share and make a new one to get a new password.
+A quit from `stim stop` or SIGTERM shows the alert for at most 3 seconds and then quits.
 
 ## Replay
 
@@ -2135,7 +2180,7 @@ environment.
 
 ## Updates
 
-Stim Desktop checks for updates with Sparkle 2 against the appcast at `SUFeedURL` in `Support/Info.plist`, `https://github.com/appandflow/stim/releases/download/desktop-latest/appcast.xml`. **Check for Updates…** in the app menu checks now, and Sparkle checks in the background once the user accepts its prompt on the second launch; **Settings > App > Updates** turns the background checks on or off. `scripts/bundle.sh --release` writes `SPARKLE_PUBLIC_ED_KEY` from its environment into `SUPublicEDKey`. A build without that key, which includes `swift run`, every Stim Dev build and every test copy, never starts the updater: the menu item stays disabled and the toggle is off.
+Stim Desktop checks for updates with Sparkle 2 against the appcast at `SUFeedURL` in `Support/Info.plist`, `https://github.com/appandflow/stim/releases/download/desktop-latest/appcast.xml`. **Check for Updates…** in the app menu checks now, and Sparkle checks in the background once the user accepts its prompt on the second launch; **Settings > App > Updates** turns the background checks on or off. **Settings > App > Updates > Get prerelease updates** also offers the appcast's `next` channel, the notarized builds the `Desktop next` workflow publishes for each Desktop change on `main` (see [RELEASING.md](./RELEASING.md#next-channel)); it is off by default and on for a build whose version contains `-next.`, and `AppUpdater` maps it to Sparkle's `allowedChannels(for:)`. `scripts/bundle.sh --release` writes `SPARKLE_PUBLIC_ED_KEY` from its environment into `SUPublicEDKey`. A build without that key, which includes `swift run`, every Stim Dev build and every test copy, never starts the updater: the menu item stays disabled and the toggle is off.
 
 `scripts/release.sh <version>` builds the signed, notarized universal DMG and zip; see [RELEASING.md](./RELEASING.md).
 

@@ -79,26 +79,148 @@ export interface SettingWriteResult {
 
 export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
 
-export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop'] as const;
+export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop', 'none'] as const;
 
 export const ANDROID_EMULATOR_APPS = ['emulator', 'stim-desktop'] as const;
 
-export const REPLACED_SETTINGS: Readonly<
-  Record<string, { key: string; env?: string; value: (old: unknown) => string | null }>
-> = {
+/**
+ * A setting Stim no longer reads. `key` names the setting that replaced it, when one did, and `value` maps an old
+ * value to that setting's; `replacement` says what replaced it in words. `env` is the old environment override; with
+ * `refuses`, the commands the stim-daemon governs refuse to run while it is set.
+ */
+export interface RemovedSetting {
+  key?: string;
+  replacement: string;
+  env?: string;
+  refuses?: true;
+  value?: (old: unknown) => string | null;
+}
+
+function sameNumber(old: unknown): string | null {
+  const value = typeof old === 'string' && old.trim() ? Number(old) : old;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? String(value) : null;
+}
+const FIXED_LADDER = 'nothing replaced it; the pressure ladder has fixed rules';
+
+function fixed(env: string): RemovedSetting {
+  return { replacement: FIXED_LADDER, env, refuses: true };
+}
+
+export const REPLACED_SETTINGS: Readonly<Record<string, RemovedSetting>> = {
   'remote.buildMode': {
     key: 'remote.build',
+    replacement: 'remote.build',
     env: 'STIM_REMOTE_BUILD_MODE',
     value: (old) => (old === 'auto' ? 'auto' : old === 'force' ? 'remote' : old === 'off' ? 'local' : null),
   },
+  'metro.idleStopMinutes': {
+    key: 'idle.minutes',
+    replacement: 'idle.minutes, which stops the dev server and the owned devices together',
+    value: sameNumber,
+  },
+  'devices.idleShutdownMinutes': {
+    key: 'idle.minutes',
+    replacement: 'idle.minutes, which stops the dev server and the owned devices together',
+    value: sameNumber,
+  },
+  'devices.reclaimIdleMinutes': {
+    replacement:
+      "the stim-daemon's reclaim rule replaced it: while a run waits to boot, the daemon shuts down the longest-idle device of another workspace idle 2 minutes or more",
+  },
+  'maintenance.deviceIdleDays': {
+    key: 'idle.dormantDays',
+    replacement: 'idle.dormantDays, after which an idle workspace goes dormant and its owned devices are deleted',
+    env: 'STIM_MAINTENANCE_DEVICE_IDLE_DAYS',
+    refuses: true,
+    value: sameNumber,
+  },
+  'budget.minFreeDiskGb': {
+    key: 'disk.minFreeGb',
+    replacement: 'disk.minFreeGb',
+    env: 'STIM_BUDGET_MIN_FREE_DISK_GB',
+    refuses: true,
+    value: sameNumber,
+  },
+  'budget.hardFloorDiskGb': {
+    key: 'disk.hardFloorGb',
+    replacement: 'disk.hardFloorGb',
+    env: 'STIM_BUDGET_HARD_FLOOR_DISK_GB',
+    refuses: true,
+    value: sameNumber,
+  },
+  'maintenance.criticalFreeDiskGb': {
+    key: 'disk.criticalFreeGb',
+    replacement: 'disk.criticalFreeGb',
+    env: 'STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB',
+    refuses: true,
+    value: sameNumber,
+  },
+  'maintenance.mode': {
+    key: 'daemon.mode',
+    replacement: 'daemon.mode, which also decides whether start, ios, android and gc run the passes themselves',
+    env: 'STIM_MAINTENANCE',
+    refuses: true,
+    value: (old) => (old === 'on' || old === 'report' || old === 'off' ? old : null),
+  },
+  'daemon.enabled': {
+    key: 'daemon.mode',
+    replacement: 'daemon.mode',
+    value: (old) => (old === true || old === 'true' ? 'on' : old === false || old === 'false' ? 'off' : null),
+  },
+  'budget.maxCommittedMemoryGb': fixed('STIM_BUDGET_MAX_COMMITTED_MEMORY_GB'),
+  'budget.maxLiveWorkspaces': fixed('STIM_BUDGET_MAX_LIVE_WORKSPACES'),
+  'maintenance.pressureCheckMinutes': fixed('STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES'),
+  'maintenance.sizeCheckMinutes': fixed('STIM_MAINTENANCE_SIZE_CHECK_MINUTES'),
+  'maintenance.maxLoadPerCore': fixed('STIM_MAINTENANCE_MAX_LOAD_PER_CORE'),
+  'maintenance.memoryPressureLevel': fixed('STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL'),
+  'maintenance.memoryWarningMinutes': fixed('STIM_MAINTENANCE_MEMORY_WARNING_MINUTES'),
+  'maintenance.minAvailableMemoryGb': fixed('STIM_MAINTENANCE_MIN_AVAILABLE_MEMORY_GB'),
+  'maintenance.capTargetPercent': fixed('STIM_MAINTENANCE_CAP_TARGET_PERCENT'),
+  'maintenance.idleCheckMinutes': fixed('STIM_MAINTENANCE_IDLE_CHECK_MINUTES'),
+  'maintenance.urgentFreeDiskGb': fixed('STIM_MAINTENANCE_URGENT_FREE_DISK_GB'),
+  'maintenance.pressureProtectMinutes': fixed('STIM_MAINTENANCE_PRESSURE_PROTECT_MINUTES'),
 };
 
-export function replacementAdvice(key: string, old: unknown): { key: string; command: string | null } | null {
-  const replaced = REPLACED_SETTINGS[key];
+/**
+ * What to do instead of a removed setting: the setting that replaced it, when one did, and the command that sets it
+ * to the old value's equivalent, with `--scope` when the replacement lives in several layers and `scope` is one of
+ * them. Null for a key that was never removed.
+ */
+export function replacementAdvice(
+  key: string,
+  old: unknown,
+  scope?: SettingScope,
+): { key: string | null; replacement: string; command: string | null } | null {
+  const replaced = Object.hasOwn(REPLACED_SETTINGS, key) ? REPLACED_SETTINGS[key] : undefined;
   if (!replaced) return null;
-  const value = replaced.value(old);
-  return { key: replaced.key, command: value ? `stim settings set ${replaced.key} ${value}` : null };
+  const value = replaced.key && replaced.value ? replaced.value(old) : null;
+  const target = replaced.key ? SETTINGS.find((setting) => setting.key === replaced.key) : undefined;
+  const scoped =
+    scope && target && target.scopes.length > 1 && target.scopes.includes(scope) ? ` --scope ${scope}` : '';
+  return {
+    key: replaced.key ?? null,
+    replacement: replaced.replacement,
+    command: replaced.key && value ? `stim settings set ${replaced.key} ${value}${scoped}` : null,
+  };
 }
+
+/** How Stim words a removed setting `name` (a key or its environment variable): `X was replaced by Y` or `X is no longer read by Stim: ...`. */
+export function removedSettingWords(name: string, removed: RemovedSetting): string {
+  return removed.key
+    ? `${name} was replaced by ${removed.replacement}`
+    : `${name} is no longer read by Stim: ${removed.replacement}`;
+}
+
+/** The removed settings whose old environment variable `env` sets, with what replaced each. */
+export function removedEnvironment(env: NodeJS.ProcessEnv): { key: string; env: string; replaced: RemovedSetting }[] {
+  return Object.entries(REPLACED_SETTINGS).flatMap(([key, replaced]) =>
+    replaced.env && env[replaced.env]?.trim() ? [{ key, env: replaced.env, replaced }] : [],
+  );
+}
+
+export const SHARE_DEFAULT_PORT = 7790;
+
+export const SHARE_EXPOSURES = ['auto', 'tailscale', 'proxy'] as const;
 
 export const WEB_VIEWPORTS = ['desktop', 'phone'] as const;
 
@@ -108,6 +230,43 @@ const PROJECT: readonly SettingScope[] = ['workspace', 'repo', 'committed'];
 const EVERY: readonly SettingScope[] = ['machine', 'workspace', 'repo', 'committed'];
 const MACHINE: readonly SettingScope[] = ['machine'];
 const RECORDING: readonly SettingScope[] = ['machine', 'workspace', 'repo'];
+
+/** An old setting value that turned a mechanism off, and what turns it off now. */
+export interface LeftoverOffRule {
+  /** The setting that turns it off now. */
+  key: string;
+  /** The layers the old setting was read from. */
+  scopes: readonly SettingScope[];
+  /** The new setting's value for an old value that turned it off; null for any other old value. */
+  off: (old: unknown) => string | null;
+  /**
+   * Set when the old setting is still read for something else, which this says. Its value then never refuses; doctor
+   * reports it until `key` is set anywhere.
+   */
+  kept?: string;
+}
+
+const offAtZero = (old: unknown): string | null => (sameNumber(old) === '0' ? '0' : null);
+
+/**
+ * The old values that turned a mechanism off. While a loaded config layer still holds one of a removed setting, start,
+ * ios, android, web, macos, revive and gc refuse, so the old off never silently becomes a default that acts.
+ */
+export const LEFTOVER_OFF: Readonly<Record<string, LeftoverOffRule>> = {
+  'maintenance.mode': {
+    key: 'daemon.mode',
+    scopes: MACHINE,
+    off: (old) => (old === 'off' || old === 'report' ? old : null),
+  },
+  'metro.idleStopMinutes': { key: 'idle.minutes', scopes: PROJECT, off: offAtZero },
+  'devices.idleShutdownMinutes': { key: 'idle.minutes', scopes: EVERY, off: offAtZero },
+  'maintenance.idleStopHours': {
+    key: 'idle.dormantDays',
+    scopes: EVERY,
+    off: offAtZero,
+    kept: 'now applies to hosted device sessions only',
+  },
+};
 
 const STRING = { kind: 'string' } as const;
 const PATH = { kind: 'path' } as const;
@@ -385,27 +544,20 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Bundle URL `stim android` prefetches to warm Metro',
   },
   {
-    key: 'metro.idleStopMinutes',
-    type: { kind: 'number', integer: true, minimum: 0 },
-    scopes: PROJECT,
-    default: 15,
-    description: 'Minutes without a bundle request, client log or Stim command before the dev server stops; 0 never',
-  },
-  {
-    key: 'devices.idleShutdownMinutes',
+    key: 'idle.minutes',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: EVERY,
     default: 15,
     description:
-      'Minutes an owned simulator or emulator stays idle before the workspace supervisor, or automatic maintenance when no supervisor runs, shuts it down; 0 never',
+      'Minutes without activity before a workspace goes idle: its dev server stops with its port kept, its owned simulators and emulators shut down, and its regenerable build outputs are deleted; stim revive resumes it. 0 turns the idle and dormant stages off',
   },
   {
-    key: 'devices.reclaimIdleMinutes',
-    type: { kind: 'number', integer: true, minimum: 0 },
-    scopes: EVERY,
-    default: 10,
+    key: 'idle.dormantDays',
+    type: { kind: 'number', minimum: 0 },
+    scopes: MACHINE,
+    default: 3,
     description:
-      'Minutes an owned simulator or emulator stays idle before a waiting run reclaims its device slot; 0 never',
+      'Days without activity before a workspace goes dormant: its owned simulators and emulators are deleted (the parked pool is untouched) and its logs are archived, while node_modules and Pods stay; any Stim command run in it leaves the stage. Fractions of a day are allowed; 0 never',
   },
   {
     key: 'macos.product',
@@ -591,7 +743,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 'xcode',
     desktopDefault: 'stim-desktop',
-    description: 'App that displays an owned iOS simulator; stim-desktop by default when Stim Desktop is installed',
+    description:
+      'App that displays an owned iOS simulator, or none to open no viewer; stim-desktop by default when Stim Desktop is installed',
   },
   {
     key: 'androidEmulatorApp',
@@ -608,7 +761,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 0,
     env: 'STIM_MAX_BUILDS',
-    description: 'Concurrent native builds; 0 means no limit',
+    description: 'Concurrent native builds; 0 derives max(1, floor(CPU cores / 6))',
   },
   {
     key: 'concurrency.maxDevices',
@@ -617,7 +770,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 0,
     env: 'STIM_MAX_DEVICES',
     description:
-      'Booted owned iOS simulators and Android emulators together; local and hosted macOS apps use separate pools; 0 means no limit',
+      'Booted owned iOS simulators and Android emulators together; local and hosted macOS apps use separate pools; 0 derives max(2, floor((RAM - 4 GB) / 1.5 GB))',
   },
   {
     key: 'concurrency.maxIosDevices',
@@ -646,74 +799,31 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Local and hosted macOS apps in separate pools, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
   },
   {
-    key: 'budget.minFreeDiskGb',
+    key: 'disk.minFreeGb',
     type: GIGABYTES,
     scopes: MACHINE,
     default: 20,
-    env: 'STIM_BUDGET_MIN_FREE_DISK_GB',
-    scopedHomeValue: 0,
-    description: 'Free disk, in GB, ios, android and start reclaim toward; 0 reclaims only below the hard floor',
+    env: 'STIM_DISK_MIN_FREE_GB',
+    description:
+      'Free disk, in GB, on a volume Stim writes to below which the pressure level is high and the stim-daemon reclaims; 0 turns the high disk level off',
   },
   {
-    key: 'budget.hardFloorDiskGb',
+    key: 'disk.hardFloorGb',
     type: GIGABYTES,
     scopes: MACHINE,
     default: 5,
-    env: 'STIM_BUDGET_HARD_FLOOR_DISK_GB',
-    scopedHomeValue: 0,
-    description: 'Free disk, in GB, below which ios, android and start refuse with STIM_LOW_DISK; 0 never refuses',
+    env: 'STIM_DISK_HARD_FLOOR_GB',
+    description:
+      "Free disk, in GB, below which start, ios and android refuse with STIM_LOW_DISK after the stim-daemon's pressure ladder ran; 0 never refuses",
   },
   {
-    key: 'budget.maxCommittedMemoryGb',
+    key: 'disk.criticalFreeGb',
     type: GIGABYTES,
     scopes: MACHINE,
-    env: 'STIM_BUDGET_MAX_COMMITTED_MEMORY_GB',
-    scopedHomeValue: 0,
+    default: 6,
+    env: 'STIM_DISK_CRITICAL_FREE_GB',
     description:
-      'Estimated memory, in GB, of active environments before idle ones are reclaimed; unset is 60% of RAM, 0 is off',
-  },
-  {
-    key: 'budget.maxLiveWorkspaces',
-    type: CAPACITY,
-    scopes: MACHINE,
-    env: 'STIM_BUDGET_MAX_LIVE_WORKSPACES',
-    scopedHomeValue: 0,
-    description: 'Active workspaces before idle ones are reclaimed; unset or 0 means no limit',
-  },
-  {
-    key: 'maintenance.mode',
-    type: { kind: 'choice', choices: ['off', 'report', 'on'] },
-    scopes: MACHINE,
-    default: 'on',
-    env: 'STIM_MAINTENANCE',
-    scopedHomeValue: 'off',
-    ciValue: 'off',
-    description:
-      'Automatic resource maintenance. on removes what gc would remove under the caps and floors below and logs every action; report measures, plans and logs what it would do and never deletes anything; off disables it. Off under STIM_HOME or CI unless STIM_MAINTENANCE is set',
-  },
-  {
-    key: 'maintenance.pressureCheckMinutes',
-    type: { kind: 'number', integer: true, minimum: 1 },
-    scopes: MACHINE,
-    default: 1,
-    env: 'STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES',
-    description: 'Disk and memory check interval in minutes',
-  },
-  {
-    key: 'maintenance.sizeCheckMinutes',
-    type: { kind: 'number', integer: true, minimum: 1 },
-    scopes: MACHINE,
-    default: 60,
-    env: 'STIM_MAINTENANCE_SIZE_CHECK_MINUTES',
-    description: 'Directory size check interval in minutes',
-  },
-  {
-    key: 'maintenance.maxLoadPerCore',
-    type: { kind: 'number', exclusiveMinimum: 0 },
-    scopes: MACHINE,
-    default: 4,
-    env: 'STIM_MAINTENANCE_MAX_LOAD_PER_CORE',
-    description: 'Defer size scans above this one-minute load per CPU',
+      'Free disk, in GB, on a volume Stim writes to below which the pressure level is critical: the stim-daemon empties the Metro and compilation caches and deletes the devices of idle workspaces and their node_modules and Pods; 0 turns the critical disk level off',
   },
   {
     key: 'maintenance.logMaxMb',
@@ -740,37 +850,6 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Write debug check records and routine skips',
   },
   {
-    key: 'maintenance.memoryPressureLevel',
-    type: { kind: 'choice', choices: ['warning', 'critical', 'off'] },
-    scopes: MACHINE,
-    default: 'warning',
-    env: 'STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL',
-    description: 'Lowest macOS memory pressure level considered; off disables memory pressure reporting',
-  },
-  {
-    key: 'maintenance.memoryWarningMinutes',
-    type: { kind: 'number', integer: true, minimum: 0 },
-    scopes: MACHINE,
-    default: 10,
-    env: 'STIM_MAINTENANCE_MEMORY_WARNING_MINUTES',
-    description: 'Consecutive warning minutes before memory counts as pressure',
-  },
-  {
-    key: 'maintenance.minAvailableMemoryGb',
-    type: { kind: 'number', minimum: 0 },
-    scopes: MACHINE,
-    env: 'STIM_MAINTENANCE_MIN_AVAILABLE_MEMORY_GB',
-    description: 'Available-memory threshold in GiB; unset is 10% of RAM',
-  },
-  {
-    key: 'maintenance.capTargetPercent',
-    type: { kind: 'number', integer: true, minimum: 10, maximum: 100 },
-    scopes: MACHINE,
-    default: 80,
-    env: 'STIM_MAINTENANCE_CAP_TARGET_PERCENT',
-    description: 'Plan toward this percentage of each size cap',
-  },
-  {
     key: 'maintenance.worktreeCheckMinutes',
     type: { kind: 'number', integer: true, minimum: 1 },
     scopes: MACHINE,
@@ -779,22 +858,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Finished-worktree check interval in minutes',
   },
   {
-    key: 'maintenance.idleCheckMinutes',
-    type: { kind: 'number', integer: true, minimum: 1 },
-    scopes: MACHINE,
-    default: 5,
-    env: 'STIM_MAINTENANCE_IDLE_CHECK_MINUTES',
-    description:
-      'Interval in minutes of the check that shuts down owned simulators and emulators idle for devices.idleShutdownMinutes, also with no dev server running, and stops workspaces idle for maintenance.idleStopHours',
-  },
-  {
     key: 'maintenance.idleStopHours',
     type: { kind: 'number', minimum: 0 },
     scopes: EVERY,
     default: 6,
     env: 'STIM_MAINTENANCE_IDLE_STOP_HOURS',
     description:
-      "Hours with no native run, Metro bundle or HMR request, agent-device command, Stim command or live view of a local device before automatic maintenance and gc --delete stop a workspace's dev server and shut down its owned or hosted simulators and emulators, as stim stop does, and stim-server stops a hosted session whose client has been gone that long; device and app log lines do not count; 0 never",
+      'Hours before automatic maintenance stops a workspace with a device hosted on a remote Mac once it has no activity, as stim stop does, and before stim-server stops a hosted session whose client has been gone that long; the stim-daemon times every other workspace with idle.minutes and idle.dormantDays; 0 never',
   },
   {
     key: 'maintenance.sweepHours',
@@ -814,15 +884,6 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Days unused before the age sweep removes it: workspace build outputs, shared cache entries, parked simulators and emulators, and, with maintenance.removeIdleWorktrees, clean pushed linked worktrees; 0 turns those age removals off',
   },
   {
-    key: 'maintenance.deviceIdleDays',
-    type: { kind: 'number', integer: true, minimum: 0 },
-    scopes: MACHINE,
-    default: 3,
-    env: 'STIM_MAINTENANCE_DEVICE_IDLE_DAYS',
-    description:
-      'Days a workspace stays idle before the age sweep deletes its owned simulators and emulators; 0 turns that off',
-  },
-  {
     key: 'maintenance.protectRecentHours',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,
@@ -831,40 +892,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Cache entries used within this many hours are never evicted',
   },
   {
-    key: 'maintenance.urgentFreeDiskGb',
-    type: GIGABYTES,
-    scopes: MACHINE,
-    default: 12,
-    env: 'STIM_MAINTENANCE_URGENT_FREE_DISK_GB',
-    description:
-      'Free disk, in GB, below which automatic maintenance reports disk pressure level 2; 0 turns that threshold off',
-  },
-  {
-    key: 'maintenance.criticalFreeDiskGb',
-    type: GIGABYTES,
-    scopes: MACHINE,
-    default: 6,
-    env: 'STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB',
-    description:
-      'Free disk, in GB, below which automatic maintenance enters disk pressure level 3, also at or below budget.hardFloorDiskGb; 0 leaves only the hard floor',
-  },
-  {
-    key: 'maintenance.pressureProtectMinutes',
-    type: { kind: 'number', integer: true, minimum: 0 },
-    scopes: MACHINE,
-    default: 10,
-    env: 'STIM_MAINTENANCE_PRESSURE_PROTECT_MINUTES',
-    description:
-      'Protection window, in minutes, that replaces maintenance.protectRecentHours at disk pressure levels 2 and 3, except for workspace build outputs and build directories, which level 2 keeps for 15 minutes after the last ios, android or macos run',
-  },
-  {
     key: 'maintenance.gradleVersionIdleDays',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,
     default: 7,
     env: 'STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS',
     description:
-      'At disk pressure level 3, stop idle Gradle and Kotlin daemons, then delete the Gradle version caches and wrapper distributions no registered project pins once their directories are unmodified this many days; 0 turns this off',
+      "Days an unpinned Gradle version's caches and wrapper distribution stay unmodified before the stim-daemon deletes them, on its daily sweep or at once under disk pressure, after stopping the idle Gradle and Kotlin daemons that keep them; 0 turns this off",
   },
   {
     key: 'maintenance.removeFinishedWorktrees',
@@ -890,7 +924,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: PROJECT,
     default: false,
     description:
-      'Pin this workspace: automatic maintenance never clears its build outputs, deletes its owned devices or removes its worktree',
+      'Pin this workspace: the stim-daemon never moves it to the idle or dormant stage, and automatic maintenance and the pressure ladder never clear its build outputs, delete its owned devices or remove its worktree',
   },
   {
     key: 'maintenance.workspaceOutputsMaxGb',
@@ -961,6 +995,16 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Parked emulators kept for adoption; 0 turns parking off',
   },
   {
+    key: 'daemon.mode',
+    type: { kind: 'choice', choices: ['on', 'report', 'off'] },
+    scopes: MACHINE,
+    default: 'on',
+    env: 'STIM_DAEMON',
+    ciValue: 'off',
+    description:
+      'The per-home stim-daemon and the passes it runs: the idle and dormant stages, the pressure ladder and automatic maintenance. on: start, ios, android, web, macos and revive start the daemon, which exits once nothing runs in the home and every workspace is dormant or removed, and the passes act. report: the passes log what they would do and act on nothing. off: no daemon, and no pass runs; each dev server supervisor times its own idle stop. Without a running daemon, as on Windows, which has none, start, ios, android, doctor and gc run the passes in their own process in this mode. The daemon keeps the mode it started with, STIM_DAEMON included, unless the machine setting later turns stricter, and the CI and non-sensitive setting environment overrides of the command that started it for its whole life. Off in CI unless STIM_DAEMON is set',
+  },
+  {
     key: 'debug.logs',
     type: { kind: 'boolean' },
     scopes: MACHINE,
@@ -1000,6 +1044,33 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: false,
     description:
       "Whether a machine approved for builds or device hosting here may update this machine's stim-server service to that machine's own stim-server build; releases from npm need no setting",
+  },
+  {
+    key: 'share.exposure',
+    type: { kind: 'choice', choices: SHARE_EXPOSURES },
+    scopes: MACHINE,
+    default: 'auto',
+    description:
+      'How stim share is reached from the internet: tailscale through a Tailscale Funnel route, proxy through your own reverse proxy that forwards to a loopback port, auto tailscale when the tailscale command is installed and logged in, else proxy. proxy never runs tailscale serve or tailscale funnel',
+  },
+  {
+    key: 'share.publicUrl',
+    type: {
+      kind: 'string',
+      pattern: '^https://[^\\s/?#@]+(/[^\\s?#]*)?$',
+      patternHelp: 'an https origin, optionally with a path prefix, such as https://demo.example.com',
+    },
+    scopes: MACHINE,
+    description:
+      'The https address your reverse proxy serves shares under in proxy mode, optionally with a path prefix that the proxy leaves on the path, such as https://demo.example.com. Share links print under it and its origin is the only one the frame socket accepts. Without it proxy mode prints a loopback link and a warning',
+  },
+  {
+    key: 'share.port',
+    type: { kind: 'number', integer: true, minimum: 1024, maximum: 65535 },
+    scopes: MACHINE,
+    default: SHARE_DEFAULT_PORT,
+    description:
+      'The loopback port the share listener binds in proxy mode, so your reverse proxy can name it. It is not used in tailscale mode, which picks a free port',
   },
   {
     key: 'server.lanAddresses',

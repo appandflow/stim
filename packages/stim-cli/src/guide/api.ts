@@ -77,7 +77,9 @@ repairDoctor({ platform?, signal?, beforeRepair? }) applies the repairs offered 
 then returns { report, exitCode }. A refused project repair sets exitCode to 1
 without changing the caller's process exit code. Progress uses onProgress. Its
 execution budget is 120 seconds; cancellation drains owned report resources.
-Stop native builds in this checkout before requesting repairs.
+Stop native builds in this checkout before requesting repairs. The source
+checkout repairs (dependencies, Pods, prebuild record) need a terminal to confirm
+each step, so repairDoctor announces them in its progress and runs none.
 beforeRepair and beforeUnlock receive the resolved canonical project root before
 mutation; throwing refuses the operation. Use them to reserve the actual project
 when the client's directory is a subdirectory.
@@ -121,13 +123,12 @@ cleanup scope before effects, including registered descendants and pending
 branch cleanup. Throwing refuses the operation.
 
 gc() stays read-only. collectGarbage({ cache?, olderThan?, worktrees?, delete?,
-idleMs?, signal? }) runs the same GC selections and actions as the CLI, including
-an unscoped sweep. It returns { report, exitCode }; exitCode is 0 or 1 and does
-not change process.exitCode. delete: true enables deletion. idleMs reclaims
-owned devices idle for that many milliseconds, including without delete.
+signal? }) runs the same GC selections and actions as the CLI, including an
+unscoped sweep and the pressure ladder. It returns { report, exitCode }; exitCode
+is 0 or 1 and does not change process.exitCode. delete: true enables deletion.
 The existing CLI rules for cache selection, workspace safety and scoped homes apply.
 
-A deletion or idle sweep takes this home's exclusive maintenance claim;
+A deletion takes this home's exclusive maintenance claim;
 concurrent maintenance rejects with STIM_CLAIM_REFUSED and names the held claim.
 Execution and cleanup use the report budgets above. Cancellation stops pending
 lock waits and further actions; completed actions remain applied. An archive

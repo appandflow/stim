@@ -23,6 +23,7 @@ import {
   INPUT_KEYS,
   KEY_MODIFIERS,
   MAX_INPUT_TEXT,
+  MAX_CLIPBOARD_BYTES,
   INPUT_BUTTONS,
   ROTATE_DIRECTIONS,
   DEVICE_POSTURES,
@@ -367,6 +368,13 @@ function session(properties: Record<string, JsonSchema>, required: string[] = []
     properties: { session: { type: 'string' }, ...properties },
   };
 }
+
+const presencePoint: JsonSchema = {
+  type: 'object',
+  required: ['x', 'y'],
+  additionalProperties: false,
+  properties: { x: { type: 'number' }, y: { type: 'number' } },
+};
 
 function optionalParams(method: Method, params: JsonSchema): JsonSchema {
   return {
@@ -1012,6 +1020,42 @@ export function protocolJsonSchema(): JsonSchema {
           video: { type: 'array', items: { enum: [...VIDEO_CODECS] } },
           at: { type: 'number', description: 'Start replaying the footage recorded at this time; needs video.' },
           rate: { enum: [...REPLAY_RATES] },
+          presence: { type: 'boolean', default: false, description: 'Also send presence events.' },
+        },
+      },
+      PresenceTouch: {
+        type: 'object',
+        required: ['phase', 'x', 'y', 'at'],
+        additionalProperties: false,
+        properties: {
+          phase: { enum: [...TOUCH_PHASES] },
+          x: { type: 'number' },
+          y: { type: 'number' },
+          second: presencePoint,
+          display: { type: 'integer', minimum: 0 },
+          at: { type: 'number' },
+        },
+      },
+      PresenceGesture: {
+        type: 'object',
+        required: ['kind', 'from', 'durationMs'],
+        additionalProperties: false,
+        properties: {
+          kind: { enum: ['tap', 'swipe'] },
+          from: presencePoint,
+          to: presencePoint,
+          durationMs: { type: 'number', minimum: 0 },
+          target: {
+            type: 'object',
+            required: ['x', 'y', 'width', 'height'],
+            additionalProperties: false,
+            properties: {
+              x: { type: 'number' },
+              y: { type: 'number' },
+              width: { type: 'number', minimum: 0 },
+              height: { type: 'number', minimum: 0 },
+            },
+          },
         },
       },
       ActionParams: {
@@ -1530,6 +1574,8 @@ export function protocolJsonSchema(): JsonSchema {
                 phase: { enum: [...TOUCH_PHASES] },
                 x: { type: 'number', minimum: 0, maximum: 1 },
                 y: { type: 'number', minimum: 0, maximum: 1 },
+                x2: { type: 'number', minimum: 0, maximum: 1 },
+                y2: { type: 'number', minimum: 0, maximum: 1 },
                 display: { type: 'integer', minimum: 0, maximum: 3 },
                 duoRevision: { type: 'string', format: 'uuid' },
               },
@@ -1573,6 +1619,11 @@ export function protocolJsonSchema(): JsonSchema {
               'window',
             ]),
           ),
+          request(
+            'device-host.input.clipboard.set',
+            session({ text: { type: 'string', maxLength: MAX_CLIPBOARD_BYTES }, paste: { type: 'boolean' } }, ['text']),
+          ),
+          request('device-host.input.clipboard.get', session({})),
           request('device-host.input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
           request('device-host.input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('device-host.input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
@@ -1753,7 +1804,6 @@ export function protocolJsonSchema(): JsonSchema {
               olderThan: { type: 'integer', minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
               worktrees: { type: 'boolean' },
               delete: { type: 'boolean' },
-              idleMs: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
             },
           }),
           request('desktop.worktree.warm.subscribe', {
@@ -1894,6 +1944,8 @@ export function protocolJsonSchema(): JsonSchema {
                 phase: { enum: [...TOUCH_PHASES] },
                 x: { type: 'number', minimum: 0, maximum: 1 },
                 y: { type: 'number', minimum: 0, maximum: 1 },
+                x2: { type: 'number', minimum: 0, maximum: 1 },
+                y2: { type: 'number', minimum: 0, maximum: 1 },
                 display: { type: 'integer', minimum: 0, maximum: 3 },
               },
               ['phase', 'x', 'y'],
@@ -1936,6 +1988,17 @@ export function protocolJsonSchema(): JsonSchema {
               'window',
             ]),
           ),
+          request(
+            'input.clipboard.set',
+            session(
+              {
+                text: { type: 'string', maxLength: MAX_CLIPBOARD_BYTES },
+                paste: { type: 'boolean' },
+              },
+              ['text'],
+            ),
+          ),
+          request('input.clipboard.get', session({})),
           request('input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
           request('input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
@@ -2197,6 +2260,47 @@ export function protocolJsonSchema(): JsonSchema {
           request('server.update.status'),
           request('device-host.sessions'),
           request('device-host.sessions.stop', session({})),
+          request('share.start', {
+            type: 'object',
+            required: ['workspace', 'platform'],
+            additionalProperties: false,
+            properties: {
+              workspace: { type: 'string', minLength: 1 },
+              platform: { enum: ['ios', 'android'] },
+              slot: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
+              physical: { type: 'boolean' },
+              control: { type: 'boolean' },
+              expiresMinutes: { type: 'integer', minimum: 1, maximum: 480 },
+              password: { type: 'string', minLength: 8, maxLength: 128 },
+              passwordless: { type: 'boolean' },
+              view: {
+                type: 'object',
+                additionalProperties: false,
+                properties: { password: { type: 'string', minLength: 8, maxLength: 128 } },
+              },
+            },
+          }),
+          request('share.stop', {
+            type: 'object',
+            required: ['workspace'],
+            additionalProperties: false,
+            properties: { workspace: { type: 'string', minLength: 1 }, id: { type: 'string', minLength: 1 } },
+          }),
+          optionalParams('share.list', { type: 'object', maxProperties: 0 }),
+          request('presence.publish', {
+            type: 'object',
+            required: ['workspace', 'platform', 'command', 'phase'],
+            additionalProperties: false,
+            properties: {
+              workspace: { type: 'string', minLength: 1 },
+              platform: { enum: ['ios', 'android'] },
+              slot: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
+              physical: { type: 'boolean' },
+              command: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' },
+              phase: { enum: ['start', 'end'] },
+              gesture: { $ref: '#/$defs/PresenceGesture' },
+            },
+          }),
           request('machines.update.start', {
             type: 'object',
             required: ['machine'],
@@ -2329,6 +2433,10 @@ export function protocolJsonSchema(): JsonSchema {
                             kind: { enum: [...REPLAY_MARKER_KINDS] },
                             command: { type: 'string' },
                             label: { type: 'string' },
+                            x: { type: 'number' },
+                            y: { type: 'number' },
+                            x2: { type: 'number' },
+                            y2: { type: 'number' },
                           },
                         },
                       },
@@ -2593,6 +2701,34 @@ export function protocolJsonSchema(): JsonSchema {
                   screenID: { type: 'integer', minimum: 0, maximum: 4294967295 },
                   angle: { type: 'number', minimum: 0, maximum: 180 },
                   orientation: { type: 'integer', minimum: 1, maximum: 4 },
+                },
+              },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'participants'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'presence' },
+              subscription: { type: 'string' },
+              participants: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  required: ['id', 'kind', 'name', 'color'],
+                  additionalProperties: false,
+                  properties: {
+                    id: { type: 'string' },
+                    kind: { enum: ['viewer', 'host', 'agent'] },
+                    name: { type: 'string' },
+                    color: { type: 'integer', minimum: 0, maximum: 7 },
+                    viewOnly: { const: true },
+                    touch: {
+                      oneOf: [{ type: 'null' }, { $ref: '#/$defs/PresenceTouch' }],
+                    },
+                    gesture: { $ref: '#/$defs/PresenceGesture' },
+                  },
                 },
               },
             },

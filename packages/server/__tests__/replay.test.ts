@@ -35,3 +35,44 @@ test('markers are the agent actions on this device and errors of the workspace, 
     { at: 1500, kind: 'crash', label: 'crashed' },
   ]);
 });
+
+test("an agent action lands where its session's measured screen puts it", () => {
+  const records = [
+    {
+      ts: 1100,
+      src: 'agent',
+      event: 'agent_action',
+      platform: 'ios',
+      command: 'press',
+      session: 'measured',
+      msg: 'Tapped',
+      details: { x: 201, y: 437 },
+    },
+    {
+      ts: 1200,
+      src: 'agent',
+      event: 'agent_action',
+      platform: 'ios',
+      command: 'scroll',
+      session: 'measured',
+      msg: 'Scrolled',
+      details: { x1: 201, y1: 600, x2: 201, y2: 200, durationMs: 300 },
+    },
+    {
+      ts: 1300,
+      src: 'agent',
+      event: 'agent_action',
+      platform: 'ios',
+      command: 'press',
+      session: 'unmeasured',
+      msg: 'Tapped',
+      details: { x: 10, y: 10 },
+    },
+  ];
+  const viewport = (session: string) => (session === 'measured' ? { width: 402, height: 874 } : null);
+  expect(timelineMarkers(records, 'ios', 'default', 1000, viewport)).toEqual([
+    { at: 1100, kind: 'action', command: 'press', label: 'Tapped', x: 0.5, y: 0.5 },
+    { at: 1200, kind: 'action', command: 'scroll', label: 'Scrolled', x: 0.5, y: 600 / 874, x2: 0.5, y2: 200 / 874 },
+    { at: 1300, kind: 'action', command: 'press', label: 'Tapped' },
+  ]);
+});
