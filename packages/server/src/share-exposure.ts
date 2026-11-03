@@ -1,6 +1,8 @@
 import { isJsonObject, SHARE_DEFAULT_PORT, settingDefinition, settingValueError } from '@stim-cli/core/state';
 import type { OpenedRoute, ShareRoute } from './share-route.ts';
 
+type FunnelRoute = Pick<ShareRoute, 'open' | 'close' | 'stranded' | 'removeStranded'>;
+
 export interface ShareSettings {
   exposure: unknown;
   publicUrl: unknown;
@@ -77,11 +79,11 @@ function proxyBase(exposure: ResolvedExposure, listenerPort: number): OpenedRout
  */
 export class ExposedRoute {
   private current: ResolvedExposure | null = null;
-  private readonly tailscale: ShareRoute;
+  private readonly tailscale: FunnelRoute;
   private readonly settings: () => ShareSettings;
   private readonly loggedIn: () => Promise<boolean>;
 
-  constructor(tailscale: ShareRoute, settings: () => ShareSettings, loggedIn: () => Promise<boolean>) {
+  constructor(tailscale: FunnelRoute, settings: () => ShareSettings, loggedIn: () => Promise<boolean>) {
     this.tailscale = tailscale;
     this.settings = settings;
     this.loggedIn = loggedIn;

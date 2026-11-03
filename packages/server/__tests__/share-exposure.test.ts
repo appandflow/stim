@@ -82,7 +82,8 @@ describe('web shares in proxy mode', () => {
     return new Promise((resolve) => {
       const probe = createServer();
       probe.listen(0, '127.0.0.1', () => {
-        const { port } = probe.address() as { port: number };
+        const address = probe.address();
+        const port = typeof address === 'object' && address ? address.port : 0;
         probe.close(() => resolve(port));
       });
     });
@@ -142,7 +143,7 @@ describe('web shares in proxy mode', () => {
           },
           (response) => {
             response.resume();
-            response.on('end', () => resolve({ status: response.statusCode!, headers: response.headers }));
+            response.on('end', () => resolve({ status: response.statusCode ?? 0, headers: response.headers }));
           },
         );
         sent.on('error', reject);
@@ -155,7 +156,7 @@ describe('web shares in proxy mode', () => {
     return new Promise<{ socket: WebSocket; status: number | null }>((resolve) => {
       const socket = new WebSocket(`${url.replace(/^http/, 'ws')}ws`, { headers });
       socket.once('open', () => resolve({ socket, status: null }));
-      socket.once('unexpected-response', (_request, response) => resolve({ socket, status: response.statusCode! }));
+      socket.once('unexpected-response', (_request, response) => resolve({ socket, status: response.statusCode ?? 0 }));
       socket.once('error', () => {});
     });
   }
@@ -220,14 +221,14 @@ describe('web shares in proxy mode', () => {
     expect(path).toMatch(/^\/stim\/s\/[A-Za-z0-9_-]{43}\/$/);
     const local = `http://127.0.0.1:${port}`;
     expect((await http(`${local}${path.replace('/stim', '')}`)).status).toBe(404);
-    const answer = await http(`${local}${path}login`, { method: 'POST', body: `password=${share.password!}` });
+    const answer = await http(`${local}${path}login`, { method: 'POST', body: `password=${share.password ?? ''}` });
     expect(answer.status).toBe(303);
     expect(answer.headers.location).toBe(path);
     const cookie = String(answer.headers['set-cookie']);
     expect(cookie).toContain(`Path=${path};`);
     const { socket, status: refused } = await connect(`${local}${path}`, {
       origin: PUBLIC,
-      cookie: cookie.split(';')[0]!,
+      cookie: cookie.split(';')[0] ?? '',
     });
     expect(refused).toBeNull();
     socket.close();
@@ -256,7 +257,7 @@ describe('the Funnel route of an auto exposure', () => {
       close: async () => {},
       stranded: () => null,
       removeStranded: async () => {},
-    } as unknown as ShareRoute;
+    };
     const exposed = new ExposedRoute(
       route,
       () => ({ exposure: undefined, publicUrl: undefined, port: undefined }),
