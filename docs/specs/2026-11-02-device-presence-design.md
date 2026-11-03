@@ -10,8 +10,9 @@ ready to implement once those are answered.
 - A web share (`stim share`) can have a view password and a control password. View-only viewers watch and see
   everyone's touches; control viewers can also tap.
 - Automation input from agent-device shows on the same overlay, labeled as the agent and its command.
-- agent-device can drive a workspace's device through a Stim route, so Stim sees every action, revives an idle
-  workspace before the first one, and counts each as activity.
+- Agents drive a workspace's device through one `stim` command that wraps agent-device, so Stim sees every action,
+  revives an idle workspace before the first one, counts each as activity, and highlights the element an action
+  targets.
 - One protocol for the web viewer, Desktop's viewer and the phone app. The web viewer stays a subset of Desktop's.
 
 ## Non-goals
@@ -250,15 +251,55 @@ publishes each `action.recorded` with coordinates as an `agent` participant `ges
 and `click` become taps; `scroll` and `swipe` become swipes over `durationMs`. `@ref` targets have coordinates in the
 record because the daemon resolved them.
 
-Points must be normalized by the device's logical size: on iOS the frame's pixel size divided by the device type's
-screen scale, on Android the display size in the unit agent-device records (to verify: pixels or dp). The same
+Points must be normalized by the box agent-device measures in. A JSON snapshot reports it as `viewport`, in the same
+space and orientation as its rects (callstack/agent-device#3182; that tap points share it is to verify); without one, use the device's logical size: on
+iOS the frame's pixel size divided by the device type's screen scale, on Android the display size in the unit
+agent-device records (to verify: pixels or dp). The same
 normalized start point (`x`/`y`, from `x1`/`y1` for scrolls and swipes) and end point (`x2`/`y2`) go onto `ReplayMarker` as optional fields, so Desktop's replay can show where each
 action landed.
 
 The honest gap: these show 0.6 to 1 s after an action completes, with no live phases, and only for agents that use
 the workspace's agent-device state directory.
 
-### 6.2 The agent-device proxy
+### 6.2 `stim agent-device`: the wrapper command (recommended)
+
+Agents run `stim agent-device <agent-device args...>` instead of `agent-device`. The name says what runs and cannot
+collide with `stim device lock|unlock|provision|location|permission|push|network`, whose `push` is also an
+agent-device command. This is a new command and needs the maintainer's decision (open question 4).
+
+- **Selection.** Stim resolves this workspace's device and injects what agent-device needs: `--platform`, `--udid` or
+  `--serial` of the owned simulator or emulator or the leased physical device, `AGENT_DEVICE_STATE_DIR` for the
+  workspace, `--remote-config` for a hosted session, and a default `--session` per workspace and slot when the agent
+  passes none. `--slot` picks a slot. Local, hosted and remote devices look the same to the agent: no device ids, no
+  `connect` step.
+- **Before the command.** Stim revives an idle-stopped workspace (the `stim revive` path: Metro, the owned device
+  through admission, the app relaunched), with progress on stderr; the agent waits a few seconds, as it would for
+  `stim revive`. It refuses with `STIM_BAD_ARG` when the agent names a device, udid or serial that is not this
+  workspace's, and refuses `boot`, so agent-device never boots a device outside admission.
+- **After the command.** Stim reads the session's new `action.recorded` events (written by the daemon before it
+  answers; to verify) and publishes them to stim-server over its Unix socket as presence, a timeline marker and an
+  activity signal. Presence shows `Agent · press` when the command starts and the point when it exits, with no
+  file-follow delay.
+- **Transparency.** stdin, stdout and stderr pass through, the exit code is agent-device's, and signals are forwarded.
+  Stim writes nothing to stdout, so `--json` output stays parseable; its own lines go to stderr. Interactive and
+  long-running commands (`record`, `logs`, `takeover`) keep working because the streams are inherited. Only a
+  `snapshot --json` has its stdout teed through Stim, byte for byte, to read rects (6.5); a TTY never sees a pipe.
+- **Version.** Stim resolves agent-device as the hosted driver does (`resolveAgentDevice`, the shared
+  `~/.local/bin/agent-device`), checks the minimum version hosted control already requires (0.21.30), and otherwise
+  passes arguments through without pinning. A missing or older agent-device refuses with the install command.
+- **Cost.** A warm `stim --version` takes 80 ms (five runs on this MacBook; 0.16 to 0.72 s cold), and agent-device's
+  own CLI start takes 0.15 to 0.4 s, which agents already pay. About 80 ms on top of a press that takes 0.5 to 1.5 s
+  does not matter for agents issuing many taps, provided the wrapper reads workspace state without a full status
+  payload.
+- **Enforcement.** Agents can still call agent-device directly. `stim guide agent` routes all interaction through the
+  wrapper and keeps the `AGENT_DEVICE_STATE_DIR` form only as a fallback; the static skill does not change
+  (AGENTS.md invariant 1). Direct calls still get 6.1 presence and the boot hook. A soft rule is enough for presence,
+  because 6.1 covers whoever bypasses it; the route in 6.3 is a backstop only if outlines must be reliable for every
+  agent.
+- **No listener.** Nothing listens, so revive needs no long-lived process, the daemon's exit rule is unchanged, and
+  the change adds no network surface.
+
+### 6.3 Alternative: an HTTP route
 
 Reuse the hosted shape. On a worker, stim-server already runs agent-device's daemon in HTTP mode under a policy
 (`AgentDeviceDriver` with a `device`, `packages/agent-driver-agent-device/driver.ts`), pins every JSON-RPC request to
@@ -334,9 +375,48 @@ stop` and `worktree remove` close the route (open question 5). With `daemon.mode
   that ignores the config bypasses Stim as today and gets only 6.1 presence.
 - **Arbitration.** Unchanged in the first version: agent activity counts as a driver in status, so share and Desktop
   `begin` refuse with `device-busy` unless they take over. Holding agent requests while a human holds the pointer
-  grab is open question 7.
+  grab is open question 6.
 - **Cost.** One loopback HTTP hop per request, well under a millisecond, and one agent-device daemon per active
   workspace, as today.
+
+### 6.4 Wrapper or route
+
+|                        | `stim agent-device` (6.2)                       | HTTP route (6.3)                                                           |
+| ---------------------- | ----------------------------------------------- | -------------------------------------------------------------------------- |
+| Agent interface        | one command, no ids or config                   | `--remote-config <file>` on every call                                     |
+| Revive on first action | before spawning, no listener                    | held request, needs a relay that outlives idle stop                        |
+| Points                 | from action records after exit                  | from each RPC result                                                       |
+| Element rects          | only from snapshots the agent asked as `--json` | from every snapshot RPC, whatever the CLI prints                           |
+| Bypass                 | direct `agent-device` calls                     | agents that skip the config                                                |
+| New surface            | a command                                       | a loopback listener, `agent.link`, daemon exit rule; `review: needs-human` |
+| Hosted, remote         | same command                                    | already the hosted path                                                    |
+
+Recommended: the wrapper first. The route can be added under the wrapper later, which would then pass
+`--remote-config` itself and get every snapshot's rects, without changing what agents type.
+
+### 6.5 Element highlight
+
+An action on a ref or selector shows the element: an outline of its rect in the agent's color, a ripple at the point
+pressed, and the label.
+
+- **What agent-device returns.** `press`, `click` and `fill` results carry the dispatched point (`x`, `y`), not a
+  rect; the record builder copies only those fields. A `target_still_moving` refusal means nothing was dispatched,
+  so nothing is drawn. `settle` and verification commands report screen state, not a target. No
+  callstack/agent-device issue or pull request asks for the target rect in action results (searched 2026-11-03;
+  only the occlusion refusal carries a `targetRect`).
+- **Rects.** A `snapshot --json` result lists nodes with `ref` and `rect {x, y, width, height}` and a `viewport` in
+  the same space; iOS and Android share this node shape. Stim keeps the latest tree per agent-device session. Android
+  Appium snapshots publish `viewport` only when the measurements before and after the tree agree; without it Stim
+  falls back to the logical size (6.1). A repeated unchanged Android snapshot prints a compact acknowledgement in
+  text mode; `--json` keeps the full tree.
+- **Resolving.** For `@eN`, take that ref's rect from the cached tree, and draw it only if it contains the point the
+  result reports. Otherwise the ref is stale (the screen changed since the snapshot): draw the point only. Selectors
+  are not re-matched; Stim hit-tests the reported point against the cached tree and outlines the smallest node that
+  contains it, again only when one does.
+- **Scaling.** Rects and points are divided by `viewport` to get fractions of the screen in its current orientation,
+  then mapped to the upright frame with the device's rotation, which the frame stream already knows. The overlay
+  draws in the screen box, never over the device frame artwork, like human touches.
+- **Fading.** The outline holds 600 ms after the command exits and fades over 300 ms.
 
 ## 7. Desktop and phone
 
@@ -352,12 +432,12 @@ stop` and `worktree remove` close the route (open question 5). With `daemon.mode
   `device-host.input.touch`) and `share-view-password` (the `share.start` parameter and the row fields).
 - No `STIM_BUILD_COMPAT` bump: none of the touched files is in `scripts/build-compat.json`, and AGENTS.md exempts
   fields a hello feature negotiates.
-- The proxy changes the CLI's JSON contract (`agentDevice.remoteConfig`) and the guide; guide contract tests and
-  website pages follow.
-- Phase 1 changes a share's authentication (a second password, cookies on passwordless shares) and phase 3 adds a
-  loopback listener; both get `review: needs-human`. Phase 1 also updates the "Web shares" rule in AGENTS.md, which
-  describes one password. Phase 3 adds an AGENTS.md rule for the local agent relay and the local-only `agent.link`
-  method, and the daemon's new exit rule.
+- The wrapper adds a command, so AGENTS.md's command surface, `stim guide agent`, the guide contract tests and the
+  website change with it. The HTTP route, if built, adds `agentDevice.remoteConfig` to the CLI's JSON contract.
+- Phase 1 changes a share's authentication (a second password, cookies on passwordless shares) and gets
+  `review: needs-human`; so would the HTTP route, a new loopback listener. Phase 1 also updates the "Web shares" rule in AGENTS.md, which
+  describes one password. The HTTP route would add an AGENTS.md rule for the local agent relay, the local-only
+  `agent.link` method and the daemon's new exit rule.
 
 ## 9. Privacy and safety
 
@@ -377,8 +457,9 @@ stop` and `worktree remove` close the route (open question 5). With `daemon.mode
    control passwords with upgrade. Local devices only; hosted shares show only a viewer's own touches.
 2. **Agent presence from recorded actions** (server, core). 6.1: follow agent records per subscribed device,
    normalize, publish `gesture`, add coordinates to `ReplayMarker`.
-3. **agent-device proxy** (server, CLI, guide, website). 6.2: local agent route, `agentDevice.remoteConfig`,
-   revive on first action, activity, live agent presence from requests.
+3. **`stim agent-device`** (CLI, server, guide, website). 6.2 and 6.5: the wrapper with injected selection, revive
+   before the command, records published as presence, markers and activity, element outlines from `--json`
+   snapshots. The HTTP route (6.3) only if the maintainer wants it as a backstop.
 4. **Desktop, phone and hosted presence** (desktop, mobile, server). `frames.subscribe` presence for Desktop and the
    phone, the overlay in both, worker-published presence across the device-host link.
 
@@ -389,9 +470,10 @@ stop` and `worktree remove` close the route (open question 5). With `daemon.mode
   before shipping phase 2.
 - The share viewer is being changed in parallel (H.264, keys, rotation). Phase 1 lands after those, and keeps the
   overlay in its own file.
-- Revive inside a held request can exceed agent-device's timeout on a cold boot; agents then see a timeout instead of
-  a remedy.
-- Two agent paths (proxy and state dir) during the transition mean two kinds of agent presence.
+- Agents that keep calling agent-device directly get only post-hoc points and no outlines.
+- If the daemon writes `action.recorded` after it answers, the wrapper must wait briefly for the record; verify
+  before phase 3.
+- Element outlines depend on agents using `snapshot --json`; text snapshots give points only.
 
 ## 12. Open questions
 
@@ -399,11 +481,9 @@ stop` and `worktree remove` close the route (open question 5). With `daemon.mode
 2. Should `--no-password --view-password` mean "anyone with the link can watch, control needs a password"? Recommended
    no for the first version.
 3. Passwordless shares: force `Guest N` names (recommended), or allow chosen names?
-4. Build the agent-device proxy as phase 3? Recommended yes.
-5. If yes: host the loopback relays in the stim-daemon, kept up while a workspace has an open agent route
-   (recommended), or elsewhere?
-6. If yes: run the agent-device daemon and its policy in stim-server, as hosted sessions do (recommended)?
-7. Should the proxy hold agent requests while a human holds the pointer grab, or keep today's arbitration (agent
-   counts as a driver)?
-8. If the proxy ships, should the guide drop the `AGENT_DEVICE_STATE_DIR` path, and Stim stop pursuing
-   callstack/agent-device#4153?
+4. Add `stim agent-device <args>` as the interface agents use for device interaction (recommended), under that name?
+5. HTTP route (6.3): skip for now (recommended), or build it under the wrapper so every snapshot's rects are seen?
+6. Should Stim hold agent commands while a human holds the pointer grab, or keep today's arbitration (agent counts as
+   a driver)?
+7. Once the wrapper ships, should Stim stop pursuing callstack/agent-device#4153, keeping `boot-hook.json` only for
+   direct agent-device calls?
