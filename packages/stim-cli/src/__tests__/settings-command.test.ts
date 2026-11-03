@@ -166,7 +166,7 @@ test.each([
 );
 
 test.each([
-  ['metro.idleStopMinutes', '30', 'idle.minutes', 'stim settings set idle.minutes 30'],
+  ['metro.idleStopMinutes', '30', 'idle.minutes', 'stim settings set idle.minutes 30 --scope machine'],
   ['devices.idleShutdownMinutes', '30', 'idle.minutes', 'stim settings set idle.minutes 30'],
   ['maintenance.deviceIdleDays', '2', 'idle.dormantDays', 'stim settings set idle.dormantDays 2'],
   ['budget.minFreeDiskGb', '12', 'disk.minFreeGb', 'stim settings set disk.minFreeGb 12'],
