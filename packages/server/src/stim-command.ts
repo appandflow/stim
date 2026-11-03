@@ -12,11 +12,20 @@ export interface CommandLimits {
 export const STDERR_TAIL = 2000;
 const KILL_GRACE_MS = 1000;
 
+/**
+ * Node's `ChildProcess.kill` on a child that failed to spawn reaches libuv with pid 0, and `kill(0, sig)` signals the
+ * caller's own process group (https://man7.org/linux/man-pages/man2/kill.2.html); on Windows it throws `kill EINVAL`.
+ */
+export function signalChild(child: ChildProcess, signal: NodeJS.Signals): boolean {
+  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return false;
+  return child.kill(signal);
+}
+
 export function terminate(child: ChildProcess, cooperative = false): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   if (cooperative && child.connected) child.send('cancel', () => {});
-  else child.kill('SIGTERM');
-  const timer = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS);
+  else signalChild(child, 'SIGTERM');
+  const timer = setTimeout(() => signalChild(child, 'SIGKILL'), KILL_GRACE_MS);
   return new Promise((resolve) => {
     const done = () => {
       clearTimeout(timer);
