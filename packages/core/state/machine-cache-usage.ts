@@ -18,7 +18,8 @@ export interface MachineCacheUsage {
   version: 1;
   measuredAt: string;
   roots: string[];
-  sizes: { dir: string; bytes: number | null }[];
+  /** `privateBytes` is what deleting the directory would free, measured for the directories the report lists as large. */
+  sizes: { dir: string; bytes: number | null; privateBytes?: number | null }[];
   runtimes: SimRuntimeUsage[] | null;
   agentDeviceVersion: string | null;
   xcodeBuildVersion: string | null;
@@ -65,7 +66,13 @@ function validUsage(value: Record<string, unknown> | null): value is Record<stri
     Array.isArray(value.roots) &&
     value.roots.every((root) => typeof root === 'string') &&
     Array.isArray(value.sizes) &&
-    value.sizes.every((entry) => object(entry) && typeof entry.dir === 'string' && bytes(entry.bytes)) &&
+    value.sizes.every(
+      (entry) =>
+        object(entry) &&
+        typeof entry.dir === 'string' &&
+        bytes(entry.bytes) &&
+        (entry.privateBytes === undefined || bytes(entry.privateBytes)),
+    ) &&
     (value.runtimes === null || (Array.isArray(value.runtimes) && value.runtimes.every(validRuntime))) &&
     nullableString(value.agentDeviceVersion) &&
     nullableString(value.xcodeBuildVersion),

@@ -139,6 +139,40 @@ describe('idle timing judgment', () => {
       expect(judge('high', base.commandEndMs + 1 * MIN).ok).toBe(false);
     });
   });
+  describe('an idle stop the daemon recorded under pressure', () => {
+    const pollAt = base.commandEndMs + 13 * MIN;
+    const judge = (daemonIdle, pressureLevel = 'normal') =>
+      judgeIdleTiming({
+        ...base,
+        previousPollStartMs: null,
+        idlePollStartMs: pollAt - 2000,
+        idlePollEndMs: pollAt,
+        pressureLevel,
+        daemonIdle,
+      });
+    it('passes although no status poll reported high, when the record names high or critical and 2 minutes of idle', () => {
+      const verdict = judge({ atMs: base.commandEndMs + 12 * MIN, pressure: 'high' });
+      expect(verdict).toMatchObject({ ok: true, early: true, earlyAllowed: true });
+      expect(verdict.evidence.join('\n')).toContain("allowed: the daemon's log records the idle at");
+      expect(judge({ atMs: base.commandEndMs + 12 * MIN, pressure: 'critical' }).ok).toBe(true);
+    });
+    it('fails a record at normal pressure even when a status poll reported high', () => {
+      expect(judge({ atMs: base.commandEndMs + 12 * MIN, pressure: null }, 'high').ok).toBe(false);
+    });
+    it('fails a pressure record under 2 minutes of idle, judged at the record time rather than the poll time', () => {
+      expect(judge({ atMs: base.commandEndMs + 1 * MIN, pressure: 'high' }).ok).toBe(false);
+    });
+    it('judges earliness by the record time: a normal idle the poll saw only after the earliest time still fails', () => {
+      const verdict = judgeIdleTiming({
+        ...base,
+        previousPollStartMs: null,
+        idlePollStartMs: base.commandEndMs + 14 * MIN + 1000,
+        idlePollEndMs: base.commandEndMs + 14 * MIN + 3000,
+        daemonIdle: { atMs: base.commandEndMs + 13 * MIN, pressure: null },
+      });
+      expect(verdict).toMatchObject({ ok: false, early: true });
+    });
+  });
   it('treats status activity, which is rounded down to the minute, as up to a minute later', () => {
     const verdict = judgeIdleTiming({
       ...base,
@@ -230,6 +264,23 @@ const action = (ts, rung, kind, target, extra = {}) =>
   line({ event: 'pressure_action', rung, kind, target, outcome: 'done', bytes: 0, ts, ...extra });
 const idle = (ts, workspace) => line({ event: 'workspace_idle', workspace, freedBytes: 5, ts });
 const tick = (ts) => line({ event: 'daemon_tick', ts });
+
+describe('pressure level of an idle record', () => {
+  const idleMsg = (why) =>
+    line({
+      event: 'workspace_idle',
+      workspace: A04,
+      msg: `${A04}: no activity for 11 minutes (${why}; last: native run): Stopped: supervisor pid 1 stopped`,
+      freedBytes: 0,
+      ts: 5000,
+    });
+  const levelOf = (why) => ladderActions({ daemonText: idleMsg(why) }).actions[0].pressure;
+  it('reads high and critical from the pressure form of the message and null from the idle clock form', () => {
+    expect(levelOf('pressure level high: macOS memory pressure has been warning for 10 minutes')).toBe('high');
+    expect(levelOf('pressure level critical: macOS memory pressure is critical')).toBe('critical');
+    expect(levelOf('idle.minutes is 15')).toBe(null);
+  });
+});
 
 describe('ladder order from the daemon log', () => {
   const run = [
