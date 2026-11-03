@@ -24,4 +24,42 @@ function writeClipboard(clipboard, ClipboardItemClass, BlobClass, text) {
   return text.then((value) => clipboard.writeText(value));
 }
 
-globalThis.stimClipboard = { pasteRequest, writeClipboard };
+const POLL_MS = 2000;
+const POLL_MAX_MS = 30000;
+
+function nextPollDelay(current, ok) {
+  return ok ? POLL_MS : Math.min(current * 2, POLL_MAX_MS);
+}
+
+function createClipboardSync() {
+  let device = null;
+  let browser = null;
+  return {
+    deviceRead(text) {
+      const first = device === null;
+      if (typeof text !== 'string' || text === device) return false;
+      device = text;
+      return !(first || text === '' || text === browser);
+    },
+    wrote(text) {
+      browser = text;
+    },
+    browserRead(text) {
+      if (typeof text !== 'string' || text === browser) return null;
+      if (browser === null || text === '' || text === device) {
+        browser = text;
+        return null;
+      }
+      const request = pasteRequest(text);
+      if (request && request.message) return { message: { type: 'clipboard-set', text } };
+      browser = text;
+      return request;
+    },
+    sent(text) {
+      browser = text;
+      device = text;
+    },
+  };
+}
+
+globalThis.stimClipboard = { pasteRequest, writeClipboard, nextPollDelay, createClipboardSync };

@@ -140,6 +140,20 @@ describe.skipIf(process.platform === 'win32')('an iOS simulator clipboard (simct
     ]);
   });
 
+  it('does not count a clipboard read as input, so polling never keeps an idle session alive', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      recordingTool(join(home, 'bin', 'xcrun'), `process.stdout.write('text');`);
+      const id = await session(device, { ...process.env, PATH: `${join(home, 'bin')}:${process.env.PATH}` });
+      vi.advanceTimersByTime(40_000);
+      expect(await hub.input(owner, id, get)).toEqual({ text: 'text' });
+      vi.advanceTimersByTime(30_000);
+      expect(await hub.input(owner, id, get)).toMatchObject({ code: 'unknown-session' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reads a clipboard larger than the set limit, up to the read limit', async () => {
     const big = 'x'.repeat(MAX_CLIPBOARD_BYTES * 2);
     recordingTool(join(home, 'bin', 'xcrun'), `process.stdout.write(${JSON.stringify(big)});`);

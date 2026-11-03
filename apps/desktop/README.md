@@ -222,7 +222,10 @@ worktree's branch, else the verified checkout's folder, else its project.
 Apps sharing a reported checkout appear together, including primary checkouts;
 older servers retain linked-worktree grouping. Each app keeps its own commands,
 devices and log routes. Primary checkout groups have no Remove Worktree action.
-Resources shows each app's dependency disk breakdown separately.
+Resources shows each app's dependency disk breakdown separately. For a linked worktree, its Disk card counts only the private part of
+`node_modules` (what removing it frees, from `stim status`) in the total and the bar, and lists the part that
+clones or hard links share with other folders on a last line, not counted. A primary checkout, and a workspace
+without a private size, count `node_modules` in full, so the shared bytes are counted once, under the source.
 The second line is where the app sits inside its checkout, such as `apps/mobile`.
 The view options button next to the logo opens a menu:
 
@@ -293,7 +296,7 @@ right now is tried again, not reported as revoked.
 has one connection, and `StatusStore.usePairedServers` follows each one's status in memory. Below this Mac's
 projects, the sidebar gets a section per paired server: its name, connection dot, a **View Only** pill (**View and
 Control** for a `--control` pairing), and its
-workspaces with the same grouping and status filter as this Mac's. Hidden, expanded and collapsed state for those
+workspaces with the same grouping, status filter and row layout as this Mac's: the status sits beside the name when the whole name fits and on its own line below it otherwise. Hidden, expanded and collapsed state for those
 rows is kept in memory only, keyed by the owner and path, and this Mac's hidden paths never apply to them. A paired
 row opens a page: the status, the path as text, the agent and device lines with the machine each runs on
 ("Running on janics-mac-mini-2"), the build and where it compiles, and "Viewing floco · read-only" or "Controlled by
@@ -786,8 +789,16 @@ gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
 - **Projects**: workspaces and linked worktrees that `stim worktree warm` has
   not set up (**Not warmed**), grouped by repository and ranked by total. A
   repository with several worktrees expands into them. Each worktree shows its
-  `node_modules` (sized with `du`), owned devices (from the inventory), and
-  build outputs and logs (from `stim gc --json`). A trash icon marks build
+  `node_modules`, owned devices (from the inventory), and
+  build outputs and logs (from `stim gc --json`). For a linked worktree,
+  `node_modules` is the private size `stim status` reports, what removing it
+  frees, and the part that copy-on-write clones or hard links share with other
+  folders follows it in parentheses, not counted. A primary checkout shows all of
+  its `node_modules`, so those shared bytes are counted once, under the source
+  (when the repository's primary checkout is not listed they are not counted).
+  Without a private size (an older Stim, or a folder
+  status has not measured) it is sized with `du`, which counts clones in full;
+  its tooltip says so. A trash icon marks build
   outputs `stim gc --delete` clears; a lock marks ones it keeps, with the
   reason. Scissors mark logs `stim gc --delete` trims to their newest 8 MiB; a
   lock marks logs over the cap it keeps. The lifecycle reads **Merged into
@@ -2108,7 +2119,7 @@ In a normal debug session, **Window > SwiftUI Playground** opens the same fixtur
 that session's main window keeps its normal live services. The standalone entry is the
 backend-free option. Release builds exclude the playground and its fixture seams, and refuse `--playground`.
 
-Choose live or archived Workspaces, Notifications, Builds, Simulator controls, Settings or Design tokens. Each screen offers
+Choose live or archived Workspaces, the Sidebar (this Mac's and a paired machine's projects at three sidebar widths), Notifications, Builds, Simulator controls, Settings or Design tokens. Each screen offers
 its applicable named scenarios: ready, loading, empty, error, long text and large data.
 Notifications includes 200 entries; Builds includes the retained maximum of 10 runs per platform. Local inboxes and fixed
 simulator forms omit loading/error or large-list scenarios that their production views do not have.

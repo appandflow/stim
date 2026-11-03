@@ -756,7 +756,7 @@ struct MachineView: View {
       .padding(.leading, nested ? Space.xxxl : 0)
       if !compact {
         lifecycleChip(lifecycle, workspace: workspace).frame(width: 130, alignment: .leading)
-        size(workspace.nodeModules)
+        size(workspace.nodeModules, reason: nodeModulesNote(workspace))
         size(workspace.devices)
           .help(workspace.deviceCount == 0 ? "No owned simulator or emulator" : "\(workspace.deviceCount) owned devices")
         size(workspace.buildOutputs)
@@ -803,12 +803,29 @@ struct MachineView: View {
   }
 
   private func breakdown(_ workspace: WorkspaceStorage) -> String {
-    [
+    let shared = workspace.nodeModulesShared.flatMap { $0 > 0 ? " (\(Format.fileSize($0)) shared)" : nil } ?? ""
+    return [
       ("node_modules", workspace.nodeModules), ("devices", workspace.devices), ("outputs", workspace.buildOutputs),
       ("logs", workspace.logs),
     ]
-    .compactMap { name, size in size.bytes.flatMap { $0 > 0 ? "\(name) \(Format.fileSize($0))" : nil } }
+    .compactMap { name, size in
+      guard let bytes = size.bytes, bytes > 0 || (name == "node_modules" && !shared.isEmpty) else { return nil }
+      return "\(name) \(Format.fileSize(bytes))" + (name == "node_modules" ? shared : "")
+    }
     .joined(separator: " \u{00B7} ")
+  }
+
+  private func nodeModulesNote(_ workspace: WorkspaceStorage) -> String? {
+    guard case .size(let bytes) = workspace.nodeModules else { return nil }
+    if workspace.isCheckout {
+      return bytes > 0 ? "Counted in full here; worktrees cloned from it share these bytes and count only their own" : nil
+    }
+    guard let shared = workspace.nodeModulesShared else {
+      return bytes > 0 ? "Counts files cloned from other folders in full, so it can be more than this worktree frees" : nil
+    }
+    return shared > 0
+      ? "What removing it frees. Another \(Format.fileSize(shared)) is shared with other folders and not counted."
+      : nil
   }
 
   @ViewBuilder
