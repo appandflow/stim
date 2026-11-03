@@ -69,7 +69,7 @@ try {
     const { removedEnvironmentRefusal } = await import('../src/daemon/mode.ts');
     const { leftoverOffRefusal } = await import('../src/workspace/leftover-off.ts');
     const governed = path.length === 1 ? (path[0] ?? '') : '';
-    const refusal = removedEnvironmentRefusal(governed) ?? leftoverOffRefusal(governed, process.cwd());
+    const refusal = removedEnvironmentRefusal(governed) ?? leftoverOffRefusal(governed, process.cwd(), process.env);
     if (refusal) {
       if (process.argv.includes('--json')) console.log(JSON.stringify(refusal));
       console.error(`${refusal.code}: ${refusal.message}`);

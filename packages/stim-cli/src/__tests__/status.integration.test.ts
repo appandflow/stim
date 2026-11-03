@@ -897,7 +897,7 @@ test('a running build reports what its build tool is doing only while it compile
       detail: { unit: 'targets', done: 0, total: 3 },
     });
 
-    expect((await runStatus()).join('\n')).toContain('stage: running');
+    expect((await runStatus(process.platform)).join('\n')).toContain('stage: running');
 
     progress.step('install');
     expect((await runStatusJson(process.platform)).environments[0].build).toMatchObject({ phase: 'install' });

@@ -1,7 +1,8 @@
-# Publishes the packages to npm via OIDC trusted publishing when a
-# version tag is pushed. There is NO token: npm trusts a short-lived OIDC
-# credential minted for exactly this repo + workflow + environment, and the
-# `release` environment requires a manual approval, which replaces the OTP.
+# Publishes the packages to npm via OIDC trusted publishing. There is NO
+# token: npm trusts a short-lived OIDC credential minted for exactly this repo
+# + workflow + environment. A version tag publishes a release; a push to main
+# publishes the head of main to the `next` dist-tag (RELEASE.md, "Prerelease
+# channel").
 #
 # The tarballs come from `pnpm pack`: the packages declare their edges to each
 # other with pnpm's `workspace:` protocol, which only pnpm substitutes with the
@@ -15,12 +16,20 @@ name: Release
 on:
   push:
     tags: ['v*']
+    branches: [main]
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  NEXT_THROTTLE_MINUTES: 5
+
 jobs:
   tag-on-main:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -243,7 +252,7 @@ jobs:
   # for its tarball. A separate job without id-token lets `npx` run the
   # published CLI and its freshly resolved dependencies with no publish
   # credential, and lets a slow registry be retried with "Re-run failed jobs"
-  # without another release approval.
+  # without publishing again.
   smoke:
     needs: publish
     runs-on: ubuntu-latest
@@ -324,3 +333,295 @@ jobs:
           wait_for "npx stim@$version --version" cli_runs
           wait_for "npx -p @stim-cli/ci@$version stim-ci --version" ci_runs
           wait_for "npx -p @stim-cli/server@$version stim-server --version" server_runs
+
+  next-publish:
+    if: github.repository == 'appandflow/stim' && github.ref == 'refs/heads/main' && vars.NEXT_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    # GitHub keeps one run active and one pending, and a newer pending run
+    # replaces the older one, so a burst of pushes queues at most one publish.
+    concurrency:
+      group: npm-next-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      checks: read
+      id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
+    steps:
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Wait until NEXT_THROTTLE_MINUTES after the last next publish
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          if ! current=$(npm view stim dist-tags.next); then
+            echo "::warning::could not read stim's next dist-tag; publishing without waiting"
+            exit 0
+          fi
+          if [ -z "$current" ]; then
+            echo "stim has no next dist-tag yet"
+            exit 0
+          fi
+          if ! published=$(npm view stim time --json | node -e '
+            const time = JSON.parse(require("fs").readFileSync(0, "utf8"));
+            process.stdout.write(String(Math.floor(Date.parse(time[process.argv[1]]) / 1000)));
+          ' "$current"); then
+            echo "::warning::could not read when $current was published; publishing without waiting"
+            exit 0
+          fi
+          wait=$((published + NEXT_THROTTLE_MINUTES * 60 - $(date +%s)))
+          echo "next is $current, published $(date -u -d "@$published" +%FT%TZ)"
+          if [ "$wait" -gt 0 ]; then
+            echo "waiting ${wait}s"
+            sleep "$wait"
+          fi
+
+      - name: Resolve the head of main
+        id: head
+        run: |
+          sha=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" refs/heads/main | cut -f1)
+          [ -n "$sha" ] || { echo "::error::could not resolve refs/heads/main"; exit 1; }
+          echo "head of main: $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # The main ruleset requires the merge queue's `merge gate` check, but
+      # repository admins can bypass it. A bypassed push publishes only once
+      # the CI release-gate jobs passed on it.
+      - name: The head passed its required checks
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          passed() {
+            local conclusion
+            conclusion=$(gh api -X GET "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs" -f check_name="$1" \
+              --jq '.check_runs | sort_by(.id) | last | .conclusion // ""')
+            [ "$conclusion" = success ]
+          }
+          if passed 'merge gate'; then
+            echo "merge gate passed on $SHA"
+          elif passed 'test (node 22)' && passed 'test (node 24)' && passed 'published runtime (node 22.12.0)'; then
+            echo "$SHA bypassed the merge queue; the CI release-gate jobs passed"
+          else
+            echo "::notice::$SHA has no passing merge gate or CI release gate yet; not publishing it"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          ref: ${{ steps.head.outputs.sha }}
+          persist-credentials: false
+
+      - name: Compute the next version
+        id: version
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          base=$(node -p "require('./packages/core/package.json').version")
+          if [[ "$base" == *-* ]]; then
+            echo "::notice::main carries the release candidate $base, which owns the next dist-tag; not publishing"
+            exit 0
+          fi
+          IFS=. read -r major minor _ <<<"${base%%-*}"
+          stamp=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S "$SHA")
+          version="$major.$((minor + 1)).0-next.$stamp.g${SHA:0:7}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.0-next\.[0-9]{14}\.g[0-9a-f]{7}$ ]]; then
+            echo "::error::refusing to publish $version: not an X.Y.0-next.<stamp>.g<sha> version"
+            exit 1
+          fi
+          for name in @stim-cli/ci @stim-cli/server; do
+            if ! npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              echo "publishing $version"
+              exit 0
+            fi
+          done
+          echo "::notice::$version is already published"
+
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        if: steps.version.outputs.version != ''
+        with:
+          cache: false
+          install: false
+
+      - name: Set the version
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node scripts/release-prep.mjs --check
+          for p in $PACKAGE_DIRS; do
+            node -e '
+              const fs = require("fs");
+              const path = `packages/${process.argv[1]}/package.json`;
+              const manifest = JSON.parse(fs.readFileSync(path, "utf8"));
+              manifest.version = process.env.VERSION;
+              fs.writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
+            ' "$p"
+          done
+
+      - name: Install and build the packages
+        if: steps.version.outputs.version != ''
+        run: |
+          pnpm install --frozen-lockfile --filter "./packages/*"
+          pnpm -r --filter "./packages/*" run build
+
+      - name: Pack the tarballs
+        if: steps.version.outputs.version != ''
+        run: |
+          mkdir -p "$RUNNER_TEMP/tarballs"
+          for p in $PACKAGE_DIRS; do
+            tarball=$(cd "packages/$p" && pnpm pack --pack-destination "$RUNNER_TEMP/tarballs" | tail -1)
+            mv "$tarball" "$RUNNER_TEMP/tarballs/$p.tgz"
+            tar -xzOf "$RUNNER_TEMP/tarballs/$p.tgz" package/package.json > "$RUNNER_TEMP/tarballs/$p.package.json"
+          done
+
+      - name: Packed manifests name the exact version
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for p in $PACKAGE_DIRS; do
+            node -e '
+              const manifest = require(process.argv[1]);
+              const version = process.env.VERSION;
+              const groups = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+              let bad = manifest.version === version ? 0 : 1;
+              if (bad) console.log(`${manifest.name} is ${manifest.version}, not ${version}`);
+              for (const group of groups) {
+                for (const [name, range] of Object.entries(manifest[group] ?? {})) {
+                  if (name !== "stim" && !name.startsWith("@stim-cli/")) continue;
+                  if (range !== version) {
+                    console.log(`${manifest.name} ${group}.${name} is ${range}, not ${version}`);
+                    bad += 1;
+                  }
+                }
+              }
+              process.exit(bad === 0 ? 0 : 1);
+            ' "$RUNNER_TEMP/tarballs/$p.package.json"
+          done
+
+      - name: The server tarball ships the share viewer
+        if: steps.version.outputs.version != ''
+        run: |
+          listing=$(tar -tzf "$RUNNER_TEMP/tarballs/server.tgz")
+          for f in packages/server/share-viewer/*; do
+            entry="package/dist/share-viewer/$(basename "$f")"
+            grep -qxF "$entry" <<<"$listing" || { echo "::error::server tarball is missing $entry"; exit 1; }
+          done
+
+      # Dependencies publish before their dependents, so `npm install stim@next`
+      # never resolves a version whose dependencies are missing. Each wave
+      # publishes in parallel.
+      - name: Publish to the next dist-tag
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ "$VERSION" != *-next.* ]]; then
+            echo "::error::refusing to publish $VERSION: the next channel publishes only -next. versions"
+            exit 1
+          fi
+          publish() {
+            local name
+            name=$(node -p "require('$RUNNER_TEMP/tarballs/$1.package.json').name")
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already published"
+            elif npm publish "$RUNNER_TEMP/tarballs/$1.tgz" --provenance --access public --tag next > "$RUNNER_TEMP/npm-$1.log" 2>&1; then
+              cat "$RUNNER_TEMP/npm-$1.log"
+              echo "$name@$VERSION published"
+            elif cat "$RUNNER_TEMP/npm-$1.log" && grep -q 'cannot publish over the previously published' "$RUNNER_TEMP/npm-$1.log"; then
+              echo "$name@$VERSION is already published"
+            else
+              echo "$name@$VERSION failed to publish"
+              return 1
+            fi
+          }
+          wave() {
+            local names=("$@") pids=() failed=0 i
+            for p in "${names[@]}"; do
+              publish "$p" > "$RUNNER_TEMP/publish-$p.log" 2>&1 &
+              pids+=($!)
+            done
+            for i in "${!pids[@]}"; do
+              wait "${pids[$i]}" || failed=1
+              echo "::group::${names[$i]}"
+              cat "$RUNNER_TEMP/publish-${names[$i]}.log"
+              echo "::endgroup::"
+            done
+            return "$failed"
+          }
+          wave core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache transport transport-tailscale transport-local
+          wave stim-cli
+          wave ci server
+
+      - name: Summary
+        if: always() && steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          {
+            echo "## stim@$VERSION"
+            echo
+            echo "Commit: [${SHA:0:9}](https://github.com/$GITHUB_REPOSITORY/commit/$SHA)"
+            echo
+            echo '```'
+            echo "npm install --global stim@$VERSION"
+            echo '```'
+            echo
+            echo "| package | published |"
+            echo "| --- | --- |"
+            for p in $PACKAGE_DIRS; do
+              name=$(node -p "require('./packages/$p/package.json').name")
+              if npm view "$name@$VERSION" version >/dev/null 2>&1; then state=yes; else state=NO; fi
+              echo "| $name | $state |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  next-smoke:
+    needs: next-publish
+    if: needs.next-publish.outputs.version != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions: {}
+    env:
+      VERSION: ${{ needs.next-publish.outputs.version }}
+      npm_config_prefer_online: 'true'
+    steps:
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: The published CLI and server run
+        run: |
+          cd "$(mktemp -d)"
+          runs() {
+            local out
+            out=$(npx --yes "$@" --version 2>&1) && [ "$(printf '%s\n' "$out" | tail -1)" = "$VERSION" ]
+          }
+          retry() {
+            local deadline=$((SECONDS + 300))
+            until runs "$@"; do
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "::error::npx $* --version did not print $VERSION within 300s"
+                return 1
+              fi
+              sleep 15
+            done
+            echo "npx $* --version: $VERSION"
+          }
+          retry "stim@$VERSION"
+          retry -p "@stim-cli/ci@$VERSION" stim-ci
+          retry -p "@stim-cli/server@$VERSION" stim-server

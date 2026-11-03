@@ -1672,11 +1672,14 @@ replacement to the old value when there is one. \`stim doctor\` and \`stim
 settings\` report any left in a config file or the environment. start, ios,
 android, web, macos, revive and gc refuse with STIM_BAD_ARG while a variable
 marked "refused" is set; unset it, or set its replacement. They also refuse
-while a config layer they read holds an old value that turned something off:
-maintenance.mode off or report, metro.idleStopMinutes or
-devices.idleShutdownMinutes 0, and maintenance.idleStopHours 0 until
-idle.dormantDays is set. The refusal names the set and unset commands that
-keep the old behavior, and doctor rates it a cost. \`stim settings unset
+while a config layer they read holds a removed setting's old value that turned
+something off: maintenance.mode off or report, or metro.idleStopMinutes or
+devices.idleShutdownMinutes 0. The refusal names the set and unset commands
+that keep the old behavior, or only the unset when a layer already sets the
+replacement, and doctor rates it a cost. maintenance.idleStopHours 0 is still
+read, for hosted sessions, so it never refuses; doctor rates it a cost until
+idle.dormantDays is set, since it no longer keeps workspaces from going
+dormant. \`stim settings unset
 <key>\` removes a leftover key from every layer that has it (--scope limits it
 to one).
 

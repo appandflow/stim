@@ -51,17 +51,11 @@ test.each([
     'stim settings set idle.minutes 0 --scope machine',
     'devices.idleShutdownMinutes',
   ],
-  [
-    'maintenance.idleStopHours 0',
-    { maintenance: { idleStopHours: 0 } },
-    'stim settings set idle.dormantDays 0',
-    'maintenance.idleStopHours --scope machine',
-  ],
 ])(
   'a governed command refuses while the machine config holds %s, naming the commands that migrate it',
   (_, machine, set, unset) => {
     writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 2, projects: {}, repos: {}, ...machine }));
-    const refused = run(['gc', '--json'], {});
+    const refused = run(['gc', '--json'], { STIM_DAEMON: '' });
     expect(refused.status).toBe(1);
     const payload = JSON.parse(refused.stdout);
     expect(payload.code).toBe('STIM_BAD_ARG');
@@ -70,13 +64,18 @@ test.each([
   },
 );
 
-test("start refuses while the project's .stim.json holds metro.idleStopMinutes 0", () => {
+test("start refuses while the project's .stim.json holds the old idle settings at 0, naming their one replacement once", () => {
   const app = join(home, 'app');
   mkdirSync(app);
   writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
-  writeFileSync(join(app, '.stim.json'), JSON.stringify({ metro: { idleStopMinutes: 0 } }));
+  writeFileSync(
+    join(app, '.stim.json'),
+    JSON.stringify({ metro: { idleStopMinutes: 0 }, devices: { idleShutdownMinutes: 0 } }),
+  );
   const refused = run(['start'], {}, app);
   expect(refused.status).toBe(1);
   expect(refused.stderr).toContain('STIM_BAD_ARG: metro.idleStopMinutes 0 in');
+  expect(refused.stderr.split('stim settings set idle.minutes 0 --scope committed')).toHaveLength(2);
+  expect(refused.stderr).toContain('`stim settings unset devices.idleShutdownMinutes`');
   expect(refused.stderr).toContain('`stim settings set idle.minutes 0 --scope committed`');
 });
