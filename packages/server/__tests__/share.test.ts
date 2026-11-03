@@ -536,7 +536,7 @@ describe('a web share', () => {
     const touch = (x = 0.25) => JSON.stringify({ type: 'touch', phase: 'down', x, y: 0.75 });
     const signed = async (control = 'control pass', view = 'view password') => {
       const share = await started(f, { control: true, password: control, view: { password: view } });
-      const url = local(share, f.hub.port!);
+      const url = local(share, f.hub.port ?? 0);
       return { share, url, headers: { origin: origin(url) } };
     };
 
@@ -633,7 +633,7 @@ describe('a web share', () => {
         method: 'POST',
         body: 'password=control%20pass&name=%20%20Ann%E2%80%AE%20',
       });
-      const first = await connect(url, { ...headers, cookie: String(named.headers['set-cookie']).split(';')[0]! });
+      const first = await connect(url, { ...headers, cookie: String(named.headers['set-cookie']).split(';')[0] ?? '' });
       const firstMessages = first.messages;
       const second = await connect(url, { ...headers, cookie: await login(url, 'view%20password') });
       const secondMessages = second.messages;
@@ -672,7 +672,7 @@ describe('a web share', () => {
   describe('on a share without a login', () => {
     it('names a viewer by what it sends, one change per five seconds, and falls back to Guest N', async () => {
       const share = await started(f, { passwordless: true, control: true });
-      const url = local(share, f.hub.port!);
+      const url = local(share, f.hub.port ?? 0);
       const headers = { origin: origin(url) };
       expect((await http(url)).body).toContain('data-ask-name="true"');
       const { socket } = await connect(url, headers);
@@ -753,7 +753,7 @@ describe('a web share', () => {
   it('keeps no recording exemption for a device whose control another client holds', async () => {
     f.refuseControl = true;
     const share = await started(f, { control: true });
-    const url = local(share, f.hub.port!);
+    const url = local(share, f.hub.port ?? 0);
     const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
     const refused = new Promise<string>((resolve) =>
       socket.on('message', (data, binary) => {
@@ -773,7 +773,7 @@ describe('a web share', () => {
     f.refuseControl = true;
     const share = await started(f, { control: true });
     f.status(payload('Booted', { state: 'driven', driver: { tool: 'agent-device' }, basis: ['agent-device-lease'] }));
-    const url = local(share, f.hub.port!);
+    const url = local(share, f.hub.port ?? 0);
     const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
     socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
     await vi.waitFor(() => expect(f.begins).toHaveLength(1));
@@ -783,7 +783,7 @@ describe('a web share', () => {
 
   it('ends when stopped: closes viewers, stops capture and removes the route with the last share', async () => {
     const share = await started(f);
-    const url = local(share, f.hub.port!);
+    const url = local(share, f.hub.port ?? 0);
     const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
     const closed = new Promise((resolve) => socket.once('close', resolve));
     expect((await f.hub.stop(WORKSPACE)).map((row) => row.id)).toHaveLength(1);
@@ -893,7 +893,7 @@ describe('a web share', () => {
     it('streams and drives through the hosted source, never the local frame pool or control hub', async () => {
       f.status(hostedPayload() as never);
       const share = await started(f, { control: true });
-      const url = local(share, f.hub.port!);
+      const url = local(share, f.hub.port ?? 0);
       expect(f.hostedSources[0]!.subscribed).toEqual([]);
       const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
       expect(f.subscribed).toEqual([]);
@@ -939,7 +939,7 @@ describe('a web share', () => {
     it('ends when the host stream fails', async () => {
       f.status(hostedPayload() as never);
       const share = await started(f);
-      const url = local(share, f.hub.port!);
+      const url = local(share, f.hub.port ?? 0);
       const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
       f.hostedSources[0]!.subscribed[0]!.failed?.('mini: the host connection closed');
       await vi.waitFor(() => expect(f.hub.list()).toEqual([]));

@@ -28,10 +28,8 @@ describe('human presence', () => {
   const ann = { id: 'v1', kind: 'viewer' as const, name: 'Ann', color: 2 };
   const at = (phase: 'down' | 'move' | 'up', x: number) => ({ phase, x, y: 0.5, at: 1 });
 
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
   test('moves reach subscribers once per tick with the latest point, while down and up go at once and in order', () => {
+    vi.useFakeTimers();
     const hub = new PresenceHub();
     const seen: { id: string; phase?: string; x?: number }[][] = [];
     hub.subscribe('d', (participants) =>

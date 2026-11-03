@@ -112,7 +112,7 @@ struct ShareDeviceSheet: View {
     if offersViewPassword && viewKind != .off {
       return "The first password controls the device; the view-only one only watches. Stim shows generated passwords once."
     }
-    switch kind {
+    return switch kind {
     case .generated: "Stim generates a password and shows it once. Send it to viewers separately from the link."
     case .custom: "Stim never shows this password again and does not keep it."
     case .none:
@@ -210,7 +210,7 @@ struct ShareDeviceSheet: View {
       return
         "Anyone with the link and a password can open it until it ends. Generated passwords are shown only now: Stim Desktop does not keep them."
     }
-    switch started.share.auth {
+    return switch started.share.auth {
     case .generated:
       "Anyone with both can open it until it ends. The password is shown only now: Stim Desktop does not keep it."
     case .set: "Anyone with the link and your password can open it until it ends."

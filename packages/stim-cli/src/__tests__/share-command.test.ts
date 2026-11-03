@@ -151,11 +151,11 @@ describe('stim share', () => {
       () => ({ result: { ...ROW, control: true, auth: 'generated', viewAuth: 'set', password: 'ctrlpass1' } }),
     ]);
     const generated = await runShare('android', { control: true, viewPassword: true }, deps, '1.0.0');
-    expect(deps.sent[0]!.params).toMatchObject({ control: true, view: {} });
+    expect(deps.sent[0]?.params).toMatchObject({ control: true, view: {} });
     expect(generated).toMatchObject({ ok: true, text: expect.stringContaining('Control password: ctrlpass1') });
     expect(generated).toMatchObject({ text: expect.stringContaining('View password:    viewpass2') });
     const chosen = await runShare('android', { control: true, viewPassword: 'watch only!' }, deps, '1.0.0');
-    expect(deps.sent[1]!.params).toMatchObject({ view: { password: 'watch only!' } });
+    expect(deps.sent[1]?.params).toMatchObject({ view: { password: 'watch only!' } });
     expect(JSON.stringify(chosen)).not.toContain('watch only!');
   });
 
