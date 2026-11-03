@@ -66,12 +66,13 @@ function workspaceStages(paths: readonly string[], running: readonly DaemonWorks
 }
 
 /** What the ladder would do now at high and at critical, with sizes, and each registered workspace's stage. */
-export async function previewGcLadder(operation?: StimContext): Promise<GcLadder | null> {
+export async function previewGcLadder(olderThan: number | null, operation?: StimContext): Promise<GcLadder | null> {
   const preview = await runForcedLadder({
     levels: ['high', 'critical'],
     act: false,
     why: GC_WHY,
     trigger: 'gc',
+    ...(olderThan === null ? {} : { parkedOlderThanDays: olderThan }),
     operation,
   });
   if (!preview) return null;
@@ -101,9 +102,21 @@ function actionWords(action: DaemonLadderAction): string {
 }
 
 /** Runs the ladder to its end at `level` now, whatever the level the machine measures; returns the failures. */
-export async function runGcLadder(level: GcLadderLevel, output: GcOutput, operation?: StimContext): Promise<number> {
+export async function runGcLadder(
+  level: GcLadderLevel,
+  olderThan: number | null,
+  output: GcOutput,
+  operation?: StimContext,
+): Promise<number> {
   output.log(chalk.bold(`Pressure ladder at ${level}, whatever the machine measures:`));
-  const ran = await runForcedLadder({ levels: [level], act: true, why: GC_WHY, trigger: 'gc', operation });
+  const ran = await runForcedLadder({
+    levels: [level],
+    act: true,
+    why: GC_WHY,
+    trigger: 'gc',
+    ...(olderThan === null ? {} : { parkedOlderThanDays: olderThan }),
+    operation,
+  });
   if (!ran) return 0;
   const actions = ran.levels.flatMap((entry) => entry.actions);
   let failures = 0;

@@ -8,6 +8,8 @@ import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
 import { runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import * as gcDevices from '../commands/gc/devices.ts';
+import { parkSim } from '../devices/sim-pool.ts';
 import * as ios from '../devices/ios.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
@@ -274,5 +276,51 @@ describe('the pressure ladder', () => {
     const rungs = actions.map((action) => action.rung);
     expect(rungs).toEqual(rungs.toSorted((a, b) => a - b));
     expect(actions.some((action) => action.rung === 4 && action.kind === 'dormant-stage')).toBe(true);
+  });
+});
+
+describe('the ladder stim gc forces', () => {
+  test('runs every rung at the forced level whatever the measured level, and gc --older-than limits rung 2 to devices parked that long', async () => {
+    vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+    for (const [udid, days] of [
+      ['OLD-PARKED', 10],
+      ['NEW-PARKED', 1],
+    ] as const) {
+      const source = join(projects, `source-${udid}`);
+      mkdirSync(source, { recursive: true });
+      upsertProject(source, { platforms: { ios: { deviceUdid: udid, deviceName: `stim-${udid}`, owned: true } } });
+      parkSim({
+        platform: 'ios',
+        projectPath: source,
+        max: 3,
+        record: {
+          udid,
+          name: `stim-${udid}`,
+          runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+          deviceTypeIdentifier: 'iphone',
+          simslimManaged: false,
+          parkedAt: new Date(Date.now() - days * DAY_MS).toISOString(),
+        },
+      });
+    }
+    const parkedTargets = async (parkedOlderThanDays?: number) =>
+      (
+        await runLadder(
+          {
+            config: loadConfig()!,
+            act: false,
+            log,
+            devices: [],
+            simsFailed: false,
+            remeasure: async () => pressure('normal'),
+            force: { level: 'high', why: 'stim gc --delete', ...(parkedOlderThanDays ? { parkedOlderThanDays } : {}) },
+            fromRung: 2,
+          },
+          pressure('normal'),
+        )
+      ).actions.flatMap((action) => (action.kind === 'delete-parked-device' ? [action.target] : []));
+
+    expect(await parkedTargets()).toEqual(['OLD-PARKED', 'NEW-PARKED']);
+    expect(await parkedTargets(5)).toEqual(['OLD-PARKED']);
   });
 });

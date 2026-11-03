@@ -177,12 +177,15 @@ export async function runForcedLadder({
   act,
   why,
   trigger,
+  parkedOlderThanDays,
   operation,
 }: {
   levels: readonly ('high' | 'critical')[];
   act: boolean;
   why: string;
   trigger: string;
+  /** Takes only the devices parked at least this many days ago, as `gc --older-than` asks. */
+  parkedOlderThanDays?: number;
   operation?: StimContext;
 }): Promise<ForcedLadder | null> {
   const config = loadConfig();
@@ -234,7 +237,7 @@ export async function runForcedLadder({
           sims: measured.sims,
           simsFailed: measured.sims === null,
           remeasure: async () => pressure,
-          force: { level, why },
+          force: { level, why, ...(parkedOlderThanDays === undefined ? {} : { parkedOlderThanDays }) },
           measure: !act,
           operation,
         },

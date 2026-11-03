@@ -923,7 +923,7 @@ async function attachMaintenancePreview(
   report.maintenance = await previewMaintenance({ devices: !cache, refresh, operation });
   if (cache === null) {
     phase('ladder', 'previewing the pressure ladder', operation);
-    report.ladder = (await previewGcLadder(operation)) ?? undefined;
+    report.ladder = (await previewGcLadder(report.olderThan, operation)) ?? undefined;
   }
 }
 
@@ -1270,7 +1270,7 @@ async function runGcCore(
     );
   if (cache === null || gcLadderLevel(cache) === 'critical') {
     throwIfCancelled(signal, 'GC');
-    deleteFailures += await runGcLadder(gcLadderLevel(cache), output, deps.operation);
+    deleteFailures += await runGcLadder(gcLadderLevel(cache), olderThan, output, deps.operation);
   }
   if (deleteFailures) output.fail();
   return payload(deleteFailures);
@@ -1292,7 +1292,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--older-than <days>',
-      'also reap owned devices whose workspace has not been used this long, trim shared cache entries nothing has used in that time and device recordings made before it, and clear workspace build outputs only for workspaces idle this long and parked devices only once parked this long',
+      'also reap owned devices whose workspace has not been used this long, trim shared cache entries nothing has used in that time and device recordings made before it, clear workspace build outputs under --cache workspaces only for workspaces idle this long, and let the pressure ladder delete parked devices only once parked this long',
       (v: string) => {
         const n = parseInt(v, 10);
         if (!Number.isFinite(n) || String(n) !== String(v).trim()) {

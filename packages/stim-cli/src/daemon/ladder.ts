@@ -58,7 +58,7 @@ export interface LadderInput {
    * Runs every rung at this level whatever the machine measures, without stopping once the level clears: what
    * `stim gc --delete` runs, and what `stim gc` previews at each level.
    */
-  force?: { level: 'high' | 'critical'; why: string };
+  force?: { level: 'high' | 'critical'; why: string; parkedOlderThanDays?: number };
   /** Measures what each action would free when it does not act, for `stim gc`'s preview. */
   measure?: boolean;
   /** The tick's `simctl list`, whose data path sizes the preview reports for simulators. */
@@ -246,7 +246,9 @@ async function parkedRung(context: RungContext): Promise<void> {
       at: record.parkedAt,
     })),
   ].toSorted((a, b) => String(a.at).localeCompare(String(b.at)));
-  for (const device of parked) {
+  const days = context.force?.parkedOlderThanDays;
+  const cutoff = days === undefined ? Infinity : Date.now() - days * 86_400_000;
+  for (const device of parked.filter((entry) => !(Date.parse(String(entry.at)) > cutoff))) {
     if (context.level === 'high' && !(await context.stillShort())) return;
     await run(
       context,

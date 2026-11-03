@@ -539,7 +539,6 @@ test('the age sweep deletes a parked simulator unused for olderThanDays through 
   vi.spyOn(ios, 'deleteParkedIosSim').mockImplementation(async (udid) => {
     deleted.push(udid);
   });
-  process.env.STIM_MAINTENANCE_DEVICE_IDLE_DAYS = '0';
   process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
 
   await runMaintenance('test');

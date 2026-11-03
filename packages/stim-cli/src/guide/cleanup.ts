@@ -270,8 +270,8 @@ WHAT RECLAIMS AN OWNED DEVICE
   stim gc --delete --older-than <days>
                             also reaps the device of a workspace no Stim
                             command has used in that long, even though the
-                            project is still on disk, and clears only the
-                            devices parked at least that long
+                            project is still on disk, and the ladder deletes
+                            only the devices parked at least that long
   stim gc --cache parked --delete
                             ERASES (never deletes) verified parked simulators
                             and wipes parked emulators' user data; they stay
@@ -1069,7 +1069,7 @@ THE ONE CASE GC WILL NOT REAP
   also count available memory under 10% of RAM. The warning's start comes
   from the daemon's last snapshot; without one, a warning keeps daemons.
   Manual reports never record history.
-  Automatic maintenance shares the pressure decision; disk-level-3 version cleanup
+  Automatic maintenance shares the pressure decision; the ladder's Gradle version cleanup
   remains independent of memory pressure. Their common build checks allow known
   iOS builds that cannot use these daemons:
     stim gc --delete              (or: stim gc --delete --cache watchman)
@@ -1141,10 +1141,11 @@ THE ONE CASE GC WILL NOT REAP
         'disk usage, workspace build outputs, logs and device recordings, AVD and build-log sizes, the data partition, trimming the shared caches',
       body: () => `DISK
   Logs, state, pidfiles and Xcode DerivedData are under the global workspace
-  directory, and \`worktree remove\` reclaims them. \`gc --delete\` lightens
-  every workspace that is not building and did not run a native command in
-  the last 15 minutes, clearing its build outputs (WORKSPACE BUILD OUTPUTS
-  below), and keeps the rest. Gradle retains its normal
+  directory, and \`worktree remove\` reclaims them. \`gc --delete\` clears
+  the build outputs of workspaces idle 2 minutes or more through the
+  pressure ladder, and \`gc --delete --cache workspaces\` those of every
+  workspace that is not building and did not run a native command in the
+  last 15 minutes (WORKSPACE BUILD OUTPUTS below). Gradle retains its normal
   project build directories while sharing task outputs through its build cache.
 
   Android AVDs normally live under ~/.android/avd, and a booted owned AVD can
