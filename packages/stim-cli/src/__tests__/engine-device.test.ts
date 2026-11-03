@@ -913,10 +913,12 @@ function iosExecutor(devices: SimEntry[]) {
   const run: string[] = [];
   const files: string[][] = [];
   const spawned: string[] = [];
+  const resetDeadlines: Record<string, number | undefined> = {};
   return {
     run,
     files,
     spawned,
+    resetDeadlines,
     exec: {
       runFileQuiet: () => '',
       run(cmd: string) {
@@ -941,8 +943,10 @@ function iosExecutor(devices: SimEntry[]) {
           return null;
         }
       },
-      runFile(file: string, args: string[] = []) {
+      runFile(file: string, args: string[] = [], opts?: { timeoutMs?: number }) {
         files.push([file, ...args]);
+        if (args[0] === 'simctl' && (args[1] === 'privacy' || args[1] === 'keychain'))
+          resetDeadlines[args[1]] = opts?.timeoutMs;
         if (file === 'xcrun' && args[0] === 'simctl' && ['list', 'boot', 'create'].includes(args[1] ?? '')) {
           const result = this.run!([file, ...args].join(' '));
           if (args[1] === 'create')
@@ -1101,7 +1105,7 @@ describe('ensureOwnedDevice: ios', () => {
           });
         if (stale) setDevice(root, 'ios', { deviceUdid: 'MISSING', owned: true });
         const name = `stim-app (iPhone 17 Pro 26.2)${collision ? ` ${workspaceId(root)}` : ''}`;
-        const { run, files, exec } = iosExecutor(devices);
+        const { run, files, resetDeadlines, exec } = iosExecutor(devices);
         setExecutor(exec);
         const device = await ensureOwnedDevice({
           platform: 'ios',
@@ -1125,6 +1129,7 @@ describe('ensureOwnedDevice: ios', () => {
         expect(run).toContain('xcrun simctl boot U1');
         expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
         expect(files).toContainEqual(['xcrun', 'simctl', 'keychain', 'U1', 'reset']);
+        expect(resetDeadlines).toEqual({ privacy: 180_000, keychain: 180_000 });
         expect(getProject(root)?.platforms?.ios).toMatchObject({ schemeApprovals });
       } finally {
         delete process.env.STIM_POOL_IOS_PARKED_MAX;
@@ -1230,7 +1235,7 @@ describe('ensureOwnedDevice: ios', () => {
         adopted: true,
         adoptionPending: true,
       });
-      const { files, exec } = iosExecutor([
+      const { files, resetDeadlines, exec } = iosExecutor([
         {
           udid: 'U1',
           name: 'stim-app (iPhone 17 Pro 26.2)',
@@ -1249,6 +1254,7 @@ describe('ensureOwnedDevice: ios', () => {
       });
       expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
       expect(files).toContainEqual(['xcrun', 'simctl', 'keychain', 'U1', 'reset']);
+      expect(resetDeadlines).toEqual({ privacy: 180_000, keychain: 180_000 });
       expect(getProject(root)?.platforms?.ios?.adoptionPending).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
