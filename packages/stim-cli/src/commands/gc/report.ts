@@ -55,6 +55,7 @@ import {
 import { gcLadderLines, type GcLadder, type GcLadderLevel } from './ladder.ts';
 import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from './recordings.ts';
 import { tempLeftoverLines, tempLeftoverSection, type TempLeftoverReport } from './temp-leftovers.ts';
+import { otherHomeLines, type OtherHome } from './other-homes.ts';
 import { trashLines, type TrashReport } from './trash.ts';
 import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, type WatchmanRoot } from './memory.ts';
 
@@ -73,6 +74,7 @@ export interface GcReport {
   parkedAvds: ParkedAvdReport[];
   parkedHostedDevices: ParkedHostedDeviceReport[];
   hostedAppStorage?: HostedAppStorage[];
+  otherHomes?: OtherHome[];
   orphanedDevices: OrphanedDevice[];
   unverifiedDevices: UnverifiedDevice[];
   staleDevices: StaleProjectDevice[];
@@ -248,6 +250,7 @@ export function formatGcReport(
     parkedAvds = [],
     parkedHostedDevices,
     hostedAppStorage,
+    otherHomes,
     orphanedDevices = [],
     unverifiedDevices = [],
     staleDevices = [],
@@ -349,6 +352,7 @@ export function formatGcReport(
   lines.push(...formatParkedAvdReport(parkedAvds, now, cacheScope !== null));
   lines.push(...parkedHostedLines);
   lines.push(...hostedAppStorageLines(hostedAppStorage));
+  lines.push(...otherHomeLines(otherHomes, now));
 
   if (orphanedDevices.length) {
     lines.push(`Orphaned devices (${orphanedDevices.length}):`);
@@ -600,12 +604,13 @@ const BUILD_STATE_DIRS_SHOWN = 4;
 
 function buildStateLine(state: WorktreeBuildState | undefined): string | null {
   if (!state?.dirs.length) return null;
-  const shown = state.dirs
-    .slice(0, BUILD_STATE_DIRS_SHOWN)
-    .map(
-      (dir) =>
-        `${dir.path} ${sizeText(dir.bytes)}${dir.privateBytes === null ? '' : ` (${sizeText(dir.privateBytes)} its own)`}`,
-    );
+  const shown = state.dirs.slice(0, BUILD_STATE_DIRS_SHOWN).map((dir) => {
+    const notes = [
+      ...(dir.privateBytes === null ? [] : [`${sizeText(dir.privateBytes)} its own`]),
+      ...(dir.reportOnly ? ['xcodebuild output, never deleted'] : []),
+    ];
+    return `${dir.path} ${sizeText(dir.bytes)}${notes.length ? ` (${notes.join(', ')})` : ''}`;
+  });
   const more = state.dirs.length > BUILD_STATE_DIRS_SHOWN ? ', ...' : '';
   return `              in-tree build state ${sizeText(state.bytes)}: ${shown.join(', ')}${more}`;
 }
@@ -727,6 +732,7 @@ export interface GcJsonSections {
   parkedEmulators: ParkedAvdReport[];
   parkedHostedDevices: ParkedHostedDeviceReport[];
   hostedAppStorage: HostedAppStorage[];
+  otherHomes: OtherHome[];
   orphanedDevices: {
     kind: 'ios' | 'android';
     id: string;
@@ -843,6 +849,7 @@ export function gcReportSections({
   parkedAvds = [],
   parkedHostedDevices = [],
   hostedAppStorage = [],
+  otherHomes = [],
   orphanedDevices = [],
   unverifiedDevices = [],
   staleDevices = [],
@@ -907,6 +914,7 @@ export function gcReportSections({
     })),
     parkedHostedDevices,
     hostedAppStorage,
+    otherHomes,
     orphanedDevices: orphanedDevices.map((d) => ({
       kind: d.kind,
       id: d.id,

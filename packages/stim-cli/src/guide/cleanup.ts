@@ -406,6 +406,26 @@ filters by parked time; --cache scopes omit hosted sessions. The CLI never write
 the server journal: stim-server reconciliation clears the parked marker after
 successful deletion leaves the session ledger empty.
 
+OTHER STIM HOMES (REPORT ONLY)
+Every Stim home other than ~/.stim that creates a workspace or a device lists
+itself once in ~/.stim/machine/homes/homes.json, which ignores STIM_HOME: its
+path, creation time, last-seen time (refreshed at most every ten minutes) and
+the simulator UDIDs and AVD names its created-devices ledger lists. Homes
+inside ~/.stim, such as the private homes of hosted sessions, are not listed.
+A list that cannot be read or written never fails the command that tried.
+Unscoped gc lists the other homes that still exist: their private size, workspace
+count, last-seen time, the devices their ledgers name (owned by that home,
+never this one) and the exact commands that tear each down, from each
+workspace root: \`STIM_HOME=<home> stim worktree remove\`, then
+\`STIM_HOME=<home> stim gc --delete\`, then removing the directory. A scoped
+STIM_HOME lists nothing: it owns only its own ledger.
+A home whose directory is gone from a mounted volume is listed as gone, and
+its last-known devices that are still on this machine appear as "orphaned from
+<home>" with the command that deletes each by hand. On a volume that is not
+mounted nothing is claimed and the entry stays. gc never deletes or tears down
+another home. \`gc --delete\` removes only the list entry of a gone home with no
+device left on this machine, after re-checking it under the list lock.
+
 AGENT-DEVICE (REPORT ONLY)
 Unscoped gc reports agent-device runner builds by platform and entry, last use,
 agent-device and Xcode versions, sessions, logs, other state, workspace state
@@ -572,6 +592,12 @@ SWEEPING FINISHED WORKTREES
   Each worktree line also shows its in-tree build state: the size of the
   build and dependency directories the pressure ladder clears (DISK PRESSURE
   above) and a root .pnpm-store, largest first (APFS clones count in full).
+  A directory laid out as Xcode DerivedData under another name than .dd, such
+  as a rn-tester build-device, is listed too, marked "xcodebuild output,
+  never deleted" (JSON reportOnly: true); gc and the idle stage never delete
+  it, and a .dd or android/.cxx of a worktree that is no registered
+  workspace is listed and never deleted either. DerivedData, CMake output,
+  node_modules and Pods also show what deleting them frees as "its own".
   A size comes from the disk-usage cache while it is under an hour old and
   no entry was added to or removed from its directory since (a build that
   only grows files deeper inside shows within the hour); otherwise gc runs
@@ -1210,8 +1236,11 @@ WORKSPACE BUILD OUTPUTS
   Each workspace directory holds derived-data/, gradle-build/, android-cas/,
   cache-provider/, js-swap-tmp/, macos/build, the staged macos/<Product>.app and macos/staging-*
   leftovers. The project's own android/app/build, android/build,
-  android/.gradle and .build count with them when git ignores every file in
-  the directory and tracks none; one that fails that check, or is not in a
+  android/.gradle, .build, the CMake directories android/.cxx and
+  android/<module>/.cxx, and a .dd directory laid out as Xcode DerivedData
+  (a Build/ directory beside ModuleCache.noindex or Logs/) count with them
+  when git ignores every file in the directory and tracks none; one that
+  fails that check, or is not in a
   git checkout, stays, and \`gc --delete\` prints why when the check fails
   between the report and the deletion. ios/build stays: React Native's pod
   install writes podspec facades and codegen output there that only pod

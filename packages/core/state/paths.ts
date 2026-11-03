@@ -94,8 +94,8 @@ export function sharedPods(): string {
   return join(configDir(), 'pods');
 }
 
-export function createdDevicesFile(): string {
-  return join(configDir(), 'created-devices.json');
+export function createdDevicesFile(home: string = configDir()): string {
+  return join(home, 'created-devices.json');
 }
 
 export function gitMergeCacheDir(): string {
@@ -156,6 +156,19 @@ export function easSessionLedgerFile(root: string = easMachineStateRoot()): stri
 
 export function easSessionLedgerLock(root: string = easMachineStateRoot()): string {
   return join(root, 'ledger.lock');
+}
+
+/** The machine-level list of Stim homes lives under the real home directory, never under STIM_HOME. */
+export function stimHomesRoot(): string {
+  return join(homedir(), '.stim', 'machine', 'homes');
+}
+
+export function stimHomesFile(root: string = stimHomesRoot()): string {
+  return join(root, 'homes.json');
+}
+
+export function stimHomesLock(root: string = stimHomesRoot()): string {
+  return join(root, 'homes.lock');
 }
 
 /** Where stim-server records, one file per server process, the devices whose frames a client subscribes to. */

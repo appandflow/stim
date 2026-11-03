@@ -529,8 +529,11 @@ cannot list. A running dev server, a booted or hosted simulator or emulator, or
 a tunnel does not keep the outputs. They stay while a `stim ios` or
 `stim android` run holds the workspace, a build names it, or its macOS app or
 build runs or cannot be verified. Clearing them also clears the
-project's own `android/app/build`, `android/build`, `android/.gradle` and
-`.build` when git ignores every file in the directory and tracks none.
+project's own `android/app/build`, `android/build`, `android/.gradle`, `.build`,
+the CMake directories `android/.cxx` and `android/<module>/.cxx`, and a `.dd`
+directory laid out as Xcode DerivedData (a `Build/` directory beside
+`ModuleCache.noindex` or `Logs/`) when git ignores every file in the
+directory and tracks none.
 `ios/build` stays, because React Native's `pod install` writes files there that
 only `pod install` recreates. The shared build cache, the Xcode compilation cache, the Gradle caches
 and the Metro cache are never touched. With `--cache workspaces`,

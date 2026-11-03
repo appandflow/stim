@@ -109,9 +109,11 @@ per-home `stim-daemon` moves it into the idle stage in one pass: it stops the
 dev server and keeps its port, shuts down the workspace's owned simulators and
 emulators, and deletes its regenerable build outputs (its DerivedData and other
 workspace build directories, the in-tree `android/app/build`, `android/build`,
-`android/.gradle` and `.build` that git ignores, and the Metro transform store
-unless another running dev server shares it). `ios/build` stays, because
-`pod install` writes generated sources there.
+`android/.gradle`, `.build`, `android/.cxx`, `android/<module>/.cxx` and `.dd`
+(a directory laid out as Xcode DerivedData) that git ignores, and the Metro
+transform store unless another running dev server shares it). `ios/build`
+stays, because `pod install` writes generated sources there. Xcode output
+under another name stays too; `stim gc` lists it.
 
 Activity is the newest of:
 

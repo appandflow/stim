@@ -1,6 +1,7 @@
+import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import {
   DEVICE_METRO_IDLE_STOP_REASON,
   INTERACTIONS_KEY,
@@ -17,7 +18,7 @@ import { runIdlePass } from '../daemon/idle.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { liveClaimOwner } from './_factories.ts';
+import { liveClaimOwner, writeDerivedData } from './_factories.ts';
 import { serveShareList, shareRow, type ShareListAnswer } from './_share-list-server.ts';
 
 const MINUTE_MS = 60_000;
@@ -111,6 +112,37 @@ test('a workspace idle past idle.minutes, whatever its device and app logs, ente
   const timeline = readFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), 'utf8');
   expect(timeline).toContain('"event":"workspace_idle"');
   expect(timeline).toContain('Run stim ios or stim android to resume it.');
+});
+
+test('the idle stage deletes the git-ignored .dd and CMake output of a workspace and leaves other-named xcodebuild output', async () => {
+  const { root } = bootedWorkspace('outputs', 20 * MINUTE_MS);
+  execSync('git init -q', { cwd: root });
+  writeFileSync(join(root, '.gitignore'), '.dd/\nandroid/\nbuild-device/\n');
+  writeDerivedData(join(root, '.dd'));
+  writeDerivedData(join(root, 'build-device'));
+  mkdirSync(join(root, 'android', 'app', '.cxx'), { recursive: true });
+  writeFileSync(join(root, 'android', 'app', '.cxx', 'blob'), 'cmake');
+
+  expect(await pass()).toEqual([expect.objectContaining({ path: root, outcome: 'idle' })]);
+
+  expect(existsSync(join(root, '.dd'))).toBe(false);
+  expect(existsSync(join(root, 'android', 'app', '.cxx'))).toBe(false);
+  expect(existsSync(join(root, 'build-device', 'Build'))).toBe(true);
+});
+
+test('the idle stage keeps a .dd that git does not ignore', async () => {
+  const { root } = bootedWorkspace('unignored', 20 * MINUTE_MS);
+  execSync('git init -q', { cwd: root });
+  writeDerivedData(join(root, '.dd'));
+
+  const [result] = await pass();
+
+  expect(result).toMatchObject({
+    path: root,
+    outcome: 'idle',
+    detail: expect.stringContaining(`${sep}.dd: it holds files git does not ignore`),
+  });
+  expect(existsSync(join(root, '.dd', 'Build'))).toBe(true);
 });
 
 test('a live agent-device session keeps the workspace however old its last command, naming the driver', async () => {

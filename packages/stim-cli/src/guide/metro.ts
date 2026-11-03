@@ -238,9 +238,12 @@ the workflow, stop the workspace and the specific unit you created:
   records; shuts the owned simulators and emulators down, ending their log
   collectors; and deletes the workspace's regenerable build outputs (its
   derived-data and other workspace build directories, the in-tree
-  android/app/build, android/build, android/.gradle and .build that git
-  ignores, and the Metro store unless another running dev server shares it).
-  ios/build stays: pod install writes generated sources there. Activity is
+  android/app/build, android/build, android/.gradle, .build, the CMake
+  directories android/.cxx and android/<module>/.cxx, and a .dd directory
+  laid out as Xcode DerivedData (a Build/ directory beside ModuleCache.noindex
+  or Logs/) that git ignores, and the Metro store unless another running dev
+  server shares it). ios/build stays: pod install writes generated sources
+  there. Xcode output under any other name stays too; gc reports it. Activity is
   the newest of a Stim command in the workspace (start, ios, android, reload,
   revive, logs, worktree warm) or the end of its native run; a Metro bundle,
   manifest or HMR request; an agent-device action on its devices; an input a

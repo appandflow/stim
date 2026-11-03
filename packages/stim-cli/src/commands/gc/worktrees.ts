@@ -138,8 +138,11 @@ interface WorktreeSkip {
 
 export interface WorktreeBuildState {
   bytes: number | null;
-  /** `privateBytes` is what deleting the directory would free, for node_modules and Pods on APFS; else null. */
-  dirs: { path: string; bytes: number | null; privateBytes: number | null }[];
+  /**
+   * `privateBytes` is what deleting the directory would free, for node_modules, Pods, DerivedData and CMake output on
+   * APFS; else null. `reportOnly` marks xcodebuild output under a name other than `.dd`, which Stim never deletes.
+   */
+  dirs: { path: string; bytes: number | null; privateBytes: number | null; reportOnly?: true }[];
 }
 
 export interface UnlistedWorktreeDir {

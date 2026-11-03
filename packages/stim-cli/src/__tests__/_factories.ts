@@ -21,6 +21,13 @@ import type { BuildSlotInfo } from '../engine/build-slots.ts';
 // Above every kernel's pid_max (macOS 99999, Linux 2^22): a stray signal fails ESRCH instead of reaching a process.
 export const IMPOSSIBLE_PID = 999999901;
 
+/** Writes the layout xcodebuild leaves under `-derivedDataPath`, with `blobBytes` of build product. */
+export function writeDerivedData(dir: string, blobBytes = 1024): void {
+  for (const sub of ['Build/Products/Debug-iphonesimulator', 'ModuleCache.noindex', 'Logs/Build'])
+    mkdirSync(join(dir, sub), { recursive: true });
+  writeFileSync(join(dir, 'Build/Products/Debug-iphonesimulator/App'), Buffer.alloc(blobBytes));
+}
+
 export function makeConfig(overrides: Partial<StimConfig> = {}): StimConfig {
   return { version: 2, projects: {}, repos: {}, ...overrides };
 }
