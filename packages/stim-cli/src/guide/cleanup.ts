@@ -919,6 +919,13 @@ WHICH stim-* DEVICES gc DELETES
   \`rm -rf <dir>\` for AVD data with no registration), and
   never runs it. Boot, shutdown and teardown re-check ownership by the same
   rule, so a device that stops matching is left alone.
+  Deleting an owned simulator also removes its launchd folder,
+  /private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid>, which holds the
+  simulator's launchd.log and its SimSlim overrides and which simctl delete
+  leaves behind. gc lists such folders whose UDID has no simulator in Xcode's
+  device set under "Simulator launchd folders with no simulator", with sizes,
+  and never deletes them: a simulator in another simctl device set is not in
+  that list, and removing its folder would drop its SimSlim overrides.
   With STIM_HOME set, gc skips the device sweep because simulators and AVDs
   are machine-global, but pruning a dead project still deletes the devices its
   record marks as owned. gc lists them as to be deleted under "Device sweep

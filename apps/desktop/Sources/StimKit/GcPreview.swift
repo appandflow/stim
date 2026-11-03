@@ -52,6 +52,7 @@ public struct GcPreview: Sendable {
     ("parkedEmulators", "Parked emulators"),
     ("orphanedDevices", "Orphaned devices"),
     ("unverifiedDevices", "Unrecognized stim-* devices"),
+    ("simulatorLaunchdFolders", "Simulator launchd folders with no simulator"),
     ("staleDevices", "Stale devices"),
     ("staleDeviceRecords", "Stale device records"),
     ("staleLedgerEntries", "Stale device ledger entries"),
@@ -75,7 +76,7 @@ public struct GcPreview: Sendable {
   /// Sections `stim guide facts gc` documents as never deleted.
   static let reportOnly: Set<String> = [
     "unresolvedBuildClaims", "buildsInProgress", "keptDeviceLeases", "deviceSweepNotices",
-    "easSessionSweepNotices", "skipped", "unverifiedDevices",
+    "easSessionSweepNotices", "skipped", "unverifiedDevices", "simulatorLaunchdFolders",
   ]
 
   /// The `stim gc` arguments that act on what a dry run with `preview` reported: the same scope with
@@ -133,6 +134,9 @@ public struct GcPreview: Sendable {
     let kept: String?
     if key == "unverifiedDevices" {
       kept = "This Stim home has no record of creating it; to delete it, run: \(item["command"] as? String ?? "?")"
+    } else if key == "simulatorLaunchdFolders" {
+      kept =
+        "No simulator in Xcode's device set has this UDID; once its simulator is gone for good, run: \(item["command"] as? String ?? "?")"
     } else if key == "recordings", item["withWorkspace"] as? Bool == true {
       kept = "deleted with its workspace directory, counted there"
     } else if reportOnly {

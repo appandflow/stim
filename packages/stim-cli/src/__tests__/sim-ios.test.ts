@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import type { StimContext } from '@stim-cli/core';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -7,6 +8,7 @@ import {
   parseSimctlList,
   pickDefaultIosCreation,
   deleteIosSim,
+  deleteParkedIosSim,
   bootIosSim,
   clearIosAppData,
   parseUserApps,
@@ -369,3 +371,94 @@ test('boot diagnostics retain peak pressure after recovery and unknown readings,
     vi.restoreAllMocks();
   }
 });
+
+const LAUNCHD_UDID = 'A48B2B1E-3768-48D8-9816-86B2AC7F2188';
+const OTHER_LAUNCHD_UDID = '9981F3FA-0F95-4720-B4D4-FBC8E90C10A8';
+
+function launchdFixture(): { root: string; folder: string; other: string } {
+  const root = mkdtempSync(join(tmpdir(), 'stim-launchd-'));
+  const folder = join(root, `com.apple.CoreSimulator.SimDevice.${LAUNCHD_UDID}`);
+  const other = join(root, `com.apple.CoreSimulator.SimDevice.${OTHER_LAUNCHD_UDID}`);
+  mkdirSync(folder);
+  writeFileSync(join(folder, 'launchd.log'), 'log');
+  mkdirSync(other);
+  return { root, folder, other };
+}
+
+function ownedSimExecutor(udid: string): { calls: string[] } {
+  const calls: string[] = [];
+  setExecutor({
+    runFile: (file: string, args: string[] = []) => {
+      calls.push([file, ...args].join(' '));
+      return args.includes('list')
+        ? JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-27-0': [
+                {
+                  udid,
+                  name: 'stim-app (iPhone 17 iOS 27.0)',
+                  state: 'Shutdown',
+                  isAvailable: true,
+                  deviceTypeIdentifier: 'iphone-17',
+                },
+              ],
+            },
+          })
+        : '';
+    },
+    runQuiet: () => {
+      throw new Error('should not be called');
+    },
+    spawn: () => null,
+  });
+  return { calls };
+}
+
+test.each([
+  ['deleteIosSim', (root: string) => deleteIosSim(LAUNCHD_UDID, undefined, { launchdOverridesRoot: root })],
+  ['deleteParkedIosSim', (root: string) => deleteParkedIosSim(LAUNCHD_UDID, undefined, { launchdOverridesRoot: root })],
+])('%s removes the launchd folder of the simulator it deleted and no other', async (_name, del) => {
+  recordCreatedDevice('ios', LAUNCHD_UDID);
+  const { root, folder, other } = launchdFixture();
+  const { calls } = ownedSimExecutor(LAUNCHD_UDID);
+  try {
+    await del(root);
+    expect(calls).toContain(`xcrun simctl delete ${LAUNCHD_UDID}`);
+    expect(existsSync(folder)).toBe(false);
+    expect(existsSync(other)).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
+  'a launchd folder that cannot be removed leaves a warning, and the delete still completes',
+  async () => {
+    recordCreatedDevice('ios', LAUNCHD_UDID);
+    const { root, folder } = launchdFixture();
+    chmodSync(folder, 0o500);
+    const { calls } = ownedSimExecutor(LAUNCHD_UDID);
+    const warnings: string[] = [];
+    const operation: StimContext = {
+      home: join(root, 'stim'),
+      cwd: root,
+      projectRoot: root,
+      buildCache: null,
+      runId: 'launchd-warning',
+      env: { ...process.env },
+      signal: new AbortController().signal,
+      output: (stream, text) => {
+        if (stream === 'stderr') warnings.push(text);
+      },
+    };
+    try {
+      await deleteIosSim(LAUNCHD_UDID, operation, { launchdOverridesRoot: root });
+      expect(calls).toContain(`xcrun simctl delete ${LAUNCHD_UDID}`);
+      expect(warnings).toEqual([expect.stringMatching(/^warning: could not remove .*SimDevice\.A48B2B1E.*\n$/)]);
+      expect(existsSync(join(folder, 'launchd.log'))).toBe(true);
+    } finally {
+      chmodSync(folder, 0o700);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
