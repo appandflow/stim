@@ -667,8 +667,8 @@ In `on` mode a pass works through these steps, cheapest to rebuild first:
    checked again.
 7. Owned simulators and emulators of a finished worktree that is kept, such as
    a dirty one, once idle for `gc.worktreeGraceMinutes`. Idle means no dev
-   server, native run, build, lease, managed lock, driven or busy device, and
-   no recorded use. The next run recreates them. The devices of any workspace
+   server, native run, build, lease, managed lock, driven or busy device, live
+   [web share](./share.md), and no recorded use. The next run recreates them. The devices of any workspace
    without activity for `idle.dormantDays` go with its
    [dormant stage](./owned-devices.md#cleanup-behavior) instead.
 8. In the daily sweep, pressure ladder rung 6: idle Gradle and Kotlin daemons,
