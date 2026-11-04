@@ -1262,8 +1262,11 @@ describe('a web share', () => {
   it('keeps no recording exemption for a device whose control another client holds', async () => {
     f.refuseControl = true;
     const share = await started(f, { control: true });
-    const url = local(share, f.hub.port!);
-    const { socket, messages } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket, messages } = await connect(url, {
+      origin: origin(url),
+      cookie: await login(url, share.password ?? ''),
+    });
     await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({ type: 'control' })));
     const told = messages.find((message) => message.type === 'control');
     expect(told?.message).not.toContain('Desktop');
