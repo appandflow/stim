@@ -11,8 +11,6 @@ const PLATFORMS = {
 
 function requested({ eventName, labels, suite, action, changedLabel }) {
   switch (eventName) {
-    case 'push':
-      return ['smoke'];
     case 'schedule':
       return ['loop'];
     case 'workflow_dispatch':
@@ -38,10 +36,7 @@ function requested({ eventName, labels, suite, action, changedLabel }) {
 export function planSuites(input) {
   const suites = requested(input);
   return Object.fromEntries(
-    Object.entries(PLATFORMS).map(([platform, supported]) => [
-      platform,
-      input.eventName === 'push' && platform === 'windows' ? [] : suites.filter((s) => supported.includes(s)),
-    ]),
+    Object.entries(PLATFORMS).map(([platform, supported]) => [platform, suites.filter((s) => supported.includes(s))]),
   );
 }
 

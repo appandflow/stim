@@ -2148,13 +2148,16 @@ the same rules as a lint, which is what desktop CI runs. CI also builds and
 tests with `-Xswiftc -warnings-as-errors`, so fix a warning instead of
 introducing one.
 
-A pull request and a push to `main` run the formatting, token, ASCII, debug
-build, linked SDK and `swift test` checks, about 9 minutes. The Release
+A pull request and a push to `main` that change Desktop run the token and
+ASCII checks on Linux, and on macOS the formatting lint and the debug build
+(`swift build -Xswiftc -warnings-as-errors`) with the linked SDK check. The
+build takes about 4 minutes and has no cache (see #5108). `swift test`, the Release
 configuration compile, the `stim-frames` helper compile, the hardened-runtime
-server start and an ad-hoc release package run nightly at 05:00 UTC and on
-dispatch, so a change that breaks only one of them fails the next nightly run,
-not its pull request. Run them for a branch with
-`gh workflow run desktop.yml --ref <branch>`.
+server start and an ad-hoc release package run in the `Full suite` workflow:
+nightly at 04:30 UTC, on a pull request labeled `ci-full`, and before a stable
+release. A change that breaks only a test or one of those compiles is found by the
+nightly run, so run `swift test -Xswiftc -warnings-as-errors` yourself, or add `ci-full`.
+Run the full job for a branch with `gh workflow run desktop.yml --ref <branch>`.
 
 `Sources/StimDesktop/Design/Tokens.swift` is generated from the phone app's
 design tokens in `apps/mobile/src/design/tokens.ts`: spacing, radii, opacity,
@@ -2258,7 +2261,7 @@ hardened runtime and `Support/Node/node.entitlements`:
 `com.apple.security.cs.disable-library-validation`, because the `stim`
 commands the server runs on this Node can load a project's own native addons,
 signed by another team or not at all. Both are in the set Node.js signs its own
-macOS release with. The Desktop workflow stages the server on every run; its nightly run signs
+macOS release with. The Desktop workflow's full run stages the server and signs
 it the same way ad hoc and checks that it answers `/health` under an empty
 environment.
 

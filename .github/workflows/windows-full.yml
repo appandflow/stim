@@ -1,7 +1,8 @@
 name: Windows full validation
 
 on:
-  workflow_call:
+  schedule:
+    - cron: '45 4 * * *'
   workflow_dispatch:
 
 permissions:

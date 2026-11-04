@@ -1,0 +1,59 @@
+name: Full suite
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.native && 'Full suite (native E2E)' || 'Full suite' }}
+
+on:
+  schedule:
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+    inputs:
+      native:
+        description: Also run the native E2E smoke on iOS, Linux Android and Windows Android
+        type: boolean
+        default: true
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+concurrency:
+  group: full-suite-${{ github.event_name }}-${{ github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'ci-full' && '-unrelated-label' || '' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'ci-full') && (github.event.action != 'labeled' || github.event.label.name == 'ci-full'))
+    uses: ./.github/workflows/ci.yml
+    with:
+      full: true
+
+  desktop:
+    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'ci-full') && (github.event.action != 'labeled' || github.event.label.name == 'ci-full'))
+    uses: ./.github/workflows/desktop.yml
+    with:
+      full: true
+
+  mobile:
+    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'ci-full') && (github.event.action != 'labeled' || github.event.label.name == 'ci-full'))
+    uses: ./.github/workflows/mobile.yml
+    with:
+      full: true
+
+  native:
+    if: github.event_name == 'workflow_dispatch' && inputs.native
+    uses: ./.github/workflows/e2e-native.yml
+    with:
+      suite: smoke
+
+  result:
+    name: full suite
+    if: always() && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'ci-full') && (github.event.action != 'labeled' || github.event.label.name == 'ci-full')))
+    needs: [ci, desktop, mobile, native]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every job that ran
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          case " $RESULTS " in *" failure "* | *" cancelled "*) exit 1 ;; esac
