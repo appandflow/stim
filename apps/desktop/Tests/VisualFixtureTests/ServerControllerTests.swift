@@ -52,6 +52,16 @@ import XCTest
       ServerController.problem(state: .failed("Port in use."), connectionRefusal: refusal), "Port in use.")
   }
 
+  func testASilentAdoptedServerIsWaitedForAndTheLaunchAgentIsNamedOnlyWhenInstalled() {
+    let service = ServerController.adoptedServerSilentReason(port: 7787, serviceInstalled: true)
+    let other = ServerController.adoptedServerSilentReason(port: 7787, serviceInstalled: false)
+    XCTAssertTrue(service.contains("dev.stim.server"))
+    XCTAssertFalse(other.contains("dev.stim.server"))
+    for reason in [service, other] {
+      XCTAssertTrue(reason.contains("port 7787") && reason.contains("does not start its own server"))
+    }
+  }
+
   func testAnAutomaticPortUsesOnlyTheChildsLoopbackListenerAnnouncement() {
     XCTAssertEqual(ServerController.announcedLoopbackPort(OutputLine(.stdout, "listening on ws://127.0.0.1:49152")), 49152)
     XCTAssertNil(ServerController.announcedLoopbackPort(OutputLine(.stderr, "listening on ws://127.0.0.1:49152")))

@@ -258,9 +258,12 @@ service` LaunchAgent on a Mac that hosts for others, Desktop uses that one and n
 stops or reconfigures it. Cleanup, settings changes and app runs from Desktop work on that
 server too, with no approval step: Desktop reaches it through the Stim home's local socket, which only
 your user can open. A server older than Desktop, or one another Stim Desktop started, refuses and says why.
-Desktop never takes over an adopted server's port. If the server stops answering, whether it restarted or crashed,
-Desktop shows it as unavailable and waits for it; it starts its own server only when no server for the Stim home
-answers and the port is free, which is at launch. A port that something holds without answering is not replaced either. If the default port belongs to another Stim home,
+A port that something holds without answering, such as a
+stim-server too busy to reply, is not replaced: Desktop starts no second server onto it.
+Desktop never takes over an adopted server's port either. If the adopted server stops answering, whether
+it restarted, updated or crashed, Desktop shows it as unavailable and waits for it, naming the
+`dev.stim.server` LaunchAgent when it is installed. It starts its own server only when it adopted none, no server for
+the Stim home answers and the port is free: at launch, or later once a program that is not a stim-server stops holding the port. To use Desktop's own server instead, stop the other one and reopen Desktop. If the default port belongs to another Stim home,
 a copy using an explicit separate home starts its loopback-only server on a free
 port chosen by the OS. This lets hosted Desktop test copies coexist with the
 host's server. An explicit port override or **Allow connections** keeps the selected
