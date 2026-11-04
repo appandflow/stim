@@ -685,7 +685,8 @@ Screenshots use only remote artifacts.
 
 ${HOSTED_RECORDING('emulator')}
 
-Stop closes the matching agent-device connection and removes the slot file only
+Stop closes the agent-device connection of the session \`stim agent-device\` names
+by default (end one you named with \`--session\` yourself) and removes the slot file only
 once the host confirms stop or revocation. Reinstall, stop, revocation and server
 close stop the daemon before native work or device deletion. An unresolved
 proxy, daemon or helper retains the child-aware daemon claim and refuses
@@ -1008,8 +1009,8 @@ the simulator automatically with ios-instance and the proxy provider, scoped
 to this session's tenant. Close releases it; Stim still owns the simulator.
 The config names daemonBaseUrl, daemonAuthToken, tenant, sessionIsolation,
 runId, clientId, deviceKey, leaseBackend, leaseProvider and platform; it carries
-no preallocated leaseId. stim stop closes the matching agent-device connection
-and removes that slot's config after the host confirms stop or revocation.
+no preallocated leaseId. stim stop closes the agent-device connection of the default session name
+(not one you named with \`--session\`) and removes that slot's config after the host confirms stop or revocation.
 The host stops the session daemon and identity-checked agent-device runners
 targeting its exact simulator UDID before deleting the simulator, even without close.
 
