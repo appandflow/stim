@@ -30,8 +30,10 @@ enum CrashReporter {
         options.enableAutoSessionTracking = false
         options.sendClientReports = false
         options.enableUncaughtNSExceptionReporting = true
-        options.beforeSend = { scrub($0, with: scrubber) }
-        options.beforeBreadcrumb = { scrub($0, with: scrubber) }
+        // sentry-cocoa captures app hangs on its io.sentry.app-hang-tracker thread, a loop that never drains its
+        // autorelease pool, so the scrubber's regex results and bridged strings must not outlive each callback.
+        options.beforeSend = { event in autoreleasepool { scrub(event, with: scrubber) } }
+        options.beforeBreadcrumb = { breadcrumb in autoreleasepool { scrub(breadcrumb, with: scrubber) } }
       }
       Diagnostics.shared.install(
         Diagnostics.Sink(
