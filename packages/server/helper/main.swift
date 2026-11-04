@@ -285,16 +285,21 @@ final class JpegGate {
   func admit(_ config: Config, pacer: Pacer) -> Bool {
     let now = CFAbsoluteTimeGetCurrent()
     let wait = last + 1 / max(config.jpegFps ?? config.fps, 0.1) - now
-    if wait <= 0 {
+    if wait <= 0.5 / max(config.fps, 0.1) {
       last = now
       return true
     }
     if !retrying {
       retrying = true
-      pacer.queue.asyncAfter(deadline: .now() + wait) {
+      // launchd.plist(5) ProcessType Standard coalesces default-leeway timers, as Pacer notes.
+      let timer = DispatchSource.makeTimerSource(flags: .strict, queue: pacer.queue)
+      timer.schedule(deadline: .now() + wait, leeway: .nanoseconds(0))
+      timer.setEventHandler {
+        timer.cancel()
         self.retrying = false
         pacer.changed()
       }
+      timer.resume()
     }
     return false
   }
