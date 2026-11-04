@@ -771,14 +771,14 @@ with values recorded when the build was cached, so the check is one `adb shell`
 call instead of reading the whole APK. App-group
 containers, photos, the pasteboard and Simulator settings are not cleared.
 
-Every iOS install on an owned simulator, adopted or not, also allows "Paste from
+Every iOS install `stim ios` makes on a local owned simulator, adopted or not, also allows "Paste from
 Other Apps" for the app it installed, so pasting text Stim cannot type, such as
 accents and emoji, with Command-V from Stim Desktop, the phone app or a share
 lands in that app without an "Allow Paste" prompt. After the install and before
 the launch, Stim checks the simulator is still Stim-owned and writes the
 installed bundle id's `kTCCServicePasteboard` row (Allow) into the simulator's own
 `TCC.db`; no other app's row and nothing on the Mac is touched. A failure prints a
-warning and the install stands. Other apps on the simulator, Safari included, keep
+warning and the install stands. A simulator that `--remote` runs on EAS is not covered. Other apps on the simulator, Safari included, keep
 iOS's own prompt.
 
 Android adoption requires the same system image, disk size and AVD creation

@@ -53,7 +53,7 @@ async function writeIosDevMenuOffDefaults(udid: string, bundleId: string, exec: 
 async function grantIosPasteboardAccess(udid: string, bundleId: string, exec: Executor): Promise<string | null> {
   try {
     const listing = await exec.runFileAsync('xcrun', ['simctl', 'list', 'devices', '--json'], {
-      timeoutMs: 30000,
+      timeoutMs: IOS_TCC_QUERY_TIMEOUT_MS,
       killSignal: 'SIGKILL',
     });
     const resolved = resolveOwnedIosSim(udid, parseSimctlList(listing));
