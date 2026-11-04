@@ -52,6 +52,14 @@ body.viewer {
   height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+body.viewer input,
+body.viewer textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 body {
   margin: 0;
@@ -284,6 +292,7 @@ body[data-control='true'] .aperture {
   height: 100%;
   background: var(--screen);
   touch-action: none;
+  -webkit-user-select: none;
   user-select: none;
   outline: none;
 }
