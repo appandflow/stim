@@ -255,23 +255,28 @@ new checks.
 
 The fresh reviewer records the outcome with labels. When the review is clear, it
 adds `review: ai-approved` and marks the pull request ready with `gh pr ready`.
-When the diff has a change in one of these that no maintainer has approved, it
-adds `review: needs-human` and removes any `review: human-approved`:
+When the diff contains one of these and no maintainer has approved it, it adds
+`review: needs-human` and removes any `review: human-approved`:
 
-- what another machine can reach or do on this machine: a new or wider network
-  listener, authentication or pairing path, or stim-server capability;
-- how secrets, tokens or signing keys are stored, passed or exposed;
-- deleting or killing something Stim does not own, or a new way to decide that
-  Stim owns it;
-- a release or publishing workflow that holds secrets;
-- a breaking change to on-disk state or a published contract that existing
-  installs or clients cannot read.
+- a product decision: a new, removed or renamed command, flag or setting; a
+  changed default; or a change to user-visible behavior beyond what the linked
+  issue asked for. This is the "explicit product decision" that new commands
+  and flags require. A decision recorded in the issue or in a maintainer
+  comment counts as approved;
+- a new or wider way for another machine to reach or act on this one: a
+  network listener, an authentication or pairing path, or a stim-server
+  capability;
+- a change to how secrets, tokens or signing keys are stored, passed or
+  exposed.
 
-Refactors, hardening, stricter validation and bug fixes inside those areas do
-not qualify unless they widen what is exposed or deleted, expose a secret, or
-break what existing installs or clients can read. When it is unclear, leave the
-label off and name the concern in the review; that alone does not block
-`review: ai-approved`.
+Refactors, hardening, stricter validation and bug fixes inside the security
+areas do not qualify unless they widen what is exposed or expose a secret. The
+reviewer still names other concerns in its review, such as deleting or killing
+something Stim does not own, a new ownership rule, a release or publishing
+workflow that holds secrets, or a breaking change to on-disk state or a
+published contract; the Required invariants govern them, and they do not add the
+label. When it is unclear, leave the label off and name the concern in the
+review; that alone does not block `review: ai-approved`.
 
 With that label, the reviewer posts a comment that starts with `Human review:`
 and lists each unapproved `path:lines`, linked at the reviewed commit, with one
