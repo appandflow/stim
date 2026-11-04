@@ -225,7 +225,9 @@ returns; --scope and setsid do not escape a runner that reaps descendants.
 The service uses the user's login-shell environment. Check its journal if it
 cannot find stim or the project's Node version.
 
-Stim does not detect these runners or manage the transient unit. At the end of
+Stim does not detect these runners or manage this transient unit. The stim-daemon
+needs no recipe: it starts as its own transient user service when a user systemd
+manager answers (guide settings, THE STIM DAEMON). At the end of
 the workflow, stop the workspace and the specific unit you created:
 
   stim stop

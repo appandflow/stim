@@ -16,10 +16,12 @@ import { getExecutor } from '../exec.ts';
 import { compareStimVersions } from '../diagnostics/stim-installations.ts';
 import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { daemonMode, platformHasDaemon, spawnsDaemon } from './mode.ts';
+import { systemdDaemonArgs } from './systemd-launch.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
 const CLAIM_POLL_MS = 50;
+const SYSTEMD_RUN_TIMEOUT_MS = 5000;
 /**
  * Whether a stim-daemon holds this home's claim. A claim Stim cannot resolve counts as held, so nothing else takes
  * an idle decision while it stands; `stim doctor` names the command that removes it.
@@ -129,13 +131,42 @@ function daemonEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 /**
+ * Asks the user's systemd manager to run the daemon as a transient service, which a runner that kills everything a
+ * command started cannot reach (#5084). False where that cannot be asked: not Linux, no `systemd-run`, no user
+ * runtime directory, or `systemd-run` fails because no user manager answers.
+ */
+function startDaemonService(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  command: readonly string[],
+  daemonEnvironment: NodeJS.ProcessEnv,
+): boolean {
+  if (platform !== 'linux' || !env.XDG_RUNTIME_DIR) return false;
+  const executor = getExecutor();
+  const systemdRun = executor.findExecutable('systemd-run', { env });
+  if (!systemdRun) return false;
+  try {
+    executor.runFile(systemdRun, systemdDaemonArgs(daemonDir(), daemonEnvironment, command), {
+      timeoutMs: SYSTEMD_RUN_TIMEOUT_MS,
+      cwd: daemonDir(),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Starts a daemon; `settled` resolves once it has exited or failed to spawn. With `replace`, the daemon first asks
- * the running daemon with that pid to hand over after its current tick.
+ * the running daemon with that pid to hand over after its current tick. Where a user systemd manager answers, the
+ * daemon runs as its service and `settled` never resolves: `systemd-run` returns once the service starts, which says
+ * nothing about the daemon, so the caller keeps polling for its claim.
  */
 function spawnDaemon(
   env: NodeJS.ProcessEnv,
   mode: DaemonMode,
-  replace?: number,
+  replace: number | undefined,
+  platform: NodeJS.Platform,
 ): { settled: Promise<void>; exited: () => boolean } {
   mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
   const args = [
@@ -144,11 +175,14 @@ function spawnDaemon(
     mode,
     ...(replace === undefined ? [] : ['--replace', String(replace)]),
   ];
+  const kept = daemonEnv(env);
+  if (startDaemonService(env, platform, [process.execPath, ...args], kept))
+    return { settled: new Promise<void>(() => {}), exited: () => false };
   const child = getExecutor().spawn(process.execPath, args, {
     cwd: daemonDir(),
     detached: true,
     stdio: 'ignore',
-    env: daemonEnv(env),
+    env: kept,
   });
   let exited = false;
   const settled = new Promise<void>((done) => {
@@ -194,8 +228,11 @@ async function handoverSettled(): Promise<boolean> {
  * one takes over. Returns whether a daemon holds the home; a claim Stim cannot resolve is reported
  * and counts as held.
  */
-export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
-  if (!spawnsDaemon(env)) return false;
+export async function ensureDaemon(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): Promise<boolean> {
+  if (!spawnsDaemon(env, platform)) return false;
   const mode = daemonMode(env);
   try {
     const survey = readClaimSet(daemonClaimRoot());
@@ -213,11 +250,11 @@ export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promis
         typeof running.build !== 'string' ||
         (typeof running.version === 'string' && (compareStimVersions(own.version, running.version) ?? 0) > 0);
       if (own.installed && older && typeof running.pid === 'number' && !handoverInProgress())
-        spawnDaemon(env, mode, running.pid);
+        spawnDaemon(env, mode, running.pid, platform);
       return true;
     }
     if (handoverInProgress() && (await handoverSettled())) return true;
-    return await claimTaken(spawnDaemon(env, mode));
+    return await claimTaken(spawnDaemon(env, mode, undefined, platform));
   } catch {
     return false;
   }

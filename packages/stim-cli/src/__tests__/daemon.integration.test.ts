@@ -47,6 +47,7 @@ let daemons: SpawnedDaemon[] = [];
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = home;
+  vi.stubEnv('XDG_RUNTIME_DIR', '');
 });
 
 afterEach(async () => {
@@ -55,6 +56,7 @@ afterEach(async () => {
   daemons = [];
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+  vi.unstubAllEnvs();
 });
 
 /**
@@ -564,6 +566,101 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     expect(spawned).toHaveLength(1);
     expect(spawned[0]?.args.slice(1)).toEqual(['--mode', 'report']);
     expect(spawned[0]?.options?.env).toEqual(kept);
+  });
+
+  describe('a Linux command starts the daemon as a transient user service so a runner that kills the call cannot reach it', () => {
+    const systemdEnv = () => ({
+      PATH: '/usr/bin',
+      HOME: '/home/agent',
+      STIM_HOME: home,
+      STIM_DAEMON: 'on',
+      XDG_RUNTIME_DIR: '/run/user/1000',
+      API_TOKEN: 'secret',
+    });
+
+    function mockExecutor(runFile: (file: string, args: string[]) => string) {
+      const spawned: (readonly string[])[] = [];
+      setExecutor({
+        ...getExecutor(),
+        findExecutable: (name: string) => (name === 'systemd-run' ? '/usr/bin/systemd-run' : null),
+        runFile,
+        spawn(_file, args = []) {
+          spawned.push(args);
+          return spawnChild(process.execPath, ['-e', ''], { stdio: 'ignore' });
+        },
+      });
+      onTestFinished(() => resetExecutor());
+      return spawned;
+    }
+
+    test('systemd-run carries the daemon command and its environment, and no daemon is spawned as a child', async () => {
+      const runs: { file: string; args: string[] }[] = [];
+      let service: Promise<void> | undefined;
+      const spawned = mockExecutor((file, args) => {
+        runs.push({ file, args });
+        setTimeout(() => (service = runDaemon({ tickMs: 60_000, mode: 'on' })), 300);
+        return '';
+      });
+
+      expect(await ensureDaemon(systemdEnv(), 'linux')).toBe(true);
+
+      expect(spawned).toEqual([]);
+      expect(runs).toHaveLength(1);
+      const [run] = runs;
+      assert(run);
+      const { file, args } = run;
+      expect(file).toBe('/usr/bin/systemd-run');
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--user',
+          '--quiet',
+          '--collect',
+          '--property=KillMode=process',
+          `--working-directory=${join(home, 'daemon')}`,
+        ]),
+      );
+      expect(args.filter((arg) => arg.startsWith('--setenv='))).toEqual(
+        expect.arrayContaining(['--setenv=PATH=/usr/bin', '--setenv=HOME=/home/agent', `--setenv=STIM_HOME=${home}`]),
+      );
+      expect(args.join(' ')).not.toContain('API_TOKEN');
+      expect(args.join(' ')).not.toContain('XDG_RUNTIME_DIR');
+      expect(args.slice(args.indexOf('--') + 1)).toEqual([
+        process.execPath,
+        expect.stringMatching(/daemon-run\.mjs$|daemon[\\/]run\.ts$/),
+        '--mode',
+        'on',
+      ]);
+      expect(args.find((arg) => arg.startsWith('--unit='))).toMatch(/^--unit=stim-daemon-[0-9a-f]{8}-[0-9a-f]{6}$/);
+
+      await askDaemon('handover', 1000, { pid: process.pid, build: null });
+      await service;
+    }, 20_000);
+
+    test('a manager that does not answer leaves the daemon a detached child, as before', async () => {
+      const spawned = mockExecutor(() => {
+        throw new Error('Failed to connect to bus');
+      });
+
+      expect(await ensureDaemon(systemdEnv(), 'linux')).toBe(false);
+
+      expect(spawned).toHaveLength(1);
+    });
+
+    test.each([
+      ['another platform', 'darwin', '/run/user/1000'],
+      ['no user runtime directory', 'linux', undefined],
+    ] as const)('%s uses no service', async (_name, platform, runtime) => {
+      let runs = 0;
+      const spawned = mockExecutor(() => {
+        runs++;
+        return '';
+      });
+
+      expect(await ensureDaemon({ ...systemdEnv(), XDG_RUNTIME_DIR: runtime }, platform)).toBe(false);
+
+      expect(runs).toBe(0);
+      expect(spawned).toHaveLength(1);
+    });
   });
 
   test('a command counts the home as held only once the daemon it started takes the claim', async () => {
