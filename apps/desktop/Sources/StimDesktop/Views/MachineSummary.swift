@@ -114,9 +114,22 @@ struct MachineSummary: View {
 
   private func cpuItem(_ cpu: Double, load: CapacityLoad?) -> some View {
     let cpuText = formatPercent(cpu * 100)
-    let value = load.map { "\(cpuText) \u{00B7} \($0.text)" } ?? cpuText
-    let tone =
-      load.map { UsageThresholds.worse(UsageThresholds.cpu(fraction: cpu), $0.tone) } ?? UsageThresholds.cpu(fraction: cpu)
+    let cpuTone = UsageThresholds.cpu(fraction: cpu)
+    var value = cpuText
+    var tone = cpuTone
+    var accessibilityLabel = "CPU details"
+    var accessibilityValue = cpuText
+    var help = "CPU is the share of this Mac's processor time in use right now, up to 100%."
+    if let load {
+      value = "\(cpuText) \u{00B7} \(load.text)"
+      tone = UsageThresholds.worse(cpuTone, load.tone)
+      accessibilityLabel = "CPU and load details"
+      accessibilityValue = "CPU \(cpuText), load \(load.text)"
+      help += " Load is the 5-minute average of tasks running or waiting, per core. \(load.busySentence)"
+    }
+    if let workspacesCpu {
+      help += " Stim's share of CPU: active workspaces' processes, simulators and emulators use \(workspacesCpu)."
+    }
     return Button {
       expandedResource = .cpu
     } label: {
@@ -124,13 +137,9 @@ struct MachineSummary: View {
         .padding(Space.sm)
     }
     .buttonStyle(.hoverRow(radius: Radius.round))
-    .accessibilityLabel(load == nil ? "CPU details" : "CPU and load details")
-    .accessibilityValue(load.map { "CPU \(cpuText), load \($0.text)" } ?? cpuText)
-    .help(
-      "CPU is the share of this Mac's processor time in use right now, up to 100%."
-        + (load.map { " Load is the 5-minute average of tasks running or waiting, per core. \($0.busySentence)" } ?? "")
-        + (workspacesCpu.map { " Stim's share of CPU: active workspaces' processes, simulators and emulators use \($0)." } ?? "")
-    )
+    .accessibilityLabel(accessibilityLabel)
+    .accessibilityValue(accessibilityValue)
+    .help(help)
     .popover(isPresented: shows(.cpu), arrowEdge: .bottom) { popover(.cpu) }
     .onHover { hovering in
       if hovering, expandedResource != nil {
