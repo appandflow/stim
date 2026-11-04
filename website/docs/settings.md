@@ -627,7 +627,10 @@ A dropped connection is not a failure by itself: Stim pings the machine every
 15 seconds, treats a minute of silence while it waits for the build as a drop,
 then reconnects to the same machine for up to 3 minutes and takes the running
 build back. The machine keeps a build running for 5 minutes without a
-connection before it cancels it. A drop while the app is fetched still builds
+connection before it cancels it. When the machine's `stim-server` restarted and no
+longer holds the build, or the connection drops while the source syncs and no other machine
+can take the build, Stim waits for the machine to answer (up to 3 minutes) and starts the same
+build again there, up to twice, before `auto` builds here or a named machine refuses. A drop while the app is fetched still builds
 here. Ctrl-C cancels the build on the machine; a run killed another way, or
 interrupted while it reconnects, leaves it running until those 5 minutes pass. An
 offloaded app lands only in this machine's build cache, not in a remote cache
@@ -713,7 +716,7 @@ registry signature of every dependency they bring from npm, and does not look up
 Stim's own packages on the registry, so an unpublished version installs. Either way
 the new server is installed beside the running one and must start before the
 switch. The update waits up to 30 minutes for offloaded builds and hosted
-sessions to finish, restarts the job, and switches back to the previous server
+native steps to finish (a server that resumes its hosted sessions leaves the others running), restarts the job, and switches back to the previous server
 when the new job exits or does not answer within 90 seconds. It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
 serve route.

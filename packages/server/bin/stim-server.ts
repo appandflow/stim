@@ -28,7 +28,7 @@ import {
   validateRelease,
   validateServeEnvironment,
 } from '../src/service-plist.ts';
-import { PROTOCOL_VERSION } from '../src/protocol.ts';
+import { PROTOCOL_VERSION, type Capability } from '../src/protocol.ts';
 import { serviceManagerOrNull } from '../src/service-manager.ts';
 import {
   capabilitiesFor,
@@ -37,6 +37,7 @@ import {
   readBuildClients,
   readDeviceHostClients,
   readDevices,
+  renameDevice,
   revokeDevice,
   serverIdentity,
   type PairedDevice,
@@ -81,7 +82,7 @@ const USAGE = `Usage:
                                     install that stim-server release from npm, or the .tgz
                                     packages in <dir>, beside the current one, switch the
                                     service to it, and switch back if it does not answer
-                                    --no-wait interrupts active builds and hosted sessions at restart
+                                    --no-wait also restarts with builds and hosted installs still running, which interrupts them
   stim-server service rollback [--label <name>]
                                     switch the service back to the server it ran before
   stim-server service uninstall [--label <name>]
@@ -94,6 +95,8 @@ const USAGE = `Usage:
   stim-server devices grant <id> --control|--read
                                     let a paired device run actions, or only read
   stim-server devices revoke <id>   revoke a paired device or approved client and close its connections
+  stim-server devices rename <id> <name>
+                                    rename a paired device or approved client; it sees the name on its next connection
   stim-server log [--json]          list the actions paired devices ran`;
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
@@ -356,6 +359,41 @@ function describe(device: PairedDevice): string {
   return `${device.id}  ${device.name}  ${scope}  from ${from}  paired ${device.pairedAt}  last seen ${device.lastSeenAt ?? 'never'}`;
 }
 
+const KINDS = { device: 'phone', build: 'build-client', 'device-host': 'device-host-client' } as const;
+
+const ACCESS: Record<Capability, string> = {
+  read: 'view',
+  control: 'control',
+  build: 'build',
+  'device-host': 'run-devices',
+};
+
+function listed(device: PairedDevice, registry: keyof typeof KINDS) {
+  const { id, name, from, publicKey, pairedAt, lastSeenAt, capabilities } = device;
+  return {
+    id,
+    name,
+    ...(from ? { from } : {}),
+    keyFingerprint: keyFingerprint(Buffer.from(publicKey, 'base64url')),
+    pairedAt,
+    lastSeenAt,
+    capabilities,
+    kind: KINDS[registry],
+    access: capabilities.map((capability) => ACCESS[capability]),
+    owner: registry === 'device' ? 'this-machine' : 'theirs-running-here',
+  };
+}
+
+function rename(id: string, args: string[]): void {
+  const [name, ...extra] = args;
+  if (name === undefined || extra.length) fail(`unknown command.\n${USAGE}`);
+  const outcome = renameDevice(id, name);
+  if (outcome === 'unknown')
+    fail(`no paired device or approved client ${id}. Run \`stim-server devices\` to list them.`);
+  if (outcome === 'invalid-name') fail('the name must be 1 to 64 characters of printable text on one line.');
+  console.log(`Renamed ${id}.`);
+}
+
 function scopeFlag(values: {
   read?: boolean;
   control?: boolean;
@@ -564,7 +602,12 @@ async function main(): Promise<void> {
   }
   if (command === 'devices' && (sub === undefined || sub === 'list') && arg === undefined) {
     const clients = readDeviceHostClients();
-    const devices = [...readDevices(), ...readBuildClients(), ...clients];
+    const sources = [
+      ...readDevices().map((device) => [device, 'device'] as const),
+      ...readBuildClients().map((device) => [device, 'build'] as const),
+      ...clients.map((device) => [device, 'device-host'] as const),
+    ];
+    const devices = sources.map(([device]) => device);
     let hostedSessions: ReturnType<typeof readHostedSessionRows> = [];
     try {
       hostedSessions = readHostedSessionRows(readHostedSessions(), clients);
@@ -572,22 +615,15 @@ async function main(): Promise<void> {
       console.error(`Could not read hosted sessions: ${(error as Error).message}`);
     }
     if (values.json) {
-      const listed = devices.map(({ id, name, from, publicKey, pairedAt, lastSeenAt, capabilities }) => ({
-        id,
-        name,
-        ...(from ? { from } : {}),
-        keyFingerprint: keyFingerprint(Buffer.from(publicKey, 'base64url')),
-        pairedAt,
-        lastSeenAt,
-        capabilities,
-      }));
-      return void console.log(JSON.stringify({ devices: listed, hostedSessions }));
+      const rows = sources.map(([device, registry]) => listed(device, registry));
+      return void console.log(JSON.stringify({ devices: rows, hostedSessions }));
     }
     if (!devices.length) console.log('No paired devices.');
     for (const device of devices) console.log(describe(device));
     for (const line of formatHostedSessions(hostedSessions)) console.log(line);
     return;
   }
+  if (command === 'devices' && sub === 'rename' && arg !== undefined) return rename(arg, rest);
   if (command === 'devices' && sub === 'revoke' && arg !== undefined && rest.length === 0) {
     if (!revokeDevice(arg)) fail(`no paired device ${arg}. Run \`stim-server devices\` to list them.`);
     console.log(`Revoked ${arg}.`);

@@ -180,7 +180,7 @@ interface Health {
   protocol?: number;
   stim: string;
   stimBuild?: string | null;
-  busy?: { builds: number; hostedSessions: number };
+  busy?: { builds: number; hostedSessions: number; hostedWork?: number; resumes?: boolean };
   stimHome: string;
   tailscale?: { state: string; dnsName?: string | null; backendState?: string; reason?: string };
   route?: { state: string; port?: number; ports?: number[]; reason?: string };
@@ -951,7 +951,8 @@ export async function installServer(
   }
 }
 
-async function waitForIdle(port: number, log: (line: string) => void): Promise<void> {
+/** `allSessions` waits for every hosted session, which a rollback needs because the previous server may not resume them. */
+async function waitForIdle(port: number, log: (line: string) => void, allSessions = false): Promise<void> {
   const deadline = Date.now() + IDLE_WAIT_MS;
   let said = '';
   for (;;) {
@@ -960,8 +961,9 @@ async function waitForIdle(port: number, log: (line: string) => void): Promise<v
     if (health && !busy) {
       log('This stim-server does not report its running builds, so the restart does not wait for them.');
     }
-    if (!busy || busy.builds + busy.hostedSessions === 0) return;
-    const work = `${busy.builds} offloaded build(s) and ${busy.hostedSessions} hosted session(s)`;
+    const hosted = busy?.resumes && !allSessions ? (busy.hostedWork ?? 0) : (busy?.hostedSessions ?? 0);
+    if (!busy || busy.builds + hosted === 0) return;
+    const work = `${busy.builds} offloaded build(s) and ${hosted} hosted session(s)`;
     if (Date.now() >= deadline) {
       throw new ServiceError(
         `stim-server still runs ${work} after ${IDLE_WAIT_MS / 60_000} minutes; not restarting it. Run this again later.`,
@@ -1120,7 +1122,7 @@ function withUpdateClaim<T>(
 }
 
 /**
- * Installs `source` beside the server the job runs, waits for offloaded builds and hosted sessions to finish,
+ * Installs `source` beside the server the job runs, waits for offloaded builds and hosted native steps to finish,
  * switches the job to it and restarts it, and switches back when it does not answer as the installed build. Never
  * touches pairings, approvals, the host app, `$STIM_HOME` or the serve route. With `waitForWork` false,
  * restart interrupts active work instead of waiting for idle; shutdown and health checks still apply.
@@ -1188,7 +1190,7 @@ export async function rollbackService(label: string, log: (line: string) => void
     if (!build) throw new ServiceError(`The previous server ${previous} is no longer installed.`);
     const at = new Date().toISOString();
     try {
-      await waitForIdle(installed.port, log);
+      await waitForIdle(installed.port, log, true);
       log(`Switching ${label} back to ${describeBuild(build)}.`);
       await switchTo(installed, previous, build);
     } catch (error) {

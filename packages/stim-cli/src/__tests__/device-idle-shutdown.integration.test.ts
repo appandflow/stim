@@ -15,7 +15,7 @@ vi.mock('../devices/teardown.ts', () => ({
 }));
 vi.mock('../devices/ios.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../devices/ios.ts')>()),
-  listAllIosSims: () =>
+  listAllIosSimsAsync: async () =>
     ['MINE', 'OTHER'].map((udid) => ({
       udid,
       name: `stim-${udid}`,
@@ -147,7 +147,7 @@ describe('shutDownIdleDevices', () => {
     process.env.STIM_HOME = stimHome;
     home = process.env.HOME;
     process.env.HOME = stimHome;
-    setExecutor({ runFileQuiet: () => '' } as never);
+    setExecutor({ runFileQuietAsync: async () => '' } as never);
     vi.mocked(teardownOwnedIosSim).mockReset();
   });
 

@@ -233,19 +233,22 @@ public struct HostedOnMachine: Hashable, Sendable {
 /// The hosted simulators and emulators this Mac's workspaces run on `machine`, a `remote.machines` entry. A hosted
 /// macOS app is left out: its `stim stop` ends the whole workspace.
 public func hostedDevices(on machine: String, in workspaces: [Workspace]) -> [HostedOnMachine] {
-  let name = OffloadMachines.name(machine)
-  let same = { (host: String) in
-    let other = OffloadMachines.name(host)
-    if other == name { return true }
-    guard !name.contains(".") || !other.contains(".") else { return false }
-    return name.split(separator: ".").first == other.split(separator: ".").first
-  }
-  return workspaces.flatMap { workspace in
+  workspaces.flatMap { workspace in
     workspace.devices.compactMap { device -> HostedOnMachine? in
       if case .macos = device { return nil }
-      guard let host = device.hostedMachine, same(host) else { return nil }
+      guard let host = device.hostedMachine, isSameMachine(machine, host) else { return nil }
       return HostedOnMachine(
         workspace: workspace.names.title, device: device.label, stop: stopCommand(for: device, cwd: workspace.path))
     }
   }
+}
+
+/// Whether two `remote.machines` entries or reported hosts name one machine: the same name without its port, or a
+/// short name and the full MagicDNS name that starts with it.
+public func isSameMachine(_ entry: String, _ other: String) -> Bool {
+  let name = OffloadMachines.name(entry)
+  let otherName = OffloadMachines.name(other)
+  if otherName == name { return true }
+  guard !name.contains(".") || !otherName.contains(".") else { return false }
+  return name.split(separator: ".").first == otherName.split(separator: ".").first
 }

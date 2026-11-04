@@ -280,12 +280,12 @@ PATH).
 - **`stim-ci.yml`** -- "Stim CI dogfood": builds, launches, probes and stops
   the mobile app on iOS (`xcode-27`) and Android (`ubuntu-latest`) and the
   Desktop app on macOS (`macos-15`) through the `stim-ci` action, twice per job
-  to cover the warm path. It runs on dispatch, on a pull request labeled
-  `e2e-smoke`, and on a push to `main` that changes `apps/mobile`,
-  `apps/desktop`, `packages/ci`, `packages/core`, `packages/stim-cli`,
-  `scripts/ci`, the action or the workflow. A change to the other packages or
-  to the lockfile does not start it on push; a pull request label or dispatch
-  runs it on demand.
+  to cover the warm path. It runs nightly at 09:00 UTC on `main`, on dispatch,
+  and on a pull request labeled `e2e-smoke` that changes `apps/mobile`,
+  `apps/desktop`, `packages`, `scripts/ci`, the action, the workflow or the
+  lockfile. A push to `main` does not start it, so a merge that breaks the app
+  lifecycle shows in the next nightly run; dispatch or the label runs it on
+  demand.
   No workflow uses a larger runner, because larger runners are billed per minute
   even on public repositories.
 

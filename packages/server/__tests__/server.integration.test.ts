@@ -1051,6 +1051,15 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(await local.request('share.stop', { workspace: root, id: '' })).toMatchObject({
       error: { code: 'bad-request' },
     });
+    for (const [params, message] of [
+      [{ slug: 'Pokedex' }, 'params.slug must be'],
+      [{ slug: 'assets' }, 'params.slug cannot be assets'],
+      [{ slug: 'pokedex', passwordless: true }, 'needs a password'],
+    ] as const) {
+      expect(await local.request('share.start', { workspace: root, platform: 'ios', ...params })).toMatchObject({
+        error: { code: 'bad-request', message: expect.stringContaining(message) },
+      });
+    }
   });
 
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {
@@ -1341,6 +1350,7 @@ describe('pairing', () => {
           'device-clipboard',
           'share-view-password',
           'hosted-presence',
+          'share-slug',
         ],
         actions: [],
         device: { name: 'Test phone' },
@@ -4146,7 +4156,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       protocol: 2,
       stimHome: process.env.STIM_HOME,
       startup: { state: 'ready' },
-      busy: { builds: 0, hostedSessions: 0 },
+      busy: { builds: 0, hostedSessions: 0, hostedWork: 0, resumes: true },
       tailscale: { state: 'not-running', backendState: 'Stopped' },
       nativeViewerOpened: false,
     });

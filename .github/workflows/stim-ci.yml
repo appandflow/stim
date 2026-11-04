@@ -2,17 +2,8 @@ name: Stim CI dogfood
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'apps/mobile/**'
-      - 'apps/desktop/**'
-      - 'packages/ci/**'
-      - 'packages/core/**'
-      - 'packages/stim-cli/**'
-      - 'scripts/ci/**'
-      - '.github/actions/stim-ci/**'
-      - '.github/workflows/stim-ci.yml'
+  schedule:
+    - cron: '0 9 * * *'
   pull_request:
     types: [labeled, opened, synchronize, reopened]
     paths:

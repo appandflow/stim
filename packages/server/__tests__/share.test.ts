@@ -40,7 +40,7 @@ interface Fixture {
   congestions: number;
   begins: unknown[];
   inputs: unknown[];
-  inputResult: { text: string } | { code: 'action-failed'; message: string } | null;
+  inputResult: { text: string } | { typed: true } | { code: 'action-failed' | 'device-busy'; message: string } | null;
   /** The viewer each input came from, by name. */
   inputBy: string[];
   /** Names of the viewers whose pointer the control hub was told to lift. */
@@ -586,6 +586,34 @@ describe('a web share', () => {
       { session: 'c1', command: { input: 'clipboard', text, paste: true } },
       { session: 'c1', command: { input: 'clipboard', text: 'no paste', paste: false } },
     ]);
+    socket.close();
+  });
+
+  it('tells the viewer to tap the paste suggestion only when an iOS paste was not typed', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    const notes: unknown[] = [];
+    socket.on('message', (data, binary) => {
+      if (!binary) notes.push(JSON.parse(data.toString()));
+    });
+    const suggestion = { type: 'control', message: expect.stringContaining('paste suggestion') };
+    f.inputResult = { typed: true };
+    socket.send(JSON.stringify({ type: 'clipboard-set', text: 'typed', paste: true }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
+    f.inputResult = null;
+    socket.send(JSON.stringify({ type: 'clipboard-set', text: 'not typed', paste: true }));
+    await vi.waitFor(() => expect(notes).toContainEqual(suggestion));
+    expect(notes.filter((note) => JSON.stringify(note).includes('suggestion'))).toHaveLength(1);
+    f.inputResult = { code: 'device-busy', message: 'typing' };
+    socket.send(JSON.stringify({ type: 'clipboard-set', text: 'again', paste: true }));
+    await vi.waitFor(() =>
+      expect(notes).toContainEqual({ type: 'control', message: expect.stringContaining('still typing') }),
+    );
+    f.inputResult = null;
+    socket.send(JSON.stringify({ type: 'clipboard-set', text: 'only set' }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(4));
+    expect(notes.filter((note) => JSON.stringify(note).includes('suggestion'))).toHaveLength(1);
     socket.close();
   });
 
@@ -1231,6 +1259,58 @@ describe('a web share', () => {
     expect(f.routeCloses).toBe(0);
     expect((await f.hub.stop(WORKSPACE)).map((row) => row.id)).toEqual([second.id]);
     expect(f.routeCloses).toBe(1);
+  });
+
+  describe('with a slug', () => {
+    it('serves the share at /s/<slug>/ behind its password and lists the slug', async () => {
+      const share = await started(f, { slug: 'pokedex' });
+      expect(share.url).toBe('https://mac.tail.ts.net:10000/s/pokedex/');
+      expect(share).toMatchObject({ auth: 'generated', slug: 'pokedex' });
+      expect(f.hub.list()).toMatchObject([{ slug: 'pokedex' }]);
+      const url = local(share, f.hub.port ?? 0);
+      const page = await http(url);
+      expect(page.body).toContain('name="password"');
+      expect(page.body).not.toContain('id="screen"');
+      expect((await connect(url, { origin: origin(url) })).status).toBe(401);
+      expect((await http(`${url}login`, { method: 'POST', body: 'password=wrong' })).status).toBe(401);
+      const cookie = await login(url, share.password ?? '');
+      const { socket, status } = await connect(url, { origin: origin(url), cookie });
+      expect(status).toBeNull();
+      socket.close();
+    });
+
+    it('refuses a slug without a password', async () => {
+      expect(await f.hub.start(shareRequest({ slug: 'pokedex', passwordless: true }))).toMatchObject({
+        code: 'bad-request',
+      });
+      expect(f.hub.list()).toEqual([]);
+    });
+
+    it('refuses a slug a live share holds, naming it, and frees it when that share ends', async () => {
+      const first = await started(f, { slug: 'pokedex' });
+      const firstUrl = local(first, f.hub.port ?? 0);
+      const oldCookie = await login(firstUrl, first.password ?? '');
+      const refused = await f.hub.start(shareRequest({ slug: 'pokedex', control: true }));
+      expect(refused).toMatchObject({ code: 'action-failed' });
+      expect('message' in refused && refused.message).toContain(first.id);
+      expect(f.hub.list().map((row) => row.id)).toEqual([first.id]);
+      await f.hub.stop(WORKSPACE);
+      const second = await started(f, { slug: 'pokedex' });
+      expect(second.url).toBe(first.url);
+      const url = local(second, f.hub.port ?? 0);
+      expect((await http(url, { cookie: oldCookie })).body).toContain('name="password"');
+      expect((await connect(url, { origin: origin(url), cookie: oldCookie })).status).toBe(401);
+    });
+
+    it('gives a slug to only one of two shares that start at once', async () => {
+      const results = await Promise.all([
+        f.hub.start(shareRequest({ slug: 'pokedex' })),
+        f.hub.start(shareRequest({ slug: 'pokedex' })),
+      ]);
+      expect(results.filter((result) => 'url' in result)).toHaveLength(1);
+      expect(results.filter((result) => 'code' in result)).toMatchObject([{ code: 'action-failed' }]);
+      expect(f.hub.list()).toHaveLength(1);
+    });
   });
 
   it('keeps the port a route that failed to be removed still points at bound until a later route replaces it', async () => {

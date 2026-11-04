@@ -57,7 +57,7 @@ export async function selectHostedIosDevice(selectors: HostedDeviceSelectors): P
 
 /** Called only in the private server-owned worker home; native effects use Stim's existing ownership and teardown. */
 export async function runHostedDevice(
-  mode: 'prepare' | 'stop' | 'install' | 'park' | 'inspect' | 'adopt',
+  mode: 'prepare' | 'stop' | 'install' | 'park' | 'inspect' | 'adopt' | 'resume',
   selectors: HostedDeviceSelectors,
   app?: { session: string; attempt: string; metroPort?: number },
 ): Promise<HostedWorkerResult> {
@@ -127,6 +127,17 @@ export async function runHostedDevice(
       });
       removeHostedAppData(home, { keepBlobs: true });
       await muteBootedSimulator(device.udid, hostedNotify);
+      return { state: 'ready', device };
+    }
+    if (mode === 'resume') {
+      if (
+        !current ||
+        !current.available ||
+        !current.name.startsWith('stim-') ||
+        current.name !== device.name ||
+        current.state !== 'Booted'
+      )
+        throw new Error('The hosted simulator is missing, renamed or no longer Booted.');
       return { state: 'ready', device };
     }
     if (mode === 'park') {

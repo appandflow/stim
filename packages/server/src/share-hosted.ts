@@ -379,7 +379,9 @@ export class HostedShareSource implements ShareSource {
     try {
       const reply = await control.lease.connection.request(`device-host.${method}`, { ...params, session });
       if ('error' in reply) return reply.error;
-      return method === 'input.clipboard.get' && isJsonObject(reply.result) ? reply.result : null;
+      if (!isJsonObject(reply.result)) return null;
+      if (method === 'input.clipboard.get') return reply.result;
+      return method === 'input.clipboard.set' && reply.result.typed === true ? { typed: true } : null;
     } catch (cause) {
       return { code: 'action-failed', message: `${this.host.machine}: ${messageOf(cause)}` };
     }
