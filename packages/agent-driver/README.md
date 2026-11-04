@@ -20,6 +20,7 @@ export function createAgentDriver({ env, stateDir, claimRoot, device }) {
 }
 export const client = { configFile: 'my-tool-remote.json', access };
 export const actions = { read };
+export async function recover({ env, stateDir, claimRoot }) {}
 ```
 
 `createAgentDriver` returns a `HostedAgentDriver` named `id`. stim-server
@@ -36,6 +37,11 @@ The command never carries the token.
 
 `actions` is optional. `read` returns the driver's recorded agent actions in a
 workspace or archive directory as `agent` log records.
+
+`recover` is optional. stim-server calls it when it starts, once for each hosted
+session area that holds the driver's `stateDir`, so the driver can stop what a
+run left behind for a stim-server process that is gone. It rejects naming what
+it could not resolve; stim-server logs that and continues.
 
 `loadAgentDriverModule` and `loadAgentDriver` never throw. A failed or slow
 import, a module with another `apiVersion` or `id`, or a factory that throws
