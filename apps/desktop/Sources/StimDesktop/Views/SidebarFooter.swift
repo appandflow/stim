@@ -10,9 +10,6 @@ struct SidebarFooter: View {
   @ObservedObject private var updater = AppUpdater.shared
   @ObservedObject private var server = ServerController.shared
   @Binding var selection: SidebarItem?
-  @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
-  @ObservedObject private var flags = FeatureFlagStore.shared
-  @AppStorage("settingsTab") private var settingsTab = "app"
   @Environment(\.openSettings) private var openSettings
 
   private var status: SidebarFooterStatus {
@@ -42,7 +39,6 @@ struct SidebarFooter: View {
       OperationsButton(log: actions.operations, actions: actions, store: store)
       if !drivenDevices.isEmpty { agentsButton }
       if let problem = server.problem { serverProblemButton(problem) }
-      if PhoneApp.showsSidebarButton(phoneApp: flags.phoneApp, servesPhones: servesPhones) { phonesButton }
       settingsButton
     }
     .padding(.horizontal, Space.md)
@@ -113,35 +109,12 @@ struct SidebarFooter: View {
       + drivenDevices.map { "\($0.workspaceTitle) \u{2192} \($0.deviceLabel)" }).joined(separator: "\n")
   }
 
-  private var phonesButton: some View {
-    IconButton(systemImage: "iphone.gen3.radiowaves.left.and.right", help: phonesTooltip) {
-      OpenRequests.shared.pairsPhone = true
-      settingsTab = "phones"
-      openSettings()
-    }
-  }
-
   private func serverProblemButton(_ problem: String) -> some View {
     IconButton(
       systemImage: "exclamationmark.triangle", tint: Palette.warning,
       help:
         "stim-server is unavailable, so replay, the diff viewer and archived logs are too: \(abbreviatingHome(problem)) \u{2014} click to retry",
       label: "stim-server unavailable", action: server.retry)
-  }
-
-  private var phonesTooltip: String {
-    switch server.state {
-    case .off: return "Phone server is off \u{2014} click to open Paired Devices settings"
-    case .starting, .notReady(.pending, _): return "Phone server is starting \u{2014} click to open Paired Devices settings"
-    case .notReady(.degraded(let reason), _):
-      return "Phone server is degraded: \(abbreviatingHome(reason)) \u{2014} click to open Paired Devices settings"
-    case .failed(let message): return "Phone server failed: \(message) \u{2014} click to open Paired Devices settings"
-    case .running(let health, _):
-      guard let route = health.route, let dnsName = health.tailscale.dnsName else {
-        return "Phone server is running, but phones cannot reach it over Tailscale yet \u{2014} click to pair a phone"
-      }
-      return "Phone server is running at \(route.endpoint(dnsName: dnsName)) \u{2014} click to pair a phone"
-    }
   }
 
   private var settingsButton: some View {

@@ -1327,7 +1327,7 @@ server the app started in loopback-only mode and never touches one it did not st
 turning it on after a failed start tries again.
 
 A server answering health with HTTP 503 appears as **Starting** or
-**Degraded** with its reason in the Paired Devices page (or **Settings > Advanced** with the Phone app off); the footer icon shows only Degraded. Desktop keeps
+**Degraded** with its reason in the Paired Devices page (or **Settings > Advanced** with the Phone app off). Desktop keeps
 checking it without starting another server or terminating one it launched.
 For a server it launches, Desktop checks every 250 milliseconds until it is
 ready or the 15-second startup deadline passes, then uses its regular poller.
