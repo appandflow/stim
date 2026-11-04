@@ -14,7 +14,7 @@ import { readVolumeSpace, readVolumeSpaceAsync } from '../budget.ts';
 import { memoryPressure } from '../daemon/pressure.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { readHostMemoryPressure, readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
-import { discoverCaches, discoverCachesAsync, type CacheDescriptor } from '../cache/caches.ts';
+import { discoverCachesAsync, type CacheDescriptor } from '../cache/caches.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
@@ -94,7 +94,7 @@ export function sizeScanDeferred(): boolean {
 
 export function cacheBlocked(
   entry: Pick<MaintenanceSize, 'name' | 'dir' | 'category'>,
-  discovered: CacheDescriptor[] = discoverCaches(),
+  discovered: CacheDescriptor[],
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
   return (
