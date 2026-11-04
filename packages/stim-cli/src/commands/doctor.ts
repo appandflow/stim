@@ -61,12 +61,8 @@ import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { readServerSetup } from '../diagnostics/server-setup-probe.ts';
 import { isServerFinding, serverSetupFindings } from '../diagnostics/server-setup.ts';
 import { serverNetworkFindings } from '../diagnostics/server-network.ts';
-<<<<<<< HEAD
 import { serverPermissionFindings } from '../diagnostics/server-permissions.ts';
-import { serviceToolchainEnv, serviceToolchainFindings } from '../diagnostics/server-toolchain.ts';
-=======
 import { serviceToolchainEntries, serviceToolchainFindings } from '../diagnostics/server-toolchain.ts';
->>>>>>> feat/5182-doctor-server-network
 import { configuredMachines, inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
 import { memoryCulpritFindings, readMemoryCulpritsAsync } from '../memory-culprits.ts';
