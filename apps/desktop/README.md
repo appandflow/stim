@@ -2094,6 +2094,14 @@ the same rules as a lint, which is what desktop CI runs. CI also builds and
 tests with `-Xswiftc -warnings-as-errors`, so fix a warning instead of
 introducing one.
 
+A pull request and a push to `main` run the formatting, token, ASCII, debug
+build, linked SDK and `swift test` checks, about 9 minutes. The Release
+configuration compile, the `stim-frames` helper compile, the hardened-runtime
+server start and an ad-hoc release package run nightly at 05:00 UTC and on
+dispatch, so a change that breaks only one of them fails the next nightly run,
+not its pull request. Run them for a branch with
+`gh workflow run desktop.yml --ref <branch>`.
+
 `Sources/StimDesktop/Design/Tokens.swift` is generated from the phone app's
 design tokens in `apps/mobile/src/design/tokens.ts`: spacing, radii, opacity,
 the text styles with their macOS sizes from `macosText`, and the light and dark
@@ -2195,7 +2203,7 @@ hardened runtime and `Support/Node/node.entitlements`:
 `com.apple.security.cs.disable-library-validation`, because the `stim`
 commands the server runs on this Node can load a project's own native addons,
 signed by another team or not at all. Both are in the set Node.js signs its own
-macOS release with. The Desktop workflow stages the server on every run, signs
+macOS release with. The Desktop workflow stages the server on every run; its nightly run signs
 it the same way ad hoc and checks that it answers `/health` under an empty
 environment.
 
@@ -2362,7 +2370,7 @@ The fixture test skips without the variable and never starts the CLI or a device
 - `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo and observe its angle from the phone.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. An emulator without a hardware keyboard (`hw.keyboard=no`) drops key events, so Desktop types on it with `adb shell input`. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/WebFrames`: the Stim-owned Chrome page from `stim web`, over the Chrome DevTools Protocol on the loopback `cdpEndpoint` `stim status` reports. It connects only when `SystemInfo.getProcessInfo` names the Chrome pid status reports, attaches to the page's `targetId`, streams it with `Page.startScreencast` and sends `Input.dispatch*` events. Public protocol only; no WebKit view, which would render a different engine than the one agents test.
-- stim-server's `stim-frames` helper compiles the shared files listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. This includes the SceneKit Duo model used for composed mobile frames. Desktop CI compiles it; keep SwiftUI and StimKit dependencies behind module availability checks. Desktop and the helper both send simulator keys through `SimulatorHID.hardwareKey`, and page input through `WebPage`.
+- stim-server's `stim-frames` helper compiles the shared files listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. This includes the SceneKit Duo model used for composed mobile frames. The nightly Desktop workflow compiles it; keep SwiftUI and StimKit dependencies behind module availability checks. Desktop and the helper both send simulator keys through `SimulatorHID.hardwareKey`, and page input through `WebPage`.
 - `Sources/StimDesktop`: the SwiftUI app. `Design/` holds the generated tokens, the theme layer over them (`.textStyle(_:)`, `Font.stim(_:)` and the dynamic colors), and the component kit that mirrors the phone's: `.buttonStyle(.stim(_:_:))`, `IconButton`, `Pill`, `Banner`, `ListSection`/`ListRow`, `Card`, `HoverRowStyle`, `StatusDot`, `StimProgressBar`, `InlineEmpty` and the `IconSize` scale. A debug build has **Window > SwiftUI Playground** for production screen fixtures and design tokens.
 
 ### Native visual fixture exports

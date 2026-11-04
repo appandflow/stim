@@ -151,7 +151,11 @@ trimming dispositions and CI/tooling tradeoffs.
 ## CI scheduling
 
 Pull requests retain Linux unit and CLI/cache E2E checks, mobile tests,
-and strict Desktop Swift build/tests plus the frames helper. The Windows PR
+and the strict Desktop Swift debug build and tests. No job that takes more than
+about 10 minutes runs on a pull request or a push to `main`: the Release
+compile, the frames helper compile and the hardened-runtime server start of the
+Desktop workflow run nightly, and the Windows Android smoke of Native E2E is
+covered by its nightly loop. The Windows PR
 lane builds and typechecks the packages, then runs the existing executor,
 detached launcher, log command, cache provider and build-lock suites. These
 include real Windows subprocesses and filesystem/cache operations. The full
@@ -181,9 +185,12 @@ dispatch. A pushed `v*` tag starts `Post-release validation`
 separate from the npm Release workflow, so it neither delays nor fails the
 publish, and it does not gate a release until
 [#3878](https://github.com/appandflow/stim/issues/3878).
-Desktop release packaging runs nightly at 05:00 UTC and on manual Desktop
-dispatch; the production Desktop release workflow still builds and packages
-its candidate. Scheduled validation never publishes a release.
+The Desktop workflow's full validation runs nightly at 05:00 UTC and on manual
+Desktop dispatch (`gh workflow run desktop.yml --ref <branch>`): the Release
+configuration compile, the `stim-frames` helper compile, the hardened-runtime
+server start and an ad-hoc release package, on top of the checks a pull request
+gets. The production Desktop release workflow still builds and packages its
+candidate. Scheduled validation never publishes a release.
 
 ## Fixture isolation
 
