@@ -246,6 +246,8 @@ import { DEFAULT_VIDEO_LIMITS, HOSTED_MAX_BITRATE, videoPacket, VideoGate, type 
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
+import { androidScreen, simulatorScreen, type ScreenSize } from './device-screen.ts';
+import { LocalAgentPresence } from './local-agent-presence.ts';
 import { parsePresencePublish, PresenceHub, presenceKey } from './presence.ts';
 import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
 import { createKeepAwake, type KeepAwakeOptions, type KeepAwakeStatus } from './keep-awake.ts';
@@ -1813,6 +1815,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     allowed: (client) => buildAllowed({ id: client }),
   });
   const presence = new PresenceHub();
+  const localAgents = new LocalAgentPresence({
+    hub: presence,
+    follow: (workspace, onRecord, signal) =>
+      createStim({ projectRoot: workspace, env: options.env }).followLogs(
+        { sources: ['agent'], tail: 0, signal },
+        onRecord,
+      ),
+    screen: (platform, device) =>
+      platform === 'ios' ? simulatorScreen(device, options.env) : androidScreen(device, options.env),
+  });
   const control = new ControlHub({
     env: options.env,
     stimCli: options.stimCli,
@@ -1849,7 +1861,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const shares = new ShareHub({
     frames,
     control,
-    presence,
+    presence: {
+      subscribe: (key, listener) => localAgents.subscribe(key, listener),
+      join: (key, who) => presence.join(key, who),
+      leave: (key, id) => presence.leave(key, id),
+    },
     subscribeStatus: (listener) =>
       statusFeed.subscribe({
         item: (payload) => listener.item(payload as unknown as StatusPayload),
@@ -2967,7 +2983,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const stopPresence =
         target.presence === true && archive === undefined && !hosted && resolvedDir
-          ? presence.subscribe(
+          ? localAgents.subscribe(
               presenceKey(resolvedDir, frameTarget.platform, slot ?? 'default', physical === true),
               (participants) => {
                 if (!ended) send(socket, { event: 'presence', subscription, participants });
@@ -5001,14 +5017,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         }
       }
       if (method === 'device-host.presence.subscribe') {
-        if (typeof params.session !== 'string' || !hostedDevices.owns(session.id, params.session))
+        const hostedSession = params.session;
+        if (typeof hostedSession !== 'string' || !hostedDevices.owns(session.id, hostedSession))
           return error(id, 'unknown-session', 'This client has no such ready hosted session.');
         const subscription = openSubscription(id);
         if (!subscription) return;
         subscriptions.set(
           subscription,
-          hostedPresence.subscribe(params.session, (participants) =>
-            send(socket, { event: 'presence', subscription, participants }),
+          hostedPresence.subscribe(
+            hostedSession,
+            (participants) => send(socket, { event: 'presence', subscription, participants }),
+            async (): Promise<ScreenSize | null> => {
+              const target = hostedDevices.viewTarget(session.id, hostedSession);
+              if (target.platform === 'ios') return simulatorScreen(target.session.device.udid, options.env);
+              if (target.platform === 'android') return androidScreen(target.session.device.serial, options.env);
+              return null;
+            },
           ),
         );
         return;
@@ -5139,7 +5163,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
       const resolved = registeredWorkspace(parsed.workspace);
       if ('code' in resolved) return error(id, resolved.code, resolved.message);
-      presence.agent(
+      localAgents.published(
         presenceKey(resolved.dir, parsed.platform, parsed.slot ?? 'default', parsed.physical === true),
         parsed.command,
         parsed.phase,

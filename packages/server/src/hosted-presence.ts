@@ -3,9 +3,9 @@ import type { Readable } from 'node:stream';
 import { join } from 'node:path';
 import {
   agentActionGesture,
+  agentActionTarget,
   createAgentActionReader,
   deviceHostArea,
-  isJsonObject,
   parseAgentSnapshot,
   type AgentSnapshotTree,
   type NdjsonRecord,
@@ -18,26 +18,12 @@ const POLL_MS = 250;
 /** The largest agent-device answer read for a snapshot tree. */
 const MAX_ANSWER_BYTES = 8 * 1024 * 1024;
 
+type Viewport = NonNullable<AgentSnapshotTree['viewport']>;
+
 interface Follower {
   listeners: number;
   stop: () => void;
-}
-
-/**
- * The element an agent action acted on, from the details agent-device records. A ref is kept as `@ref`; a selector
- * is redacted to `<arg>` in the record, so a single positional that is not a coordinate pair stands for one, and
- * the recorded point picks the element.
- */
-function targetOf(details: unknown): string | undefined {
-  if (!isJsonObject(details)) return undefined;
-  const { ref, positionals, targetLabel } = details;
-  if (typeof ref === 'string') return `@${ref}`;
-  return Array.isArray(positionals) &&
-    positionals.length === 1 &&
-    typeof targetLabel === 'string' &&
-    !targetLabel.startsWith('(')
-    ? '<selector>'
-    : undefined;
+  measure: () => void;
 }
 
 /**
@@ -48,6 +34,7 @@ function targetOf(details: unknown): string | undefined {
 export class HostedPresence {
   private readonly hub = new PresenceHub();
   private readonly trees = new Map<string, AgentSnapshotTree>();
+  private readonly screens = new Map<string, Viewport>();
   private readonly followers = new Map<string, Follower>();
   private readonly pollMs: number;
   private readonly now: () => number;
@@ -71,8 +58,16 @@ export class HostedPresence {
         }));
   }
 
-  /** Sends `listener` the agent on `session` now, then each action of it, until the returned function is called. */
-  subscribe(session: string, listener: (participants: PresenceParticipant[]) => void): () => void {
+  /**
+   * Sends `listener` the agent on `session` now, then each action of it, until the returned function is called.
+   * `screen` measures the session's device in the units agent-device records points in, for actions that come
+   * before a snapshot did.
+   */
+  subscribe(
+    session: string,
+    listener: (participants: PresenceParticipant[]) => void,
+    screen?: () => Promise<Viewport | null>,
+  ): () => void {
     const key = hostedPresenceKey(session);
     const unsubscribe = this.hub.subscribe(key, listener);
     let follower = this.followers.get(session);
@@ -80,8 +75,27 @@ export class HostedPresence {
       const read = this.read(session, this.now());
       const timer = setInterval(() => this.publish(session, read()), this.pollMs);
       timer.unref();
-      follower = { listeners: 0, stop: () => clearInterval(timer) };
+      let measuring = false;
+      const measured: Follower = {
+        listeners: 0,
+        stop: () => clearInterval(timer),
+        measure: () => {
+          if (!screen || measuring || this.screens.has(session)) return;
+          measuring = true;
+          void (async () => {
+            try {
+              const viewport = await screen();
+              if (viewport && this.followers.get(session) === measured) this.screens.set(session, viewport);
+            } catch {
+            } finally {
+              measuring = false;
+            }
+          })();
+        },
+      };
+      follower = measured;
       this.followers.set(session, follower);
+      follower.measure();
     }
     follower.listeners++;
     const held = follower;
@@ -92,7 +106,9 @@ export class HostedPresence {
       unsubscribe();
       if (--held.listeners > 0) return;
       held.stop();
-      if (this.followers.get(session) === held) this.followers.delete(session);
+      if (this.followers.get(session) !== held) return;
+      this.followers.delete(session);
+      this.screens.delete(session);
     };
   }
 
@@ -101,7 +117,13 @@ export class HostedPresence {
     for (const record of records) {
       const { command, details } = record;
       if (record.event !== 'agent_action' || typeof command !== 'string' || !AGENT_COMMAND.test(command)) continue;
-      const gesture = agentActionGesture(details, this.trees.get(session) ?? null, targetOf(details));
+      if (!this.trees.get(session)?.viewport) this.followers.get(session)?.measure();
+      const gesture = agentActionGesture(
+        details,
+        this.trees.get(session) ?? null,
+        agentActionTarget(details),
+        this.screens.get(session),
+      );
       this.hub.agent(key, command, 'end', gesture ?? undefined);
     }
   }
@@ -127,12 +149,14 @@ export class HostedPresence {
   /** The session ended: drops its snapshot tree. */
   forget(session: string): void {
     this.trees.delete(session);
+    this.screens.delete(session);
   }
 
   close(): void {
     for (const follower of this.followers.values()) follower.stop();
     this.followers.clear();
     this.trees.clear();
+    this.screens.clear();
     this.hub.close();
   }
 }
