@@ -48,7 +48,12 @@ function fixture(
       for (const participant of participants) if (participant.kind === 'agent') gestures.push(participant.gesture);
     });
   const settle = () => vi.advanceTimersByTimeAsync(0);
-  return { agents, follows, screens, gestures, subscribe, settle };
+  const follow = () => {
+    const found = follows[0];
+    if (!found) throw new Error('nothing follows');
+    return found;
+  };
+  return { agents, follows, follow, screens, gestures, subscribe, settle };
 }
 
 beforeEach(() => vi.useFakeTimers({ now: NOW }));
@@ -56,11 +61,11 @@ beforeEach(() => vi.useFakeTimers({ now: NOW }));
 test("shows an agent-device action no wrapper ran as the agent's gesture, measured in the device's screen", async () => {
   const f = fixture();
   f.subscribe();
-  f.follows[0]!.emit(scroll(NOW - 700));
+  f.follow().emit(scroll(NOW - 700));
   await f.settle();
   expect(f.gestures).toEqual([{ kind: 'swipe', from: { x: 0.5, y: 0.75 }, to: { x: 0.5, y: 0.25 }, durationMs: 400 }]);
   expect(f.screens).toEqual(['ios:UDID']);
-  f.follows[0]!.emit(scroll(NOW - 100));
+  f.follow().emit(scroll(NOW - 100));
   await f.settle();
   expect(f.gestures).toHaveLength(2);
   expect(f.screens).toHaveLength(1);
@@ -69,7 +74,7 @@ test("shows an agent-device action no wrapper ran as the agent's gesture, measur
 test("measures an action in its session's snapshot viewport without asking the device", async () => {
   const f = fixture(() => ({ viewport: { width: 200, height: 400 }, nodes: [] }));
   f.subscribe();
-  f.follows[0]!.emit(scroll(NOW - 100, { details: { x: 100, y: 100 } }));
+  f.follow().emit(scroll(NOW - 100, { details: { x: 100, y: 100 } }));
   await f.settle();
   expect(f.gestures).toEqual([{ kind: 'tap', from: { x: 0.5, y: 0.25 }, durationMs: 0 }]);
   expect(f.screens).toEqual([]);
@@ -83,9 +88,9 @@ test('follows a workspace once for all its devices, and only while one of them h
   expect(f.follows.map((follow) => follow.workspace)).toEqual([WORKSPACE]);
   first();
   second();
-  expect(f.follows[0]!.signal.aborted).toBe(false);
+  expect(f.follow().signal.aborted).toBe(false);
   other();
-  expect(f.follows[0]!.signal.aborted).toBe(true);
+  expect(f.follow().signal.aborted).toBe(true);
   f.subscribe();
   expect(f.follows).toHaveLength(2);
 });
@@ -94,7 +99,7 @@ test('ignores history, actions on devices nobody watches and the records of a le
   const f = fixture();
   f.subscribe();
   f.subscribe(presenceKey(WORKSPACE, 'android', 'default', true));
-  const { emit } = f.follows[0]!;
+  const { emit } = f.follow();
   emit(scroll(NOW - 60_000));
   emit(scroll(NOW - 100, { platform: 'android' }));
   emit(scroll(NOW - 100, { slot: 'two' }));
@@ -115,7 +120,7 @@ describe('a gesture shown by both `stim agent-device` and the records', () => {
   test('draws once whichever comes first, and a repeat of the same action still draws', async () => {
     const f = fixture();
     f.subscribe();
-    const { emit } = f.follows[0]!;
+    const { emit } = f.follow();
     f.agents.published(KEY, 'scroll', 'end', swipe);
     emit(scroll(NOW - 100));
     await f.settle();
@@ -134,10 +139,10 @@ test('measures the device again at the next action when measuring failed', async
     return SCREEN;
   });
   f.subscribe();
-  f.follows[0]!.emit(scroll(NOW - 200));
+  f.follow().emit(scroll(NOW - 200));
   await f.settle();
   expect(f.gestures).toEqual([undefined]);
-  f.follows[0]!.emit(scroll(NOW - 100));
+  f.follow().emit(scroll(NOW - 100));
   await f.settle();
   expect(f.gestures.at(-1)).toMatchObject({ kind: 'swipe' });
 });
@@ -147,7 +152,7 @@ test('a gesture from `stim agent-device` on a device nobody follows does not wai
   const swipe: PresenceGesture = { kind: 'swipe', from: { x: 0.5, y: 0.75 }, to: { x: 0.5, y: 0.25 }, durationMs: 400 };
   f.agents.published(KEY, 'scroll', 'end', swipe);
   f.subscribe();
-  f.follows[0]!.emit(scroll(NOW - 100));
+  f.follow().emit(scroll(NOW - 100));
   await f.settle();
   expect(f.gestures).toEqual([undefined, swipe]);
 });

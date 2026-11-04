@@ -145,11 +145,11 @@ test("measures an action that came before any snapshot in the session's device s
   const f = fixture();
   const { events } = f.seen(A, async () => ({ width: 200, height: 400 }));
   await vi.advanceTimersByTimeAsync(0);
-  f.records[A]!.push(action('press', { x: 100, y: 100 }));
+  f.records[A]?.push(action('press', { x: 100, y: 100 }));
   vi.advanceTimersByTime(POLL_MS);
   expect(events.at(-1)?.[0]?.gesture).toEqual({ kind: 'tap', from: { x: 0.5, y: 0.25 }, durationMs: 0 });
   await f.answer(A, snapshot);
-  f.records[A]!.push(action('press', { x: 100, y: 100 }));
+  f.records[A]?.push(action('press', { x: 100, y: 100 }));
   vi.advanceTimersByTime(POLL_MS);
   expect(events.at(-1)?.[0]?.gesture).toEqual({ kind: 'tap', from: { x: 0.25, y: 0.125 }, durationMs: 0 });
 });
@@ -162,10 +162,10 @@ test('measures the device again at the next action when the first measuring fail
     return { width: 200, height: 400 };
   });
   await vi.advanceTimersByTimeAsync(0);
-  f.records[A]!.push(action('press', { x: 100, y: 100 }));
+  f.records[A]?.push(action('press', { x: 100, y: 100 }));
   await vi.advanceTimersByTimeAsync(POLL_MS);
   expect(events.at(-1)?.[0]?.gesture).toBeUndefined();
-  f.records[A]!.push(action('press', { x: 100, y: 100 }));
+  f.records[A]?.push(action('press', { x: 100, y: 100 }));
   await vi.advanceTimersByTimeAsync(POLL_MS);
   expect(events.at(-1)?.[0]?.gesture).toEqual({ kind: 'tap', from: { x: 0.5, y: 0.25 }, durationMs: 0 });
 });
