@@ -1997,6 +1997,26 @@ describe('a web share', () => {
       expect(String(viewer.headers['set-cookie'])).toContain('stim_transport=webrtc');
     });
 
+    it('offers WebRTC to a local share only when this machine can send it, and to a hosted share whenever the setting is on', async () => {
+      const canSendHere = false;
+      f = fixture({}, { webrtc: (hosted) => hosted || canSendHere });
+      const localShare = await started(f);
+      const localUrl = local(localShare, f.hub.port ?? 0);
+      expect((await http(localUrl, { cookie: await login(localUrl, localShare.password ?? '') })).body).toContain(
+        'data-webrtc="false"',
+      );
+      await f.hub.close();
+      f.presence.close();
+
+      f = fixture({}, { webrtc: (hosted) => hosted || canSendHere });
+      useHosted(f);
+      const remote = await started(f);
+      const remoteUrl = local(remote, f.hub.port ?? 0);
+      expect((await http(remoteUrl, { cookie: await login(remoteUrl, remote.password ?? '') })).body).toContain(
+        'data-webrtc="true"',
+      );
+    });
+
     it('streams and drives through the hosted source, never the local frame pool or control hub', async () => {
       f.status(hostedPayload() as never);
       const share = await started(f, { control: true });

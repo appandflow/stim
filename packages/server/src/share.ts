@@ -128,8 +128,11 @@ export interface ShareDeps {
     /** Retries removing the route `stranded` reports. */
     removeStranded: () => Promise<void>;
   };
-  /** Whether `share.webrtc` is on; without it viewers get WebSocket video only and WebRTC offers are refused. */
-  webrtc?: () => boolean;
+  /**
+   * Whether viewers of a share may take video over WebRTC: `share.webrtc` is on and, for a device on this machine,
+   * node-datachannel loads here. Without it viewers get WebSocket video only and WebRTC offers are refused.
+   */
+  webrtc?: (hosted: boolean) => boolean;
   /** Frames and input for a device a host Mac runs for this machine; without it such a share is refused. */
   hosted?: (host: HostedTarget, request: ShareTarget) => ShareSource;
   /** The display name of an app on a simulator, for the page titles; defaults to reading its Info.plist. */
@@ -588,6 +591,7 @@ export class ShareHub {
     };
     share.timer.unref?.();
     this.shares.set(share.key, share);
+    this.preloadWebrtc(share);
     void this.readApp(share);
     share.unwatch = this.deps.subscribeStatus({
       item: (payload) => this.reconcile(share, payload),
@@ -963,6 +967,7 @@ export class ShareHub {
     share.bound = bound.key;
     share.hosted = bound.hosted;
     share.device = bound.device;
+    this.preloadWebrtc(share);
     void this.readApp(share);
     console.error(`stim-server: web share ${share.id} resumed on ${bound.key}`);
     for (const viewer of share.viewers) {
@@ -1128,7 +1133,7 @@ export class ShareHub {
     if (rest === '' && request.method === 'GET') {
       const [path = '', query = ''] = (request.url ?? '').split('?');
       const transport = new URLSearchParams(query).get('transport');
-      const remember = this.rtcOffered() && (transport === 'webrtc' || transport === 'ws') ? transport : null;
+      const remember = this.rtcOffered(share) && (transport === 'webrtc' || transport === 'ws') ? transport : null;
       const extra = remember
         ? { 'set-cookie': `stim_transport=${remember}; Secure; SameSite=Strict; Path=${path}; Max-Age=86400` }
         : {};
@@ -1149,7 +1154,7 @@ export class ShareHub {
             platform,
             buttons: BUTTONS[platform],
             rotate,
-            webrtc: this.rtcOffered(),
+            webrtc: this.rtcOffered(share),
             stun: process.env.STIM_WEBRTC_STUN ?? '',
           }),
           extra,
@@ -1498,8 +1503,12 @@ export class ShareHub {
     await this.input(share, viewer, message);
   }
 
-  private rtcOffered(): boolean {
-    return this.deps.webrtc?.() === true;
+  private preloadWebrtc(share: Share): void {
+    this.rtcOffered(share);
+  }
+
+  private rtcOffered(share: Share): boolean {
+    return this.deps.webrtc?.(share.hosted) === true;
   }
 
   /**
@@ -1515,7 +1524,7 @@ export class ShareHub {
       }
     };
     const { source } = share;
-    if (!viewer.video || !this.rtcOffered() || typeof sdp !== 'string' || sdp.length > 65536) {
+    if (!viewer.video || !this.rtcOffered(share) || typeof sdp !== 'string' || sdp.length > 65536) {
       return failed('WebRTC was not requested.');
     }
     if (!source?.webrtc || !viewer.detach) return failed('This share cannot send WebRTC.');
