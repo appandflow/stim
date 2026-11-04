@@ -69,6 +69,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   resetExecutor();
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
@@ -296,6 +297,7 @@ describe.skipIf(process.platform === 'win32')(
       });
 
       test('a finished worktree the last worktree check kept for its grace period does', async () => {
+        vi.stubEnv('STIM_DAEMON', 'on');
         awaitRemoval();
         expect(await exitsAfterTwoQuietTicks()).toBe(false);
       });

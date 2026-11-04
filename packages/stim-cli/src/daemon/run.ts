@@ -170,9 +170,11 @@ async function pendingWork(
   const settings = resolveMaintenanceSettings(config);
   const removal =
     act && settings.mode === 'on' && settings.removeFinishedWorktrees ? readMaintenanceState()?.nextRemoval : undefined;
-  return removal
-    ? `the finished worktree ${removal.target} becomes removable at ${new Date(removal.at).toISOString()}`
-    : null;
+  if (!removal) return null;
+  const at = new Date(removal.at).toISOString();
+  return removal.at > Date.now()
+    ? `the finished worktree ${removal.target} becomes removable at ${at}`
+    : `the finished worktree ${removal.target}, removable since ${at}, waits for the next worktree check`;
 }
 
 /**
