@@ -146,6 +146,12 @@ describe('--json', () => {
     });
   });
 
+  it('devices lists a registry file that a newer Stim wrote as a whole, without reading its records', () => {
+    spend(createPairingToken().token, 'Phone');
+    writeFileSync(join(home, 'server', 'devices.json'), JSON.stringify({ version: 3, devices: [{ id: 'future' }] }));
+    expect(run('devices', '--json')).toMatchObject({ devices: [], unreadable: [{ file: 'devices.json', version: 3 }] });
+  });
+
   it('devices reports Stim Desktop as desktop, any other or unrecorded app as phone, and the recorded app additively', () => {
     const desktop = spend(createPairingToken().token, 'Studio Mac')?.device;
     const phone = spend(createPairingToken().token, 'Phone')?.device;

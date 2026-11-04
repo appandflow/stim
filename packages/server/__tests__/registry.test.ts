@@ -372,4 +372,43 @@ describe('entries this version cannot read', () => {
       { file: 'devices.json', index: 4 },
     ]);
   });
+  it('keeps the other top-level members of a version 2 file as their text', () => {
+    const first = pair('First');
+    const others = '"label": {"keep":[1,2.0]}, "big":12345678901234567890';
+    writeFileSync(
+      file('devices.json'),
+      `{"version":2, ${others.split(', ')[0]}, "devices":[${JSON.stringify(first)}], ${others.split(', ')[1]}}`,
+    );
+    renameDevice(first.id, 'Studio');
+    pair('Second');
+    const text = readFileSync(file('devices.json'), 'utf8');
+    for (const member of others.split(', ')) expect(text).toContain(member);
+    expect(readDevices().map((device) => device.name)).toEqual(['Studio', 'Second']);
+  });
+
+  it('refuses every write to a file that a newer Stim wrote, and lists it as a whole', () => {
+    const phone = pair();
+    const newer = JSON.stringify({ version: 3, devices: [{ id: phone.id, record: { kind: 'passkey' } }] });
+    for (const name of ['devices.json', 'build-clients.json', 'device-host-clients.json']) {
+      writeFileSync(file(name), newer);
+    }
+    expect(() => pair('Second')).toThrow(/version 3, which a newer Stim wrote/);
+    expect(readUnreadable()).toEqual([
+      { file: 'devices.json', version: 3 },
+      { file: 'build-clients.json', version: 3 },
+      { file: 'device-host-clients.json', version: 3 },
+    ]);
+    for (const name of ['devices.json', 'build-clients.json', 'device-host-clients.json']) {
+      expect(readFileSync(file(name), 'utf8')).toBe(newer);
+    }
+  });
+
+  it('still replaces a file of protocol 1 on the next write', () => {
+    mkdirSync(join(home, 'server'));
+    writeFileSync(file('devices.json'), JSON.stringify({ version: 1, devices: [{ id: 'old', token: 'secret' }] }));
+    pair();
+    expect(JSON.parse(readFileSync(file('devices.json'), 'utf8'))).toMatchObject({ version: 2 });
+    expect(readUnreadable()).toEqual([]);
+    expect(readFileSync(file('devices.json'), 'utf8')).not.toContain('secret');
+  });
 });

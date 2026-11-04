@@ -31,7 +31,7 @@ import {
   type QuietHours,
 } from './protocol.ts';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
-import { arrayElementSpans } from './json-spans.ts';
+import { arrayElementSpans, otherMembers } from './json-spans.ts';
 
 export const PAIRING_TTL_MS: number = 5 * 60_000;
 
@@ -333,22 +333,35 @@ const slotId = (slot: Slot): string | undefined => {
   return typeof id === 'string' ? id : undefined;
 };
 
-/** Records of protocol 1, which stored device tokens and tailnet nodes, are not read. */
-function readSlots(file: string): Slot[] {
+interface Contents {
+  slots: Slot[];
+  /** The text of each top-level member of a version 2 file other than `version` and `devices`. */
+  others: string[];
+  /** The version of a file that a newer Stim wrote. */
+  newer: number | null;
+}
+
+/** Records of protocol 1, which stored device tokens and tailnet nodes, are not read, and neither are those of a newer version. */
+function readContents(file: string): Contents {
+  const none: Contents = { slots: [], others: [], newer: null };
   const text = readRegistryText(file);
-  if (text === null) return [];
+  if (text === null) return none;
   const registry = parseRegistry(file, text);
-  if (registry.version !== REGISTRY_VERSION) return [];
-  const { devices } = registry;
+  const { version, devices } = registry;
+  if (typeof version === 'number' && version > REGISTRY_VERSION) return { ...none, newer: version };
+  if (version !== REGISTRY_VERSION) return none;
   if (!Array.isArray(devices)) throw new RegistryUnavailable(`${file} has no devices list.`);
   const spans = arrayElementSpans(text, 'devices');
   if (spans?.length !== devices.length) throw new RegistryUnavailable(`Cannot locate the records in ${file}.`);
-  return spans.map(([start, end], index) => ({
+  const slots = spans.map(([start, end], index) => ({
     raw: text.slice(start, end),
     value: devices[index],
     device: parseDevice(devices[index]),
   }));
+  return { slots, others: otherMembers(text, ['version', 'devices']), newer: null };
 }
+
+const readSlots = (file: string): Slot[] => readContents(file).slots;
 
 function readRecords(file: string): PairedDevice[] {
   return readSlots(file).flatMap((slot) => slot.device ?? []);
@@ -365,43 +378,60 @@ function recordsOrNone(file: string): PairedDevice[] {
 
 /**
  * Writes `devices` as the file's records. An entry this version cannot read stays in its place, as the text it has in
- * the file. A record left in `devices` takes the place of the entry with its id, and a new one goes last.
+ * the file, and so does any other top-level member. A record left in `devices` takes the place of the entry with its id,
+ * and a new one goes last. A file that a newer Stim wrote is not written.
  */
 function writeRecords(file: string, devices: PairedDevice[]): void {
   const marker = randomBytes(8).toString('hex');
   const unreadable: string[] = [];
   const remaining = [...devices];
   const entries: unknown[] = [];
-  for (const { raw, device } of readSlots(file)) {
+  const { slots, others, newer } = readContents(file);
+  if (newer !== null) {
+    throw new RegistryUnavailable(
+      `${file} is registry version ${newer}, which a newer Stim wrote; this Stim writes version ${REGISTRY_VERSION} and leaves it as it is.`,
+    );
+  }
+  for (const { raw, device } of slots) {
     if (device === null) entries.push(`${marker}${unreadable.push(raw) - 1}`);
     else {
       const index = remaining.findIndex((each) => each.id === device.id);
       if (index >= 0) entries.push(...remaining.splice(index, 1));
     }
   }
-  let text = `${JSON.stringify({ version: REGISTRY_VERSION, devices: [...entries, ...remaining] }, null, 2)}\n`;
+  const members = Object.fromEntries(others.map((_, index) => [`${marker}m${index}`, 0]));
+  const value = { version: REGISTRY_VERSION, devices: [...entries, ...remaining], ...members };
+  let text = `${JSON.stringify(value, null, 2)}\n`;
   for (const [index, raw] of unreadable.entries()) text = text.replace(`"${marker}${index}"`, () => raw);
+  for (const [index, raw] of others.entries()) text = text.replace(`"${marker}m${index}": 0`, () => raw);
   writeText(file, text);
 }
 
-/** An entry of a registry's `devices` list that this version cannot read. It is kept as it is and grants nothing. */
+/**
+ * An entry of a registry's `devices` list that this version cannot read, or, with `version`, a whole registry file that
+ * a newer Stim wrote. It is kept as it is and grants nothing.
+ */
 export interface UnreadableRecord {
   /** The registry file's name: `devices.json`, `build-clients.json` or `device-host-clients.json`. */
   file: string;
-  /** The entry's position in that file's `devices` list. */
-  index: number;
+  /** The entry's position in that file's `devices` list. Absent for a whole file. */
+  index?: number;
   /** The entry's own `id`, when it has a string one. */
   id?: string;
+  /** The version of a whole file that a newer Stim wrote. */
+  version?: number;
 }
 
 const REGISTRIES = [devicesFile, () => clientsFile('build'), () => clientsFile('device-host')];
 
 /** The entries of the three registries that this version cannot read, or none for a registry that cannot be read. */
 export function readUnreadable(): UnreadableRecord[] {
-  return REGISTRIES.flatMap((path) => {
+  return REGISTRIES.flatMap((path): UnreadableRecord[] => {
     const file = path();
     try {
-      return readSlots(file).flatMap((slot, index) => {
+      const { slots, newer } = readContents(file);
+      if (newer !== null) return [{ file: basename(file), version: newer }];
+      return slots.flatMap((slot, index) => {
         if (slot.device !== null) return [];
         const id = cleanClientText(slotId(slot) ?? '');
         return [{ file: basename(file), index, ...(id ? { id } : {}) }];

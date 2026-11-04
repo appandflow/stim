@@ -362,7 +362,9 @@ function describe(device: PairedDevice): string {
   return `${device.id}  ${device.name}  ${scope}  from ${from}  paired ${device.pairedAt}  last seen ${device.lastSeenAt ?? 'never'}`;
 }
 
-function describeUnreadable({ file, index, id }: UnreadableRecord): string {
+function describeUnreadable({ file, index, id, version }: UnreadableRecord): string {
+  if (version !== undefined)
+    return `unreadable  ${file} registry version ${version}, written by a newer Stim  left as it is`;
   return `unreadable  ${file} entry ${index}${id ? `  ${id}` : ''}  left as it is`;
 }
 

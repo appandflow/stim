@@ -837,8 +837,9 @@ with stim-server devices rename <id> <name>; the client sees the name on its
 next connection, and its access does not change. An entry of a registry file
 that this stim-server cannot read is never dropped: every write keeps it as the
 text it had, it grants nothing, and devices --json lists it in unreadable as
-{ file, index, id? }. Rename, grant and revoke refuse its id; the person edits
-the file.
+{ file, index, id? }. A file with a registry version newer than 2 is listed as
+{ file, version }, its records are not read, and writes to it are refused.
+Rename, grant and revoke refuse an unreadable id; the person edits the file.
 
 The host's person sees Hosted here rows in stim-server devices; --json adds
 hostedSessions beside devices. Rows show client, platform, device, installed

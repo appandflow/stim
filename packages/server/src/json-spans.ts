@@ -32,13 +32,21 @@ function skipValue(text: string, from: number): number {
   return index;
 }
 
-/** Calls `visit` with each member's key and the [start, end) span of its value in the object or array at `from`. */
-function eachMember(text: string, from: number, visit: (key: unknown, start: number, end: number) => void): void {
+/**
+ * Calls `visit` with each member's key, the [start, end) span of its value and the index where the member starts, in the
+ * object or array at `from`.
+ */
+function eachMember(
+  text: string,
+  from: number,
+  visit: (key: unknown, start: number, end: number, memberStart: number) => void,
+): void {
   const object = text[from] === '{';
   let index = from + 1;
   for (;;) {
     index = skipSpace(text, index);
     if (text[index] === '}' || text[index] === ']') return;
+    const memberStart = index;
     let key: unknown = null;
     if (object) {
       const keyEnd = skipValue(text, index);
@@ -47,7 +55,7 @@ function eachMember(text: string, from: number, visit: (key: unknown, start: num
       index = skipSpace(text, index);
     }
     const end = skipValue(text, index);
-    visit(key, index, end);
+    visit(key, index, end, memberStart);
     index = skipSpace(text, end);
     if (text[index] === ',') index++;
   }
@@ -67,4 +75,13 @@ export function arrayElementSpans(text: string, member: string): Array<[number, 
   const spans: Array<[number, number]> = [];
   eachMember(text, array[0], (_key, start, end) => spans.push([start, end]));
   return spans;
+}
+
+/** The text of each member of the top-level object `text` whose key is not in `omit`, from its key to the end of its value. */
+export function otherMembers(text: string, omit: readonly string[]): string[] {
+  const members: string[] = [];
+  eachMember(text, skipSpace(text, 0), (key, _start, end, memberStart) => {
+    if (typeof key !== 'string' || !omit.includes(key)) members.push(text.slice(memberStart, end));
+  });
+  return members;
 }
