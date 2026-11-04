@@ -2003,7 +2003,7 @@ describe("a web share starting while the workspace's devices may be shut down", 
     expect(held.events).toEqual([`hold ${WORKSPACE}`, 'release']);
   });
 
-  it('counts as a start in flight until it answers, whether it registers a share or is refused', async () => {
+  it('counts every start as in flight until it answers', async () => {
     const held = claim();
     const f = fixture({}, { holdWorkspace: held.holdWorkspace });
     expect(f.hub.startsInFlight).toBe(0);

@@ -342,7 +342,9 @@ Only an explicit stop ends a share before its expiry: `stim share stop`,
   (`$STIM_HOME/server/share-server.log`) on stderr. That server stops on its
   own when its last share ends, or after 2 minutes without one, and removes its
   Funnel route first, and stays up retrying while that removal fails;
-  `stim share stop` also stops it. If the Stim home does not answer when it
+  `stim share stop` also stops it, unless a share start is still in flight
+  (another workspace's may wait for its devices), which it leaves running and
+  says so. If the Stim home does not answer when it
   starts, it exits at once and `stim share` reports its log. A server Stim Desktop or
   the background service runs is never stopped. Without a matching
   `@stim-cli/server`, `stim share` refuses with `STIM_SERVER_NOT_RUNNING` and
