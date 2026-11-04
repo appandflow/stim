@@ -44,6 +44,7 @@ export * from './hosted-ios.ts';
 export * from './hosted-android.ts';
 export * from './hosted-native.ts';
 export * from './hosted-metro.ts';
+export * from './reverse-ports.ts';
 export * from './tailnet.ts';
 export * from './hosted-logs.ts';
 export * from './maintenance.ts';

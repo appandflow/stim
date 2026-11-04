@@ -28,7 +28,7 @@ import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import { phaseLine, stepClock, stepTimer } from '../command-output.ts';
 import { waitFlagConflict, leaseExpiryText, type RunLease } from '../engine/device-lease-run.ts';
-import { parseMachine } from '@stim-cli/core/state';
+import { parseMachine, readWorkspaceState, reversePorts } from '@stim-cli/core/state';
 import {
   connectIosBackend,
   deviceRemoteConflict,
@@ -1063,6 +1063,16 @@ async function runIos(
         ? 'ios.lanHost'
         : `${chosen.interfaceName ?? 'interface'}${chosen.candidates > 1 ? ` of ${chosen.candidates} candidates` : ''}`;
       phase('lan', `${lanOriginUrl} (${source})`);
+      const reversed = reversePorts(readWorkspaceState(root));
+      if (reversed.length)
+        note(
+          chalk.yellow(
+            phaseLine(
+              'reverse',
+              `localhost:${reversed.join(', localhost:')} is not reachable from a phone, because USB carries no reverse forward; the app needs this Mac's network address instead.`,
+            ),
+          ),
+        );
       if (publicUrlSetting(settings) || tunnelModeSetting(settings)) {
         note(
           chalk.dim(

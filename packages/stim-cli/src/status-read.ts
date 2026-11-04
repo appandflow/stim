@@ -84,6 +84,7 @@ import {
   readDormantStage,
   readIdleStage,
   readIdleStop,
+  reversePorts,
   readBuildHistory,
   readLastBuilds,
   readDevicePlacement,
@@ -110,6 +111,8 @@ import { createAppProcessReader } from './devices/app-process.ts';
 import { hasMetroReverse } from './engine/app-install.ts';
 import {
   addReverseMissingIssue,
+  addReversePortMissingIssue,
+  reversePortTargets,
   applyMachineMemory,
   deviceLeaseStates,
   environmentState,
@@ -759,9 +762,18 @@ function readMetroReverses(
   probes: StatusProbes,
 ): void {
   for (const [i, state] of states.entries()) {
-    for (const target of metroReverseTargets(state, launchesByState[i]!)) {
+    const launches = launchesByState[i] ?? {};
+    for (const target of metroReverseTargets(state, launches)) {
       const listing = probes.metroReverses(target.serial);
       if (listing !== null && !hasMetroReverse(listing, target.metroPort)) addReverseMissingIssue(state, target);
+    }
+    const ports = reversePorts(readWorkspaceState(state.path));
+    if (ports.length === 0) continue;
+    for (const target of reversePortTargets(state, launches)) {
+      const listing = probes.metroReverses(target.serial);
+      if (listing === null) continue;
+      for (const port of ports)
+        if (!hasMetroReverse(listing, port)) addReversePortMissingIssue(state, { ...target, port });
     }
   }
 }

@@ -17,7 +17,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 ```
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
-`ios`, `android`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove`, `settings [get|set|unset]`,
+`ios`, `android`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release|reverse]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove`, `settings [get|set|unset]`,
 `status`, `stats`, `gc`, and `guide`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
@@ -698,7 +698,8 @@ state a physical device leaves is its lease: the file under
 `$STIM_HOME/device-locks/` and the holder's token in that workspace's
 `state.json`, plus, for Android, the serial and Metro port of the `adb reverse`
 the run added, recorded in that `state.json` so `stop` and `worktree remove`
-remove the reverses that point at that Metro port and nothing else on the phone. For live view and control of a leased Android phone, stim-server pushes the
+remove the reverses that point at that Metro port or at a port the workspace
+reversed with `ports reverse`, and nothing else on the phone. For live view and control of a leased Android phone, stim-server pushes the
 scrcpy server jar to `/data/local/tmp`, runs it with `app_process` over an
 `adb forward`, and removes the jar and the forward when the stream stops; it
 changes no setting. A serial or UDID never enters the project registry, and

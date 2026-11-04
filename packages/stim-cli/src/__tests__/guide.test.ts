@@ -24,6 +24,7 @@ import {
   PLACEMENT_DECISIONS,
   PLACEMENT_WORDS,
   REPLACED_SETTINGS,
+  MAX_REVERSE_PORTS,
 } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
@@ -841,6 +842,13 @@ test('named ports guidance is routed and separates named listener cleanup from M
   expect(renderTopic('ports')).toContain('--dry-run');
   expect(renderTopic('ports')).toContain('stim stop leaves');
   expect(renderSection('cleanup', 'gc')).toContain('guide ports');
+});
+
+test('ports guidance documents reverse and its cap', () => {
+  const guide = renderTopic('ports');
+  expect(guide).toContain('stim ports reverse --remove');
+  expect(guide).toContain(`at most ${MAX_REVERSE_PORTS}`);
+  expect(guide).toContain('android-reverse-missing');
 });
 
 test('guide prints the status block before the index and the agent topic, and never before a section', async () => {

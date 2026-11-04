@@ -1371,7 +1371,10 @@ RULES
                                     Metro, but the adb reverse for that Metro
                                     port is gone, so the app cannot reach
                                     Metro; the remedy stim reload android
-                                    restores it
+                                    restores it. It also fires for a port
+                                    reversed with stim ports reverse that the
+                                    emulator lost; the remedy is then
+                                    stim ports reverse <port>
              avd-not-detected       adb does not see the owned emulator while
                                     the workspace expects it: it holds an
                                     unexpired lease on its serial, or it
