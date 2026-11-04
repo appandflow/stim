@@ -995,6 +995,16 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Parked emulators kept for adoption; 0 turns parking off',
   },
   {
+    key: 'pool.bootedGraceMinutes',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 15,
+    env: 'STIM_POOL_BOOTED_GRACE_MINUTES',
+    scopedHomeValue: 0,
+    description:
+      'Minutes a parked simulator stays booted when memory pressure is normal and a device slot is free, so the next ios adopts it without a boot; 0 shuts it down at once',
+  },
+  {
     key: 'daemon.mode',
     type: { kind: 'choice', choices: ['on', 'report', 'off'] },
     scopes: MACHINE,

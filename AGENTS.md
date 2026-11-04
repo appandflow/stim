@@ -725,6 +725,12 @@ disk pressure, or automatic maintenance's age sweep after
 `maintenance.olderThanDays`; erase them only with `gc --cache parked
 --delete`. Every route uses centralized teardown and ownership revalidation.
 `gc --delete` deletes parked hosted devices through their owning session home.
+Park keeps a simulator that is booted when it parks it booted for
+`pool.bootedGraceMinutes`, only while memory pressure is normal and a device slot
+is free, and records `bootedUntil`; adoption of it still resets and verifies as
+above, without the boot. The stim-daemon shuts a booted parked simulator down
+through teardown at expiry, under memory pressure before any workspace's device,
+and before it reclaims a workspace's device for a waiting run.
 
 `stim web` launches the installed Chrome only with a profile Stim created under
 `$STIM_HOME/workspaces/<id>/web/`, listed under `web` in the created-devices

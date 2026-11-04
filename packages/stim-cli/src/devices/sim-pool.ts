@@ -23,6 +23,8 @@ interface ParkedRecord {
   udid: string;
   name: string;
   parkedAt: string;
+  /** Set while the device is kept booted for adoption; the daemon shuts it down once this time passes. */
+  bootedUntil?: string;
   deletionClaim?: unknown;
 }
 
@@ -62,6 +64,7 @@ function isParkedRecord(value: unknown, platform: PoolPlatform): value is PoolRe
     typeof record.name === 'string' &&
     record.name.startsWith('stim-') &&
     typeof record.parkedAt === 'string' &&
+    (record.bootedUntil === undefined || typeof record.bootedUntil === 'string') &&
     (platform === 'android'
       ? record.udid === record.name &&
         /^stim-[A-Za-z0-9._-]+$/.test(record.name) &&
@@ -114,11 +117,18 @@ export function isLegacyDeletionClaim(value: unknown): boolean {
   return marker.kind !== 'ownership-claim' || typeof marker.claimId !== 'string' || marker.claimId.length === 0;
 }
 
+/** Whether the record keeps its device booted and the grace period has not passed. */
+export function isBootedParked(record: ParkedRecord, now: number = Date.now()): boolean {
+  return record.bootedUntil !== undefined && Date.parse(record.bootedUntil) > now;
+}
+
+/** The records an adoption may take for this model and runtime: a device kept booted first, then oldest first. */
 export function selectParked(
   records: readonly ParkedSim[],
   { deviceTypeIdentifier, runtimeIdentifier }: { deviceTypeIdentifier: string; runtimeIdentifier: string },
+  now: number = Date.now(),
 ): ParkedSim[] {
-  return oldestFirst(
+  const matching = oldestFirst(
     records.filter(
       (r) =>
         !isLegacyDeletionClaim(r.deletionClaim) &&
@@ -126,6 +136,7 @@ export function selectParked(
         r.runtimeIdentifier === runtimeIdentifier,
     ),
   );
+  return [...matching.filter((r) => isBootedParked(r, now)), ...matching.filter((r) => !isBootedParked(r, now))];
 }
 
 export function evictOverflow<T extends ParkedRecord>(records: readonly T[], max: number): { keep: T[]; evicted: T[] } {
@@ -346,6 +357,17 @@ async function settleParkedAfter<P extends PoolPlatform>(
     if (operation) stopDeclaringSpawnsOn(operation, claim);
     if (!retained) releaseClaim(claim);
   }
+}
+
+/** Runs `action` on the parked record under its operation claim, then replaces the record with `keep(record)`. */
+export function keepParkedAfter<P extends PoolPlatform>(
+  platform: P,
+  udid: string,
+  action: (record: PoolRecords[P]) => void | Promise<void>,
+  keep: (record: PoolRecords[P]) => PoolRecords[P],
+  operation?: StimContext,
+): Promise<PoolRecords[P] | null> {
+  return settleParkedAfter(platform, udid, action, keep, operation);
 }
 
 export async function dropParked(platform: PoolPlatform, udid: string, operation?: StimContext): Promise<boolean> {

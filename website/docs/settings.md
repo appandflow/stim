@@ -405,13 +405,22 @@ set always wins over that default. `stim settings` shows such a default as
 workspace to adopt. Absent means 3; `0` turns parking and adoption off. When
 `STIM_HOME` is set, parking is off unless `STIM_POOL_IOS_PARKED_MAX` is set too.
 `pool.androidParkedMax` and `STIM_POOL_ANDROID_PARKED_MAX` apply the same rules
-to Android emulators. The hosting Mac also uses these bounds for hosted devices
+to Android emulators.
+
+The hosting Mac also uses these bounds for hosted devices
 on stop, separately from its local pool and across all clients per platform.
 Hosted adoption is limited to the same client, clears app data and removes other
 apps. Parked hosted devices persist across a clean server restart; the oldest
 excess devices, unusable adoption candidates and a revoked client's devices are
 retired. See [hosted parking](./remote-machines.md#hosted-parking-and-restart)
 and [owned devices](/docs/owned-devices) for adoption cleanup.
+
+`pool.bootedGraceMinutes` is how many minutes `worktree remove` keeps a
+simulator that is booted booted as it parks it, so the next `stim ios` that
+adopts it skips the boot. Absent means 15; `0` shuts it down at park. Stim keeps
+it booted only while macOS memory pressure is normal and a device slot is free.
+`STIM_POOL_BOOTED_GRACE_MINUTES` overrides it, and when `STIM_HOME` is set it is
+`0` unless that variable is set. Emulators are always shut down at park. It needs the stim-daemon: with `daemon.mode` `off` or `report`, or on Windows, `worktree remove` shuts the simulator down at park.
 
 `remote.buildPoolDisabled` and `remote.devicePoolDisabled` list members excluded
 from this requester's automatic build and simulator/emulator placement. Both default

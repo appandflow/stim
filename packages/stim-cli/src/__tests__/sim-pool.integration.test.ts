@@ -98,6 +98,18 @@ test('selection is exact by model and runtime and oldest first', () => {
   ).toEqual(['FIRST', 'SECOND']);
 });
 
+test('selection offers a simulator kept booted before an older shut-down one, until its grace period passes', () => {
+  const now = Date.parse('2026-09-02T00:00:00.000Z');
+  const booted = { ...second, bootedUntil: '2026-09-02T00:10:00.000Z' };
+  const expired = { ...first, bootedUntil: '2026-09-01T23:00:00.000Z' };
+  const model = { deviceTypeIdentifier: 'iphone-17', runtimeIdentifier: 'ios-26-5' };
+  expect(selectParked([expired, booted], model, now).map((record) => record.udid)).toEqual(['SECOND', 'FIRST']);
+  expect(selectParked([expired, booted], model, now + 20 * 60_000).map((record) => record.udid)).toEqual([
+    'FIRST',
+    'SECOND',
+  ]);
+});
+
 test('overflow eviction removes the oldest records regardless of insertion order', () => {
   const third = { ...second, deviceTypeIdentifier: 'ipad-pro', udid: 'THIRD', parkedAt: '2026-09-01T12:00:00.000Z' };
   const result = evictOverflow([third, first, second], 1);

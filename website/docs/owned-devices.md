@@ -767,6 +767,18 @@ and waits up to 15 seconds more. A simulator that stays booted is deleted
 instead, and `stim worktree remove` prints `could not park <name>: ... --
 deleted it instead`.
 
+A simulator that is booted when `stim worktree remove` parks it stays booted
+for `pool.bootedGraceMinutes` (15 by default; `0` shuts it down at park), so the
+next `stim ios` that adopts it skips the boot. Stim keeps it booted only while
+macOS memory pressure is normal, a device slot is free and `daemon.mode` is `on`, terminates the
+leftover app, and counts the simulator against the device caps. The stim-daemon
+shuts it down, and keeps it parked, when the grace period passes, under any
+memory pressure before it touches a workspace's device, and before it reclaims
+another workspace's device for a run waiting on a device slot. `stim stop`
+shuts the workspace's simulator down first, so run `stim worktree remove`
+without a prior `stim stop` to keep it booted. Emulators are always shut down
+at park.
+
 Adoption gives the new workspace a clean app state without reinstalling. It
 resets privacy grants and the keychain, uninstalls every other user app except
 XCUITest runner apps, and

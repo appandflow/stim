@@ -741,6 +741,14 @@ export async function resetIosKeychain(udid: string): Promise<void> {
   await getExecutor().runFileAsync('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_RESET_OPTIONS);
 }
 
+export async function terminateIosApp(udid: string, bundleId: string): Promise<void> {
+  try {
+    await getExecutor().runFileAsync('xcrun', ['simctl', 'terminate', udid, bundleId], SIMCTL_OPTIONS);
+  } catch (error) {
+    if (!/found nothing to terminate/.test(error instanceof Error ? error.message : String(error))) throw error;
+  }
+}
+
 const CLEARED_CONTAINER_DIRS = ['Documents', 'Library', 'tmp', 'SystemData'];
 
 export async function clearIosAppData(
@@ -749,11 +757,7 @@ export async function clearIosAppData(
   { defaultsPlist = null }: { defaultsPlist?: string | null } = {},
 ): Promise<void> {
   const exec = getExecutor();
-  try {
-    await exec.runFileAsync('xcrun', ['simctl', 'terminate', udid, bundleId], SIMCTL_OPTIONS);
-  } catch (error) {
-    if (!/found nothing to terminate/.test(error instanceof Error ? error.message : String(error))) throw error;
-  }
+  await terminateIosApp(udid, bundleId);
   if (defaultsPlist) {
     await exec.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'defaults', 'import', bundleId, '-'], {
       ...SIMCTL_OPTIONS,

@@ -413,6 +413,46 @@ describe('the pressure ladder', () => {
     expect(deleted).toEqual([]);
   });
 
+  test('under memory pressure rung 0 shuts down a parked simulator kept booted, and touches no workspace device', async () => {
+    const { udid } = workspace('in-use', 60 * MINUTE_MS, 'Booted');
+    sims.push({
+      udid: 'PARKED',
+      name: 'stim-parked (iPhone 17 26.0) park',
+      state: 'Booted',
+      runtime: 'iOS 26.0',
+      deviceTypeIdentifier: 'iPhone',
+      available: true,
+    });
+    saveConfig({
+      ...(loadConfig() ?? { version: 2, projects: {}, repos: {} }),
+      parked: {
+        ios: [
+          {
+            udid: 'PARKED',
+            name: 'stim-parked (iPhone 17 26.0) park',
+            deviceTypeIdentifier: 'iPhone',
+            runtimeIdentifier: 'iOS 26.0',
+            parkedAt: new Date(Date.now() - MINUTE_MS).toISOString(),
+            bootedUntil: new Date(Date.now() + 10 * MINUTE_MS).toISOString(),
+            simslimManaged: false,
+          },
+        ],
+      },
+    });
+    const shutDown = vi
+      .spyOn(teardown, 'shutDownBootedParkedIosSim')
+      .mockResolvedValue({ status: 'torn-down', label: 'stim-parked' });
+    const { actions } = await runLadder(
+      { ...input(true, async () => pressure('high', 'memory')), sims },
+      pressure('high', 'memory'),
+    );
+    expect(actions).toEqual([
+      expect.objectContaining({ rung: 0, kind: 'shut-down-parked-device', target: 'PARKED', outcome: 'done' }),
+    ]);
+    expect(shutDown).toHaveBeenCalledTimes(1);
+    expect(teardown.teardownOwnedIosSim).not.toHaveBeenCalledWith(udid, expect.anything());
+  });
+
   test('daemon.mode report plans each rung and deletes nothing', async () => {
     const { udid } = workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
     caches('kept-key');

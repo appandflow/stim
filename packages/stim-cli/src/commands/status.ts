@@ -61,7 +61,7 @@ import {
   tightVolumes,
 } from '../status.ts';
 import { createStatusMeasurer, type StatusMeasurer } from '../status-measures.ts';
-import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
+import { isBootedParked, parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type { EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
 import { physicalDeviceLine } from '../physical-devices.ts';
 import { hostedAgentLine } from '../device-host/hosted-agent.ts';
@@ -213,7 +213,16 @@ function renderStatus(
   };
   const pools = (['ios', 'android'] as const).map((platform) => {
     const { max, error } = parkedMaxSetting(platform);
-    return { error, line: poolLine({ platform, parked: readParked(platform).length, max }) };
+    const records = readParked(platform);
+    return {
+      error,
+      line: poolLine({
+        platform,
+        parked: records.length,
+        booted: records.filter((record) => isBootedParked(record)).length,
+        max,
+      }),
+    };
   });
 
   const maintenance = maintenanceStatus();

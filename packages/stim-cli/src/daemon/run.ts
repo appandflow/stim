@@ -47,6 +47,7 @@ import type { TickMeasurement } from './measure.ts';
 import { listWaiting } from '../engine/wait-queue.ts';
 import { createMaintenanceLane, runHomePasses, type HomePasses } from './passes.ts';
 import { reclaimForBootWaiters } from './reclaim.ts';
+import { bootedParkedPending } from './booted-parked.ts';
 import { pendingDormant } from './stages.ts';
 
 const TICK_MS = 60_000;
@@ -205,6 +206,7 @@ function homeAlive(config: Config | null, measured: TickMeasurement): string | n
   if (listBuildSlots().some((slot) => slot.alive || slot.unresolved)) return 'a build slot is held';
   const owned = measured.devices.filter(ownedHere);
   if (owned.length) return `${owned.length} owned device(s) running`;
+  if (bootedParkedPending()) return 'a parked simulator is kept booted';
   const ownsIos = Object.values(config?.projects ?? {}).some((project) =>
     projectDeviceSlots(project).some(({ platforms }) => platforms.ios?.owned === true),
   );

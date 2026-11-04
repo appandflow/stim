@@ -848,6 +848,13 @@ that already exists stays where it is until \`gc --delete\`. A value that is
 not a whole number 0 or more is refused by name on \`worktree remove\` and
 \`ios\`, and warned about by \`status\`, \`gc\` and \`doctor\`.
 
+\`pool.bootedGraceMinutes\` (or STIM_POOL_BOOTED_GRACE_MINUTES) is how many
+minutes \`worktree remove\` keeps a simulator that is booted booted as it
+parks it, while memory pressure is normal and a device slot is free, so the
+next adoption skips the boot. Absent means 15; \`0\` shuts it down at park.
+When \`STIM_HOME\` is set it is 0 unless the variable is set. See
+\`guide lifecycle pool\`.
+
 Android uses \`pool.androidParkedMax\` or STIM_POOL_ANDROID_PARKED_MAX with
 these same defaults and validation rules. \`android\` validates that bound;
 \`worktree remove\`, \`status\`, \`gc\` and \`doctor\` check the applicable
