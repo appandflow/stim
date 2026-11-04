@@ -11413,7 +11413,8 @@ describe('frames.subscribe', () => {
     const port = await startControl({}, { inputPerSecond: 3 });
     const client = await authed(port, true);
     const begun = await client.request('control.begin', { workspace, platform: 'ios' });
-    const { session } = (begun as { result: { session: string } }).result;
+    assert('result' in begun && begun.result && 'session' in begun.result && typeof begun.result.session === 'string');
+    const { session } = begun.result;
     const touch = (phase: string) => client.request('input.touch', { session, phase, x: 0, y: 0 });
     await touch('down');
     const moves = [];
