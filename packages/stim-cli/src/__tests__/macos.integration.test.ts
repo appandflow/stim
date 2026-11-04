@@ -417,11 +417,14 @@ test.skipIf(process.platform === 'win32')(
       if (pid === undefined || !processToken) throw new Error('The fixture process has no identity.');
       return { pid, processToken, startedAtMicros: 1 };
     };
-    await ownedProcess();
-    expect((await startedBy([identity(owner.pid)])).map((each) => each.pid)).toEqual([started]);
-    expect(await startedBy([identity(process.pid)])).toEqual([]);
-    expect(await startedBy([identity(process.ppid)])).toEqual([]);
-    process.kill(started, 'SIGKILL');
+    try {
+      await ownedProcess();
+      expect((await startedBy([identity(owner.pid)])).map((each) => each.pid)).toEqual([started]);
+      expect(await startedBy([identity(process.pid)])).toEqual([]);
+      expect(await startedBy([identity(process.ppid)])).toEqual([]);
+    } finally {
+      process.kill(started, 'SIGKILL');
+    }
   },
 );
 

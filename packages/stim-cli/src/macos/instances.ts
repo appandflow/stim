@@ -127,18 +127,15 @@ async function listProcesses(operation?: StimContext): Promise<ProcessRow[]> {
  */
 export async function startedBy(owners: readonly MacosProcess[], operation?: StimContext): Promise<MacosProcess[]> {
   operation?.signal.throwIfAborted();
-  if (process.platform === 'win32') return [];
+  const running = owners.filter((owner) => inspectProcessIdentity(owner) === 'same');
+  if (!running.length || process.platform === 'win32') return [];
   const rows = await listProcesses(operation);
   const parents = new Map(rows.map((row) => [row.pid, row]));
   const protectedPids = new Set([1, process.pid]);
   for (let pid = parents.get(process.pid)?.ppid; pid && !protectedPids.has(pid); pid = parents.get(pid)?.ppid)
     protectedPids.add(pid);
   const protectedGroups = new Set([...protectedPids].flatMap((pid) => parents.get(pid)?.pgid ?? []));
-  const live = new Set(
-    owners
-      .filter((owner) => !protectedPids.has(owner.pid) && inspectProcessIdentity(owner) === 'same')
-      .map((owner) => owner.pid),
-  );
+  const live = new Set(running.filter((owner) => !protectedPids.has(owner.pid)).map((owner) => owner.pid));
   if (!live.size) return [];
   const leaders = new Set(
     rows
