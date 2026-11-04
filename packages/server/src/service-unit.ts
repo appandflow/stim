@@ -1,16 +1,15 @@
-import { quoteUnitWord, unitLines, unitWords } from '@stim-cli/core';
+import { quoteUnitWord } from '@stim-cli/core';
+import { LABEL_VARIABLE } from '@stim-cli/core/state';
 import {
   environmentValues,
-  installedService,
   serverArguments,
   THROTTLE_SECONDS,
-  type InstalledService,
   type ServeRecord,
   type ServiceSpec,
 } from './service-plist.ts';
 
-/** The variable a systemd unit sets so the server knows its own label; launchd sets `XPC_SERVICE_NAME` itself. */
-export const LABEL_VARIABLE = 'STIM_SERVICE_LABEL';
+export { LABEL_VARIABLE, parseSystemctlShow, parseUnit, SHOW_PROPERTIES } from '@stim-cli/core/state';
+
 const STOP_TIMEOUT_SECONDS = 30;
 
 const execLine = (args: string[]) => `ExecStart=${args.map((arg) => quoteUnitWord(arg, true)).join(' ')}`;
@@ -51,38 +50,6 @@ export function renderUnit(spec: ServiceSpec, previousScript: string | null = nu
   return lines.join('\n');
 }
 
-/** Reads a unit `renderUnit` wrote, or null when it has no `ExecStart=` and label in that form. */
-export function parseUnit(text: string): InstalledService | null {
-  const lines = unitLines(text);
-  const value = (section: string, key: string) =>
-    lines.findLast((line) => line.section === section && line.key === key)?.value ?? null;
-  const exec = value('Service', 'ExecStart');
-  const programArguments = exec === null ? null : unitWords(exec, true);
-  const environment: Record<string, string> = {};
-  for (const line of lines) {
-    if (line.section !== 'Service' || line.key !== 'Environment') continue;
-    for (const entry of unitWords(line.value, false) ?? []) {
-      const equals = entry.indexOf('=');
-      if (equals > 0) environment[entry.slice(0, equals)] = entry.slice(equals + 1);
-    }
-  }
-  const label = environment[LABEL_VARIABLE];
-  if (!programArguments || !label) return null;
-  const output = value('Service', 'StandardOutput');
-  const previous = value('X-Stim', 'PreviousScript');
-  const servePort = value('X-Stim', 'ServePort');
-  return installedService({
-    label,
-    programArguments,
-    environment,
-    logPath: output?.startsWith('append:') ? output.slice('append:'.length).replace(/%%/g, '%') : null,
-    managed: value('X-Stim', 'Managed') === 'true',
-    servePort: servePort !== null && /^\d+$/.test(servePort) ? Number(servePort) : null,
-    serveCreated: value('X-Stim', 'ServeCreated') === 'true',
-    previousScript: previous === null ? null : (unitWords(previous, false)?.[0] ?? null),
-  });
-}
-
 /** `text` with the server arguments and previous script, or the serve record, replaced; every other line kept. */
 export function editUnit(
   text: string,
@@ -111,42 +78,4 @@ export function editUnit(
     }
   }
   return out.join('\n');
-}
-
-/** A unit's state from `systemctl --user show -p <SHOW_PROPERTIES>`, or null when it is not loaded or not running. */
-export interface UnitJob {
-  state: string;
-  pid: number | null;
-  runs: number | null;
-  lastExitCode: string | null;
-}
-
-export const SHOW_PROPERTIES = 'LoadState,ActiveState,SubState,MainPID,NRestarts,ExecMainCode,ExecMainStatus';
-
-/**
- * Reads `systemctl show` output. A unit that is not loaded, or is inactive or failed, has no job, as launchd lists no
- * job after `bootout`. A unit waiting to restart after its server exited is a job with no pid and a last exit code.
- */
-export function parseSystemctlShow(output: string): UnitJob | null {
-  const fields = new Map<string, string>();
-  for (const line of output.split('\n')) {
-    const equals = line.indexOf('=');
-    if (equals > 0) fields.set(line.slice(0, equals), line.slice(equals + 1).trim());
-  }
-  const active = fields.get('ActiveState');
-  if (fields.get('LoadState') !== 'loaded' || !active || active === 'inactive' || active === 'failed') return null;
-  const number = (name: string) => {
-    const text = fields.get(name);
-    return text !== undefined && /^\d+$/.test(text) ? Number(text) : null;
-  };
-  const pid = number('MainPID');
-  const restarts = number('NRestarts');
-  const code = fields.get('ExecMainCode');
-  const status = fields.get('ExecMainStatus');
-  return {
-    state: fields.get('SubState') ? `${active} (${fields.get('SubState')})` : active,
-    pid: pid ? pid : null,
-    runs: restarts === null ? null : restarts + 1,
-    lastExitCode: code === '1' ? (status ?? null) : code === '2' || code === '3' ? `signal ${status}` : null,
-  };
 }

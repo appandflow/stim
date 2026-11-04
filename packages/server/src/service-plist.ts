@@ -1,5 +1,5 @@
 import { delimiter, isAbsolute, join, relative } from 'node:path';
-import { isJsonObject } from '@stim-cli/core/state';
+import { isJsonObject, type InstalledService } from '@stim-cli/core/state';
 import type { ServeRecord } from '@stim-cli/transport-tailscale';
 
 export class ServiceError extends Error {}
@@ -13,6 +13,12 @@ const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const JOB_KEYS = ['STIM_HOME', 'SHELL'];
 
 export { planServe, type ServeRecord } from '@stim-cli/transport-tailscale';
+export {
+  installedService,
+  parseInstalledPlist,
+  parseLaunchctlPrint,
+  type InstalledService,
+} from '@stim-cli/core/state';
 
 export interface ServiceSpec {
   label: string;
@@ -195,99 +201,6 @@ export function renderPlist(spec: ServiceSpec): string {
   return lines.join('\n');
 }
 
-export interface InstalledService {
-  label: string;
-  host: string | null;
-  node: string | null;
-  script: string | null;
-  port: number | null;
-  env: string[];
-  pathPrepend: string[];
-  stimHome: string | null;
-  logPath: string | null;
-  /** Whether `install` wrote this plist. */
-  managed: boolean;
-  serve: ServeRecord | null;
-  /** The server script the job ran before `service update` or `service rollback` switched it. */
-  previousScript: string | null;
-  programArguments: string[];
-}
-
-function strings(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
-}
-
-/** What a job file records besides its arguments, read by `parseInstalledPlist` and `parseUnit`. */
-export interface JobFields {
-  label: string;
-  programArguments: string[];
-  environment: Record<string, unknown>;
-  logPath: string | null;
-  managed: boolean;
-  servePort: unknown;
-  serveCreated: boolean;
-  previousScript: unknown;
-}
-
-export function installedService(job: JobFields): InstalledService {
-  const { programArguments, environment } = job;
-  const host =
-    programArguments[1] === 'run' && programArguments[0]?.endsWith('/Contents/MacOS/stim-host')
-      ? programArguments[0]
-      : null;
-  const [node = null, script = null, ...args] = host ? programArguments.slice(2) : programArguments;
-  const env: string[] = [];
-  const pathPrepend: string[] = [];
-  let port: number | null = null;
-  for (let index = 0; index < args.length; index += 2) {
-    const flag = args[index];
-    const next = args[index + 1];
-    if (next === undefined) break;
-    if (flag === '--port') port = Number(next);
-    if (flag === '--env') {
-      const stored = environment[next];
-      if (next.includes('=')) env.push(next);
-      else if (typeof stored === 'string') env.push(`${next}=${stored}`);
-    }
-    if (flag === '--path-prepend') pathPrepend.push(next);
-  }
-  const servePort = job.servePort;
-  return {
-    label: job.label,
-    host,
-    node,
-    script,
-    port: Number.isInteger(port) ? port : null,
-    env,
-    pathPrepend,
-    stimHome: typeof environment.STIM_HOME === 'string' ? environment.STIM_HOME : null,
-    logPath: job.logPath,
-    managed: job.managed,
-    serve:
-      typeof servePort === 'number' && Number.isInteger(servePort)
-        ? { port: servePort, created: job.serveCreated }
-        : null,
-    previousScript: typeof job.previousScript === 'string' ? job.previousScript : null,
-    programArguments,
-  };
-}
-
-/** Reads `plutil -convert json` output of a plist `renderPlist` wrote. */
-export function parseInstalledPlist(value: unknown): InstalledService | null {
-  if (!isJsonObject(value) || typeof value.Label !== 'string') return null;
-  const meta = isJsonObject(value.StimService) ? value.StimService : {};
-  return installedService({
-    label: value.Label,
-    programArguments: strings(value.ProgramArguments),
-    environment: isJsonObject(value.EnvironmentVariables) ? value.EnvironmentVariables : {},
-    logPath: typeof value.StandardOutPath === 'string' ? value.StandardOutPath : null,
-    managed: meta.Managed === true,
-    servePort: meta.ServePort,
-    serveCreated: meta.ServeCreated === true,
-    previousScript: meta.PreviousScript,
-  });
-}
-
 /** The job's `ProgramArguments` with the server script, which follows the launcher, `run` and node, set to `script`. */
 export function argumentsWithScript(
   service: Pick<InstalledService, 'host' | 'programArguments'>,
@@ -295,28 +208,6 @@ export function argumentsWithScript(
 ): string[] {
   const index = service.host ? 3 : 1;
   return service.programArguments.map((argument, at) => (at === index ? script : argument));
-}
-
-export interface LaunchdJob {
-  state: string;
-  pid: number | null;
-  runs: number | null;
-  lastExitCode: string | null;
-}
-
-/** Reads the top-level fields of `launchctl print gui/<uid>/<label>`; nested `state =` lines are indented further. */
-export function parseLaunchctlPrint(output: string): LaunchdJob {
-  const field = (name: string) => new RegExp(`^\\t${name} = (.+)$`, 'm').exec(output)?.[1]?.trim() ?? null;
-  const number = (name: string) => {
-    const text = field(name);
-    return text !== null && /^\d+$/.test(text) ? Number(text) : null;
-  };
-  return {
-    state: field('state') ?? 'unknown',
-    pid: number('pid'),
-    runs: number('runs'),
-    lastExitCode: field('last exit code'),
-  };
 }
 
 const parseVersion = (v: string) => /^(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+.*)?$/.exec(v);

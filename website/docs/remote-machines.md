@@ -1325,6 +1325,25 @@ slow steps, run `stim settings set debug.logs true --scope machine` on that mach
 or set `STIM_DEBUG=1` for its stim-server. Nothing is sent anywhere, and no
 token or ticket is logged.
 
+### Check this machine's stim-server setup
+
+`stim doctor` also reads this machine's own stim-server setup and reports what
+is wrong with the command to fix it. It changes nothing: it does not stop, start
+or update a server. It looks at the installed service (the LaunchAgent on macOS,
+the systemd user unit on Linux), every running `stim-server` process, each
+server's `/health` on `127.0.0.1` and the Stim home's local socket. A machine
+with no service, server or socket costs it only a process listing.
+
+| Finding                    | What it means and the fix                                                                                                                                                                                                        |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server-multiple`          | Several servers serve one Stim home: the service, Stim Desktop's bundled server, a server someone started. Doctor names the one to keep (the service, otherwise the one that holds the local socket) and how to stop the others. |
+| `server-service-crash`     | The service is installed but not running, or keeps exiting. It gives the run count, the last exit code, the log, and `stim-server service rollback` when a previous server is still installed.                                   |
+| `server-desktop-authority` | The server on the Stim home's local socket predates Desktop actions, so Desktop reads from it but runs nothing through it. Update it with `stim-server service update --release <version>`.                                      |
+| `server-version`           | A server runs another stim version than the `stim` here. Update the service with `stim-server service update --release <version>`; Desktop's bundled server updates with the app.                                                |
+| `server-home`              | A server serves another Stim home than this `stim`. A scratch `STIM_HOME` does this on purpose.                                                                                                                                  |
+| `server-leftover`          | A server started by hand is running that no service or Desktop owns. Doctor lists its pid, home and port.                                                                                                                        |
+| `server-keep-awake`        | This Mac serves approved build or device-host machines with `server.keepAwake` off, so it can sleep under them.                                                                                                                  |
+
 ## Ask your agent
 
 These responses are illustrative. Placement comes from `stim status --json`

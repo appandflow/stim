@@ -56,6 +56,8 @@ import { inspectBuildMachines, type BuildMachinesInspection } from '../offload/b
 import { doctorIo, keyConfirmer, type GeneratedTickets } from '../offload/tailnet.ts';
 import { confirmInTerminal } from './device-provision.ts';
 import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
+import { readServerSetup } from '../diagnostics/server-setup-probe.ts';
+import { isServerFinding, serverSetupFindings } from '../diagnostics/server-setup.ts';
 import { configuredMachines, inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
 import { memoryCulpritFindings, readMemoryCulpritsAsync } from '../memory-culprits.ts';
@@ -640,6 +642,7 @@ async function assembleDoctorReport(
     ),
   );
 
+  const serverSetup = withoutUnhandledRejection(readServerSetup(version));
   const watchman = await watchmanMemory;
   if (watchman) findings.push(watchman);
   if (!memorySweepIsScoped(env)) findings.push(...memoryCulpritFindings(await readMemoryCulpritsAsync()));
@@ -652,6 +655,8 @@ async function assembleDoctorReport(
   findings.push(...deviceHostMachines.findings.filter((each) => !reported.has(each.title)));
   const agentDriver = inspectHostedAgentDriver();
   if (agentDriver) findings.push(agentDriver);
+  const setup = await serverSetup;
+  if (setup) findings.push(...serverSetupFindings(setup));
 
   const toolchain = host === 'darwin' ? toolchainReport(root, env) : null;
   const maintenance = maintenanceStatus(env);
@@ -766,15 +771,21 @@ export default function doctorCommand(
         for (const line of toolchainLines(toolchain)) console.log(chalk.dim(line));
       }
       for (const f of ordered) {
-        const tag = f.level === 'cost' ? chalk.yellow('costs time') : chalk.dim('note');
+        const tag =
+          f.level !== 'cost'
+            ? chalk.dim('note')
+            : isServerFinding(f)
+              ? chalk.yellow('problem')
+              : chalk.yellow('costs time');
         console.log(`\n${tag}  ${chalk.bold(f.title)}`);
         console.log(`  ${f.detail}`);
         if (f.fix) console.log(chalk.dim(`  -> ${f.fix}`));
       }
 
+      const serverOnly = findings.every(isServerFinding);
       console.log(
         chalk.dim(
-          `\n${findings.length} finding(s). Fix relevant "costs time" findings before copying the source checkout into a native worktree.`,
+          `\n${findings.length} finding(s).${serverOnly ? '' : ' Fix relevant "costs time" findings before copying the source checkout into a native worktree.'}${findings.some(isServerFinding) ? ' Doctor reports stim-server problems and never changes a server.' : ''}`,
         ),
       );
       recordDoctorRun(root, opts.platform, version, undefined, selected.platforms);

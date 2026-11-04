@@ -31,6 +31,7 @@ import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_FINGERPRINT_IGNORES } from '../cache/build-cache.ts';
 import { WATCHMAN_NESTED_WORKTREES } from '../diagnostics/doctor-watchman.ts';
+import { SERVER_FINDING_CODES } from '../diagnostics/server-setup.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
 import { AUTOMATION_TOOLS } from '../devices/automation-tools.ts';
 import { STIM_DESKTOP_INSTALLED, workspaceLinkLine } from '../devices/stim-desktop.ts';
@@ -494,6 +495,11 @@ test('the settings topic names the reason stim settings prints for a Stim Deskto
 
 test('emulator boot guidance routes the emulator viewer preference to the settings topic', () => {
   expect(renderTopic('lifecycle')).toContain('androidEmulatorApp');
+});
+
+test('the settings topic documents every stim-server setup finding code doctor reports', () => {
+  const body = renderTopic('settings');
+  for (const code of SERVER_FINDING_CODES) expect(body).toContain(code);
 });
 
 test('the settings topic documents every registered setting and its environment override', () => {
