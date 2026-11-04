@@ -625,7 +625,7 @@ interface Run {
 }
 
 const SESSION_LOST =
-  /Error \(SESSION_NOT_FOUND\)|"code":\s*"SESSION_NOT_FOUND"|requires an active app session on the target device/;
+  /Error \(SESSION_NOT_FOUND\)|"code":\s*"SESSION_NOT_FOUND"|requires an active app session on the target device|No active proxy device lease for this session/;
 
 function lostSession(exit: AgentDeviceExit): boolean {
   const text = `${exit.stdout}${exit.stderr}`;

@@ -24,8 +24,8 @@ if (args[0] === 'open') {
 if (args[0] === 'tap' || args[0] === 'batch') {
   log('taps', JSON.stringify(args));
   if (!existsSync(join(process.env.STIM_HOME, 'opened'))) {
-    process.stdout.write(JSON.stringify({ success: false, error: { code: 'SESSION_NOT_FOUND' } }) + '\\n');
-    process.stderr.write('Error (SESSION_NOT_FOUND): iOS snapshot requires an active app session on the target device. Run open first\\n');
+    process.stdout.write(JSON.stringify({ success: false, error: { code: process.env.LOST_AS_LEASE ? 'INVALID_ARGS' : 'SESSION_NOT_FOUND' } }) + '\\n');
+    process.stderr.write(process.env.LOST_AS_LEASE ? 'Error (INVALID_ARGS): No active proxy device lease for this session; run open first.\\n' : 'Error (SESSION_NOT_FOUND): iOS snapshot requires an active app session on the target device. Run open first\\n');
     process.exit(1);
   }
   process.stdout.write(JSON.stringify({ success: true }) + '\\n');
@@ -76,10 +76,10 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-const run = (args: string[], cwd = app) =>
+const run = (args: string[], cwd = app, env: NodeJS.ProcessEnv = {}) =>
   spawnSync(process.execPath, [cli, 'agent-device', ...args], {
     cwd,
-    env: { ...process.env, STIM_HOME: home, STIM_AGENT_DEVICE_BIN: bin, STIM_DAEMON: 'off' },
+    env: { ...process.env, STIM_HOME: home, STIM_AGENT_DEVICE_BIN: bin, STIM_DAEMON: 'off', ...env },
     encoding: 'utf8',
     timeout: 60_000,
   });
@@ -192,46 +192,51 @@ test.skipIf(process.platform === 'win32')(
   60_000,
 );
 
-test.skipIf(process.platform === 'win32')(
-  'a hosted command the restarted host no longer knows opens the recorded app on the same session and runs again',
-  () => {
-    const config = join(home, 'hosted', 'agent.json');
-    mkdirSync(workspaceStateDir(app), { recursive: true });
-    writeFileSync(
-      join(workspaceStateDir(app), 'state.json'),
-      JSON.stringify({
-        ios: {
-          host: {
-            machine: 'local:mini',
-            session: '4f88400a-48eb-4a07-ba6a-734c42768b2a',
-            agent: { driver: 'agent-device', remoteConfig: config, command: 'x' },
-          },
-        },
-        launches: {
+describe.skipIf(process.platform === 'win32')('hosted reopen', () => {
+  test.each([
+    ['SESSION_NOT_FOUND', {}],
+    ['No active proxy device lease', { LOST_AS_LEASE: '1' }],
+  ])(
+    'a hosted command the restarted host no longer knows (%s) opens the recorded app on the same session and runs again',
+    (_message, env) => {
+      const config = join(home, 'hosted', 'agent.json');
+      mkdirSync(workspaceStateDir(app), { recursive: true });
+      writeFileSync(
+        join(workspaceStateDir(app), 'state.json'),
+        JSON.stringify({
           ios: {
-            appId: 'com.example.app',
-            deviceId: 'hosted',
-            metroPort: 8082,
-            release: false,
-            launchedAt: '2026-11-03T00:00:00.000Z',
+            host: {
+              machine: 'local:mini',
+              session: '4f88400a-48eb-4a07-ba6a-734c42768b2a',
+              agent: { driver: 'agent-device', remoteConfig: config, command: 'x' },
+            },
           },
-        },
-      }),
-    );
-    const result = run(['tap', '@e1', '--json']);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe(`${JSON.stringify({ success: true })}\n`);
-    expect(result.stderr).toContain('opening com.example.app again');
-    expect(
-      readFileSync(join(home, 'opens'), 'utf8')
-        .trim()
-        .split('\n')
-        .map((line) => JSON.parse(line)),
-    ).toEqual([['open', 'com.example.app', '--session', 'stim-default-ios', '--remote-config', config]]);
-    expect(readFileSync(join(home, 'taps'), 'utf8').trim().split('\n')).toHaveLength(2);
-  },
-  60_000,
-);
+          launches: {
+            ios: {
+              appId: 'com.example.app',
+              deviceId: 'hosted',
+              metroPort: 8082,
+              release: false,
+              launchedAt: '2026-11-03T00:00:00.000Z',
+            },
+          },
+        }),
+      );
+      const result = run(['tap', '@e1', '--json'], app, env);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(`${JSON.stringify({ success: true })}\n`);
+      expect(result.stderr).toContain('opening com.example.app again');
+      expect(
+        readFileSync(join(home, 'opens'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line)),
+      ).toEqual([['open', 'com.example.app', '--session', 'stim-default-ios', '--remote-config', config]]);
+      expect(readFileSync(join(home, 'taps'), 'utf8').trim().split('\n')).toHaveLength(2);
+    },
+    60_000,
+  );
+});
 
 test.skipIf(process.platform === 'win32')(
   'a multi-step hosted command is never run again after the host lost the session',
