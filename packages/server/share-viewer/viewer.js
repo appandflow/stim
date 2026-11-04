@@ -1143,7 +1143,7 @@ document.getElementById('upgrade-open').addEventListener('click', () => {
 });
 const upgradeResult = new URLSearchParams(location.search).get('upgrade');
 if (upgradeResult) {
-  showNote(upgradeResult === 'limited' ? 'Too many wrong passwords. Try again later.' : 'Wrong password.');
+  showNote(upgradeResult === 'limited' ? 'Too many wrong access codes. Try again later.' : 'Wrong access code.');
   history.replaceState(null, '', location.pathname);
 }
 

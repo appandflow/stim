@@ -12,14 +12,14 @@
     <header class="bar">{{logo}}</header>
     <main class="center">
       <form class="card" method="post" action="login">
-        <h1>Enter the password</h1>
+        <h1>Enter the access code</h1>
         <p class="hint">The person who shared this app gave you one.</p>
         <div class="labeled">
-          <label for="password">Password</label>
+          <label for="access">Access code</label>
           <input
-            id="password"
+            id="access"
             type="text"
-            name="password"
+            name="access"
             class="field secret"
             autocomplete="off"
             autocapitalize="off"
@@ -32,7 +32,7 @@
             autofocus
             required
             maxlength="128"
-            placeholder="Password"
+            placeholder="Access code"
           />
         </div>
         <div class="labeled">
