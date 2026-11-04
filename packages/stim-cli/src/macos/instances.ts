@@ -86,6 +86,44 @@ function failedBundleListing(record: MacosProcess, error: unknown): string | nul
   return open;
 }
 
+/** `ps -axo pid=,pgid=` rows as `[pid, pgid]`. */
+function processGroups(psOutput: string): [number, number][] {
+  const rows: [number, number][] = [];
+  for (const line of psOutput.split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    if (match) rows.push([Number(match[1]), Number(match[2])]);
+  }
+  return rows;
+}
+
+/**
+ * The processes in the process group the supervisor leads, which hold the app and everything it started without
+ * leaving the group. The supervisor spawns detached, so its pid names the group. A group is read only while the
+ * supervisor is verified live and leading it: its pid cannot be reused, nor name another group, until the group is empty.
+ */
+export async function supervisorGroupMembers(
+  supervisor: MacosProcess,
+  operation?: StimContext,
+): Promise<MacosProcess[]> {
+  operation?.signal.throwIfAborted();
+  if (inspectProcessIdentity(supervisor) !== 'same') return [];
+  const rows = processGroups(
+    await runOperationFile(operation, getExecutor(), 'ps', ['-axo', 'pid=,pgid='], {
+      cwd: operation?.cwd,
+      timeoutMs: 10_000,
+      killSignal: 'SIGKILL',
+    }),
+  );
+  if (!rows.some(([pid, group]) => pid === supervisor.pid && group === supervisor.pid)) return [];
+  const members: MacosProcess[] = [];
+  for (const [pid, group] of rows) {
+    if (group !== supervisor.pid || pid === supervisor.pid || pid === process.pid) continue;
+    const record = bundleRecord(pid);
+    if (record) members.push(record);
+  }
+  return members;
+}
+
 /** The attempt directories under a hosted session's `apps`, each of which holds one `App.app`. */
 export function hostedBundleDirs(area: string): string[] {
   const apps = join(area, 'apps');

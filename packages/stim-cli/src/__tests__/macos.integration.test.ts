@@ -344,6 +344,45 @@ describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned b
   });
 });
 
+test.skipIf(process.platform === 'win32')(
+  'stopping an app also ends what its supervisor group started, and spares a process outside it',
+  async () => {
+    const server = 'setInterval(() => {}, 1000)';
+    const app = `const s = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(server)}], { stdio: 'ignore' });
+      process.stdout.write(s.pid + '\\n'); setInterval(() => {}, 1000)`;
+    const supervisor = `const a = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(app)}], { stdio: ['ignore', 'pipe', 'ignore'] });
+      a.stdout.on('data', (d) => process.stdout.write(a.pid + ' ' + d)); setInterval(() => {}, 1000)`;
+    const leader = getExecutor().spawn(process.execPath, ['-e', supervisor], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    children.push(leader);
+    const pids = await new Promise<number[]>((resolve) =>
+      leader.stdout?.once('data', (data: Buffer) => resolve(String(data).trim().split(' ').map(Number))),
+    );
+    const owned = (pid: number | undefined): MacosProcess => {
+      const processToken = pid === undefined ? null : captureProcessToken(pid);
+      if (pid === undefined || !processToken) throw new Error('The fixture process has no identity.');
+      return { pid, processToken, startedAtMicros: 1 };
+    };
+    const [supervised, started] = [owned(leader.pid), owned(pids[1])];
+    const bystander = await ownedProcess();
+    try {
+      writeWorkspaceState(root, { macos: record({ supervisor: supervised, app: owned(pids[0]) }) });
+      expect(await stopMacosApp(root)).toBe(true);
+      expect(inspectProcessIdentity(started)).toBe('gone');
+      expect(inspectProcessIdentity(bystander)).toBe('same');
+    } finally {
+      for (const pid of [supervised.pid, ...pids]) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {}
+      }
+    }
+  },
+  20_000,
+);
+
 describe('macOS build placement and promotion', () => {
   let bundle: string;
   let bin: string;

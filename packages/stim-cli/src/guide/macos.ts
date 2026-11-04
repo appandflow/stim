@@ -219,8 +219,10 @@ actions are no longer returned, and a failed open is not shown.
 OWNERSHIP AND LOCAL VIEWING
 
 The supervisor owns a process-identity claim with the app as its child. Stop
-signals only verified recorded identities. An unverifiable or malformed owner
-refuses with STIM_MACOS_OWNER_UNVERIFIED; other apps remain untouched.
+signals only verified recorded identities, which include the processes the app
+started that still share the supervisor's process group, such as a Desktop test
+copy's stim-server. An unverifiable or malformed owner refuses with
+STIM_MACOS_OWNER_UNVERIFIED; other apps remain untouched.
 
 Stim Desktop shows this app in its workspace, with Build and run, Open app (local
 apps only) and Stop, and a live preview that updates itself while the app runs. Capture and Open app verify the recorded executable, bundle

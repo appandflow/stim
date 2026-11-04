@@ -10,7 +10,8 @@ const { spawn } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const mode = process.argv[2];
 const env = { ...process.env };
-if (mode !== 'none') env.STIM_DESKTOP_BOOTSTRAP_FD = '0';
+if (mode === 'lifetime') env.STIM_DESKTOP_LIFETIME_FD = '0';
+else if (mode !== 'none') env.STIM_DESKTOP_BOOTSTRAP_FD = '0';
 const child = spawn(process.execPath, [process.argv[1], '--port', '0', '--loopback-only'], {
   env, stdio: ['pipe', 'pipe', 'pipe'],
 });
@@ -20,12 +21,12 @@ child.stdout.on('data', (data) => send({ output: data.toString() }));
 child.stderr.on('data', (data) => send({ error: data.toString() }));
 child.on('exit', (code) => send({ exit: code }));
 child.stdin.on('error', () => {});
-if (mode !== 'none') child.stdin.write(randomBytes(32).toString('base64url') + '\\n');
+if (mode !== 'none' && mode !== 'lifetime') child.stdin.write(randomBytes(32).toString('base64url') + '\\n');
 if (mode === 'ended') child.stdin.end();
 setInterval(() => {}, 60000);
 `;
 
-async function parent(mode: 'live' | 'ended' | 'none') {
+async function parent(mode: 'live' | 'ended' | 'lifetime' | 'none') {
   const home = mkdtempSync(join(tmpdir(), 'stim-desktop-lifetime-'));
   const process = spawn(globalThis.process.execPath, ['-e', PARENT, BIN, mode], {
     env: { ...globalThis.process.env, STIM_HOME: home, PATH: '' },
@@ -92,4 +93,21 @@ test.skipIf(process.platform === 'win32')(
     }
   },
   20000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a server whose launcher marks stdin as its lifetime exits when the launcher dies, without a key',
+  async () => {
+    const fixture = await parent('lifetime');
+    try {
+      await expect.poll(fixture.port, { timeout: 10000 }).toBeGreaterThan(0);
+      await new Promise((done) => setTimeout(done, 500));
+      expect(inspectProcessIdentity(fixture.record)).toBe('same');
+      fixture.process.kill('SIGKILL');
+      expect(await waitForProcessExit(fixture.record, 10000)).toBe(true);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+  30000,
 );

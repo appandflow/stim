@@ -4,7 +4,12 @@ import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { withWorkspaceStateLockAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { hostedBundleDirs, runningBundleInstancesAsync, runningInstancesInAsync } from './instances.ts';
+import {
+  hostedBundleDirs,
+  runningBundleInstancesAsync,
+  runningInstancesInAsync,
+  supervisorGroupMembers,
+} from './instances.ts';
 import { macosRuntimeClaim, requiredMacosRecord } from './state.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 import type { StimContext } from '@stim-cli/core';
@@ -64,9 +69,11 @@ export async function stopHostedBundleInstances(area: string, operation?: StimCo
 export async function stopMacosAppHeld(root: string, operation?: StimContext): Promise<boolean> {
   operation?.signal.throwIfAborted();
   const record = requiredMacosRecord(root);
+  const started = record?.supervisor ? await supervisorGroupMembers(record.supervisor, operation) : [];
   if (record?.supervisor) await stopProcesses([record.supervisor], SUPERVISOR_EXIT_MS, operation);
   const app = readMacosRecord(root)?.app ?? record?.app;
   if (app) await stopProcesses([app], undefined, operation);
+  await stopProcesses(started, undefined, operation);
   const instances = await runningBundleInstancesAsync(root, operation);
   await stopProcesses(instances, undefined, operation);
   operation?.signal.throwIfAborted();

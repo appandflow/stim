@@ -71,3 +71,13 @@ export function readDesktopBootstrap(
     input.once('close', ended);
   });
 }
+
+/** Resolves when the launcher's end of `input` closes, however the launcher ended. The launcher writes nothing. */
+export function watchLauncherLifetime(input: Readable): Promise<void> {
+  return new Promise((resolve) => {
+    input.on('data', () => {});
+    input.once('end', resolve);
+    input.once('error', resolve);
+    input.once('close', resolve);
+  });
+}
