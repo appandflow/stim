@@ -13,6 +13,11 @@ type NodeDataChannel = typeof import('node-datachannel');
 const STUN = (process.env.STIM_WEBRTC_STUN ?? 'stun:stun.l.google.com:19302').split(',').filter(Boolean);
 /** Data waiting in the SCTP send queue above which a viewer's video drops until its next keyframe. */
 const QUEUE_BYTES = Number(process.env.STIM_WEBRTC_QUEUE_KB ?? 96) * 1024;
+/**
+ * usrsctp's send buffer. Its 1 MB default holds seconds of video behind a slow link where `bufferedAmount` cannot see
+ * it, and delays the control channel, which shares the association.
+ */
+const SEND_BUFFER_BYTES = 128 * 1024;
 const GATHER_MS = 3000;
 const CONNECT_MS = 15_000;
 const STATS_MS = 1000;
@@ -39,6 +44,10 @@ let loading: Promise<NodeDataChannel> | null = null;
 function load(): Promise<NodeDataChannel> {
   loading ??= import('node-datachannel').then((module) => {
     const loaded = (module as unknown as { default?: NodeDataChannel }).default ?? module;
+    (loaded as NodeDataChannel).setSctpSettings({
+      sendBufferSize: SEND_BUFFER_BYTES,
+      ...(process.env.STIM_WEBRTC_SCTP ? JSON.parse(process.env.STIM_WEBRTC_SCTP) : {}),
+    });
     return loaded as NodeDataChannel;
   });
   return loading;

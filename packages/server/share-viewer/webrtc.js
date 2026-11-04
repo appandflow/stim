@@ -57,7 +57,7 @@
 
   function percentile(values, p) {
     if (!values.length) return null;
-    const sorted = [...values].sort((a, b) => a - b);
+    const sorted = values.toSorted((a, b) => a - b);
     return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
   }
 
@@ -183,9 +183,7 @@
     clearTimeout(connectTimer);
     clearInterval(pingTimer);
     clearInterval(statsTimer);
-    if (video) video.onmessage = null;
     if (pc) {
-      pc.onconnectionstatechange = null;
       pc.close();
     }
     pc = video = ctl = null;
@@ -202,11 +200,15 @@
     state.offsets.rtc = null;
     const peer = new RTCPeerConnection({ iceServers: [{ urls: STUN }] });
     pc = peer;
-    video = peer.createDataChannel('video', { ordered: false, maxRetransmits: 0 });
+    const lifetime = Number(query.get('ttl'));
+    video = peer.createDataChannel(
+      'video',
+      lifetime > 0 ? { ordered: false, maxPacketLifeTime: lifetime } : { ordered: false, maxRetransmits: 0 },
+    );
     video.binaryType = 'arraybuffer';
-    video.onmessage = (event) => handlers.video(event.data);
+    video.addEventListener('message', (event) => handlers.video(event.data));
     ctl = peer.createDataChannel('ctl');
-    ctl.onmessage = (event) => {
+    ctl.addEventListener('message', (event) => {
       if (typeof event.data !== 'string') return;
       const message = JSON.parse(event.data);
       if (message.t === 'pong') sample('rtc', message.c, message.s);
@@ -216,24 +218,24 @@
         state.serverRtt = message.rtt;
         state.serverPair = message.pair;
       }
-    };
-    video.onopen = () => {
+    });
+    video.addEventListener('open', () => {
       if (peer !== pc) return;
       clearTimeout(connectTimer);
       state.active = 'webrtc';
       handlers.opened();
-    };
-    ctl.onopen = () => {
+    });
+    ctl.addEventListener('open', () => {
       ping();
       pingTimer = setInterval(ping, 2000);
-    };
-    peer.onconnectionstatechange = () => {
+    });
+    peer.addEventListener('connectionstatechange', () => {
       if (peer !== pc) return;
       if (peer.connectionState === 'failed' || peer.connectionState === 'closed')
         failed('WebRTC ' + peer.connectionState);
       else if (peer.connectionState === 'disconnected')
         setTimeout(() => peer === pc && peer.connectionState === 'disconnected' && failed('WebRTC disconnected'), 3000);
-    };
+    });
     statsTimer = setInterval(() => void readPair().catch(() => {}), 1000);
     connectTimer = setTimeout(() => peer === pc && failed('WebRTC did not connect'), CONNECT_MS);
     await peer.setLocalDescription(await peer.createOffer());
@@ -289,6 +291,16 @@
     },
     late() {
       state.late++;
+    },
+    snapshot() {
+      return {
+        queued: state.queued,
+        dropped: state.serverDropped,
+        ctlRtt: state.ctlRtt,
+        pcRtt: state.pcRtt,
+        wsRtt: state.wsRtt,
+        gaps: state.gaps,
+      };
     },
     get active() {
       return state.active;

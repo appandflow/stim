@@ -264,30 +264,73 @@ function configure(sps, pps) {
 
 /** Decodes one video packet: the header the server's videoPacket writes, then an Annex-B access unit. */
 let lastSequence = -1;
+const REORDER_MS = 40;
+const reordered = new Map();
+let reorderTimer = null;
 
-/** An unordered channel can lose or reorder packets; a P-frame after a gap would corrupt the picture. */
-function inOrder(view, keyframe) {
-  const sequence = view.getUint32(4);
-  if (sequence <= lastSequence && lastSequence - sequence < 0x80000000) {
-    rtc.late();
-    return false;
-  }
-  const gap = lastSequence >= 0 && sequence !== lastSequence + 1;
-  lastSequence = sequence;
-  if (gap) rtc.gap();
-  if (gap && !keyframe) {
-    askForKeyframe();
-    return false;
-  }
-  return true;
+function resetSequence() {
+  lastSequence = -1;
+  reordered.clear();
+  clearTimeout(reorderTimer);
+  reorderTimer = null;
 }
 
-function showVideo(buffer, viaRtc) {
+/** Plays a packet of the unordered channel; one after a missing packet cannot decode unless it is a keyframe. */
+function playSequenced(buffer, gap) {
+  const view = new DataView(buffer);
+  lastSequence = view.getUint32(4);
+  if (gap) {
+    rtc.gap();
+    if ((view.getUint8(1) & VIDEO_KEYFRAME) === 0) return askForKeyframe();
+  }
+  showVideo(buffer);
+}
+
+function drainReordered() {
+  while (reordered.has(lastSequence + 1)) {
+    const next = reordered.get(lastSequence + 1);
+    reordered.delete(lastSequence + 1);
+    playSequenced(next, false);
+  }
+  if (!reordered.size) {
+    clearTimeout(reorderTimer);
+    reorderTimer = null;
+  }
+}
+
+function giveUpOnMissing() {
+  reorderTimer = null;
+  if (!reordered.size) return;
+  const next = Math.min(...reordered.keys());
+  const buffer = reordered.get(next);
+  reordered.delete(next);
+  playSequenced(buffer, true);
+  drainReordered();
+  if (reordered.size) reorderTimer = setTimeout(giveUpOnMissing, REORDER_MS);
+}
+
+/** An unordered, lossy channel delivers packets late and out of order; waits briefly for a missing one. */
+function receiveRtc(buffer) {
+  if (buffer.byteLength < 21) return;
+  const sequence = new DataView(buffer).getUint32(4);
+  if (lastSequence >= 0 && sequence <= lastSequence) {
+    rtc.late();
+    return;
+  }
+  if (lastSequence < 0 || sequence === lastSequence + 1) {
+    playSequenced(buffer, false);
+    drainReordered();
+    return;
+  }
+  reordered.set(sequence, buffer);
+  reorderTimer ??= setTimeout(giveUpOnMissing, REORDER_MS);
+}
+
+function showVideo(buffer) {
   const view = new DataView(buffer);
   if (buffer.byteLength < 21 || view.getUint8(0) !== 1) return;
   const keyframe = (view.getUint8(1) & VIDEO_KEYFRAME) !== 0;
   rtc.received(buffer.byteLength);
-  if (viaRtc && !inOrder(view, keyframe)) return;
   const units = nalUnits(new Uint8Array(buffer, view.getUint16(2)));
   if (keyframe) {
     const sps = units.find((unit) => nalType(unit) === 7);
@@ -565,7 +608,7 @@ function connect(codec) {
   socket = current;
   body.dataset.codec = codec;
   body.dataset.transport = viaRtc ? 'webrtc' : 'ws';
-  lastSequence = -1;
+  resetSequence();
   if (!viaRtc) rtc.stop();
   current.binaryType = 'arraybuffer';
   current.addEventListener('open', () => {
@@ -585,7 +628,7 @@ function connect(codec) {
       if (new Uint8Array(event.data, 0, 1)[0] === 0xff) {
         const blob = new Blob([event.data], { type: 'image/jpeg' });
         pending = pending.then(() => showJpeg(blob)).catch(() => {});
-      } else if (codec === 'h264') showVideo(event.data, false);
+      } else if (codec === 'h264') showVideo(event.data);
       return;
     }
     const message = JSON.parse(event.data);
@@ -620,7 +663,7 @@ function connect(codec) {
       live = false;
       waitingForKeyframe = true;
       refreshStatus();
-      lastSequence = -1;
+      resetSequence();
       if (viaRtc && !rtcFailed) startRtc();
       else if (codec === 'h264') askForKeyframe();
     } else if (message.type === 'you') {
@@ -648,10 +691,10 @@ function startRtc() {
   void rtc
     .start({
       send,
-      video: (data) => showVideo(data, true),
+      video: receiveRtc,
       opened: () => {
         waitingForKeyframe = true;
-        lastSequence = -1;
+        resetSequence();
       },
       failed: () => {
         rtcFailed = true;
