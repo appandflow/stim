@@ -175,7 +175,9 @@ WHAT IT NEEDS
   server stops on its own when its last share ends (stim share stop, expiry,
   stim stop, worktree remove) or when no share starts within 2 minutes, and
   removes its Funnel route on the way out (it stays up, retrying, while that
-  removal fails); stim share stop also stops it. When the Stim home does not
+  removal fails); stim share stop also stops it, unless a share start is still
+  in flight (another workspace's may wait for its devices), which it leaves
+  running and says so. When the Stim home does not
   answer at its startup it exits at once with the reason in its log. A
   server Stim Desktop, the LaunchAgent or you started is never stopped. When
   no matching stim-server is installed, or it does not start, stim share

@@ -471,6 +471,17 @@ describe('stim share', () => {
       });
     });
 
+    it('says the stim-server was left running when a share start is in flight', async () => {
+      const deps = fake([() => ({ result: { stopped: [] } })]);
+      deps.stopServer = async () => ({ pid: 4242, starting: 1 });
+      expect(await runShare('stop', {}, deps, '1.0.0')).toMatchObject({
+        ok: true,
+        output: { keptServer: 4242, startingShares: 1 },
+        text: expect.stringContaining('Left the stim-server stim share started (pid 4242) running'),
+      });
+      expect(JSON.stringify(await runShare('stop', {}, deps, '1.0.0'))).not.toContain('stoppedServer');
+    });
+
     it('tells the person to update an older stim-server that does not take a saved link', async () => {
       const deps = fake([
         started(),

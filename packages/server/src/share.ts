@@ -380,6 +380,10 @@ export class ShareHub {
     this.limits = { ...SHARE_LIMITS, ...deps.limits };
   }
 
+  get startsInFlight(): number {
+    return this.starting;
+  }
+
   /** The loopback port the listener serves, or null while it is closed: no share is live and none is kept. */
   get port(): number | null {
     const address = this.listener?.address();

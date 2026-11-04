@@ -109,6 +109,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
  * `share-reuse` is `share.start`'s `token` and `expiresAt`, which start a share under a URL token a stopped share had.
+ * `share-starting` is `share.list`'s `starting`: the `share.start` requests the server has not yet answered.
  * `share-waiting` is the rows' `state` (a share waits for its device instead of ending) and `share.stop`'s `slot`.
  * `share-slug` is `share.start`'s `slug` parameter and the rows' `slug`.
  * `hosted-presence` is `device-host.presence.subscribe`: the `presence` events of a hosted session, which carry what the
@@ -195,6 +196,7 @@ export const FEATURES = [
   'hosted-presence',
   'share-slug',
   'share-reuse',
+  'share-starting',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -1793,7 +1795,11 @@ export interface Methods {
     params: { workspace: string; id?: string; slot?: string };
     result: { stopped: WebShareRow[] };
   };
-  'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
+  'share.list': {
+    params?: Record<string, never>;
+    /** `starting` counts the starts not yet answered, which no row shows yet; a server without `share-starting` omits it. */
+    result: { shares: WebShareRow[]; starting?: number };
+  };
   'presence.publish': { params: PresencePublishParams; result: Record<string, never> };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };
   'device-host.sessions.stop': { params: { session: string }; result: { id: string; state: 'stopping' | 'stopped' } };
