@@ -91,7 +91,10 @@ function unchangedSince(dir: string, measure: DiskMeasure): boolean {
 }
 
 function sizeOptions(dir: string) {
-  return { maxAgeMs: BUILD_STATE_MAX_AGE_MS, valid: (measure: DiskMeasure) => unchangedSince(dir, measure) };
+  return {
+    maxAgeMs: BUILD_STATE_MAX_AGE_MS,
+    ...(isDependencyTree(dir) ? {} : { valid: (measure: DiskMeasure) => unchangedSince(dir, measure) }),
+  };
 }
 
 function dirSize(measure: DiskMeasure | null, dir: string, privateSized: ReadonlySet<string>): DirSize | null {
