@@ -40,7 +40,7 @@ interface Fixture {
   congestions: number;
   begins: unknown[];
   inputs: unknown[];
-  inputResult: { text: string } | { typed: true } | { code: 'action-failed'; message: string } | null;
+  inputResult: { text: string } | { typed: true } | { code: 'action-failed' | 'device-busy'; message: string } | null;
   /** The viewer each input came from, by name. */
   inputBy: string[];
   /** Names of the viewers whose pointer the control hub was told to lift. */
@@ -605,8 +605,14 @@ describe('a web share', () => {
     socket.send(JSON.stringify({ type: 'clipboard-set', text: 'not typed', paste: true }));
     await vi.waitFor(() => expect(notes).toContainEqual(suggestion));
     expect(notes.filter((note) => JSON.stringify(note).includes('suggestion'))).toHaveLength(1);
+    f.inputResult = { code: 'device-busy', message: 'typing' };
+    socket.send(JSON.stringify({ type: 'clipboard-set', text: 'again', paste: true }));
+    await vi.waitFor(() =>
+      expect(notes).toContainEqual({ type: 'control', message: expect.stringContaining('still typing') }),
+    );
+    f.inputResult = null;
     socket.send(JSON.stringify({ type: 'clipboard-set', text: 'only set' }));
-    await vi.waitFor(() => expect(f.inputs).toHaveLength(3));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(4));
     expect(notes.filter((note) => JSON.stringify(note).includes('suggestion'))).toHaveLength(1);
     socket.close();
   });
