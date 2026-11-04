@@ -72,8 +72,10 @@ export function createTouchTracker() {
       if (state === 'single') return [message('move', now.first)];
       return state === 'double' ? [message('move', now.first, now.second)] : [];
     },
-    up(id: number): TouchMessage[] {
-      const point = fingers.get(id);
+    up(id: number, at?: FingerPoint): TouchMessage[] {
+      if (!fingers.has(id)) return [];
+      if (at) fingers.set(id, at);
+      const point = at ?? fingers.get(id);
       if (!point) return [];
       const both = pair();
       const ended = isPaired(id);

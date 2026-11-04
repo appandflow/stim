@@ -438,6 +438,10 @@ it('sends a single Android finger as a tap without a second finger', async () =>
   ]);
 });
 
+afterEach(() => {
+  jest.useRealTimers();
+});
+
 it('sends a held Android finger as a one-finger touch once the second-finger wait passes', async () => {
   jest.useFakeTimers();
   mockArtwork = true;
@@ -455,7 +459,6 @@ it('sends a held Android finger as a one-finger touch once the second-finger wai
   expect(mockTouch).not.toHaveBeenCalled();
   await act(() => jest.advanceTimersByTime(40));
   expect(mockTouch.mock.calls).toEqual([['down', 0.5, 0.5, undefined, undefined]]);
-  jest.useRealTimers();
 });
 
 it('keeps the frame presentation toggle available without a control lease or control permission', async () => {

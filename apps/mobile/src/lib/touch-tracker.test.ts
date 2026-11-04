@@ -61,4 +61,11 @@ describe('createTouchTracker', () => {
     expect(tracker.down(4, p(0.1, 0.1))).toEqual([]);
     expect(tracker.pending).toBe(true);
   });
+
+  it('lifts a finger where it lifted, not where it last moved', () => {
+    const tracker = createTouchTracker();
+    tracker.down(1, p(0.25, 0.5));
+    tracker.down(2, p(0.75, 0.5));
+    expect(tracker.up(2, p(0.8, 0.6))).toEqual([m('up', p(0.25, 0.5), p(0.8, 0.6))]);
+  });
 });

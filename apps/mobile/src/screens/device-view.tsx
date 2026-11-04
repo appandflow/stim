@@ -454,7 +454,10 @@ export function DeviceView({
       sendFingers(fingers.move(updates));
     },
     onResponderEnd: (event: GestureResponderEvent) => {
-      for (const finger of event.nativeEvent.changedTouches) sendFingers(fingers.up(finger.identifier));
+      for (const finger of event.nativeEvent.changedTouches) {
+        const at = point(finger.locationX, finger.locationY, true);
+        sendFingers(fingers.up(finger.identifier, at ?? undefined));
+      }
     },
     onResponderRelease: () => {
       clearSettle();
