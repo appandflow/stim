@@ -34,7 +34,8 @@ export interface ShareRestoreDeps {
  * Starts every unexpired share that `stim share` saved as `live` and no stim-server runs now, the way `--reuse` would:
  * the same link and passwords, until the saved expiry. A share the server cannot start yet (for example Tailscale is
  * not up after a restart) is tried again with a growing wait; one that is refused for its own sake (bad params, a link
- * already live) is left alone; one that waits on the workspace's native-run claim is tried again for as long as the saved entry is wanted. A share stopped or replaced while a start was pending never stays up. Nothing here
+ * already live) is left alone; one refused because the workspace's native-run claim is busy is tried again for as long
+ * as the saved entry is wanted. A share stopped or replaced while a start was pending never stays up. Nothing here
  * writes the saved links.
  */
 export async function restoreSavedShares(
