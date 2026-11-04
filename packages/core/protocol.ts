@@ -26,6 +26,8 @@ import type {
   WorktreeRow,
   SettingScope,
   SettingWriteResult,
+  SetupCapability,
+  SetupJournal,
 } from './state/index.ts';
 
 export const PROTOCOL_VERSION = 2;
@@ -99,6 +101,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-run` streams platform build/install/launch progress and facts on the proved local Desktop connection.
  * `desktop-build` streams build-only progress and artifact facts on the proved local Desktop connection.
  * `desktop-plan` reads next-build reports for selected folders on the proved local Desktop connection.
+ * `desktop-setup` runs `stim-server setup` for a pasted request on the proved local Desktop connection, which answers
+ * each grant with `desktop.setup.answer`.
  * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
  * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
@@ -176,6 +180,7 @@ export const FEATURES = [
   'desktop-worktree-remove',
   'desktop-worktree-warm',
   'desktop-plan',
+  'desktop-setup',
   'share-stop-id',
   'presence',
   'device-clipboard',
@@ -211,6 +216,8 @@ export const METHODS = [
   'desktop.worktree.warm.subscribe',
   'desktop.plan.get',
   'desktop.plan.cancel',
+  'desktop.setup.subscribe',
+  'desktop.setup.answer',
   'route.setup',
   'workspaces.subscribe',
   'workspace.subscribe',
@@ -1885,6 +1892,14 @@ export interface Methods {
     result: BuildPlanPayload | MacosBuildPlanPayload | DesktopPlanRefusal;
   };
   'desktop.plan.cancel': { params: { request: string }; result: { cancelled: boolean; refusal?: DesktopPlanRefusal } };
+  'desktop.setup.subscribe': {
+    params: { ticket: string; expires: string; capabilities: SetupCapability[] };
+    result: SubscribeResult;
+  };
+  'desktop.setup.answer': {
+    params: { journal: string; answer: 'approve' | 'refuse' | 'skip' };
+    result: Record<string, never>;
+  };
   'desktop.build.subscribe': {
     params: { cwd: string; options: PlatformBuildOptions };
     result: SubscribeResult;
@@ -2342,6 +2357,22 @@ export interface DesktopBuildEndedEvent {
   message: string;
 }
 
+/** A Desktop-approved setup's journal after each write, and the grant it is asking the person about. */
+export interface DesktopSetupProgressEvent {
+  event: 'desktop-setup-progress';
+  subscription: string;
+  journal: SetupJournal;
+  asking: SetupCapability | null;
+}
+
+/** The setup's exit code (as `stim-server setup` exits) and its `--json` payload, null when it printed none. */
+export interface DesktopSetupEndedEvent {
+  event: 'desktop-setup-ended';
+  subscription: string;
+  exitCode: number;
+  output: unknown;
+}
+
 /** Progress from private Desktop garbage collection, before its terminal event. */
 export interface DesktopGcProgressEvent {
   event: 'desktop-gc-progress';
@@ -2453,6 +2484,8 @@ export type ServerEvent =
   | DesktopGcEndedEvent
   | DesktopBuildProgressEvent
   | DesktopBuildEndedEvent
+  | DesktopSetupProgressEvent
+  | DesktopSetupEndedEvent
   | DesktopRunProgressEvent
   | DesktopRunEndedEvent
   | DesktopStartProgressEvent

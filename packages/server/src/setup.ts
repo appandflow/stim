@@ -241,7 +241,8 @@ export interface SetupDeps {
   tty: boolean;
   stdout(line: string): void;
   stderr(line: string): void;
-  confirm(question: string, timeoutMs: number): Promise<boolean>;
+  /** Asks the person whether to approve `capability`; false after `timeoutMs`. */
+  confirm(question: string, timeoutMs: number, capability: SetupCapability): Promise<boolean>;
   permissionWait(ms: number): Promise<boolean>;
   /**
    * The tailnet name, null without Tailscale, and whether `server.lanAddresses` is set. Setup checks the local network
@@ -1083,6 +1084,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           deps.confirm(
             approvalQuestion(concise, capability, here),
             Math.max(1, Date.parse(opts.expiresAt) - deps.now()),
+            capability,
           ),
         );
         if (deps.now() >= Date.parse(opts.expiresAt)) break;

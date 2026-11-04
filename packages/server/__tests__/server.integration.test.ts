@@ -52,6 +52,7 @@ import {
   settingsJsonSchema,
   serverLocalSocket,
   workspaceStateFile,
+  readSetupJournal,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
 import * as stim from 'stim';
@@ -82,12 +83,18 @@ import {
   readBuildClients,
   readDeviceHostClients,
   readDevices,
+  dropSetupSecret,
   revokeDevice,
+  secretPsk,
   serverDir,
   serverIdentity,
   spendSecret,
   storeSetupSecret,
+  watchClientRegistries,
 } from '../src/registry.ts';
+import { pruneSetupJournals, writeSetupJournal } from '../src/setup-journal.ts';
+import { setupClaim, type SetupDeps } from '../src/setup.ts';
+import { fetchHealth } from '../src/service.ts';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
 import { acceptNoise, newSecret, secretValues } from '@stim-cli/core/noise-session';
 import {
@@ -494,6 +501,7 @@ async function start(
     requestLog?: ServerOptions['requestLog'];
     /** The bundled Desktop's private key; the test key by default, null for a server Desktop did not start. */
     desktopBootstrap?: ServerOptions['desktopBootstrap'] | null;
+    setupDeps?: ServerOptions['setupDeps'];
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -562,6 +570,7 @@ async function start(
         : (overrides.desktopBootstrap ?? new DesktopBootstrap(DESKTOP_KEY)),
     startupProbeMs: overrides.startupProbeMs,
     startupRetryMs: overrides.startupRetryMs,
+    setupDeps: overrides.setupDeps,
   });
   if (overrides.settle !== false) await server!.ready;
   return server.addresses[0]!.port;
@@ -2428,6 +2437,306 @@ describe('setup approval', () => {
 
       expect(revokeDevice(made[capability]!.id)).toBe(true);
       expect(await approved.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
+    });
+  });
+});
+
+describe('setup approval in Stim Desktop on this machine', () => {
+  const never = async (): Promise<never> => {
+    throw new Error('Desktop-approved setup must not install or change a service');
+  };
+  /** The machine-facing parts of setup are fakes; the ticket, claim, secret, records and journal are the real ones. */
+  const setupDeps = (): SetupDeps => ({
+    platform: 'darwin',
+    now: Date.now,
+    sleep: (ms, signal) =>
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, ms);
+        signal?.addEventListener('abort', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      }),
+    tty: false,
+    stdout: () => {},
+    stderr: () => {},
+    confirm: never,
+    permissionWait: never,
+    preflight: async () => ({ dnsName: 'worker.ts.net' }),
+    fingerprint: () => 'worker-fingerprint',
+    firewall: async () => null,
+    claim: setupClaim,
+    write: writeSetupJournal,
+    prune: pruneSetupJournals,
+    withInstallClaim: (_label, work) => work(),
+    installed: async () => null,
+    health: async (port) => {
+      const health = await fetchHealth(port);
+      return (
+        health && {
+          ...health,
+          host: {
+            name: 'Stim Desktop',
+            screenRecording: false,
+            accessibility: false,
+          },
+        }
+      );
+    },
+    build: () => ({ version: '1.2.3', stimBuild: 'digest' }),
+    install: never,
+    update: never,
+    installHost: async () => ({
+      app: '/Stim Host.app',
+      executable: '/Stim Host.app/Contents/MacOS/stim-host',
+      name: 'Stim Host',
+      bundleId: 'dev.stim.host',
+      replaced: false,
+      adHoc: false,
+    }),
+    installJob: never,
+    route: async () => ({ state: 'routed', port: 7443 }),
+    prepareRoute: async () => ({
+      record: { port: 7443, created: false },
+      create: null,
+    }),
+    recordRoute: async () => {},
+    createRoute: never,
+    records: () => [...readBuildClients(), ...readDeviceHostClients()],
+    watchRecords: watchClientRegistries,
+    storeSecret: storeSetupSecret,
+    dropSecret: dropSetupSecret,
+    panes: async () => ({
+      screen: 'Screen & System Audio Recording',
+      control: 'Accessibility',
+    }),
+    requestPermissions: never,
+    openPane: async () => {},
+    toolchain: async () => ({
+      stimBuild: 'digest',
+      arch: 'arm64',
+      xcode: '27',
+      simulatorSdk: '27',
+      macosSdk: '27',
+      cocoapods: '1.16',
+      runtimes: ['iOS-27'],
+      jdk: '17',
+      androidSdk: { ndk: ['27'], buildTools: ['36'], platforms: ['36'] },
+    }),
+    node: process.execPath,
+    versions: () => root,
+    stimBuild: 'digest',
+  });
+
+  type SetupEvent = Extract<ServerMessage, { event: 'desktop-setup-progress' | 'desktop-setup-ended' }>;
+
+  async function nextSetup(client: Client, check: (event: SetupEvent) => boolean): Promise<SetupEvent> {
+    for (;;) {
+      const message = await client.next();
+      if (
+        'event' in message &&
+        (message.event === 'desktop-setup-progress' || message.event === 'desktop-setup-ended') &&
+        check(message)
+      )
+        return message;
+    }
+  }
+
+  const asking = (capability: string) => (event: SetupEvent) =>
+    event.event === 'desktop-setup-progress' && event.asking === capability;
+  const step = (prefix: string) => (event: SetupEvent) =>
+    event.event === 'desktop-setup-progress' &&
+    event.journal.steps.some((each) => each.state === 'running' && each.id.startsWith(prefix));
+  const waitsForMachine = (event: SetupEvent) =>
+    event.event === 'desktop-setup-progress' &&
+    event.journal.steps.some(
+      (each) =>
+        each.id === 'approve' && each.state === 'running' && each.detail?.startsWith('Waiting for the requesting'),
+    );
+  const ended = (event: SetupEvent) => event.event === 'desktop-setup-ended';
+
+  function request(capabilities: string[] = ['build'], minutes = 30) {
+    const ticket = newSecret();
+    const values = secretValues(Buffer.from(ticket, 'base64url'));
+    return {
+      ticket,
+      journal: values.journal,
+      stored: () => secretPsk(values.lookup.toString('hex')) !== null,
+      params: {
+        ticket,
+        expires: new Date(Date.now() + minutes * 60_000).toISOString(),
+        capabilities,
+      },
+    };
+  }
+
+  it('refuses every connection but the proved local Desktop and stores nothing', async () => {
+    const port = await start({ setupDeps });
+    const asked = request();
+    const peer = await pair(port, '100.64.0.2', true);
+    const remote = await returning(port, peer.keyPair, '100.64.0.2');
+    const loopbackPairing = await authed(port, true);
+    const build = await returning(port, setupClient(['build']).keyPair, '100.64.0.3', 'build');
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    await plain.request('hello', { client: CLIENT });
+    for (const client of [remote, loopbackPairing, build, plain]) {
+      expect(await client.request('desktop.setup.subscribe', asked.params)).toHaveProperty('error.code', 'forbidden');
+      expect(
+        await client.request('desktop.setup.answer', {
+          journal: asked.journal,
+          answer: 'approve',
+        }),
+      ).toHaveProperty('error.code', 'forbidden');
+    }
+    expect(asked.stored()).toBe(false);
+    expect(readSetupJournal(asked.journal)).toBeNull();
+  });
+
+  it('is not offered on a server Desktop did not start', async () => {
+    await start({ setupDeps, desktopBootstrap: null });
+    assert(server?.localSocket);
+    const client = await localConnect(server.localSocket);
+    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-setup']) },
+    });
+    const asked = request();
+    expect(await client.request('desktop.setup.subscribe', asked.params)).toHaveProperty('error.code', 'forbidden');
+    expect(asked.stored()).toBe(false);
+  });
+
+  it('stores the ticket only for the grants the person approves, which the requesting machine then spends', async () => {
+    const port = await start({ setupDeps });
+    const desktopClient = await desktop();
+    const asked = request(['build', 'device-host']);
+    expect(await desktopClient.request('desktop.setup.subscribe', asked.params)).toHaveProperty('result.subscription');
+    await nextSetup(desktopClient, asking('build'));
+    expect(asked.stored()).toBe(false);
+    expect(
+      await desktopClient.request('desktop.setup.answer', {
+        journal: asked.journal,
+        answer: 'approve',
+      }),
+    ).toEqual(expect.objectContaining({ result: {} }));
+    await nextSetup(desktopClient, asking('device-host'));
+    expect(asked.stored()).toBe(false);
+    await desktopClient.request('desktop.setup.answer', {
+      journal: asked.journal,
+      answer: 'refuse',
+    });
+    await nextSetup(desktopClient, waitsForMachine);
+    expect(asked.stored()).toBe(true);
+
+    const keyPair = generateNoiseKeyPair();
+    const requester = await connect(port, '100.64.0.2', {
+      secret: asked.ticket,
+      keyPair,
+      name: 'Laptop',
+    });
+    expect(await requester.request('hello', { client: CLIENT, access: 'build' })).toHaveProperty(
+      'result.capabilities',
+      ['build'],
+    );
+    await nextSetup(desktopClient, step('permissions.'));
+    expect(
+      await desktopClient.request('desktop.setup.answer', {
+        journal: asked.journal,
+        answer: 'skip',
+      }),
+    ).toEqual(expect.objectContaining({ result: {} }));
+    await nextSetup(desktopClient, step('permissions.deviceControl'));
+    await desktopClient.request('desktop.setup.answer', {
+      journal: asked.journal,
+      answer: 'skip',
+    });
+    const end = await nextSetup(desktopClient, ended);
+    expect(end).toMatchObject({ exitCode: 1, output: { granted: [{ capability: 'build' }] } });
+    expect(readBuildClients()).toEqual([
+      expect.objectContaining({
+        name: 'Laptop',
+        publicKey: keyPair.publicKey.toString('base64url'),
+      }),
+    ]);
+    expect(readDeviceHostClients()).toEqual([]);
+    expect(readFileSync(join(root, 'home', 'server', 'secrets.json'), 'utf8')).not.toContain(asked.ticket);
+  });
+
+  it('stores nothing when the person refuses every grant', async () => {
+    const port = await start({ setupDeps });
+    const desktopClient = await desktop();
+    const asked = request();
+    await desktopClient.request('desktop.setup.subscribe', asked.params);
+    await nextSetup(desktopClient, asking('build'));
+    await desktopClient.request('desktop.setup.answer', {
+      journal: asked.journal,
+      answer: 'refuse',
+    });
+    const end = await nextSetup(desktopClient, ended);
+    expect(end).toMatchObject({ exitCode: 1, output: { granted: [] } });
+    expect(asked.stored()).toBe(false);
+    await expect(connect(port, '100.64.0.2', { secret: asked.ticket })).rejects.toMatchObject({
+      code: 'unknown-secret',
+    });
+  });
+
+  it("applies setup's own ticket rules and takes one request at a time", async () => {
+    await start({ setupDeps });
+    const desktopClient = await desktop();
+    for (const params of [request(['build'], 3 * 60).params, request(['build'], -1).params]) {
+      expect(await desktopClient.request('desktop.setup.subscribe', params)).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+    }
+    const first = request();
+    await desktopClient.request('desktop.setup.subscribe', first.params);
+    await nextSetup(desktopClient, asking('build'));
+    const second = request();
+    await desktopClient.request('desktop.setup.subscribe', second.params);
+    const refused = await nextSetup(desktopClient, ended);
+    expect(refused).toMatchObject({
+      exitCode: 1,
+      output: { warnings: expect.arrayContaining([expect.stringContaining('Another setup holds')]) },
+    });
+    expect(
+      await desktopClient.request('desktop.setup.answer', {
+        journal: second.journal,
+        answer: 'approve',
+      }),
+    ).toHaveProperty('error.code', 'bad-request');
+    expect(
+      await desktopClient.request('desktop.setup.answer', {
+        journal: first.journal,
+        answer: 'skip',
+      }),
+    ).toHaveProperty('error.code', 'bad-request');
+    await desktopClient.request('desktop.setup.answer', {
+      journal: first.journal,
+      answer: 'refuse',
+    });
+    await nextSetup(desktopClient, ended);
+    expect(second.stored()).toBe(false);
+  });
+
+  it('withdraws an approved ticket when Desktop closes the request before the machine connects', async () => {
+    const port = await start({ setupDeps });
+    const desktopClient = await desktop();
+    const asked = request();
+    expect(await desktopClient.request('desktop.setup.subscribe', asked.params)).toHaveProperty(
+      'result.subscription',
+      's1',
+    );
+    await nextSetup(desktopClient, asking('build'));
+    await desktopClient.request('desktop.setup.answer', {
+      journal: asked.journal,
+      answer: 'approve',
+    });
+    await nextSetup(desktopClient, waitsForMachine);
+    expect(asked.stored()).toBe(true);
+    expect(await desktopClient.request('unsubscribe', { subscription: 's1' })).toMatchObject({ result: {} });
+    await vi.waitFor(() => expect(asked.stored()).toBe(false));
+    await expect(connect(port, '100.64.0.2', { secret: asked.ticket })).rejects.toMatchObject({
+      code: 'unknown-secret',
     });
   });
 });
