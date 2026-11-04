@@ -25,7 +25,7 @@ import Foundation
     throw ServerError(
       code: "not-connected",
       message:
-        "Stim Desktop cannot \(action) because it did not start this stim-server: it was started outside Desktop or is set as the stim-server executable in Settings > Advanced. Stop it, or clear the executable, so Desktop runs its own."
+        "Stim Desktop cannot \(action) because it did not start this stim-server: it was started outside Desktop or is set as the stim-server executable in Settings > Advanced. Stop it (a LaunchAgent restarts it until `stim-server service uninstall`), or clear the executable, so Desktop runs its own."
     )
   }
   return client

@@ -1323,7 +1323,11 @@ the LaunchAgent that `stim-server setup` or `stim-server service install` create
 adopted as not started by the app, whatever **Serve to phones** says, so build and
 device-host requests from other Macs reach the Allow / Deny dialog. If Desktop's own
 server fails and a LaunchAgent server comes up, the next retry (every 30 seconds or
-more) adopts it. Desktop's own actions, such as cleanup, settings changes and app runs, work only on the bundled server it started with its private key, so with an adopted server or a stim-server override each of them refuses with that reason and **Settings > Advanced** says so under the server's version. A server with another Stim home is not adopted: the sidebar footer
+more) adopts it. Desktop's own actions, such as cleanup, settings changes and app runs,
+work only on the bundled server it started with its private key, so with an adopted
+server or a stim-server override each of them refuses with that reason, and
+**Settings > Advanced** says so under the server's version. A server with another Stim
+home is not adopted: the sidebar footer
 shows the mismatch and Desktop keeps retrying. Before its environment is ready, Desktop
 adopts a ready server provisionally when the Stim home it runs with would adopt it, so the
 sidebar shows its status feed right away. A provisional adoption only reads: Desktop

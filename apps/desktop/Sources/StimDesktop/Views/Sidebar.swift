@@ -154,7 +154,9 @@ struct Sidebar: View {
   private func migrateHidden(_ payload: StatusPayload?) {
     let legacyPaths = prefs.hiddenWorkspaces.paths
     migratedHidden = migratedHidden.filter { legacyPaths.contains($0.key) }
-    guard let payload, ServerSession.shared.localActionConnection?.home == store.stimHome else { return }
+    guard let payload, let connection = ServerSession.shared.localActionConnection, connection.client.hasDesktopAuthority,
+      connection.home == store.stimHome
+    else { return }
     for item in prefs.hiddenWorkspaces.migrations(environments: payload.environments) {
       guard migratedHidden[item.path] != item.hidden else { continue }
       let run = prefs.setHidden(item.hidden, apps: item.apps, actions: actions, migrating: true)
