@@ -311,7 +311,8 @@ PATH).
 
 - **`desktop.yml`** -- "Desktop": builds and tests `apps/desktop` on
   `macos-15`. Its single job, `build`, runs on a pull request or push to `main`
-  that touches a Desktop path, and on dispatch and nightly. The pull request and
+  that touches a Desktop path (not `apps/desktop/**/*.md`), the bundled
+  `packages/server` or `pnpm-lock.yaml`, and on dispatch and nightly. The pull request and
   push run takes about 9 minutes: the token, ASCII and formatting checks, the
   warnings-as-errors debug build, the linked SDK check, the staged server and
   `swift test`. Nightly (05:00 UTC) and dispatch add the Release configuration
@@ -327,7 +328,7 @@ PATH).
 
   | event               | suites                                                                                              |
   | ------------------- | --------------------------------------------------------------------------------------------------- |
-  | push to `main`      | smoke on iOS and Linux Android                                                                      |
+  | push to `main`      | smoke on iOS and Linux Android, when the push changes `packages/` or a native e2e input             |
   | nightly schedule    | loop on iOS, Linux Android and Windows Android                                                      |
   | `workflow_dispatch` | the `suite` input (`smoke` \| `loop` \| `caches` \| `pool` \| `all`, default `loop`)                |
   | pull request        | the union of its labels `e2e-smoke`, `e2e-loop`, `e2e-caches`, `e2e-pool`, `e2e-all`; none, nothing |
