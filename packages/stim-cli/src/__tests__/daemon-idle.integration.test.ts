@@ -18,7 +18,7 @@ import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
-import { runBootedParkedPass } from '../daemon/booted-parked.ts';
+import { runBootedParkedPass, shutDownDeferredIosSim } from '../daemon/booted-parked.ts';
 import { runIdlePass } from '../daemon/idle.ts';
 import * as measure from '../daemon/measure.ts';
 import { runPassesInProcess } from '../daemon/passes.ts';
@@ -475,6 +475,15 @@ describe('a simulator that stop left booted', () => {
     await run('warning');
     expect(tornDown).toEqual([]);
     expect(deferred(root)).toEqual([]);
+  });
+
+  test('is not shut down by a pass that read an older deferral than the one a newer stop recorded', async () => {
+    const { root, udid } = bootedWorkspace('redeferred', 20 * MINUTE_MS);
+    const stale = { root, slot: 'default', udid, name: 'stim-redeferred', until: PAST() };
+    await defer(root, udid, FUTURE());
+    expect(await shutDownDeferredIosSim(stale, undefined)).toBeNull();
+    expect(tornDown).toEqual([]);
+    expect(deferred(root)).toEqual(['ios']);
   });
 
   test('only loses the deferral when the simulator is no longer booted', async () => {

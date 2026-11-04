@@ -51,7 +51,6 @@ export function bootedParkedDue({
   return due;
 }
 
-/** A simulator `stop` left booted: the workspace's own owned device, with the time its shutdown is due. */
 export interface DeferredMark {
   root: string;
   slot: string;
@@ -60,7 +59,6 @@ export interface DeferredMark {
   until: string;
 }
 
-/** The deferred shutdowns of the owned simulators the registered workspaces still hold. */
 export function readDeferredMarks(config: Config | null): DeferredMark[] {
   const marks: DeferredMark[] = [];
   for (const [root, project] of Object.entries(config?.projects ?? {})) {
@@ -137,7 +135,6 @@ export function bootedParkedPending(now: number = Date.now()): boolean {
   );
 }
 
-/** Whether the workspace's dev server runs, so it is in use again and a deferred shutdown no longer applies. */
 export function workspaceServing(root: string): boolean {
   const project = getProject(root);
   const target = resolveSupervisorTarget({
@@ -160,10 +157,10 @@ export async function shutDownDeferredIosSim(
     mark.root,
     async () => {
       const current = readDeferredShutdowns(readWorkspaceState(mark.root))[deviceSlotKey('ios', mark.slot)];
-      if (current?.udid !== mark.udid) return null;
+      if (current?.udid !== mark.udid || current.until !== mark.until) return null;
       const outcome = await teardownOwnedIosSim(mark.udid, { label: mark.name, workspace: mark.root, operation });
       if (outcome.status === 'torn-down' || outcome.status === 'missing')
-        await clearDeferredShutdown(mark.root, mark.slot);
+        await clearDeferredShutdown(mark.root, mark.slot, mark.until);
       return outcome;
     },
     { purpose: 'deferred simulator shutdown', operation, supervisor: false, managedLocks: false },
@@ -235,7 +232,7 @@ export async function runBootedParkedPass({
     const target = mark.udid;
     const label = `simulator ${mark.name}`;
     if (!shutDown || workspaceServing(mark.root)) {
-      if (act) await clearDeferredShutdown(mark.root, mark.slot);
+      if (act) await clearDeferredShutdown(mark.root, mark.slot, mark.until);
       continue;
     }
     if (!act) {

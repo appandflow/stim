@@ -243,7 +243,6 @@ interface DeviceOutcomeEntry {
   reason?: string;
   kind?: string | null;
   remedy?: string;
-  /** When the daemon shuts a simulator that `stop` left booted down. */
   until?: string;
 }
 
@@ -343,6 +342,7 @@ export async function runStop(options: StopArgs & { slot?: string }): Promise<St
   );
   const result = await stopWorkspace({
     ...options,
+    deferIosShutdown: undefined,
     project: project
       ? {
           ...project,
@@ -753,7 +753,6 @@ async function stopWorkspace({
       deferIosShutdown,
       teardownAvd,
       report,
-      slot: hostedSlot,
     });
     if (Object.values(outcomes.device).some((device) => device?.status === 'failed')) ok = false;
   }
@@ -1111,14 +1110,11 @@ async function shutDownDevices(
     deferIosShutdown,
     teardownAvd,
     report,
-    slot: stoppedSlot,
   }: {
     teardownIos: (udid: string, opts: IosTeardownOptions) => Promise<TeardownResult>;
     deferIosShutdown?: () => Promise<string | null>;
     teardownAvd: (avdName: string, opts: { del?: boolean; workspace?: string }) => Promise<TeardownResult>;
     report: (line: string) => void;
-    /** The slot `stop --slot` stops, whose record the caller moved into the default slot. */
-    slot?: string;
   },
 ): Promise<DeviceOutcome> {
   const device: DeviceOutcome = { ios: null, android: null };
@@ -1146,12 +1142,12 @@ async function shutDownDevices(
             del: false,
             label: iosName,
             workspace,
-            ...(until ? { deferShutdown: { until, slot: stoppedSlot ?? slot, appId } } : {}),
+            ...(until ? { deferShutdown: { until, slot, appId } } : {}),
           });
         result = (deferIosShutdown ? (deferral ??= deferIosShutdown()).then(shutDown) : shutDown(null)).then(
           async (outcome) => {
             if ((outcome.status === 'torn-down' || outcome.status === 'missing') && !outcome.deferredUntil)
-              await clearDeferredShutdown(workspace, stoppedSlot ?? slot).catch(() => {});
+              await clearDeferredShutdown(workspace, slot).catch(() => {});
             debugLog.log('stop.device.end', {
               platform: 'ios',
               slot,

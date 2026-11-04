@@ -433,6 +433,20 @@ test('teardownOwnedIosSim leaves a booted simulator booted for a deferred shutdo
     expect(getProject(projectPath)?.platforms?.ios?.deviceUdid).toBe('U1');
   }));
 
+test('a repeated deferral keeps the unexpired expiry of the first, so stop cannot extend the hold', () =>
+  withParkingHome(async (projectPath) => {
+    setExecutor(iosExecutor({ sims: [OWNED] }));
+    const first = new Date(Date.now() + 10 * 60_000).toISOString();
+    await teardownOwnedIosSim('U1', { workspace: projectPath, deferShutdown: { until: first, slot: 'default' } });
+    const later = new Date(Date.now() + 15 * 60_000).toISOString();
+    const result = await teardownOwnedIosSim('U1', {
+      workspace: projectPath,
+      deferShutdown: { until: later, slot: 'default' },
+    });
+    expect(result.deferredUntil).toBe(first);
+    expect(readDeferredShutdowns(readWorkspaceState(projectPath))).toEqual({ ios: { udid: 'U1', until: first } });
+  }));
+
 test('teardownOwnedIosSim shuts a simulator that is already shut down as before when a deferral is asked for', () =>
   withParkingHome(async (projectPath) => {
     const exec = iosExecutor({ sims: [{ ...OWNED, state: 'Shutdown' }] });

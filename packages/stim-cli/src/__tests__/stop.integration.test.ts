@@ -973,6 +973,7 @@ test('the idle stop asks the supervisor to record an idle stop, and keeps its po
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor, launches }));
   await takeLease({ root: tmpRoot, platform: 'android', id: 'PHONE', kind: 'declared' });
   let request: unknown;
+  let teardownOptions: object | undefined;
 
   const r = await runIdleStop({
     root: tmpRoot,
@@ -987,10 +988,14 @@ test('the idle stop asks the supervisor to record an idle stop, and keeps its po
     },
     waitForDeath: async () => true,
     resolveMetro: async () => makeMetroResolution.missing(),
-    teardownIos: async () => ({ status: 'torn-down', label: 'stim-a' }),
+    teardownIos: async (_udid: string, opts: object) => {
+      teardownOptions = opts;
+      return { status: 'torn-down', label: 'stim-a' };
+    },
   });
 
   expect(r.ok).toBe(true);
+  expect(teardownOptions).not.toHaveProperty('deferShutdown');
   expect(request).toMatchObject({ by: 'stim daemon', idleMinutes: 15 });
   expect(r.outcomes.port).toMatchObject({ status: 'kept', port: 8083 });
   expect(getProject(tmpRoot)?.metroPort).toBe(8083);
@@ -2042,20 +2047,16 @@ describe('stop leaves the owned simulator booted when the booted-park gates hold
     expect(reads).toBe(0);
   });
 
-  test('stop --slot records the deferral under that slot', async () => {
+  test('stop --slot shuts the slot down at once, since the workspace server it leaves running would end the deferral', async () => {
     const { calls, opts } = seams({
       root: tmpRoot,
       project: { metroPort: 8083, platforms: {}, deviceSlots: { second: { ios: { deviceUdid: 'U2', owned: true } } } },
       deferIosShutdown: async () => UNTIL,
     });
     opts.teardownIos = echoingTeardown(calls.teardowns);
-    await runStop({ ...opts, slot: 'second' });
-    expect(calls.teardowns).toEqual([
-      expect.objectContaining({
-        udid: 'U2',
-        opts: expect.objectContaining({ deferShutdown: { until: UNTIL, slot: 'second', appId: null } }),
-      }),
-    ]);
+    const r = await runStop({ ...opts, slot: 'second' });
+    expect(calls.teardowns).toEqual([{ udid: 'U2', opts: { del: false, label: undefined, workspace: tmpRoot } }]);
+    expect(r.outcomes.device.ios?.status).toBe('shut-down');
   });
 
   test('a shutdown at once forgets the deferral an earlier stop recorded', async () => {

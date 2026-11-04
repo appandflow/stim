@@ -1501,8 +1501,10 @@ result as proof instead of requiring an unrelated screenshot.`,
       the setting at 0 turns the deferral off. There is no \`stop\` flag.
   Until the expiry the idle stage leaves the stopped workspace alone, and
   \`gc\` does not count the simulator as a reason to keep its worktree.
-  Android emulators are shut down by \`stop\`, and the daemon's idle stop and
-  automatic maintenance never defer.
+  A repeated \`stop\` keeps the first expiry. Android emulators are shut down
+  by \`stop\`; \`stop --slot\` shuts the slot's simulator down at once, because
+  the dev server it leaves running ends the deferral; and the daemon's idle stop
+  and automatic maintenance never defer.
 
   Adoption matches the device type AND the runtime EXACTLY: a ticket that asks
   for an iPad never gets an iPhone, and a request for iOS 18.5 never gets 26.5.

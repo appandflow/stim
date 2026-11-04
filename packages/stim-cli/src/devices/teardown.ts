@@ -451,12 +451,11 @@ export async function teardownOwnedIosSim(
       return { status: 'skipped', kind: 'not-owned', reason: 'simulator ownership changed before shutdown' };
     if (deferShutdown && !del && workspace && current.sim?.state === 'Booted') {
       if (deferShutdown.appId) await terminateIosApp(udid, deferShutdown.appId).catch(() => {});
-      await recordDeferredShutdown(workspace, deferShutdown.slot, { udid, until: deferShutdown.until });
-      return {
-        status: 'torn-down',
-        label: label ?? current.sim.name ?? udid,
-        deferredUntil: deferShutdown.until,
-      };
+      const deferredUntil = await recordDeferredShutdown(workspace, deferShutdown.slot, {
+        udid,
+        until: deferShutdown.until,
+      });
+      return { status: 'torn-down', label: label ?? current.sim.name ?? udid, deferredUntil };
     }
     const keepBooted = Boolean(del && park && park.max > 0 && park.bootedUntil && current.sim?.state === 'Booted');
     if (!keepBooted) await shutdownIosSim(udid, operation);

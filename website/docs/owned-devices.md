@@ -342,8 +342,9 @@ next `stim ios` uses the booted simulator with no boot, and `stim worktree
 remove` parks it booted. The stim-daemon shuts it down when the grace period
 passes or when memory pressure is not normal. `stop` prints how long it stays
 booted; to shut it down now run `STIM_POOL_BOOTED_GRACE_MINUTES=0 stim stop`,
-and set `pool.bootedGraceMinutes` to `0` to turn the deferral off. Android
-emulators are shut down by `stop`.
+and set `pool.bootedGraceMinutes` to `0` to turn the deferral off. A repeated
+`stop` keeps the first expiry. Android emulators, and any simulator stopped with
+`--slot`, are shut down at once.
 
 Android creation records an owned reservation before running native tools.
 Other workspaces can update Stim config during creation, while GC and teardown
