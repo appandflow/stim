@@ -2,7 +2,8 @@ import { findFullSuiteRun } from './full-suite-gate.mjs';
 
 const sha = 'a'.repeat(40);
 const run = (fields) => ({
-  name: 'Full suite',
+  name: 'Full suite (native E2E)',
+  path: '.github/workflows/full-suite.yml',
   event: 'workflow_dispatch',
   display_title: 'Full suite (native E2E)',
   head_sha: sha,
@@ -24,7 +25,7 @@ test.each([
   ['a run without the native E2E', { display_title: 'Full suite' }],
   ['a nightly run', { event: 'schedule' }],
   ['a pull request run', { event: 'pull_request' }],
-  ['another workflow', { name: 'CI' }],
+  ['another workflow', { name: 'CI', display_title: 'CI', path: '.github/workflows/ci.yml' }],
 ])('%s does not pass', (_name, fields) => {
   expect(findFullSuiteRun([run(fields)], sha)).toBeNull();
 });

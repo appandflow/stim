@@ -51,7 +51,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=workflow_dispatch&per_page=100" |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=workflow_dispatch&status=success&per_page=100" |
             node scripts/full-suite-gate.mjs "$GITHUB_SHA"
 
   publish:

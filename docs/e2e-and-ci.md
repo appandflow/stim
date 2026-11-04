@@ -388,8 +388,9 @@ found`, and the build-cache lanes print `build cache: HIT <key>` or
 
 `merge-gate.yml` runs on every pull request with no path filter, so it exists
 even when `ci.yml`, `desktop.yml` and `mobile.yml` are skipped by their path
-filters. Nothing it waits for needs macOS or Windows: a pull request, the merge
-queue and a push to `main` run only Linux jobs and the Desktop debug compile. Its one job, `merge gate`, waits at least 75 seconds so later-starting
+filters. A pull request, the merge queue and a push to `main` start only Linux jobs and the
+Desktop debug compile, so that is all it waits for; a `ci-full` label or a dispatched
+`Full suite` on the head SHA adds the platform jobs to its wait. Its one job, `merge gate`, waits at least 75 seconds so later-starting
 workflows register, then polls (every 30 seconds, every 60 after ten minutes)
 until every other check run, workflow run and commit status on the head SHA has
 completed. It fails if any ended with a conclusion other than `success`,

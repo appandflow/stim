@@ -9,7 +9,7 @@ function findFullSuiteRun(runs, sha) {
     runs
       .filter(
         (run) =>
-          run.name === 'Full suite' &&
+          run.path === '.github/workflows/full-suite.yml' &&
           run.event === 'workflow_dispatch' &&
           run.display_title === NATIVE_RUN_TITLE &&
           run.head_sha === sha &&
