@@ -489,7 +489,7 @@ script such as mini-desktop.sh use these instead:
   rclick                     unavailable: secondary click is not supported
   quit                       stim stop (verified stop; the host frees the slot
                              and removes the app's defaults)
-  clean                      stim worktree remove
+  clean                      stim worktree remove, run from the worktree root
   3 concurrent slots         concurrency.maxMacosApps and concurrency.maxDevices
                              on the host, counted apart from simulators and
                              emulators; one bundle id slot per session
