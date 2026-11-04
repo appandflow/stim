@@ -696,6 +696,17 @@ run waiting to boot, and automatic maintenance.
           server and devices after idle.minutes, and nothing times a device
           with no dev server.
 
+On Linux the daemon starts as a transient user service, stim-daemon-<home
+hash>-<id>.service, when systemd-run is on PATH, XDG_RUNTIME_DIR is set and a
+user systemd manager answers. A command runner that adopts and kills everything
+a call started (a subreaper) cannot reach a service, so the daemon keeps ticking
+between commands. Without a manager the daemon is a detached child and such a
+runner stops it when the call ends: its log then ends with daemon_exited
+"exiting: SIGTERM" shortly after daemon_started. Set STIM_DAEMON=off for that
+runner; the passes then run in each command's own process. The dev server
+supervisor is not a service; see guide metro, LINUX RUNNERS THAT REAP
+BACKGROUND PROCESSES.
+
 Without a running daemon -- on Windows, which has none, or when one could not
 start -- stim doctor, start, ios and android run automatic maintenance, the idle
 stage for owned devices whose workspace has no running dev server, and the

@@ -1057,6 +1057,16 @@ once it exits and a command starts a new one. Its log is
 tick's measurement and decisions, with its last 20 actions, are in
 `$STIM_HOME/daemon/snapshot.json`.
 
+On Linux the daemon starts as a transient user service,
+`stim-daemon-<home hash>-<id>.service`, when `systemd-run` is on `PATH`,
+`XDG_RUNTIME_DIR` is set and a user systemd manager answers. A command runner
+that adopts and kills everything a call started, such as an agent harness that
+sets `PR_SET_CHILD_SUBREAPER`, cannot reach a service, so the daemon keeps
+ticking between commands. Without one the daemon is a detached child, which
+such a runner stops when the call ends; set `STIM_DAEMON=off` for that runner,
+and the passes then run in each command's own process. The dev server's
+supervisor is not a service; `stim guide metro` has the recipe for it.
+
 `stim status` prints a daemon line with its mode, whether it runs, when it last
 ticked and the pressure level, then the last daemon action, the runs waiting for
 a slot, and a stage line for every workspace: running with its last activity,
