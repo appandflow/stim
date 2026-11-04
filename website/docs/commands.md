@@ -312,6 +312,7 @@ stim ports
 stim ports get <label>
 stim ports stop [label] [--dry-run]
 stim ports release [label]
+stim ports reverse <label|port> [--remove] [--json]
 ```
 
 Reserves TCP ports 8900–8999 for web or API servers started by the
@@ -322,7 +323,20 @@ Allocation reads native TCP tables through `netstat` on macOS and Windows and
 each port with `lsof` and loopback connects instead, and refuses only when
 none of them can answer. Stopping listeners still requires `lsof` on macOS and
 Linux, or `netstat` on Windows.
-`ports` lists named allocations and Metro, marked managed.
+`ports` lists named allocations and Metro, marked managed, and the ports the
+workspace reverses. `ports --json` prints one payload with `ports`, `metroPort`
+and `reverses`.
+
+`ports reverse <label|port>` makes a server on this machine reachable at the
+same `localhost:<port>` from the workspace's devices, like `adb reverse`. It
+takes a label from `ports get` or a raw port, records it for the workspace (at
+most 16), and applies it to the devices the workspace has now. A local iOS
+simulator shares this Mac's loopback and needs nothing, an Android emulator or
+phone gets `adb reverse tcp:<port> tcp:<port>`, and an iPhone is refused because
+USB carries no reverse forward. `--remove` removes it, and `--json` prints
+`action`, `port`, `ports` and a `devices` list whose `status` is `reachable`,
+`applied`, `removed`, `pending`, `unsupported` or `failed`. See
+[Reverse ports](./dev-server-and-logs.md#reverse-ports).
 
 Labels start with a letter and contain up to 64 letters, digits, underscores,
 or hyphens. `metro` is reserved for `stim start` and `stim stop`.

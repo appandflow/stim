@@ -1,5 +1,10 @@
 import { reopenHostedAndroidMetro } from '../device-host/hosted-android.ts';
-import { hostedNativeRecords, hostedAndroidDeviceName, type HostedAndroidPlacement } from '@stim-cli/core/state';
+import {
+  hostedNativeRecords,
+  hostedAndroidDeviceName,
+  reversePorts,
+  type HostedAndroidPlacement,
+} from '@stim-cli/core/state';
 import { readHostedNative } from '../device-host/ios-state.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { nativeRunCommand } from '../engine/slot-launch.ts';
@@ -669,19 +674,21 @@ export async function runReload({
       continue;
     }
     const serial = candidate.record.deviceId;
-    const ensured = await d.ensureReverse(serial, port);
-    throwIfCancelled(signal, 'reload');
-    if (ensured.failed) {
-      return {
-        ok: false,
-        error: failure(
-          'STIM_RELOAD_FAILED',
-          `Stim could not check or restore the adb reverse for Metro port ${port} on ${serial}: ${ensured.reason}`,
-          `Run \`adb -s ${serial} reverse tcp:${port} tcp:${port}\`, then \`stim reload android\` again.`,
-        ),
-      };
+    for (const each of [port, ...reversePorts(readWorkspaceState(root)).filter((p) => p !== port)]) {
+      const ensured = await d.ensureReverse(serial, each);
+      throwIfCancelled(signal, 'reload');
+      if (ensured.failed) {
+        return {
+          ok: false,
+          error: failure(
+            'STIM_RELOAD_FAILED',
+            `Stim could not check or restore the adb reverse for ${each === port ? 'Metro ' : ''}port ${each} on ${serial}: ${ensured.reason}`,
+            `Run \`adb -s ${serial} reverse tcp:${each} tcp:${each}\`, then \`stim reload android\` again.`,
+          ),
+        };
+      }
+      if (ensured.restored && !reverseRestored.includes(serial)) reverseRestored.push(serial);
     }
-    if (ensured.restored) reverseRestored.push(serial);
   }
 
   const request = { role: target.platform, appId: target.record.appId, ...(signal ? { signal } : {}) };

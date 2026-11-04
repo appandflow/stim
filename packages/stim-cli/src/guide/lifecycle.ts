@@ -186,7 +186,7 @@ most 30. When the device tool still does not answer, Stim sends the reload anywa
 
 An Android reload first lists \`adb reverse\` on each live owned emulator
 launched against this Metro and re-applies the Metro port's reverse where it is
-missing. adb ties a reverse to its transport, and a transport that drops and
+missing, and the same for each port reversed with \`stim ports reverse\`. adb ties a reverse to its transport, and a transport that drops and
 reconnects comes back without it and without any error, which leaves the app
 cut off from Metro and Fast Refresh. After restoring one, Stim waits up to 8
 seconds, sending nothing, until the app on every emulator it checked is

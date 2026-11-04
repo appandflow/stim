@@ -1384,7 +1384,7 @@ function reverseDevicePortsTo(listing: unknown, hostPorts: readonly number[]): s
 }
 
 /**
- * Removes the reverses that point an owned emulator at `metroPort`, verified by the emulator's own
+ * Removes the reverses that point an owned emulator at Metro's port or a reversed port, verified by the emulator's own
  * console. The adb server connects a reverse stream from the device to the host port synchronously
  * on its single event thread (packages/modules/adb services.cpp `service_to_fd`), and on Windows a
  * refused loopback connect takes seconds, so an app retrying a stopped Metro stalls every adb call.
@@ -1393,11 +1393,11 @@ function reverseDevicePortsTo(listing: unknown, hostPorts: readonly number[]): s
 export async function removeOwnedEmulatorMetroReverses(
   avdName: string,
   serial: string,
-  metroPort: number,
+  hostPorts: readonly number[],
   operation?: StimContext,
 ): Promise<void> {
   if ((await getAvdNameForSerialAsync(serial, { operation })) !== avdName) return;
-  await removeMetroReverses(serial, [metroPort], operation);
+  await removeMetroReverses(serial, hostPorts, operation);
 }
 
 export async function removeMetroReverses(

@@ -58,3 +58,19 @@ export async function removePhoneReverses(
     return Object.keys(remaining).length ? { ...rest, [KEY]: remaining } : rest;
   });
 }
+
+export function readPhoneReverseSerials(root: string): string[] {
+  return [...new Set(Object.values(readRecords(readWorkspaceState(root))).map((record) => record.serial))];
+}
+
+export async function forgetPhoneReverse(root: string, port: number): Promise<void> {
+  await updateWorkspaceStateAsync(root, (state) => {
+    const records = readRecords(state);
+    for (const [key, record] of Object.entries(records)) {
+      record.ports = record.ports.filter((each) => each !== port);
+      if (record.ports.length === 0) delete records[key];
+    }
+    const { [KEY]: _, ...rest } = state;
+    return Object.keys(records).length ? { ...rest, [KEY]: records } : rest;
+  });
+}
