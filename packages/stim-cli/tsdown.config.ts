@@ -25,6 +25,7 @@ export default defineConfig({
     'offload-worker': 'src/offload/worker.ts',
     'status-worker': 'src/status-worker.ts',
     'doctor-fingerprint': 'bin/doctor-fingerprint.ts',
+    'fingerprint-precompute': 'bin/fingerprint-precompute.ts',
     'windows-report': 'bin/windows-report.ts',
   },
   format: 'esm',

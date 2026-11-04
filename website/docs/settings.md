@@ -1038,7 +1038,9 @@ those idle for `idle.dormantDays` into the dormant stage, runs the pressure
 ladder above normal, and reclaims a device for a run waiting to boot. Automatic
 maintenance and the dormant stage's dependency deletion run beside the ticks,
 one pass at a time, so a slow `git fetch`, pull request lookup or size scan
-never delays a tick or a waiting run. It also wakes the oldest
+never delays a tick or a waiting run. The same lane records the
+[fingerprint](./build-caches.md) of a running workspace whose git HEAD,
+lockfile or install stamp changed. It also wakes the oldest
 run waiting for a build slot as soon as one is released. When one of those
 commands runs from an installed Stim (a global install or a `node_modules`
 dependency) with a newer version than the running daemon, for example after

@@ -2027,7 +2027,8 @@ THE BUILD CACHE HAS THREE LEVELS
   patches change; undo the edit with another --no-build-cache build.
 
   A KNOWN TREE SKIPS THE FULL FINGERPRINT. After a full fingerprint at the
-  first lookup of a React Native or Expo run, Stim records it in
+  first lookup of a React Native or Expo run, or ahead of the run by the daemon
+  (below), Stim records it in
   $STIM_HOME/fingerprint-memo (~/.stim by default) under a static digest of
   the tree: git blob ids of the native inputs git tracks, the contents of the
   untracked, modified and ignored ones, the app config's sources and the files
@@ -2046,6 +2047,30 @@ THE BUILD CACHE HAS THREE LEVELS
   warning naming both hashes at the end of the run and writes a
   fingerprint_memo_stale record to the build log; run the command again to use
   the current tree.
+
+  THE DAEMON RECORDS IT AHEAD OF THE RUN. While daemon.mode is on, the daemon
+  looks at each workspace that is running and not idle, and has an iOS or
+  Android device recorded, on every minute tick. When its git HEAD, its
+  lockfile (pnpm-lock.yaml, yarn.lock, package-lock.json or bun.lock) or the
+  install stamp in node_modules (.modules.yaml, .package-lock.json or
+  .yarn-integrity) changed since the last look, and a run's own digest finds no record, it computes the
+  digest and the full fingerprint in a low-priority child process, one at a
+  time and at most two per tick, and records them as a run would. The next
+  stim ios or stim android of that tree then reads the record and starts its
+  background check as above. A record is read only when the run's own digest
+  of the tree equals the recorded one, so a precompute never makes a run use a
+  fingerprint of other inputs: an edit made after it, a different .env, or an
+  environment variable the config reads that has another value in the
+  command's shell than in the daemon's leaves the record unread, and the run
+  fingerprints in full. Nothing starts while daemon.mode is report, the
+  pressure level is above normal or the host load exceeds 4 per core, and a
+  tree whose child ended, whether it recorded, skipped, failed or timed out
+  (2 minutes), is not looked at again until one of those changes. It never records for a pod install alone: a run
+  after one fingerprints in full once. The record written is the same one a
+  run writes, so the 256-record cap and gc pruning apply to it. The daemon
+  logs one daemon_fingerprint_precompute record to daemon.ndjson per child,
+  with its outcome (recorded, present, skipped or failed) and duration, and
+  one line when a hold starts or ends.
 
   A config the digest cannot follow always fingerprints in full: a dynamic
   require or import, process.env used other than by literal name, file,
