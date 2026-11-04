@@ -60,7 +60,7 @@ function refreshStatus() {
   if (finished) return;
   if (reconnecting)
     setStatus('waiting', missingSince === null ? 'Reconnecting...' : 'Share not found. Trying again...');
-  else if (away) setStatus('waiting', 'Waiting for the device');
+  else if (away) setStatus('waiting', 'Stopped');
   else setStatus(live ? 'live' : 'waiting', live ? 'Live' : 'Waiting');
   leftText.textContent = reconnecting ? '' : timeLeft();
 }
@@ -562,6 +562,9 @@ function sendName(name) {
 }
 
 function connect(codec) {
+  away = false;
+  resuming = false;
+  delete body.dataset.away;
   roster.clear();
   for (const timer of touchTimers.values()) clearTimeout(timer);
   touchTimers.clear();
@@ -609,7 +612,7 @@ function connect(codec) {
       if (away) return;
       live = !message.delayed && hasFrame;
       refreshStatus();
-    } else if (message.type === 'waiting') {
+    } else if (message.type === 'stopped') {
       dropUndrawn();
       away = true;
       resuming = false;

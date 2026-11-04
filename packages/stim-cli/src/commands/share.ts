@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { RESERVED_SHARE_SLUGS, SHARE_SLUG_PATTERN, type Methods, type WebShareRow } from '@stim-cli/core/protocol';
-import { shareLinkKey } from '@stim-cli/core/state';
+import { shareLinkKey, type SavedShare } from '@stim-cli/core/state';
 import {
   LocalServerUnavailable,
   requestLocalServer,
@@ -164,9 +164,8 @@ function parseMinutes(value: string | undefined): number | ShareFailure {
 function describeRow(row: ShareRow): string {
   const target = `${row.platform}${row.physical ? ' device' : ''}${row.slot === 'default' ? '' : ` (slot ${row.slot})`}`;
   const mode = `${row.control ? 'view and control' : 'view only'}${row.auth === 'none' ? ', no password' : ''}${row.viewAuth ? ', view password' : ''}`;
-  const waiting = row.state === 'waiting' ? ', waiting for the device' : '';
   const link = row.slug !== undefined ? `, link /s/${row.slug}/` : '';
-  return `${target} of ${row.workspace}: ${mode}${link}${waiting}, ${row.viewers} viewer${row.viewers === 1 ? '' : 's'}, expires ${row.expiresAt}`;
+  return `${target} of ${row.workspace}: ${mode}${link}, ${row.viewers} viewer${row.viewers === 1 ? '' : 's'}, expires ${row.expiresAt}`;
 }
 
 type ShareResult = { ok: true; output: object; text: string } | { ok: false; error: ShareFailure };
@@ -211,41 +210,56 @@ function splitUrl(url: string, slug: string | undefined): { token?: string; orig
   return /^[A-Za-z0-9_-]{43}$/.test(path) ? { token: path, origin } : null;
 }
 
-/** Starts the workspace's saved link of this target again, with the passwords and setup it was first started with. */
-async function reuseShare(
+const SAVED_MARGIN_MS = 5000;
+
+/**
+ * What `--reuse` finds for this target: the saved share to start again, or why there is none (no share was started for
+ * it, its link expired or was forgotten, or it expires too soon to start), or a refusal of the flags given with it.
+ */
+function lookUpSaved(
   root: string,
   platform: 'ios' | 'android',
   opts: ShareOptions,
-  deps: ShareDeps,
-  version: string,
-): Promise<ShareResult> {
+): { saved: SavedShare } | { none: string } | { refused: ShareResult } {
+  const saved = reusableShareLinks(root)[linkKey(platform, opts)];
+  if (!saved || Date.parse(saved.expiresAt) - Date.now() < SAVED_MARGIN_MS) {
+    const target = `${platform}${opts.device ? ' device' : ''}${opts.slot && opts.slot !== 'default' ? ` (slot ${opts.slot})` : ''}`;
+    return {
+      none: `No saved link to reuse for ${target} of ${root}: no share was started for it, its link expired, or it was forgotten. Starting a new share instead.`,
+    };
+  }
   const given = [
     opts.control && '--control',
     (typeof opts.password === 'string' || opts.password === false || opts.bothPasswords) && '--password',
     opts.viewPassword !== undefined && '--view-password',
+    opts.slug !== undefined && '--slug',
   ].filter((flag): flag is string => typeof flag === 'string');
   if (given.length) {
-    return badArg(
-      `--reuse takes the control, view-only and password setup from the saved share, so it cannot be combined with ${given.join(' or ')}.`,
-      'Leave those flags out, or start a new share without --reuse.',
-    );
-  }
-  const minutes = opts.expires === undefined ? null : parseMinutes(opts.expires);
-  if (typeof minutes === 'object' && minutes !== null) return { ok: false, error: minutes };
-  const target = { platform, ...(opts.slot ? { slot: opts.slot } : {}), ...(opts.device ? { physical: true } : {}) };
-  const key = shareLinkKey(target);
-  const saved = reusableShareLinks(root)[key];
-  const flags = `${opts.device ? ' --device' : ''}${opts.slot && opts.slot !== 'default' ? ` --slot ${opts.slot}` : ''}`;
-  if (!saved) {
     return {
-      ok: false,
-      error: failure(
-        'STIM_SHARE_NOTHING_TO_REUSE',
-        `No saved link to reuse for ${platform}${opts.device ? ' device' : ''}${opts.slot && opts.slot !== 'default' ? ` (slot ${opts.slot})` : ''} of ${root}: no share was started for it, its link expired, or it was forgotten.`,
-        `Run stim share ${platform}${flags} without --reuse to start a new share.`,
+      refused: badArg(
+        `--reuse takes the link, the control and view-only setup and the passwords from the saved share, so it cannot be combined with ${given.join(' or ')}.`,
+        'Leave those flags out, or start a new share without --reuse.',
       ),
     };
   }
+  return { saved };
+}
+
+const linkKey = (platform: 'ios' | 'android', opts: ShareOptions) =>
+  shareLinkKey({ platform, ...(opts.slot ? { slot: opts.slot } : {}), ...(opts.device ? { physical: true } : {}) });
+
+/** Starts the workspace's saved link of this target again, with the passwords and setup it was first started with. */
+async function reuseShare(
+  root: string,
+  platform: 'ios' | 'android',
+  saved: SavedShare,
+  opts: ShareOptions,
+  deps: ShareDeps,
+  version: string,
+): Promise<ShareResult> {
+  const minutes = opts.expires === undefined ? null : parseMinutes(opts.expires);
+  if (typeof minutes === 'object' && minutes !== null) return { ok: false, error: minutes };
+  const key = linkKey(platform, opts);
   if (saved.auth === 'none') {
     deps.note(
       `Warning: this share has no password. Anyone with the link can ${saved.control ? 'watch and control' : 'watch'} the device until it expires.`,
@@ -422,7 +436,14 @@ export async function runShare(
       ),
     };
   }
-  if (opts.reuse) return reuseShare(root, action, opts, deps, version);
+  let notReused: string | null = null;
+  if (opts.reuse) {
+    const found = lookUpSaved(root, action, opts);
+    if ('refused' in found) return found.refused;
+    if ('saved' in found) return reuseShare(root, action, found.saved, opts, deps, version);
+    notReused = found.none;
+    deps.note(`Warning: ${notReused}`);
+  }
   if (action === 'ios' && opts.device && opts.control) {
     return {
       ok: false,
@@ -581,7 +602,7 @@ export async function runShare(
   const secret = secretLines(started, started, saved ? 'saved' : 'unsaved');
   return {
     ok: true,
-    output: started,
+    output: notReused === null ? started : { ...started, reused: false, reuseWarning: notReused },
     text: [
       `Shared ${describeRow(started)}.`,
       `URL:${started.viewAuth ? '              ' : '      '}${started.url}`,
@@ -612,7 +633,7 @@ export function registerShare(program: Command, version: string, deps: Partial<S
   program
     .command('share <action>')
     .description(
-      "Share this workspace's running app through a public web link, with a generated password unless you set or drop it: share ios|android starts one (and a stim-server, when none runs), share stop ends this workspace's shares, share list lists shares and whether one waits for its device. Every share's link and password are saved for share ios|android --reuse, which starts a stopped share again until it expires; share stop --forget deletes them.",
+      "Share this workspace's running app through a public web link, with a generated password unless you set or drop it: share ios|android starts one (and a stim-server, when none runs), share stop ends this workspace's shares, share list lists this Stim home's shares. Every share's link and password are saved for share ios|android --reuse, which starts a stopped share again until it expires (a new share, with a warning, when nothing is saved); share stop --forget deletes them.",
     )
     .option('--slot <name>', 'Share the device of this slot')
     .option('--device', 'Share the physical device this workspace leases instead of its simulator or emulator')
@@ -629,7 +650,7 @@ export function registerShare(program: Command, version: string, deps: Partial<S
     )
     .option(
       '--reuse',
-      "Start the saved link and passwords of this workspace's last share of this target again, until it expires (not with --control, --password, --no-password or --view-password; --expires replaces the expiry)",
+      "Start the saved link and passwords of this workspace's last share of this target again, until it expires, or start a new share with a warning when nothing is saved (a saved share takes no --control, --password, --no-password, --view-password or --slug; --expires replaces the expiry)",
     )
     .option('--forget', "With stop, also delete this workspace's saved links so --reuse has nothing to start")
     .option(

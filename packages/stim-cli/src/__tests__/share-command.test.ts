@@ -145,24 +145,6 @@ describe('stim share', () => {
     });
   });
 
-  it('lists each share with its state, and says when it waits for its device', async () => {
-    const deps = fake([
-      () => ({
-        result: {
-          shares: [
-            { ...ROW, state: 'live' },
-            { ...ROW, id: 'w2', slot: 'beta', state: 'waiting' },
-          ],
-        },
-      }),
-    ]);
-    const result = await runShare('list', {}, deps, '1.0.0');
-    expect(result).toMatchObject({ ok: true, output: { shares: [{ state: 'live' }, { state: 'waiting' }] } });
-    const lines = (result as { text: string }).text.split('\n');
-    expect(lines[0]).not.toContain('waiting');
-    expect(lines[1]).toContain('waiting for the device');
-  });
-
   it('never starts a server to list or stop shares', async () => {
     const deps = fake([unavailable, unavailable]);
     expect(await runShare('list', {}, deps, '1.0.0')).toMatchObject({ error: { code: 'STIM_SERVER_NOT_RUNNING' } });
@@ -391,16 +373,8 @@ describe('stim share', () => {
       expect(deps.sent).toHaveLength(1);
     });
 
-    it('fails clearly when there is nothing to reuse: no entry, another target, an expired link, or an invalid one', async () => {
-      const deps = fake([]);
-      const nothing = {
-        ok: false,
-        error: { code: 'STIM_SHARE_NOTHING_TO_REUSE', remedy: expect.stringContaining('without --reuse') },
-      };
-      expect(await runShare('android', { reuse: true }, deps, '1.0.0')).toMatchObject(nothing);
-
-      const file = workspaceShareLinksFile('/work/app');
-      mkdirSync(dirname(file), { recursive: true });
+    describe('with nothing to reuse', () => {
+      const file = () => workspaceShareLinksFile('/work/app');
       const entry = {
         platform: 'android',
         slot: 'default',
@@ -411,23 +385,66 @@ describe('stim share', () => {
         auth: 'generated',
         viewAuth: null,
         createdAt: FUTURE,
+        expiresAt: FUTURE,
       };
-      writeFileSync(
-        file,
-        JSON.stringify({ version: 1, links: { android: { ...entry, expiresAt: '2020-01-01T00:00:00.000Z' } } }),
-      );
-      expect(await runShare('android', { reuse: true }, deps, '1.0.0')).toMatchObject(nothing);
-      expect(existsSync(file)).toBe(false);
+      const plant = (overrides: Record<string, unknown> = {}) => {
+        mkdirSync(dirname(file()), { recursive: true });
+        writeFileSync(file(), JSON.stringify({ version: 1, links: { android: { ...entry, ...overrides } } }));
+      };
+      const fallsBack = async (opts: Record<string, unknown> = {}) => {
+        const deps = fake([started()]);
+        const result = await runShare('android', { reuse: true, ...opts }, deps, '1.0.0');
+        expect(deps.sent).toHaveLength(1);
+        expect(deps.sent[0]?.params).not.toHaveProperty('token');
+        expect(deps.notes[0]).toMatch(/^Warning: No saved link to reuse.*Starting a new share instead\.$/);
+        expect(result).toMatchObject({
+          ok: true,
+          output: { reused: false, reuseWarning: expect.stringContaining('No saved link to reuse'), url: URL_OF },
+        });
+        return { deps, result };
+      };
 
-      writeFileSync(
-        file,
-        JSON.stringify({ version: 1, links: { android: { ...entry, expiresAt: FUTURE, token: 'short' } } }),
-      );
-      expect(await runShare('android', { reuse: true }, deps, '1.0.0')).toMatchObject(nothing);
-      writeFileSync(file, JSON.stringify({ version: 1, links: { android: { ...entry, expiresAt: FUTURE } } }));
-      expect(await runShare('android', { reuse: true, slot: 'tablet' }, deps, '1.0.0')).toMatchObject(nothing);
-      expect(await runShare('android', { reuse: true, device: true }, deps, '1.0.0')).toMatchObject(nothing);
-      expect(deps.sent).toEqual([]);
+      it('starts a new share and warns, in text and in JSON, when no share was saved', async () => {
+        const { deps } = await fallsBack();
+        expect(deps.starts).toBe(0);
+      });
+
+      it('does the same for an expired link, an invalid one, one that expires within seconds, and another target', async () => {
+        const ran: unknown[] = [];
+        plant({ expiresAt: '2020-01-01T00:00:00.000Z' });
+        ran.push(await fallsBack());
+        plant({ token: 'short' });
+        ran.push(await fallsBack());
+        plant({ expiresAt: new Date(Date.now() + 2000).toISOString() });
+        ran.push(await fallsBack());
+        plant();
+        ran.push(await fallsBack({ slot: 'tablet' }));
+        plant();
+        ran.push(await fallsBack({ device: true }));
+        expect(ran).toHaveLength(5);
+      });
+
+      it('honors the flags given with it, since there is no saved setup to conflict with, and saves the new link', async () => {
+        const deps = fake([started({ control: true, auth: 'set', password: undefined })]);
+        await runShare(
+          'android',
+          { reuse: true, control: true, expires: '30', password: 'my own password' },
+          deps,
+          '1.0.0',
+        );
+        expect(deps.sent[0]?.params).toMatchObject({ control: true, expiresMinutes: 30, password: 'my own password' });
+        expect(links().android).toMatchObject({ token: TOKEN, control: true, password: 'my own password' });
+      });
+
+      it('still refuses flags that conflict with a saved share, including --slug', async () => {
+        plant();
+        const deps = fake([]);
+        expect(await runShare('android', { reuse: true, slug: 'pokedex' }, deps, '1.0.0')).toMatchObject({
+          ok: false,
+          error: { code: 'STIM_BAD_ARG', message: expect.stringContaining('--slug') },
+        });
+        expect(deps.sent).toEqual([]);
+      });
     });
 
     it('does not say the password was saved when saving the link failed', async () => {

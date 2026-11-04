@@ -573,15 +573,19 @@ outside it moves to its own issue and pull request.
   every live, unexpired entry of its home again when it starts, through
   `share.start`'s own path with the saved token or slug, passwords and expiry
   (`@stim-cli/core/state`'s `readLiveShareLinks`); one whose device is not there
-  yet starts waiting, a refused one is logged and stays `live`. The only write
+  yet starts stopped for now, a refused one is logged and stays `live`. The only write
   stim-server makes is `share.stop` marking the entry stopped through the CLI's
   own `pauseShareLinks`, exported as `stim/share-links`; a share started from
   Desktop is not saved and does not come back. A share outlives its
   device: when the device goes away on its own (frames fail, the device or hosted
-  session changes or is not ready) the share waits, keeping its token, passwords,
-  viewer sessions and expiry, and resumes on the slot's device when it is back.
-  Only `share.stop` (which `stim stop`, `stim worktree remove` and Desktop's Stop
-  send), expiry and the server stopping end it. The server serves
+  session changes or is not ready) the share shows as stopped, keeping its token,
+  passwords, viewer sessions and expiry, and comes back on the slot's device when
+  it is there; rows and the protocol carry no separate state for it. Only
+  `share.stop` (which `stim stop`, `stim worktree remove` and Desktop's Stop
+  send), expiry, the server stopping and a present, ready device that fails to
+  stream for 5 minutes in a row end it; viewers are told one of a few fixed
+  reasons, never the raw error, which can name workspaces. `share --reuse` with no
+  saved link starts a new share and warns. The server serves
   shares on a separate loopback listener, not the Noise protocol: per share
   the viewer page, the frames of its one device and, with control, input to
   that device through `ControlHub` (on a simulator, emulator or Android phone that includes

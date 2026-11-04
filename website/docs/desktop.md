@@ -439,9 +439,8 @@ it over the tailnet stays opt-in: **Allow connections** in **Settings > Connecti
   view-only password (generated or chosen), shown as **View password** next to
   the control one. The link and generated passwords appear once, each with a Copy button;
   Desktop does not keep them. **Settings > Connections > Using this machine > Share
-  links** lists the shares, live or waiting, with their viewers and time left ("View and control, view password" for a share with
-  two passwords). A share whose device is away waits and keeps its row; Desktop
-  does not mark it yet, but `stim share list` does. **Stop** on a row ends that one share. With a stim-server older than this (without the
+  links** lists the shares with their viewers and time left ("View and control, view password" for a share with
+  two passwords). A share whose device is away keeps its row, like any share. **Stop** on a row ends that one share. With a stim-server older than this (without the
   `share-stop-id` feature) each row has **Stop All** instead, which ends every share of
   the workspace. Quitting
   Desktop asks first while the server it started holds live shares, since quitting ends them.

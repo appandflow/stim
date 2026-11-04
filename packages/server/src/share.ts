@@ -67,7 +67,6 @@ export interface ShareRow {
   control: boolean;
   expiresAt: string;
   viewers: number;
-  state: ShareState;
   auth: ShareAuth;
   viewAuth: ViewAuth;
   slug?: string;
@@ -167,10 +166,17 @@ const STRANDED_RETRY_MS = 30_000;
 /** How soon a waiting share looks for its device again, and the most it waits between tries after a failed stream. */
 const RESUME_MIN_MS = 2000;
 const RESUME_MAX_MS = 30_000;
-/** What public viewers are told; the reasons, which can name workspaces and clients, go to the server log only. */
+/** How long a share whose device is present keeps failing to stream, with no frame in between, before it ends. */
+const STREAM_GIVE_UP_MS = 5 * 60_000;
+/**
+ * What public viewers are told. A raw reason can name workspaces and clients, so it goes to the server log only; a
+ * viewer gets one of the fixed reasons here.
+ */
 const VIEWER_TEXT = {
   ended: 'This share has ended.',
-  waiting: 'Waiting for the device...',
+  stopped: 'This share is stopped.',
+  noHelper: 'This share has ended: its device streams through a helper that this Mac has not built.',
+  noStream: 'This share has ended: its device could not stream.',
   controlRefused: 'Control is not available right now. Try again in a moment.',
   inputRefused: 'That input was not accepted.',
   clipboardRefused: 'The device did not take or return its clipboard.',
@@ -316,6 +322,8 @@ interface Share {
   /** Not before this time (epoch ms) does a share that lost its stream look for its device again. */
   resumeAt: number;
   backoff: number;
+  /** When its stream first failed with no frame since, while its device is present; null when it streams. */
+  failingSince: number | null;
   retry: NodeJS.Timeout | null;
   sessions: Map<string, Login>;
   failures: number[];
@@ -524,6 +532,7 @@ export class ShareHub {
       source,
       resumeAt: 0,
       backoff: RESUME_MIN_MS,
+      failingSince: null,
       retry: null,
       sessions: new Map(),
       failures: [],
@@ -552,7 +561,10 @@ export class ShareHub {
       item: (payload) => this.reconcile(share, payload),
       failed: () => {},
     });
-    if (!bound) this.arm(share);
+    if (!bound) {
+      console.error(`stim-server: web share ${id} started waiting for its device: ${String(resolved)}`);
+      this.arm(share);
+    }
     return {
       ...this.row(share),
       url: `${base}/s/${secret}/`,
@@ -710,7 +722,6 @@ export class ShareHub {
       control: share.request.control,
       expiresAt: new Date(share.expiresAt).toISOString(),
       viewers: share.viewers.size,
-      state: share.state,
       auth: share.auth,
       viewAuth: share.viewAuth,
       ...(share.request.slug !== undefined ? { slug: share.request.slug } : {}),
@@ -824,7 +835,7 @@ export class ShareHub {
     }
   }
 
-  private async end(share: Share, message: string): Promise<void> {
+  private async end(share: Share, message: string, viewerMessage = VIEWER_TEXT.ended): Promise<void> {
     if (share.ended) return;
     share.ended = true;
     clearTimeout(share.timer);
@@ -842,7 +853,7 @@ export class ShareHub {
       }
       if (this.closed) socket.close(1001, 'stim-server stopped');
       else {
-        socket.send(JSON.stringify({ type: 'ended', message: VIEWER_TEXT.ended }));
+        socket.send(JSON.stringify({ type: 'ended', message: viewerMessage }));
         socket.close(1000, 'share ended');
       }
       setTimeout(() => socket.terminate(), CLOSE_GRACE_MS).unref?.();
@@ -863,12 +874,16 @@ export class ShareHub {
     if (share.ended) return;
     this.followTitle(share, payload);
     const bound = this.resolve(payload, share.request, share.state === 'live' ? share.bound : null);
-    if (typeof bound === 'string') return this.suspend(share, bound);
+    if (typeof bound === 'string') {
+      share.failingSince = null;
+      return this.suspend(share, bound);
+    }
     if (share.state === 'waiting') {
       if (Date.now() >= share.resumeAt) this.resume(share, bound);
       return;
     }
     if (bound.key === share.bound) return;
+    share.failingSince = null;
     this.suspend(share, 'The device changed.');
     this.resume(share, bound);
   }
@@ -886,7 +901,7 @@ export class ShareHub {
       viewer.detach?.();
       source?.presence?.leave(viewer.who.id);
       if (viewer.socket.readyState === viewer.socket.OPEN) {
-        viewer.socket.send(JSON.stringify({ type: 'waiting', message: VIEWER_TEXT.waiting }));
+        viewer.socket.send(JSON.stringify({ type: 'stopped', message: VIEWER_TEXT.stopped }));
       }
     }
     share.source = null;
@@ -1227,7 +1242,7 @@ export class ShareHub {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
     };
     json({ type: 'hello', expiresAt: new Date(share.expiresAt).toISOString(), title: this.titleOf(share) });
-    if (share.state === 'waiting') json({ type: 'waiting', message: VIEWER_TEXT.waiting });
+    if (share.state === 'waiting') json({ type: 'stopped', message: VIEWER_TEXT.stopped });
     this.identify(share, viewer);
     share.viewers.add(viewer);
     this.introduce(share, viewer);
@@ -1302,6 +1317,7 @@ export class ShareHub {
       {
         frame: (frame) => {
           share.backoff = RESUME_MIN_MS;
+          share.failingSince = null;
           delivery.push(frame);
         },
         ...(viewer.video
@@ -1309,6 +1325,7 @@ export class ShareHub {
               video: (unit: AccessUnit) => {
                 if (socket.readyState !== socket.OPEN) return;
                 share.backoff = RESUME_MIN_MS;
+                share.failingSince = null;
                 const verdict = gate.admit(unit, socket.bufferedAmount);
                 if (verdict === 'send')
                   socket.send(videoPacket(VIDEO_SUBSCRIPTION, sequence++, unit), { binary: true });
@@ -1321,6 +1338,12 @@ export class ShareHub {
         failed: (message) =>
           queueMicrotask(() => {
             if (share.source !== source) return;
+            const now = Date.now();
+            share.failingSince ??= now;
+            if (now - share.failingSince >= STREAM_GIVE_UP_MS) {
+              const helper = message.includes('stim-frames helper, which this Mac has not built');
+              return void this.end(share, message, helper ? VIEWER_TEXT.noHelper : VIEWER_TEXT.noStream);
+            }
             share.resumeAt = Date.now() + share.backoff;
             share.backoff = Math.min(share.backoff * 2, RESUME_MAX_MS);
             this.suspend(share, message);
