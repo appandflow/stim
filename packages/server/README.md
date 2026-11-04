@@ -152,6 +152,10 @@ marks that private startup input and is removed before the server starts other
 processes. Invalid or missing marked input refuses startup.
 Desktop keeps the pipe open until its child exits. The server shuts down when
 that pipe closes, including when Desktop crashes or is forcibly killed.
+When Desktop starts a server without the key (an `npm` or override server),
+it still passes the pipe and sets `STIM_DESKTOP_LIFETIME_FD=0`; the server then
+shuts down when the pipe closes. Without that marker the server keeps serving
+after its launcher exits.
 
 A connection on the local Unix socket can send `desktopBootstrap: true` in
 `hello`. The server returns a fresh per-connection nonce and an HMAC-SHA256

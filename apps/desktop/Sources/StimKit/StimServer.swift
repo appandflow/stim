@@ -276,34 +276,33 @@ public struct StimServerCLI: Sendable {
     let run = DebugLog.CLIRun(tool: "stim-server", arguments: arguments, cwd: NSHomeDirectory())
     var environment = environment
     environment.removeValue(forKey: "STIM_DESKTOP_BOOTSTRAP_FD")
-    let input: Pipe?
+    environment.removeValue(forKey: "STIM_DESKTOP_LIFETIME_FD")
+    let input = Pipe()
     if let bootstrap {
       guard bundled != nil else {
         throw ServerError(code: "forbidden", message: "Private Desktop bootstrap requires the bundled server.")
       }
-      let pipe = Pipe()
-      try pipe.fileHandleForWriting.write(contentsOf: bootstrap.input)
-      input = pipe
+      try input.fileHandleForWriting.write(contentsOf: bootstrap.input)
       environment["STIM_DESKTOP_BOOTSTRAP_FD"] = "0"
     } else {
-      input = nil
+      environment["STIM_DESKTOP_LIFETIME_FD"] = "0"
     }
-    defer { try? input?.fileHandleForReading.close() }
+    defer { try? input.fileHandleForReading.close() }
     environment["STIM_RUN_ID"] = run.runID
     if bundled != nil, let cache = Self.compileCache { environment["NODE_COMPILE_CACHE"] = cache }
     let tail = LockedValue([String]())
-    let lifetime = input?.fileHandleForWriting
+    let lifetime = input.fileHandleForWriting
     do {
       return try ProcessStream.start(
         executable: command.program, arguments: command.arguments, cwd: NSHomeDirectory(),
         environment: environment,
-        standardInput: input?.fileHandleForReading,
+        standardInput: input.fileHandleForReading,
         onLine: { line in
           if line.channel == .stderr { tail.withLock { $0 = Array(($0 + [line.text]).suffix(3)) } }
           onLine(line)
         },
         onExit: { status in
-          try? lifetime?.close()
+          try? lifetime.close()
           DebugLog.info(
             .server,
             "stim-server process exited status=\(status) run=\(run.runID) stderr: \(tail.withLock { $0.joined(separator: " | ") })"
@@ -311,7 +310,7 @@ public struct StimServerCLI: Sendable {
           onExit(status)
         })
     } catch {
-      try? lifetime?.close()
+      try? lifetime.close()
       throw error
     }
   }

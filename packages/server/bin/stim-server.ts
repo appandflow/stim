@@ -49,7 +49,7 @@ import { keyFingerprint } from '@stim-cli/core/noise-session';
 import { hostFromExecutable, hostPermissionPanes } from '../src/stim-host.ts';
 import { defaultSetupDeps, runSetup } from '../src/setup.ts';
 import { startServer } from '../src/server.ts';
-import { readDesktopBootstrap } from '../src/desktop-bootstrap.ts';
+import { readDesktopBootstrap, watchLauncherLifetime } from '../src/desktop-bootstrap.ts';
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { loadTransport } from '@stim-cli/transport';
 import { localTransport, resolveLanAddresses } from '@stim-cli/transport-local';
@@ -149,7 +149,10 @@ async function serve(
   shareOnly = false,
 ): Promise<void> {
   const bootstrapFd = process.env.STIM_DESKTOP_BOOTSTRAP_FD;
+  const lifetimeFd = process.env.STIM_DESKTOP_LIFETIME_FD;
   delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
+  delete process.env.STIM_DESKTOP_LIFETIME_FD;
+  if (lifetimeFd !== undefined && lifetimeFd !== '0') fail('Desktop lifetime input is invalid or unavailable.');
   if (bootstrapFd !== undefined && bootstrapFd !== '0') fail('Desktop bootstrap input is invalid or unavailable.');
   const desktopInput =
     bootstrapFd === '0'
@@ -296,7 +299,9 @@ async function serve(
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('SIGHUP', shutdown);
-  void desktopInput?.closed.then(shutdown);
+  const launcherClosed =
+    desktopInput?.closed ?? (lifetimeFd === '0' ? watchLauncherLifetime(process.stdin) : undefined);
+  void launcherClosed?.then(shutdown);
   if (shareOnly) {
     const startup = await server.ready;
     if (startup.state !== 'ready') {
