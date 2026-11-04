@@ -10,7 +10,13 @@ public struct WallCard: Identifiable, Sendable {
 
   public var page: WorktreePage
   public var apps: [App]
-  public var id: String { page.id }
+  /// The server that reports the card's workspaces.
+  public var owner: ServerOwner = .local
+  /// The paired machine the card belongs to; nil for this Mac.
+  public var machine: Machine?
+  public var id: String { owner.scoped(page.id) }
+  /// Identifies the card for choices that outlive it, such as the device it streams.
+  public var choiceKey: String { owner.scoped(page.identity) }
   public var isMultiApp: Bool { apps.count > 1 }
 
   /// The grid's column count for a content width in points: one when narrow, two at typical widths, three when
