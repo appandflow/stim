@@ -508,8 +508,6 @@ public final class SimulatorDisplayNSView: NSView {
     return .pasted
   }
 
-  /// Types `keys` after any earlier typed paste, one every 25 ms like the HID keyboard `stim-server` types with, so
-  /// the main thread never waits and a long paste stops when the device or input goes away.
   private func type(_ keys: [(code: UInt16, shift: Bool)], on hid: SimulatorHID, udid: String) {
     let earlier = typing
     typing = Task { [weak self] in
@@ -520,10 +518,10 @@ public final class SimulatorDisplayNSView: NSView {
         }
         if key.shift { hid.hardwareKey(code: 0x38, down: true) }
         hid.hardwareKey(code: key.code, down: true)
-        try? await Task.sleep(for: .milliseconds(10))
+        try? await Task.sleep(for: .milliseconds(10), tolerance: .zero)
         hid.hardwareKey(code: key.code, down: false)
         if key.shift { hid.hardwareKey(code: 0x38, down: false) }
-        try? await Task.sleep(for: .milliseconds(15))
+        try? await Task.sleep(for: .milliseconds(15), tolerance: .zero)
       }
     }
   }

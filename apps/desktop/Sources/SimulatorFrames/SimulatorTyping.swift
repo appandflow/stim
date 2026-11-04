@@ -34,12 +34,12 @@ public enum SimulatorPasteOutcome: Equatable, Sendable {
 }
 
 enum SimulatorTyping {
-  /// The key presses that type `text` on a US HID keyboard, or nil when it holds a character the keyboard cannot
-  /// produce: anything outside printable ASCII, Return and Tab. CRLF types as one Return. A paste that gets nil
-  /// is sent with Command-V.
+  /// The most UTF-8 bytes typed; longer text is pasted. Equals `MAX_CLIPBOARD_BYTES` in `packages/core/protocol.ts`.
+  static let maxBytes = 8192
+
   static func keys(for text: String) -> [(code: UInt16, shift: Bool)]? {
     let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
-    guard !normalized.isEmpty else { return nil }
+    guard !normalized.isEmpty, normalized.utf8.count <= maxBytes else { return nil }
     var keys: [(code: UInt16, shift: Bool)] = []
     for character in normalized {
       guard character != "\u{8}", let key = keyCodes[character] else { return nil }

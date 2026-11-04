@@ -162,6 +162,20 @@ describe.skipIf(process.platform === 'win32')('an iOS simulator clipboard (simct
     }
   });
 
+  it('refuses a typed paste that arrives while the first is still setting the clipboard', async () => {
+    recordingTool(join(home, 'bin', 'xcrun'), '');
+    const id = await session(device, { ...process.env, PATH: `${join(home, 'bin')}:${process.env.PATH}` });
+    const [first, second] = await Promise.all([
+      hub.input(owner, id, set('first', true)),
+      hub.input(owner, id, set('second', true)),
+    ]);
+    expect(first).toEqual({ typed: true });
+    expect(second).toMatchObject({ code: 'device-busy' });
+    expect(events.filter((event) => event.startsWith('helper'))).toEqual([
+      `helper ${JSON.stringify({ input: 'text', text: 'first' })}`,
+    ]);
+  });
+
   it('stops feeding a typed paste once the session ends', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     try {

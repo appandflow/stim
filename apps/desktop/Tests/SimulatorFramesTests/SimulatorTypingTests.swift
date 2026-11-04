@@ -14,6 +14,11 @@ import Testing
     #expect(keys.map(\.code) == [0x00, 0x24, 0x0B])
   }
 
+  @Test func typesAtMostTheClipboardLimit() {
+    #expect(SimulatorTyping.keys(for: String(repeating: "a", count: 8192))?.count == 8192)
+    #expect(SimulatorTyping.keys(for: String(repeating: "a", count: 8193)) == nil)
+  }
+
   @Test func leavesWhatTheHidKeyboardCannotTypeToCommandV() {
     for text in ["", "h\u{e9}llo", "smile \u{1F600}", "bell\u{7}", "back\u{8}space", "lone\rreturn"] {
       #expect(SimulatorTyping.keys(for: text) == nil, "\(text.debugDescription)")

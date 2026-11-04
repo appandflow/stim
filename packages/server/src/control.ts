@@ -68,14 +68,8 @@ type Parsed<T> = { value: T } | Refusal;
 export const SLOT_NAME: RegExp = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const TEXT = /^[\x20-\x7e\n\t\b]+$/;
 
-/** What the iOS HID keyboard types for a paste: printable ASCII, Return and Tab; `\b` is Delete, so it is not text. */
 const PASTE_TYPEABLE = /^[\x20-\x7e\n\t]+$/;
 
-/**
- * The `input.text` pieces that type a paste on an iOS simulator, or null when the text holds a character the US HID
- * keyboard cannot produce (anything outside printable ASCII, Return and Tab). A pasted CRLF types as one Return. A
- * null text falls back to Command-V of the whole text, which needs the device's paste prompt.
- */
 export function pasteTypingChunks(text: string): string[] | null {
   const typed = text.replaceAll('\r\n', '\n');
   if (!PASTE_TYPEABLE.test(typed)) return null;
@@ -84,7 +78,6 @@ export function pasteTypingChunks(text: string): string[] | null {
   return chunks;
 }
 
-/** The helper types about 35 characters a second; a paste feeds it at this rate so its queue stays one piece deep. */
 export const PASTE_TYPING_CHARS_PER_SECOND = 32;
 
 export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
@@ -652,7 +645,6 @@ interface Session {
   unwatch: () => void;
   renewing: Promise<void>;
   adb: Promise<void>;
-  /** The timer feeding the next piece of a typed paste to the helper, and when the helper finishes typing it. */
   pasteTimer: NodeJS.Timeout | null;
   pasteTypingUntil: number;
   ended: boolean;
@@ -1053,11 +1045,18 @@ export class ControlHub {
       return text;
     };
     const run = async (): Promise<Refusal | InputClipboardGetResult | InputClipboardSetResult | null> => {
+      let reserved = false;
       try {
         if (!set) return { text: await read() };
         if (device.platform === 'ios') {
-          if (set.paste && pasteTypingChunks(set.text) && Date.now() < session.pasteTypingUntil) {
-            return { code: 'device-busy', message: 'The device is still typing the previous paste.' };
+          const chunks = set.paste ? pasteTypingChunks(set.text) : null;
+          if (chunks) {
+            if (Date.now() < session.pasteTypingUntil) {
+              return { code: 'device-busy', message: 'The device is still typing the previous paste.' };
+            }
+            const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+            session.pasteTypingUntil = Date.now() + (total / PASTE_TYPING_CHARS_PER_SECOND) * 1000;
+            reserved = true;
           }
           const claim = session.claim ? takeHostedInputClaim(session.claim) : undefined;
           await runQuietly(
@@ -1072,7 +1071,6 @@ export class ControlHub {
             },
           );
           if (set.paste && !session.ended) {
-            const chunks = pasteTypingChunks(set.text);
             if (!chunks) session.input.send({ clipboard: 'paste' });
             else {
               this.typePaste(session, chunks);
@@ -1090,6 +1088,7 @@ export class ControlHub {
         }
         return null;
       } catch (cause) {
+        if (reserved) session.pasteTypingUntil = 0;
         return { code: 'action-failed', message: cause instanceof Error ? cause.message : String(cause) };
       }
     };
@@ -1100,10 +1099,7 @@ export class ControlHub {
     return this.pending.track(queued);
   }
 
-  /** Feeds the helper one `input.text` piece now and the rest at the rate it types, so no paste queues minutes of keys. */
   private typePaste(session: Session, chunks: string[]): void {
-    const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    session.pasteTypingUntil = Date.now() + (total / PASTE_TYPING_CHARS_PER_SECOND) * 1000;
     const feed = (index: number): void => {
       session.pasteTimer = null;
       const chunk = chunks[index];
