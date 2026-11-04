@@ -575,6 +575,26 @@ describe('in a linked worktree, from a subfolder', () => {
     expect(removedTree()).toBe(false);
   });
 
+  test('a root project run from a subfolder keeps the branch ownership the later root removal needs', async () => {
+    upsertProject(wtDir, { worktreeRoot: true, worktreeBranch: 'worktree-feat-x', worktreeBranchOwned: true });
+    const sub = join(wtDir, 'src');
+    mkdirSync(sub);
+    const exec = makeExecutor({
+      worktrees: porcelain([
+        { path: mainDir, branch: 'main' },
+        { path: wtDir, branch: 'worktree-feat-x' },
+      ]),
+    });
+    setExecutor(exec);
+    await captureAction(registerRemove)(sub, {});
+    expect(process.exitCode).not.toBe(1);
+    expect(getProject(wtDir)?.worktreeBranchOwned).toBe(true);
+    expect(exec.calls.run.some((cmd) => /worktree remove/.test(cmd))).toBe(false);
+
+    await captureAction(registerRemove)(wtDir, {});
+    expect(exec.calls.run.some((cmd) => /update-ref -d .*worktree-feat-x/.test(cmd))).toBe(true);
+  });
+
   test('the worktree root removes the whole worktree and every project under it', async () => {
     const { mobile, web, removedTree } = linkedWorktree();
     await captureAction(registerRemove)(wtDir, {});

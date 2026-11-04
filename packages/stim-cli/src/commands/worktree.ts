@@ -905,6 +905,7 @@ async function reclaimEnvironment(
   output: RemovalOutput,
   operation?: StimContext,
   beforeRemove?: (workspace: string) => void,
+  preserveRootProject = false,
 ): Promise<void> {
   await withManagedRemoteWorktreeRemovalLock(
     root,
@@ -912,7 +913,11 @@ async function reclaimEnvironment(
       withReclaimLocks(
         root,
         async (lockedKeys) => {
-          const result = await reclaimAll(root, lockedKeys, { removedBy: 'worktree-remove', operation });
+          const result = await reclaimAll(root, lockedKeys, {
+            preserveRootProject,
+            removedBy: 'worktree-remove',
+            operation,
+          });
           for (const line of poolLines(result)) output.error(line);
           for (const device of result.deletedDevices) {
             output.error(chalk.dim(phaseLine('device', `deleted ${device}`)));
@@ -1352,6 +1357,7 @@ async function removeOrRefuse(
       output,
       opts.operation,
       opts.beforeRemove,
+      !isSource && nativeCanonicalPath(project) === nativeCanonicalPath(entry.path),
     );
     return;
   }
