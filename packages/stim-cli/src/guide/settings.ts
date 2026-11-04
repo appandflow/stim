@@ -670,9 +670,9 @@ run waiting to boot, and automatic maintenance.
   on      start, ios, android, web, macos and revive start one stim-daemon per
           Stim home, scoped homes included. It ticks each minute while
           anything runs there or the pressure level is above normal, and
-          every 5 minutes otherwise. It exits two ticks after nothing runs and
-          no workspace waits for its dormant stage, so the stage fires in a
-          quiet home. A workspace waits until its idle.dormantDays have passed
+          every 5 minutes otherwise. It exits two ticks after nothing runs,
+          no maintenance pass runs and no workspace waits for its dormant
+          stage, so the stage fires in a quiet home. A workspace waits until its idle.dormantDays have passed
           plus one slow tick, and never while maintenance.keep, idle.minutes
           0, idle.dormantDays 0, a hosted placement, an unreadable state or a
           failing device listing keeps it out, nor with no activity recorded
@@ -681,16 +681,20 @@ run waiting to boot, and automatic maintenance.
           machine once, classifies the pressure level, moves idle workspaces
           into the idle stage (idle.minutes) and dormant ones into the dormant
           stage (idle.dormantDays), runs the pressure ladder above normal,
-          reclaims a device for a run waiting to boot, and runs automatic
-          maintenance. When one of those commands runs from an installed
+          and reclaims a device for a run waiting to boot. Automatic
+          maintenance and the dormant stage's dependency deletion run beside
+          the ticks, one pass at a time, so a slow git fetch, pull request
+          lookup or size scan never delays a tick or a waiting run. When one
+          of those commands runs from an installed
           Stim (a global install or a node_modules dependency) with a newer
           version than the running daemon, or the daemon runs a development
           build, the daemon keeps serving the command and one new daemon
           from the installed build takes over once its current tick
           finishes, so an upgrade reaches the daemon with the next such
-          command. The same or an older version never replaces it. A
-          development build (a checkout's dist, npm link or pnpm link
-          --global) never replaces a daemon.
+          command. A maintenance pass the old daemon has running finishes
+          in its process, which starts no other. The same or an older
+          version never replaces it. A development build (a checkout's
+          dist, npm link or pnpm link --global) never replaces a daemon.
   report  the same passes log what they would do and act on nothing.
   off     no daemon and no pass: each dev server supervisor stops its own dev
           server and devices after idle.minutes, and nothing times a device
