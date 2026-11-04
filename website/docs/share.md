@@ -162,16 +162,24 @@ on Android, the hardware arrow and Escape keys on iOS).
 
 With `--control` on an iOS simulator, an Android emulator or an Android phone,
 Command-V (Control-V on Windows and Linux) while the screen has focus pastes the
-text on your computer's clipboard into the focused field on the device. On an iOS
+text on your browser's clipboard into the focused field on the device. On an iOS
 simulator, printable ASCII, line breaks and tabs are typed into the field (about 35
 characters a second, with the field's own smart quotes and dashes), so no paste prompt
 appears; other text is pasted with Command-V, and the page says to tap the paste
 suggestion on the device. The options menu in the top bar has a "Sync clipboard" switch, on by default and
 remembered by your browser. While the page is focused it copies new text from
-the device to your computer's clipboard (a "Copy from device" chip appears when
+the device to your browser's clipboard (a "Copy from device" chip appears when
 the browser refuses), and in Chrome and Edge, after a one-time permission
-prompt, it sends text you copied on your computer to the device when you return
-to the page. In other browsers press Command-V on the device screen. The menu's
+prompt, it sends text you copied to the device when you return
+to the page. In other desktop browsers press Command-V on the device screen. On a
+phone or tablet (a touch-first browser) there is no automatic sync, because a
+browser lets a page read or write the clipboard only inside a tap, and the menu has
+two buttons instead. "Paste to device" sends your clipboard to the device: iOS Safari
+shows its own small Paste button to confirm the read, and Android Chrome asks for
+clipboard permission once. A denied or empty read shows a short note, and the text
+goes to the device the same way as Command-V. "Copy from device" fetches the device
+clipboard and writes it to your clipboard inside the same tap; when the browser still
+refuses, the text appears in a field to select and copy by hand. On desktop the menu's
 "Copy from device" button copies once. Sending your copied text to the device counts as input and starts the share's
 control session like a paste. Syncing from the device starts after
 someone has tapped, typed or pasted, and does not keep an idle share's control
@@ -489,7 +497,7 @@ reload.
   costs only its listener and route. A share never records anything to disk.
 - **Control is the existing control path.** Input goes through the same
   control session and device lease Stim Desktop and the phone app use, limited
-  to taps, two-finger gestures, text, the arrow keys and Escape, pasting and syncing the clipboard with your computer, rotation and the hardware buttons of the shared device. A device an
+  to taps, two-finger gestures, text, the arrow keys and Escape, pasting and syncing the clipboard with your browser, rotation and the hardware buttons of the shared device. A device an
   agent or another client is driving answers busy; a share never takes it over.
 - **Ephemeral.** Shares live only in stim-server's memory. A share ends at its
   expiry, on `stim share stop`, `stim stop` (the workspace, or one slot with
