@@ -345,10 +345,10 @@ describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned b
 });
 
 test.skipIf(process.platform === 'win32')(
-  'stopping an app also ends what its supervisor group started, and spares a process outside it',
+  'stopping an app also ends the processes it started in groups of their own, and spares others',
   async () => {
     const server = 'setInterval(() => {}, 1000)';
-    const app = `const s = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(server)}], { stdio: 'ignore' });
+    const app = `const s = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(server)}], { stdio: 'ignore', detached: true });
       process.stdout.write(s.pid + '\\n'); setInterval(() => {}, 1000)`;
     const supervisor = `const a = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(app)}], { stdio: ['ignore', 'pipe', 'ignore'] });
       a.stdout.on('data', (d) => process.stdout.write(a.pid + ' ' + d)); setInterval(() => {}, 1000)`;
