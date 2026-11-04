@@ -164,7 +164,7 @@ async function clipboardCalls(supported: boolean) {
   );
   const connection = {
     request,
-    supports: (feature: string) => supported && feature === 'device-clipboard',
+    supports: (feature: string) => supported && (feature === 'device-clipboard' || feature === 'device-keyboard'),
     route: () => () => {},
   } as unknown as Upstream;
   const hosts = { acquire: async () => ({ connection, release: () => {} }) } as unknown as HostConnections;
@@ -185,9 +185,11 @@ async function clipboardCalls(supported: boolean) {
   const begun = request.mock.calls.length;
   relay.control(2, 'input.clipboard.set', { session: 'h1', text: 'abc', paste: true });
   relay.control(3, 'input.clipboard.get', { session: 'h1' });
+  relay.control(4, 'input.key', { session: 'h1', key: 'a', modifiers: ['command'] });
+  relay.control(5, 'input.key', { session: 'h1', key: 'left', modifiers: [] });
   const answers = () =>
     messages.filter((message) => 'id' in message && typeof message.id === 'number' && message.id >= 2);
-  await vi.waitFor(() => expect(answers()).toHaveLength(2));
+  await vi.waitFor(() => expect(answers()).toHaveLength(4));
   return { sent: request.mock.calls.slice(begun), answers: answers() };
 }
 
@@ -196,19 +198,25 @@ it('forwards the clipboard calls to a hosted session whose host advertises devic
   expect(sent).toEqual([
     ['device-host.input.clipboard.set', { session: 'host-control', text: 'abc', paste: true }],
     ['device-host.input.clipboard.get', { session: 'host-control' }],
+    ['device-host.input.key', { session: 'host-control', key: 'a', modifiers: ['command'] }],
+    ['device-host.input.key', { session: 'host-control', key: 'left', modifiers: [] }],
   ]);
   expect(answers).toEqual([
     { id: 2, result: {} },
     { id: 3, result: { text: 'from the host' } },
+    { id: 4, result: {} },
+    { id: 5, result: {} },
   ]);
 });
 
-it('refuses the clipboard calls for a host without device-clipboard, without sending them', async () => {
+it('refuses the clipboard calls and key chords for a host without the feature, sending only the bare arrow', async () => {
   const { sent, answers } = await clipboardCalls(false);
-  expect(sent).toEqual([]);
+  expect(sent).toEqual([['device-host.input.key', { session: 'host-control', key: 'left', modifiers: [] }]]);
   expect(answers).toEqual([
     { id: 2, error: { code: 'action-failed', message: expect.stringContaining('update its Stim') } },
     { id: 3, error: { code: 'action-failed', message: expect.stringContaining('update its Stim') } },
+    { id: 4, error: { code: 'action-failed', message: expect.stringContaining('update its Stim') } },
+    { id: 5, result: {} },
   ]);
 });
 

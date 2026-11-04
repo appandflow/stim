@@ -165,12 +165,17 @@ export interface SessionTarget {
   physical?: boolean;
 }
 
-/** The keys an iOS or Android device takes as `input.key`: the arrows and Escape. */
+/** The keys a physical Android phone takes as `input.key`: the arrows and Escape, without modifiers. */
 const DEVICE_KEYS = ['left', 'right', 'up', 'down', 'escape'] as const;
 type DeviceKey = (typeof DEVICE_KEYS)[number];
 
 function isDeviceKey(key: unknown): key is DeviceKey {
   return DEVICE_KEYS.some((candidate) => candidate === key);
+}
+
+/** Whether an `input.key` goes beyond the arrows and Escape without modifiers, which only a `device-keyboard` host takes. */
+export function isExtendedDeviceKey(key: unknown, modifiers: unknown): boolean {
+  return !isDeviceKey(key) || (Array.isArray(modifiers) && modifiers.length > 0);
 }
 
 const IOS_BUTTONS: readonly InputButton[] = ['home', 'lock'];
@@ -184,16 +189,40 @@ function fraction(value: unknown): boolean {
   return typeof value === 'number' && value >= 0 && value <= 1;
 }
 
+function parseKey(
+  session: string,
+  params: Record<string, unknown>,
+): Parsed<{ session: string; command: InputCommand }> {
+  const { key, modifiers = [] } = params;
+  if (
+    !INPUT_KEYS.includes(key as InputKey) ||
+    !Array.isArray(modifiers) ||
+    modifiers.length > 4 ||
+    new Set(modifiers).size !== modifiers.length ||
+    !modifiers.every((modifier) => KEY_MODIFIERS.includes(modifier as KeyModifier))
+  ) {
+    return {
+      code: 'bad-request',
+      message: 'input.key needs a supported native key and unique command, shift, option or control modifiers.',
+    };
+  }
+  return {
+    value: { session, command: { input: 'key', key: key as InputKey, modifiers: modifiers as KeyModifier[] } },
+  };
+}
+
 function parseDeviceKey(
   session: string,
   platform: 'ios' | 'android',
+  physical: boolean,
   params: Record<string, unknown>,
 ): Parsed<{ session: string; command: InputCommand }> {
+  if (!physical) return parseKey(session, params);
   const { key, modifiers = [] } = params;
   if (!isDeviceKey(key) || !Array.isArray(modifiers) || modifiers.length) {
     return {
       code: 'bad-request',
-      message: `An ${platform === 'ios' ? 'iOS' : 'Android'} device takes the keys ${DEVICE_KEYS.join(', ')}, without modifiers.`,
+      message: `An ${platform === 'ios' ? 'iOS' : 'Android'} phone takes the keys ${DEVICE_KEYS.join(', ')}, without modifiers.`,
     };
   }
   return { value: { session, command: { input: 'key', key, modifiers: [] } } };
@@ -203,10 +232,11 @@ function parseScrollOrKey(
   method: 'input.scroll' | 'input.key',
   session: string,
   platform: ControlPlatform,
+  physical: boolean,
   params: Record<string, unknown>,
 ): Parsed<{ session: string; command: InputCommand }> {
   if (platform !== 'macos' && method === 'input.key' && platform !== 'web') {
-    return parseDeviceKey(session, platform, params);
+    return parseDeviceKey(session, platform, physical, params);
   }
   if (platform !== 'macos')
     return { code: 'bad-request', message: 'This input is for a native macOS app window only.' };
@@ -231,22 +261,7 @@ function parseScrollOrKey(
       },
     };
   }
-  const { key, modifiers = [] } = params;
-  if (
-    !INPUT_KEYS.includes(key as InputKey) ||
-    !Array.isArray(modifiers) ||
-    modifiers.length > 4 ||
-    new Set(modifiers).size !== modifiers.length ||
-    !modifiers.every((modifier) => KEY_MODIFIERS.includes(modifier as KeyModifier))
-  ) {
-    return {
-      code: 'bad-request',
-      message: 'input.key needs a supported native key and unique command, shift, option or control modifiers.',
-    };
-  }
-  return {
-    value: { session, command: { input: 'key', key: key as InputKey, modifiers: modifiers as KeyModifier[] } },
-  };
+  return parseKey(session, params);
 }
 
 function parseClipboard(
@@ -315,7 +330,8 @@ export function parseInput(
       return { code: 'bad-request', message: 'input.window needs a window id from 0 to 4294967295 or null.' };
     return { value: { session, command: { input: 'window', window } } };
   }
-  if (method === 'input.scroll' || method === 'input.key') return parseScrollOrKey(method, session, platform, params);
+  if (method === 'input.scroll' || method === 'input.key')
+    return parseScrollOrKey(method, session, platform, target.physical === true, params);
   if (method === 'input.clipboard.set' || method === 'input.clipboard.get') {
     return parseClipboard(method, session, platform, target.physical === true, params);
   }
@@ -449,6 +465,29 @@ const ANDROID_KEYS: Record<InputButton | DeviceKey | '\n' | '\t' | '\b', string>
   '\b': 'KEYCODE_DEL',
 };
 
+/** Command acts as Control on Android, where Control is the shortcut key, as Command is on a Mac. */
+const ANDROID_MODIFIERS: Record<KeyModifier, string> = {
+  command: 'KEYCODE_CTRL_LEFT',
+  control: 'KEYCODE_CTRL_LEFT',
+  option: 'KEYCODE_ALT_LEFT',
+  shift: 'KEYCODE_SHIFT_LEFT',
+};
+
+const ANDROID_NAMED_KEYS: Partial<Record<InputKey, string>> = {
+  escape: 'KEYCODE_ESCAPE',
+  tab: 'KEYCODE_TAB',
+  return: 'KEYCODE_ENTER',
+  backspace: 'KEYCODE_DEL',
+  left: 'KEYCODE_DPAD_LEFT',
+  right: 'KEYCODE_DPAD_RIGHT',
+  up: 'KEYCODE_DPAD_UP',
+  down: 'KEYCODE_DPAD_DOWN',
+};
+
+function androidKeycode(key: InputKey): string {
+  return ANDROID_NAMED_KEYS[key] ?? `KEYCODE_${key.toUpperCase()}`;
+}
+
 /**
  * The `adb shell` argument lists that type `text` or press `button` on an emulator without a hardware keyboard
  * (`hw.keyboard=no`), which drops gRPC key events. `adb shell` joins its arguments into one device shell
@@ -457,7 +496,9 @@ const ANDROID_KEYS: Record<InputButton | DeviceKey | '\n' | '\t' | '\b', string>
 export function adbInputArgs(command: Extract<InputCommand, { input: 'text' | 'button' | 'key' }>): string[][] {
   if (command.input === 'button') return [['shell', 'input', 'keyevent', ANDROID_KEYS[command.button]]];
   if (command.input === 'key') {
-    return isDeviceKey(command.key) ? [['shell', 'input', 'keyevent', ANDROID_KEYS[command.key]]] : [];
+    const key = androidKeycode(command.key);
+    const modifiers = [...new Set(command.modifiers.map((modifier) => ANDROID_MODIFIERS[modifier]))];
+    return [['shell', 'input', ...(modifiers.length ? ['keycombination', ...modifiers] : ['keyevent']), key]];
   }
   const calls: string[][] = [];
   for (const part of command.text.split(/([\n\t\b]+)/)) {
@@ -1004,7 +1045,7 @@ export class ControlHub {
       command.input === 'touch' ||
       command.input === 'rotate' ||
       command.input === 'posture' ||
-      session.input.keys()
+      (session.input.keys() && !(command.input === 'key' && isExtendedDeviceKey(command.key, command.modifiers)))
     ) {
       session.input.send(
         command.input === 'touch' && command.display === undefined && command.duoRevision === undefined

@@ -15,7 +15,7 @@ import {
   type NoiseSocket,
 } from '@stim-cli/core/noise-session';
 import type { AuditRecord } from './actions.ts';
-import type { SessionTarget } from './control.ts';
+import { isExtendedDeviceKey, type SessionTarget } from './control.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { presenceKey, type PresenceHub } from './presence.ts';
 import {
@@ -716,6 +716,21 @@ export class HostedRelay {
         error: {
           code: 'action-failed',
           message: 'The Mac hosting this device cannot set or read a clipboard: update its Stim.',
+        },
+      });
+      return true;
+    }
+    if (
+      method === 'input.key' &&
+      entry.target.platform !== 'macos' &&
+      isExtendedDeviceKey(params.key, params.modifiers) &&
+      !entry.lease.connection.supports('device-keyboard')
+    ) {
+      this.send({
+        id,
+        error: {
+          code: 'action-failed',
+          message: 'The Mac hosting this device takes only the arrows and Escape as keys: update its Stim.',
         },
       });
       return true;

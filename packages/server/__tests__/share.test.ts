@@ -683,17 +683,16 @@ describe('a web share', () => {
     expect(f.hub.unrecordedTargets()).toEqual(new Set());
   });
 
-  it('with --control, passes the arrow keys and Escape and drops every other key', async () => {
+  it('with --control, passes the keys input.key names and drops every other key', async () => {
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port ?? 0);
     const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
-    for (const key of ['tab', 'a', 'return', 'unknown', 7, null]) socket.send(JSON.stringify({ type: 'key', key }));
-    for (const key of ['left', 'escape']) socket.send(JSON.stringify({ type: 'key', key }));
-    await vi.waitFor(() => expect(f.inputs).toHaveLength(2));
-    expect(f.inputs).toEqual([
-      { session: 'c1', command: { input: 'key', key: 'left', modifiers: [] } },
-      { session: 'c1', command: { input: 'key', key: 'escape', modifiers: [] } },
-    ]);
+    for (const key of ['f1', 'unknown', 7, null]) socket.send(JSON.stringify({ type: 'key', key }));
+    for (const key of ['left', 'escape', 'tab', 'a']) socket.send(JSON.stringify({ type: 'key', key }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(4));
+    expect(f.inputs).toEqual(
+      ['left', 'escape', 'tab', 'a'].map((key) => ({ session: 'c1', command: { input: 'key', key, modifiers: [] } })),
+    );
     socket.close();
   });
 

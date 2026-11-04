@@ -116,6 +116,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
  * `device-clipboard` is `input.clipboard.set` and `input.clipboard.get` (and `device-host.input.clipboard.*`): set the clipboard
  * of an iOS simulator, an Android emulator or an Android phone, optionally pasting it, and read it back.
+ * `device-keyboard` is `input.key` on an iOS simulator or an Android emulator (and `device-host.input.key`) with every
+ * `INPUT_KEYS` key and its modifiers; before it, an iOS or Android device took only the arrows and Escape.
  */
 export const FEATURES = [
   'physical-ios',
@@ -187,6 +189,7 @@ export const FEATURES = [
   'share-stop-id',
   'presence',
   'device-clipboard',
+  'device-keyboard',
   'share-view-password',
   'share-waiting',
   'hosted-presence',

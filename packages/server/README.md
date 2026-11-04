@@ -1620,7 +1620,7 @@ control session ID and `lease: null`: the hosted lifetime claim protects this
 private device. Only one controller can drive the device; `takeOver: true`
 replaces the previous controller. Use the returned control ID with
 `device-host.input.touch|text|key`, using the same parameters as ordinary input
-(`key` takes the arrows and Escape on iOS and Android; `touch` takes the second
+(`key` takes the arrows and Escape on iOS and Android, and with a worker that advertises `device-keyboard` the keys and modifiers of ordinary `input.key`; `touch` takes the second
 finger `x2` and `y2`, which a worker older than this field refuses).
 iOS also supports `device-host.input.button|rotate|posture`. Android supports
 `device-host.input.button` through scrcpy; rotation and posture are unavailable
@@ -3219,11 +3219,15 @@ sends reaches any other device.
   Without `display`, a touch on an iPhone Duo goes to the panel its latest
   frame showed, and before any frame to the cover.
   `input.text` takes up to 256 printable ASCII characters, where `\n` presses
-  Return, `\t` Tab and `\b` Delete. On an iOS or Android device, `input.key`
-  takes `left`, `right`, `up`, `down` or `escape` with no modifiers: the
-  simulator gets the hardware key, an emulator the key through its gRPC
-  keyboard or `KEYCODE_DPAD_*` and `KEYCODE_ESCAPE` over `adb` without one,
-  and a phone the same Android key events through scrcpy. A web page takes no
+  Return, `\t` Tab and `\b` Delete. On a physical Android phone, `input.key`
+  takes `left`, `right`, `up`, `down` or `escape` with no modifiers, as Android key
+  events through scrcpy. When hello advertises `device-keyboard`, an iOS simulator
+  and an Android emulator take every key of `input.key` (Escape, Tab, Return,
+  Backspace, the arrows, `a-z` and `0-9`) with unique `command`, `shift`, `option`
+  and `control` modifiers: a simulator gets the hardware keys with the modifiers
+  held, and an emulator gets one `adb shell input keycombination`, with `command`
+  as Control, which needs Android 12 or later. Without `device-keyboard` they take
+  the arrows and Escape without modifiers. A web page takes no
   keys. When hello advertises `device-clipboard`, `input.clipboard.set` takes
   `text`, any Unicode text of at most 8192 UTF-8 bytes (a request is one
   message of at most 64 KiB, and JSON escapes a control character in up to six

@@ -216,6 +216,14 @@ import Foundation
     send("input.text", ["text": .string(text)])
   }
 
+  /// A key of `INPUT_KEYS` in `packages/core/protocol.ts` with the modifiers held: `command`, `shift`, `option`, `control`.
+  public func key(_ key: String, modifiers: [String]) {
+    send("input.key", ["key": .string(key), "modifiers": .array(modifiers.map { .string($0) })])
+  }
+
+  /// Whether the server takes the `device-keyboard` chords for this device, set by the view that shows it.
+  public var keyboardChords = false
+
   /// The most text `input.clipboard.set` takes, in UTF-8 bytes: `MAX_CLIPBOARD_BYTES` in `packages/core/protocol.ts`.
   public nonisolated static let maxClipboardBytes = 8192
 

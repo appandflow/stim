@@ -164,3 +164,37 @@ public func physicalInputText(characters: String?, keyCode: UInt16) -> String? {
   else { return nil }
   return characters
 }
+
+/// What a key press sends to a device through stim-server.
+public enum PhysicalKeyInput: Equatable, Sendable {
+  case text(String)
+  case key(String, modifiers: [String])
+}
+
+private let namedPhysicalKeys: [UInt16: String] = [0x7B: "left", 0x7C: "right", 0x7D: "down", 0x7E: "up", 0x35: "escape"]
+private let chordPhysicalKeys: [UInt16: String] = namedPhysicalKeys.merging([
+  0x30: "tab", 0x24: "return", 0x4C: "return", 0x33: "backspace",
+]) {
+  first, _ in first
+}
+
+/// The `input.key` or `input.text` a key press sends. The arrows and Escape go as keys, and a printable key without
+/// Command, Control or Option as text. With `chords`, which a server advertising `device-keyboard` takes for an iOS
+/// simulator or an Android emulator, Shift also goes with the arrows and Escape, and Command, Control and Option chords
+/// go with the keys `input.key` names. Nil for a key that has no way to be sent.
+public func physicalKeyInput(
+  characters: String?, charactersIgnoringModifiers: String?, keyCode: UInt16, command: Bool, control: Bool,
+  option: Bool, shift: Bool, chords: Bool
+) -> PhysicalKeyInput? {
+  let held = [("command", command), ("shift", shift), ("option", option), ("control", control)].filter { $0.1 }.map(\.0)
+  if !(command || control || option) {
+    if let name = namedPhysicalKeys[keyCode], chords || !shift { return .key(name, modifiers: held) }
+    return physicalInputText(characters: characters, keyCode: keyCode).map { .text($0) }
+  }
+  guard chords else { return nil }
+  if let name = chordPhysicalKeys[keyCode] { return .key(name, modifiers: held) }
+  guard let typed = charactersIgnoringModifiers?.lowercased(), typed.count == 1, let scalar = typed.unicodeScalars.first,
+    ("a"..."z").contains(scalar) || ("0"..."9").contains(scalar)
+  else { return nil }
+  return .key(typed, modifiers: held)
+}

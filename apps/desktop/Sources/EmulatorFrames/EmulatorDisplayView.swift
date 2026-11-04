@@ -522,13 +522,16 @@ public final class EmulatorDisplayNSView: NSView {
   // Printable ASCII goes as text so the emulator picks the evdev keys and
   // Shift itself; other keys go as macOS key codes, which the emulator
   // translates. An emulator without a hardware keyboard drops both, so its
-  // keys go through `adb shell input`. Command and Control shortcuts stay with
-  // the Mac.
+  // keys go through `adb shell input`. A chord with Command, Control or Option
+  // goes through `adb shell input keycombination` with Command as Control, the
+  // shortcut key on Android.
   public override func keyDown(with event: NSEvent) {
-    guard !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control),
-      !event.modifierFlags.contains(.option),
-      let input = inputClient()
-    else { return super.keyDown(with: event) }
+    let flags = event.modifierFlags
+    if flags.contains(.command) || flags.contains(.control) || flags.contains(.option) {
+      if inputClient() == nil || !sendChord(event) { super.keyDown(with: event) }
+      return
+    }
+    guard let input = inputClient() else { return super.keyDown(with: event) }
     let text = event.characters.flatMap { isPrintableASCII($0) ? $0 : nil }
     if hasKeyboard == false, let serial {
       let adb = self.adb ?? AdbInput(serial: serial)
@@ -544,6 +547,20 @@ public final class EmulatorDisplayNSView: NSView {
       keysDown.insert(event.keyCode)
       input.call("sendKey", InputMessages.key(macKeyCode: event.keyCode, down: true))
     }
+  }
+
+  private func sendChord(_ event: NSEvent) -> Bool {
+    let flags = event.modifierFlags
+    guard let serial, let key = androidKeyEvent(macKeyCode: event.keyCode) ?? letterOrDigitKeyEvent(event)
+    else { return false }
+    var combination: [String] = []
+    if flags.contains(.command) || flags.contains(.control) { combination.append("KEYCODE_CTRL_LEFT") }
+    if flags.contains(.shift) { combination.append("KEYCODE_SHIFT_LEFT") }
+    if flags.contains(.option) { combination.append("KEYCODE_ALT_LEFT") }
+    let adb = self.adb ?? AdbInput(serial: serial)
+    self.adb = adb
+    if !event.isARepeat { adb.keyCombination(combination + [key]) }
+    return true
   }
 
   public override func keyUp(with event: NSEvent) {
@@ -586,6 +603,10 @@ final class AdbInput {
     run(["shell", "input", "keyevent", key])
   }
 
+  func keyCombination(_ keys: [String]) {
+    run(["shell", "input", "keycombination"] + keys)
+  }
+
   private func run(_ arguments: [String]) {
     let serial = serial
     queue.async {
@@ -602,6 +623,13 @@ final class AdbInput {
     }
     return "/opt/homebrew/bin/adb"
   }()
+}
+
+func letterOrDigitKeyEvent(_ event: NSEvent) -> String? {
+  guard let typed = event.charactersIgnoringModifiers?.lowercased(), typed.count == 1, let scalar = typed.unicodeScalars.first,
+    ("a"..."z").contains(scalar) || ("0"..."9").contains(scalar)
+  else { return nil }
+  return "KEYCODE_\(typed.uppercased())"
 }
 
 func isPrintableASCII(_ text: String) -> Bool {

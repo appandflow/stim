@@ -112,4 +112,25 @@ import Testing
     #expect(physicalInputText(characters: "\u{F702}", keyCode: 0x7B) == nil)
     #expect(physicalInputText(characters: "\u{E9}", keyCode: 0) == nil)
   }
+
+  @Test func mapsKeysToKeysAndChordsOnlyWhenTheServerTakesThem() {
+    func input(
+      _ characters: String, _ keyCode: UInt16, command: Bool = false, control: Bool = false, option: Bool = false,
+      shift: Bool = false, chords: Bool
+    ) -> PhysicalKeyInput? {
+      physicalKeyInput(
+        characters: characters, charactersIgnoringModifiers: characters, keyCode: keyCode, command: command,
+        control: control, option: option, shift: shift, chords: chords)
+    }
+    #expect(input("\u{F702}", 0x7B, chords: false) == .key("left", modifiers: []))
+    #expect(input("\u{F702}", 0x7B, shift: true, chords: false) == nil)
+    #expect(input("\u{F702}", 0x7B, shift: true, chords: true) == .key("left", modifiers: ["shift"]))
+    #expect(input("\u{1B}", 0x35, chords: false) == .key("escape", modifiers: []))
+    #expect(input("a", 0, chords: true) == .text("a"))
+    #expect(input("a", 0, command: true, chords: false) == nil)
+    #expect(input("a", 0, command: true, chords: true) == .key("a", modifiers: ["command"]))
+    #expect(input("z", 6, command: true, shift: true, chords: true) == .key("z", modifiers: ["command", "shift"]))
+    #expect(input("\t", 0x30, control: true, chords: true) == .key("tab", modifiers: ["control"]))
+    #expect(input("\u{F704}", 0x7A, command: true, chords: true) == nil)
+  }
 }
