@@ -611,7 +611,7 @@ Tailscale refuses and Stim prints Tailscale's error message.
 
 ## Typing from a viewer
 
-When Stim Desktop takes over an owned iOS simulator, or stim-server sends it
+When Stim Desktop controls an owned iOS simulator, or stim-server sends it
 input, Stim puts the simulator in hardware-keyboard mode, the setting behind
 Simulator.app's Connect Hardware Keyboard. The on-screen keyboard stays hidden
 and the keys of the viewer's keyboard type into the focused field. Nothing turns
@@ -636,9 +636,9 @@ only in hand.
 
 Tapping Control starts control at once, while an agent drives the device or
 another person controls it too: everyone's input reaches the device, and a
-finger already down keeps the touch pointer until it lifts. Against a
-stim-server older than shared control, a device someone else drives offers
-**Take Over** instead. Viewing replay remains read-only.
+finger already down keeps the touch pointer until it lifts. A device another
+workspace leases offers **Take Over** instead, and so does a device someone else
+drives on a stim-server older than shared control. Viewing replay remains read-only.
 
 ## Replay device screens
 

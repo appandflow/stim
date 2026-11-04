@@ -51,7 +51,7 @@ export function notifyCategoryLabel(category: string): string {
     case 'machine':
       return t`Machine in trouble`;
     case 'control':
-      return t`Someone takes over your device`;
+      return t`Someone else drives your device`;
     case 'attention':
       return t`Needs you`;
     default:

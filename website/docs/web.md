@@ -224,7 +224,7 @@ the newest, and Stim Desktop and the phone show them under the Web device.
 Stim records clicks, key presses, text input and wheel scrolls in the page's
 top frame; a burst of typing, of one key or of scrolling is one record, and
 pointer moves and iframes are not recorded. Typed text is never recorded, only
-its length. Input from **Take over** in Stim Desktop or the phone app is not an
+its length. Input from **Control** in Stim Desktop or the phone app is not an
 agent action, and neither is any other input within 3 seconds of it. Input
 while no tool is connected is not recorded. A person clicking a headed Chrome window
 while a tool is connected counts as that tool, and a script that disconnects
@@ -264,7 +264,7 @@ and deletes a profile only when its ledger lists it.
 
 Stim Desktop shows the owned Chrome as a **Web** tile next to the simulators,
 with live frames of the page, its URL, a "Page failed to load" pill,
-"Driven by" when a tool is attached, and the tool's latest actions under it. **Take over** sends clicks, scrolls and
+"Driven by" when a tool is attached, and the tool's latest actions under it. **Control** sends clicks, scrolls and
 keys to the page. The tile opens the URL in your own browser, reloads the page
 (`stim reload web`), and closes Chrome (`stim stop --slot web`).
 

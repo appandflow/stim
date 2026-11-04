@@ -588,7 +588,7 @@ agent actions in the logs, at the selected action or the one on screen. The tool
 the list, and the app remembers it; a sheet too narrow for the list and a
 420-point canvas hides it too. Physical and remote devices have no list.
 
-Escape releases a device that is taken over, and otherwise closes the viewer;
+Escape releases a device you control, and otherwise closes the viewer;
 closing it releases the device too. While the viewer is open, the device's
 tile stops streaming and says "Open in the viewer". The stream on a workspace card of the Active Workspaces wall or the
 Overview is a preview too; clicking it opens its workspace with that device focused. The grid pauses previews after
@@ -1128,7 +1128,7 @@ so the viewer takes that display's shape and touches address its pixels.
 Android input goes through the emulator's gRPC `sendMouse` and `sendKey` calls.
 Printable ASCII is sent as text; other keys, such as Delete, Return, Tab and the
 arrows, are sent as key presses. Control shortcuts are not sent, and an
-emulator without a gRPC endpoint cannot be taken over.
+emulator without a gRPC endpoint cannot be controlled.
 
 ## Web
 
@@ -1848,7 +1848,7 @@ marks the existing inbox read, once, and later entries are untouched. The first 
 notifying, except for Needs you, which notifies each item it has not notified
 before. Desktop does not look up pull requests, so it never notifies a pull
 request ready for review; a merged branch notifies once git finds it merged. The
-phone's "Someone takes over your device" is a push to a phone and never fires
+phone's "Someone else drives your device" is a push to a phone and never fires
 here. A phone controlling a simulator
 through stim-server counts as an agent driving it, because Desktop cannot read
 stim-server's leases. The phone app and stim-server do read them, and do not count such a phone as an agent.

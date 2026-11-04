@@ -592,7 +592,7 @@ struct DeviceTile: View {
       .labelStyle(.iconOnly)
       .buttonStyle(DeviceControlButtonStyle())
       .disabled(!interactive)
-      .help(interactive ? "Press the device's \(title) button" : "Take over the device to press its \(title) button")
+      .help(interactive ? "Press the device's \(title) button" : "Control the device to press its \(title) button")
       .accessibilityLabel("Press \(title)")
   }
 

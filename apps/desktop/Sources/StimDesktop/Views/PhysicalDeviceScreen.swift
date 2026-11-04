@@ -152,7 +152,7 @@ struct PhysicalDeviceScreen: View {
 
   private var controlNote: String? {
     switch stream.control {
-    case .starting: return "Taking over"
+    case .starting: return "Starting control"
     case .failed(let message): return message
     case .off(ended: let ended?): return "Control ended. \(ended)"
     case .off, .on: return nil

@@ -11,7 +11,7 @@ public enum ServerLink: Equatable, Sendable {
 
 /// What a physical or hosted device's tile shows: its screen through stim-server, or why it cannot.
 public enum PhysicalScreen: Equatable, Sendable {
-  /// `control` is nil when Take over is offered, else why the screen is view only.
+  /// `control` is nil when Control is offered, else why the screen is view only.
   case stream(control: String?)
   case message(String, remedy: String? = nil)
 

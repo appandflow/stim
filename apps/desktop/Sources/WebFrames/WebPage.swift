@@ -226,7 +226,7 @@ public final class WebPage: @unchecked Sendable {
     }
   }
 
-  /// Tells the Stim browser supervisor's page listener that the input that follows is Take over, not an agent: it
+  /// Tells the Stim browser supervisor's page listener that the input that follows is Control, not an agent: it
   /// drops input within 3 seconds of a `stim-takeover` event on the window. Sent at most once a second.
   private func markTakeover() {
     let now = DispatchTime.now()
