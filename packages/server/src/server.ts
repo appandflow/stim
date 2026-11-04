@@ -388,8 +388,12 @@ interface ServerHealth {
   stimBuild: string | null;
   protocol: number;
   stimHome: string;
-  /** The work a restart would cut off: offloaded builds and hosted sessions running now. */
-  busy: { builds: number; hostedSessions: number };
+  /**
+   * The work a restart would cut off: offloaded builds and hosted sessions running now. `hostedWork` counts the hosted
+   * sessions a restart would stop, because a native step is in flight or they cannot be resumed; the others are left
+   * running for the next server, which `resumes` says this one does.
+   */
+  busy: { builds: number; hostedSessions: number; hostedWork: number; resumes: true };
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
   nativeViewerOpened: boolean;
@@ -5336,7 +5340,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ...health,
       startup,
       ...(options.host ? { host: await hostHealth() } : {}),
-      busy: { builds: builds.running(), hostedSessions: hostedDevices.active() },
+      busy: {
+        builds: builds.running(),
+        hostedSessions: hostedDevices.active(),
+        hostedWork: hostedDevices.working(),
+        resumes: true,
+      },
       tailscale: healthTailscale(state),
       route,
       nativeViewerOpened,

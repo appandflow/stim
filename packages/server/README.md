@@ -67,7 +67,8 @@ printable text on one line, trimmed. The client gets the new name in `hello`'s
 `GET http://127.0.0.1:7787/health` answers requests from this machine with the
 server's name, versions, `stimBuild` (the digest of the bundled Stim's build),
 protocol, `stimHome`, `startup`, `busy`
-(the offloaded `builds` and `hostedSessions` running now) and the current
+(the offloaded `builds` and `hostedSessions` running now, `hostedWork`, the sessions a restart
+would stop, and `resumes`, true when the rest are left running for the next server) and the current
 Tailscale state. It answers HTTP 200 once `startup.state` is `ready`; while the
 state is `pending` or `degraded` (see the LaunchAgent notes below) it answers
 HTTP 503 with the same body. While Tailscale runs, it also carries `route`, read from
@@ -1509,9 +1510,14 @@ stim-server service rollback [--label <name>]
 stim-server service uninstall [--label <name>]
 ```
 
-Updates wait for offloaded builds and hosted sessions to finish by default.
-Use `--no-wait` to restart with work still active: shutdown interrupts those
-builds and sessions. Service shutdown, health checks and rollback still apply.
+Updates wait for offloaded builds and for the hosted sessions a restart would stop
+(a reservation being prepared, an app install or app transfer, a stop in progress, a
+session that is not ready, a macOS app, or a client that lost approval), by default; a server that resumes its hosted sessions reports `busy.hostedWork` and
+`busy.resumes` in `/health`, and its other ready iOS and Android sessions keep running
+through the restart and are resumed by the new server. An older server, which stops
+every session at shutdown, is still waited for entirely. Use `--no-wait` to restart
+with that work still active: shutdown interrupts those builds and native steps
+(a client retries an interrupted build on the machine; see offloaded builds). Service shutdown, health checks and rollback still apply.
 `stim-server setup --no-wait` uses the same policy when it updates a managed
 service; if setup requires a separate service update, its remedy includes the flag.
 
@@ -1652,8 +1658,9 @@ never run. Each install goes to
 named by its version, Stim build and server code, plus the package files for
 `--from`, and must start with the job's
 `node` before the switch. `update` then waits up to 30 minutes for `/health` to
-report no offloaded build and no hosted session (a server older than `busy` in
-`/health` restarts without waiting), rewrites only the server script in the
+report no offloaded build and no hosted session with a native step in flight
+(`busy.hostedWork`; a server older than `busy.resumes` waits for every hosted
+session, and one older than `busy` in `/health` restarts without waiting), rewrites only the server script in the
 plist (recording the previous one), restarts the job and waits up to 90 seconds
 for `/health` to answer with the new version and Stim build. When it does not,
 `update` puts the previous plist back and restarts it. Interrupt signals wait
