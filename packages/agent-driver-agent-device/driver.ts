@@ -144,6 +144,8 @@ function devicePolicyDigest(device: HostedAgentDevice): string {
 
 /** agent-device caps a lease's inactivity window at ten minutes; the host renews well inside it. */
 const LEASE_TTL_MS = 600_000;
+/** agent-device ends a leased session, and with it the app session and runner, once its lease goes this long without a heartbeat; the client asks for five minutes. */
+const DEVICE_LEASE_TTL_MS = 3_600_000;
 const MAX_RPC_BYTES = 1024 * 1024;
 const MAX_ECHO = 64;
 const COMMAND_METHODS = new Set(['agent_device.command', 'agent-device.command']);
@@ -366,6 +368,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
             AGENT_DEVICE_DAEMON_POLICY: policy,
             AGENT_DEVICE_MACOS_APP_BACKEND: 'native',
             AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1',
+            ...(this.options.device ? { AGENT_DEVICE_LEASE_MAX_TTL_MS: String(DEVICE_LEASE_TTL_MS) } : {}),
             ...(this.options.device?.serial ? { AGENT_DEVICE_ANDROID_SNAPSHOT_HELPER_SESSION: '0' } : {}),
             ...(this.options.device ? { AGENT_DEVICE_CLAIMS_DIR: join(this.options.stateDir, 'device-claims') } : {}),
           },
@@ -1439,7 +1442,7 @@ function pinDeviceRequest(
       backend: lease.scope.backend,
       ...(typeof params.leaseId === 'string' ? { leaseId: params.leaseId } : {}),
       ...(typeof params.session === 'string' ? { session: params.session } : {}),
-      ...(typeof params.ttlMs === 'number' ? { ttlMs: params.ttlMs } : {}),
+      ...(String(rpc.method).endsWith('.release') ? {} : { ttlMs: DEVICE_LEASE_TTL_MS }),
     };
   } else return { id, rule: 'method', message: 'Refused method.', details: {} };
   return { rpc };

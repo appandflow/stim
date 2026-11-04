@@ -1085,7 +1085,8 @@ Stim adds what agent-device needs to reach the device:
   or [hosted Android](./remote-machines.md) session.
 - `--session stim-<slot>-<platform>` unless you pass `--session`.
 - For a hosted session whose host no longer holds the agent-device session (its
-  stim-server restarted, so agent-device answers `SESSION_NOT_FOUND`), a
+  stim-server restarted, or no command reached the session for an hour, so agent-device
+  answers `SESSION_NOT_FOUND`), a
   single-action command (`snapshot`, `press`, `tap`, `scroll`, `type` and the like)
   opens the app the workspace last launched on the same session and runs once more.
   The output of that command is held until it ends, and only the last run's output
