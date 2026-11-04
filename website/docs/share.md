@@ -252,7 +252,10 @@ The sending machine offers only addresses on a private network, a link-local
 address or a Tailscale address, uses no STUN server, and ignores a viewer's
 candidates at any other address. A viewer on the same network or tailnet gets a
 direct channel. A viewer on the internet never learns the machine's public
-address and stays on the WebSocket. There is no TURN relay. Setting
+address and stays on the WebSocket; its browser offers only an mDNS name, so its
+channel attempt runs in the background until it times out and its video does not
+change. The answer lists the machine's LAN and tailnet addresses to every viewer
+with the link. There is no TURN relay. Setting
 `STIM_WEBRTC_STUN` to a `stun:` URL on the sending machine, and on the machine
 that serves the share when they differ, lets viewers connect over public
 addresses and shows the sending machine's public address to every viewer.

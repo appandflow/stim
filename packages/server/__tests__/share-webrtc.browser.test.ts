@@ -109,6 +109,7 @@ for (const name of (process.env.SHARE_BROWSERS ?? 'chromium').split(',')) {
       expect(active.log.find((entry) => entry.phase === 'ws/probing')?.draws).toBeGreaterThan(0);
 
       const drawn = await drawnPast(page, active.draws + 20);
+      expect(await page.evaluate<number>("document.querySelectorAll('.rtc-stats').length")).toBe(0);
       const settled = await probe(page);
       expect(settled.socketVideo - active.socketVideo).toBeLessThanOrEqual(5);
       expect(drawn).toBeGreaterThan(active.draws);

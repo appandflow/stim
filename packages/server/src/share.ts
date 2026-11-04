@@ -591,7 +591,7 @@ export class ShareHub {
     };
     share.timer.unref?.();
     this.shares.set(share.key, share);
-    void this.rtcOffered(share); // loads node-datachannel before the first viewer arrives
+    this.preloadWebrtc(share);
     void this.readApp(share);
     share.unwatch = this.deps.subscribeStatus({
       item: (payload) => this.reconcile(share, payload),
@@ -967,6 +967,7 @@ export class ShareHub {
     share.bound = bound.key;
     share.hosted = bound.hosted;
     share.device = bound.device;
+    this.preloadWebrtc(share);
     void this.readApp(share);
     console.error(`stim-server: web share ${share.id} resumed on ${bound.key}`);
     for (const viewer of share.viewers) {
@@ -1500,6 +1501,10 @@ export class ShareHub {
     if (message.type === 'transport') return this.transport(viewer, message.via, message.attempt);
     if (!share.request.control) return;
     await this.input(share, viewer, message);
+  }
+
+  private preloadWebrtc(share: Share): void {
+    this.rtcOffered(share);
   }
 
   private rtcOffered(share: Share): boolean {
