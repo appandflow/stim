@@ -12,13 +12,11 @@ type ReverseStatus = 'reachable' | 'applied' | 'removed' | 'pending' | 'unsuppor
 
 export interface ReverseDeviceReport {
   platform: 'ios' | 'android';
-  /** The simulator, emulator, phone or hosted session the report is about. */
   device: string;
   status: ReverseStatus;
   detail: string;
 }
 
-/** Names the port a `stim ports reverse` argument stands for: a raw port, or a label from `stim ports get`. */
 export function resolveReversePort(root: string, target: string): number {
   const project = getProject(root);
   if (/^\d+$/.test(target)) {
@@ -68,10 +66,6 @@ const DEFAULT_DEPS: ReverseDeps = {
 const PHYSICAL_IOS_REASON =
   'a physical iPhone has no reverse forward over USB, so its apps reach this Mac only over the network you share';
 
-/**
- * Applies or removes the reverse for `port` on every device the workspace has now. A local iOS simulator shares this
- * Mac's loopback, an Android emulator or phone gets `adb reverse`, and a physical iPhone cannot be reversed.
- */
 export async function reverseOnDevices(
   root: string,
   port: number,
@@ -177,19 +171,30 @@ export async function reverseOnDevices(
   return reports;
 }
 
-/** Applies the workspace's reversed ports to a local emulator or phone that `stim android` is about to launch on. */
 export async function applyRecordedReverses(
   root: string,
   { slot, serial, physical, remote }: { slot: string; serial: string; physical: boolean; remote: boolean },
   out: (line: string) => void,
+  applyReverse: ReverseDeps['applyReverse'] = DEFAULT_DEPS.applyReverse,
 ): Promise<void> {
   if (remote) return;
   for (const port of reversePorts(readWorkspaceState(root))) {
-    const applied = await DEFAULT_DEPS.applyReverse(serial, port);
+    const applied = await applyReverse(serial, port);
     if (applied.failed) {
       out(`reverse port ${port}: ${applied.reason ?? 'adb reverse failed'}`);
       continue;
     }
     if (physical) await recordPhoneReverse(root, slot, serial, port);
+  }
+}
+
+export async function dropLabelReverses(root: string, label: string | undefined): Promise<void> {
+  const reversed = reversePorts(readWorkspaceState(root));
+  const released = Object.entries(getProject(root)?.ports ?? {}).flatMap(([name, port]) =>
+    name !== 'web-cdp' && (label === undefined || name === label) && reversed.includes(port) ? [port] : [],
+  );
+  for (const port of released) {
+    await recordReversePort(root, port, false);
+    await reverseOnDevices(root, port, 'remove');
   }
 }

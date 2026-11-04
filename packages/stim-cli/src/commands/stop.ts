@@ -670,7 +670,7 @@ async function stopWorkspace({
     outcomes.metro = { status: 'skipped', reason: 'the supervisor owns the dev server on this port' };
   } else if (reservedPort === null) {
     report(chalk.dim(phaseLine('metro', 'no port reserved')));
-    await releasePhoneReverses();
+    await releaseReverses();
   } else {
     const metro = await stopMetro(reservedPort, root, {
       server: sup,

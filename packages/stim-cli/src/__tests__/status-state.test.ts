@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import {
   activityLabel,
   addReverseMissingIssue,
+  addReversePortMissingIssue,
+  reversePortTargets,
   deviceLeaseLines,
   deviceLeaseStates,
   diskLine,
@@ -332,6 +334,16 @@ describe('the adb reverse check', () => {
     ]);
     expect(state.warnings).toEqual([
       'tablet: the adb reverse for Metro port 8082 is missing on emulator-5556, so the app cannot reach Metro; run `stim reload android`',
+    ]);
+  });
+
+  test('a reversed port is checked on each owned emulator running the app, whatever Metro does', () => {
+    const state = makeEnvironmentState({ android });
+    expect(reversePortTargets(state, { android: launch })).toEqual([{ slot: 'default', serial: 'emulator-5554' }]);
+    expect(reversePortTargets(state, { android: { ...launch, deviceId: 'emulator-5556' } })).toEqual([]);
+    addReversePortMissingIssue(state, { slot: 'default', serial: 'emulator-5554', port: 8901 });
+    expect(state.issues).toEqual([
+      expect.objectContaining({ code: 'android-reverse-missing', remedy: 'stim ports reverse 8901' }),
     ]);
   });
 });

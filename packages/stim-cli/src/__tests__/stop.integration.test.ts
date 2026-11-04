@@ -859,6 +859,27 @@ describe('stop removes the adb reverses a --device run left on a physical phone'
     expect(readWorkspaceState(tmpRoot)?.reversePorts).toEqual([8901]);
   });
 
+  test('stop removes reversed ports from an owned emulator when no Metro port is reserved', async () => {
+    await updateWorkspaceStateAsync(tmpRoot, (state) => ({ ...state, reversePorts: [8901] }));
+    const events: string[] = [];
+    setExecutor(
+      makeExecutor({
+        runFileQuietAsync: async (_file, args) => {
+          if (args.includes('emu')) return 'stim-app\nOK\n';
+          events.push(args.join(' '));
+          return args.includes('--list') ? 'host-21 tcp:8901 tcp:8901\n' : '';
+        },
+      }),
+    );
+    const { opts } = seams({
+      root: tmpRoot,
+      project: { platforms: { android: { avdName: 'stim-app', owned: true, consolePort: 5556 } } },
+      teardownAvd: async () => ({ status: 'skipped', reason: 'not under test' }),
+    });
+    await runStop(opts);
+    expect(events).toEqual(['-s emulator-5556 reverse --list', '-s emulator-5556 reverse --remove tcp:8901']);
+  });
+
   test('an unreachable phone does not fail stop, and its record is dropped', async () => {
     await recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8083);
     setExecutor(

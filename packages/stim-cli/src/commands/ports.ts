@@ -4,7 +4,13 @@ import { clearNamedPorts, getNamedPort } from '../named-ports.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
 import { reversePorts } from '@stim-cli/core/state';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { recordReversePort, resolveReversePort, reverseOnDevices, type ReverseDeviceReport } from '../reverse-ports.ts';
+import {
+  dropLabelReverses,
+  recordReversePort,
+  resolveReversePort,
+  reverseOnDevices,
+  type ReverseDeviceReport,
+} from '../reverse-ports.ts';
 
 async function inProject(action: (root: string) => Promise<void>): Promise<void> {
   try {
@@ -71,12 +77,20 @@ export default function portsCommand(program: Command): void {
     .description('Stop TCP listeners and release named ports; excludes Metro')
     .option('--dry-run', 'show the listeners and allocations that would be stopped and released')
     .action((label: string | undefined, opts: { dryRun?: boolean }) =>
-      inProject((root) => clearNamedPorts(root, { label, stop: true, dryRun: opts.dryRun })),
+      inProject(async (root) => {
+        if (!opts.dryRun) await dropLabelReverses(root, label);
+        await clearNamedPorts(root, { label, stop: true, dryRun: opts.dryRun });
+      }),
     );
   ports
     .command('release [label]')
     .description('Release named ports without stopping their listeners; excludes Metro')
-    .action((label: string | undefined) => inProject((root) => clearNamedPorts(root, { label })));
+    .action((label: string | undefined) =>
+      inProject(async (root) => {
+        await dropLabelReverses(root, label);
+        await clearNamedPorts(root, { label });
+      }),
+    );
   ports
     .command('reverse <target>')
     .description('Make a server on this machine reachable at the same localhost port from the workspace devices')

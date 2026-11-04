@@ -6,7 +6,14 @@ import type { LeaseFileEntry } from '../engine/device-lease.ts';
 import { setDevice, upsertProject } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { recordPhoneReverse, readPhoneReverseSerials } from '../devices/phone-reverses.ts';
-import { recordReversePort, resolveReversePort, reverseOnDevices, type ReverseDeps } from '../reverse-ports.ts';
+import {
+  applyRecordedReverses,
+  dropLabelReverses,
+  recordReversePort,
+  resolveReversePort,
+  reverseOnDevices,
+  type ReverseDeps,
+} from '../reverse-ports.ts';
 
 let home: string;
 let root: string;
@@ -139,5 +146,44 @@ describe('reverseOnDevices', () => {
     expect(calls).toContain('apply RFCR1 8901');
     expect(readPhoneReverseSerials(root)).toEqual(['RFCR1']);
     expect(reports.find((r) => r.device === '0000-IPHONE')).toMatchObject({ platform: 'ios', status: 'unsupported' });
+  });
+});
+
+describe('ports recorded for a workspace', () => {
+  test('launch applies them to the serial it launches on, records a phone for the lease, and skips a remote device', async () => {
+    await recordReversePort(root, 8901, true);
+    await recordReversePort(root, 9000, true);
+    const applied: string[] = [];
+    const apply = async (serial: string, port: number) => {
+      applied.push(`${serial} ${port}`);
+      return port === 9000 ? { failed: true as const, reason: 'adb offline' } : {};
+    };
+    const lines: string[] = [];
+    await applyRecordedReverses(
+      root,
+      { slot: 'default', serial: 'RFCR1', physical: true, remote: false },
+      (l) => lines.push(l),
+      apply,
+    );
+    expect(applied).toEqual(['RFCR1 8901', 'RFCR1 9000']);
+    expect(lines).toEqual(['reverse port 9000: adb offline']);
+    expect(readPhoneReverseSerials(root)).toEqual(['RFCR1']);
+    applied.length = 0;
+    await applyRecordedReverses(
+      root,
+      { slot: 'default', serial: 'emulator-5554', physical: false, remote: true },
+      () => {},
+      apply,
+    );
+    expect(applied).toEqual([]);
+  });
+
+  test('releasing a label drops its reverse and no other', async () => {
+    await recordReversePort(root, 8901, true);
+    await recordReversePort(root, 3000, true);
+    await dropLabelReverses(root, 'other');
+    expect(reversePorts(readWorkspaceState(root))).toEqual([3000, 8901]);
+    await dropLabelReverses(root, 'api');
+    expect(reversePorts(readWorkspaceState(root))).toEqual([3000]);
   });
 });
