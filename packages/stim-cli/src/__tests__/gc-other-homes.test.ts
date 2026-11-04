@@ -94,9 +94,13 @@ describe('the other Stim homes of gc', () => {
 
   test('a project inside a linked worktree is torn down from the worktree root, and a source checkout keeps the project folder', async () => {
     const git = (cwd: string, ...args: string[]) =>
-      execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], {
-        stdio: 'ignore',
-      });
+      execFileSync(
+        'git',
+        ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args],
+        {
+          stdio: 'ignore',
+        },
+      );
     const repo = join(dir, 'repo');
     mkdirSync(join(repo, 'apps', 'mobile'), { recursive: true });
     mkdirSync(join(repo, 'apps', 'web'), { recursive: true });
