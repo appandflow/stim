@@ -938,10 +938,9 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       env: { ...process.env },
       stdio: 'ignore',
     });
-    const legacyExited = new Promise<void>((done) => legacy.once('exit', () => done()));
-    onTestFinished(async () => {
-      legacy.kill('SIGKILL');
-      await legacyExited;
+    daemons.push({
+      child: legacy,
+      exited: new Promise<number | null>((done) => legacy.once('exit', (code) => done(code))),
     });
     await vi.waitFor(() => expect(readFileSync(record, 'utf8')).toContain('listening'), {
       timeout: 10_000,
@@ -953,11 +952,12 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
         env: { ...process.env },
         stdio: 'ignore',
       });
-      return { child, exited: new Promise<void>((done) => child.once('exit', () => done())) };
-    });
-    onTestFinished(async () => {
-      for (const { child } of successors) child.kill('SIGTERM');
-      await Promise.all(successors.map(({ exited }) => exited));
+      const successor = {
+        child,
+        exited: new Promise<number | null>((done) => child.once('exit', (code) => done(code))),
+      };
+      daemons.push(successor);
+      return successor;
     });
 
     await vi.waitFor(
