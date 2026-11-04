@@ -1993,10 +1993,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     watchServerDir();
     // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
     revocationPoll ??= setInterval(checkRevocations, 1000).unref();
-    hostedIdleSweep ??= setInterval(
-      () => hostedDevices.sweepIdle(),
-      options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS,
-    ).unref();
+    hostedIdleSweep ??= setInterval(() => {
+      hostedDevices.sweepIdle();
+      void hostedDevices.reclaimEndedHomes();
+    }, options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS).unref();
     push.refresh();
     retireOnce ??= Promise.resolve()
       .then(() => recoverAgentDrivers(options.env, deviceHostAreas()))

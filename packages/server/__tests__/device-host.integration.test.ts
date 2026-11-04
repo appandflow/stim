@@ -2553,7 +2553,8 @@ test.each(['fail-stop', 'uncertain-stop', 'wrong-stop'])(
   async (deviceType) => {
     const failed = seedHosted({ deviceType });
     const next = seedHosted();
-    const journal = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+    const withoutStamp = () => readHostedSessions().map(({ stoppedAt: _stoppedAt, ...record }) => record);
+    const journal = withoutStamp();
     const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
     try {
       await host.reconcileStopped();
@@ -2564,7 +2565,7 @@ test.each(['fail-stop', 'uncertain-stop', 'wrong-stop'])(
         JSON.parse(readFileSync(join(deviceHostArea(failed.id), 'home', 'created-devices.json'), 'utf8')).ios,
       ).toHaveLength(1);
       expectRetired(next.id);
-      expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
+      expect(withoutStamp()).toEqual(journal);
     } finally {
       stderr.mockRestore();
     }
@@ -3208,3 +3209,138 @@ test.each(['ios', 'android'])(
     expect(readClaimSet(join(deviceHostRoot(), `${id}.claims.input`)).live).toEqual([]);
   },
 );
+
+describe('the home of an ended hosted session', () => {
+  const OLD = new Date(Date.now() - 2 * 3_600_000).toISOString();
+
+  beforeEach(async () => {
+    await host.close();
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents,
+      allowed: (client) => allowed.has(client),
+      limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
+      homeGraceMs: 3_600_000,
+    });
+  });
+
+  const area = (id: string) => deviceHostArea(id);
+  const stoppedAt = (id: string) => readHostedSessions().find((record) => record.id === id)?.stoppedAt;
+
+  test('stays through the grace period after a stop so the client can copy the final logs, then goes', async () => {
+    const session = await reserve();
+    await state(session.id, 'ready');
+    host.stop('client', { session: session.id });
+    await state(session.id, 'stopped');
+    expect(stoppedAt(session.id)).toBeDefined();
+    await host.reclaimEndedHomes();
+    expect(existsSync(area(session.id))).toBe(true);
+    const journal = JSON.parse(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8'));
+    for (const entry of journal.sessions) entry.stoppedAt = OLD;
+    writeFileSync(join(deviceHostRoot(), 'sessions.json'), JSON.stringify(journal));
+    await host.reclaimEndedHomes();
+    expect(existsSync(area(session.id))).toBe(false);
+    expect(readHostedSessions().find((record) => record.id === session.id)?.state).toBe('stopped');
+    expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toEqual([]);
+  });
+
+  test('is kept when the ledger lists a device, is unreadable or absent for a simulator, or the session is parked', async () => {
+    const listed = seedHosted({ stoppedAt: OLD }, 'listed');
+    const missing = seedHosted({ stoppedAt: OLD }, 'missing');
+    const parked = seedHosted({ stoppedAt: OLD, parked: { at: OLD } }, 'empty');
+    const malformed = seedHosted({ stoppedAt: OLD }, 'empty');
+    writeFileSync(join(area(malformed.id), 'home', 'created-devices.json'), '{');
+    const removable = [
+      seedHosted({ stoppedAt: OLD }, 'empty'),
+      seedHosted({ stoppedAt: OLD, platform: 'macos' }, 'missing'),
+    ];
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    await host.reclaimEndedHomes();
+    await host.reclaimEndedHomes();
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(String(stderr.mock.calls[0]?.[0])).toContain(malformed.id);
+    for (const kept of [listed, missing, parked, malformed]) expect(existsSync(area(kept.id))).toBe(true);
+    for (const gone of removable) expect(existsSync(area(gone.id))).toBe(false);
+  });
+
+  test('of a session that stopped before it created a device goes, while a home with an unread device record stays', async () => {
+    const never = seedHosted({ stoppedAt: OLD }, 'missing');
+    rmSync(join(area(never.id), 'home', 'hosted-device.json'));
+    const recorded = seedHosted({ stoppedAt: OLD }, 'missing');
+    await host.reclaimEndedHomes();
+    expect(existsSync(area(never.id))).toBe(false);
+    expect(existsSync(area(recorded.id))).toBe(true);
+  });
+
+  test('is not removed when the journal cannot be read, even for a home it does not list', async () => {
+    const orphan = randomUUID();
+    mkdirSync(join(area(orphan), 'home'), { recursive: true });
+    writeFileSync(
+      join(area(orphan), 'home', 'created-devices.json'),
+      JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
+    );
+    mkdirSync(deviceHostRoot(), { recursive: true });
+    writeFileSync(join(deviceHostRoot(), 'sessions.json'), '{');
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    await host.reclaimEndedHomes(true);
+    expect(existsSync(area(orphan))).toBe(true);
+  });
+
+  test('without a journal entry stays when a device record exists but no ledger, and goes for a macOS record', async () => {
+    seedHosted({ stoppedAt: OLD }, 'empty');
+    const ios = randomUUID();
+    const macos = randomUUID();
+    for (const [id, record] of [
+      [ios, { udid: '12345678-1234-1234-1234-123456789abc', name: 'stim-hosted' }],
+      [macos, { appSlot: 1, architecture: 'arm64', macosVersion: '27.0' }],
+    ] as const) {
+      mkdirSync(join(area(id), 'home'), { recursive: true });
+      writeFileSync(join(area(id), 'home', 'hosted-device.json'), JSON.stringify(record));
+    }
+    await host.reclaimEndedHomes(true);
+    expect(existsSync(area(ios))).toBe(true);
+    expect(existsSync(area(macos))).toBe(false);
+  });
+
+  test('is kept while the agent driver or another process holds a claim on the session', async () => {
+    const agent = seedHosted({ stoppedAt: OLD }, 'empty');
+    const claim = tryAcquireClaim({ root: join(area(agent.id), 'agent-device.claims'), mode: 'exclusive' });
+    const held = seedHosted({ stoppedAt: OLD }, 'empty');
+    const session = tryAcquireClaim({ root: join(deviceHostRoot(), `${held.id}.claims`), mode: 'exclusive' });
+    try {
+      await host.reclaimEndedHomes();
+      expect(existsSync(area(agent.id))).toBe(true);
+      expect(existsSync(area(held.id))).toBe(true);
+    } finally {
+      releaseClaim(claim.acquired);
+      releaseClaim(session.acquired);
+    }
+  });
+
+  test('of a session stopped before stoppedAt existed is removed one grace period after it is first seen', async () => {
+    const legacy = seedHosted({}, 'empty');
+    expect(stoppedAt(legacy.id)).toBeUndefined();
+    await host.reclaimEndedHomes();
+    expect(stoppedAt(legacy.id)).toBeDefined();
+    expect(existsSync(area(legacy.id))).toBe(true);
+  });
+
+  test('is removed on start when the journal does not list it, unless its ledger lists a device', async () => {
+    seedHosted({ stoppedAt: OLD }, 'empty');
+    const orphan = randomUUID();
+    const listed = randomUUID();
+    for (const [id, ledger] of [
+      [orphan, { version: 1, ios: [], android: [], web: [] }],
+      [listed, { version: 1, ios: ['12345678-1234-1234-1234-123456789abc'], android: [], web: [] }],
+    ] as const) {
+      mkdirSync(join(area(id), 'home'), { recursive: true });
+      writeFileSync(join(area(id), 'home', 'created-devices.json'), JSON.stringify(ledger));
+    }
+    await host.reclaimEndedHomes();
+    expect(existsSync(area(orphan))).toBe(true);
+    await host.reconcileStopped();
+    expect(existsSync(area(orphan))).toBe(false);
+    expect(existsSync(area(listed))).toBe(true);
+  });
+});

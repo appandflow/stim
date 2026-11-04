@@ -892,7 +892,8 @@ readable. The client waits up to 280 seconds for stop. The final collection,
 parking, the stop that follows a failed park and worker termination paths fit
 within that wait; an in-flight handoff copy and
 closing Metro or view transports are outside those worker bounds. Collected
-records remain in the session home; app blobs and materialized bundles are removed.
+records remain in the session home for the client to copy, until the host removes the home an hour after the session stopped;
+app blobs and materialized bundles are removed at stop.
 Native queries read persisted entries, overlap by five seconds and de-duplicate;
 info-level or later-persisted entries may be unavailable. JavaScript logs reach Metro.
 An older host prints an update note, uses uploads and shows previously copied logs.
@@ -1055,7 +1056,7 @@ Replaying an attempt resolves the same session after a lost reply. Unknown
 creation or deletion outcomes retain the reservation until exact reconciliation;
 explicit stop and approval revocation delete only that session's exact
 ledger-owned simulator. At start, stim-server retires leftover stopped iOS and
-Android devices while retaining session homes and records.
+Android devices. An hour after a session stops, stim-server removes its home when the ledger lists no device (a session that stopped before creating one counts), nothing holds its claims and it is not parked; the journal record stays.
 Hosted reservations are atomic with each other; ordinary local device producers
 do not participate, so this is not a machine-wide hard capacity guarantee.
 
@@ -1063,7 +1064,7 @@ The worker also accepts an Android reservation with optional installed
 `systemImage` and `deviceProfile` selectors. It gives that opaque session a
 unique owned AVD and a journal-reserved console port, verifies the exact running
 AVD and ABI, and reconnects to that same record. Explicit stop and revocation
-delete only that exact ledger-owned AVD and retain its session home and record. Ports are coordinated
+delete only that exact ledger-owned AVD. The session home goes later, as described for iOS, and the record stays. Ports are coordinated
 among hosted sessions; ordinary local producers can still race a reservation.
 Android Metro and screen/input routing remain follow-ups in #2266;
 Android sessions refuse the iOS Metro, view and input routes. The

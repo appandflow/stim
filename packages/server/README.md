@@ -987,12 +987,22 @@ is refused. Another attempt cannot replace an occupied workspace/slot. The
 client never supplies a worker filesystem path or another client's session.
 `device-host.stop` with `{"session":"<id>"}` deletes only its recorded,
 ledger-owned simulator. Poll attach for completion. A new attempt may reserve
-after the previous one is confirmed stopped. Stopped session homes and device records remain for reconciliation. At start,
+after the previous one is confirmed stopped. Stopped session records remain for reconciliation; the home is removed after the grace period described below. At start,
 stim-server retires leftover stopped iOS and Android devices through their exact
 private ledger ownership.
 
 The worker persists the journal under `$STIM_HOME/server/device-host-sessions/`
 and chooses an isolated worker home under `$STIM_HOME/device-host/sessions/`.
+An hour after a session stopped (`stoppedAt` in its journal record), and for any
+home whose id the journal does not list when the server starts, stim-server
+removes the whole session folder. The hour is the client's time to copy the
+final logs with `device-host.logs.query`. It removes the folder only when the
+home's created-device ledger is readable and lists nothing; a macOS home, and a
+home that has neither a ledger nor a device record because its session stopped
+before creating a device, count as listing nothing. The session must not be
+parked, and neither the session claim nor any claim set of the agent driver
+under the folder may be live. Otherwise the folder stays, and a reason that is
+an error is written once to stderr. The journal keeps the stopped record.
 An uncertain create, child exit, journal or deletion outcome retains the slot
 as `unknown`. Closing the server leaves a ready iOS or Android session ready, its
 device booted, and releases its claims; the next server resumes it at start. For each
@@ -1058,7 +1068,7 @@ A ready Android `device` has `avdName`, `serial`, `consolePort`, `systemImage`,
 its exact AVD name and running ABI before reporting ready. Creation remains
 inside the worker's claimed process group. The worker opens no emulator viewer.
 Stop and revocation use centralized teardown only for its private ledger's exact
-AVD. They delete that AVD and retain the session home and record. At start,
+AVD. They delete that AVD; the session home is removed after the grace period described above, and the record stays. At start,
 stim-server retires leftover stopped sessions; unknown native outcomes retain
 the reservation and require explicit reconciliation. Android Metro
 and screen/input routing remain follow-ups in #2266. Android sessions
