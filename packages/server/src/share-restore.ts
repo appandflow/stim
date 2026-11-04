@@ -57,6 +57,6 @@ async function restoreOne(deps: ShareRestoreDeps, link: LiveShareLink): Promise<
     if (answer.code !== 'action-failed' || (attempt >= RETRY_MS.length && !answer.busy)) {
       return deps.log(`did not restore the web share of ${what}: ${answer.message}`);
     }
-    await deps.wait(RETRY_MS[attempt] ?? RETRY_MS.at(-1)!);
+    await deps.wait(RETRY_MS[attempt] ?? 60_000);
   }
 }
