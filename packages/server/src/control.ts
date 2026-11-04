@@ -699,6 +699,8 @@ interface DeviceControl {
   cwd: string;
   beganAt: number;
   lease: Lease | null;
+  /** Why `stim device lock` refused, when the first session took the device over without the lease. */
+  leaseRefused: Refusal | null;
   input: DeviceInput;
   frames: FramePool;
   claim?: ClaimHandle;
@@ -842,6 +844,10 @@ export class ControlHub {
         void this.closeIfUnused(opened.control);
         return { code: 'forbidden', message: 'This device can no longer control devices.' };
       }
+      if (opened.control.leaseRefused && !target.takeOver) {
+        void this.closeIfUnused(opened.control);
+        return opened.control.leaseRefused;
+      }
       if (!opened.control.closed) return this.join(opened.control, owner, target, driver);
     }
   }
@@ -915,6 +921,7 @@ export class ControlHub {
     const granted = lease === null || 'code' in lease ? null : lease;
     if (lease !== null && !granted && (!target.takeOver || target.physical)) return lease as Refusal;
     const opened = this.open(device, target, cwd, beganAt, postures, granted, simulator, this.options.frames);
+    if (!('code' in opened) && lease !== null && 'code' in lease) opened.control.leaseRefused = lease;
     if ('code' in opened) {
       if (granted?.mine) void this.pending.track(this.unlock(target, cwd));
       return opened;
@@ -964,6 +971,7 @@ export class ControlHub {
       cwd,
       beganAt,
       lease,
+      leaseRefused: null,
       input,
       frames,
       ...(claim ? { claim } : {}),

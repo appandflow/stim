@@ -112,6 +112,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
  * `share-reuse` is `share.start`'s `token` and `expiresAt`, which start a share under a URL token a stopped share had.
  * `share-starting` is `share.list`'s `starting`: the `share.start` requests the server has not yet answered.
+ * `shared-control` is several clients controlling one device at once: `control.begin` and
+ * `device-host.control.begin` refuse no other client or driver, and no session ends with `taken-over`.
  * `share-waiting` is the rows' `state` (a share waits for its device instead of ending) and `share.stop`'s `slot`.
  * `share-slug` is `share.start`'s `slug` parameter and the rows' `slug`.
  * `hosted-presence` is `device-host.presence.subscribe`: the `presence` events of a hosted session, which carry what the

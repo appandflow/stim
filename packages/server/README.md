@@ -3047,8 +3047,9 @@ the events the device chose:
 - `machine`: a volume holding Stim state has less than 5 GB free (the episode
   ends once 6 GB are free again), or memory pressure stayed critical for a
   minute. It opens the machine sheet.
-- `control`: another client took over a device this phone controls, or an
-  agent started driving it. It opens the device viewer.
+- `control`: an agent started driving a device this phone controls (a server
+  without `shared-control` also sends it when another client takes the device
+  over). It opens the device viewer.
 - `attention`: something only a person can fix, from the needs-attention rule
   (`needsAttention` in `@stim-cli/core/oversight`): a port held by another app, a
   supervisor or owned Chrome Stim cannot verify, an owned AVD it could not

@@ -9859,7 +9859,9 @@ describe('frames.subscribe', () => {
       ).toHaveProperty('result');
       const sameClient = await open();
       const joined = await sameClient.request('device-host.control.begin', { session });
-      assert('result' in joined && isJsonObject(joined.result) && typeof joined.result.session === 'string');
+      assert(
+        'result' in joined && joined.result && 'session' in joined.result && typeof joined.result.session === 'string',
+      );
       const joinedSession = joined.result.session;
       expect(joinedSession).not.toBe(controlSession);
       expect(await sameClient.request('device-host.control.end', { session: joinedSession })).toHaveProperty('result');
@@ -10072,8 +10074,10 @@ describe('frames.subscribe', () => {
       const { session } = (begun as { result: { session: string } }).result;
       const other = await authed(port, true);
       const joined = await other.request('control.begin', { workspace, platform: 'macos' });
-      assert('result' in joined && isJsonObject(joined.result) && typeof joined.result.session === 'string');
-      expect(joined.result.platform).toBe('macos');
+      assert(
+        'result' in joined && joined.result && 'session' in joined.result && typeof joined.result.session === 'string',
+      );
+      expect(joined).toHaveProperty('result.platform', 'macos');
       const joinedSession = joined.result.session;
       expect(await other.request('control.end', { session: joinedSession })).toHaveProperty('result');
       expect(await other.request('input.text', { session, text: 'wrong connection' })).toHaveProperty(
@@ -11301,7 +11305,9 @@ describe('frames.subscribe', () => {
       const begun = await first.request('control.begin', target);
       const { session } = (begun as { result: { session: string } }).result;
       const joined = await second.request('control.begin', target);
-      assert('result' in joined && isJsonObject(joined.result) && typeof joined.result.session === 'string');
+      assert(
+        'result' in joined && joined.result && 'session' in joined.result && typeof joined.result.session === 'string',
+      );
       const other = joined.result.session;
       expect(other).not.toBe(session);
       expect(await first.request('input.text', { session, text: 'a' })).toMatchObject({ result: {} });
@@ -11316,6 +11322,22 @@ describe('frames.subscribe', () => {
       expect(lockCalls().every((args) => args.startsWith('device lock'))).toBe(true);
     },
     10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'refuses a client without takeOver while another workspace leases the device, though another client took it over',
+    async () => {
+      const port = await startControl({ FAKE_STIM_LOCK_BUSY: '1' });
+      const first = await authed(port, true);
+      const second = await authed(port, true);
+      const target = { workspace, platform: 'ios' };
+      expect(await first.request('control.begin', target)).toMatchObject({ error: { code: 'device-busy' } });
+      expect(await first.request('control.begin', { ...target, takeOver: true })).toHaveProperty('result.lease', null);
+      expect(await second.request('control.begin', target)).toMatchObject({
+        error: { code: 'device-busy', message: expect.stringContaining('Another workspace leases this device') },
+      });
+      expect(await second.request('control.begin', { ...target, takeOver: true })).toHaveProperty('result.session');
+    },
   );
 
   test.skipIf(!fakeTailscale)(

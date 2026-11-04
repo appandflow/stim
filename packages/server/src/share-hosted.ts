@@ -440,6 +440,7 @@ export class HostedShareSource implements ShareSource {
       const reply = await control.lease.connection.request(`device-host.${method}`, { ...params, session });
       if ('error' in reply && command.input === 'touch' && reply.error.code === 'device-busy') {
         this.grab.release(participant.id);
+        this.show(participant, { ...command, phase: 'up' });
         return { ...reply.error, busy: 'Host' };
       }
       if ('error' in reply) return reply.error;

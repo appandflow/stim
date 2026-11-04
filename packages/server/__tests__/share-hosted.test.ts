@@ -372,6 +372,7 @@ describe('presence on a share of a hosted device', () => {
     const answers = [{ error: { code: 'device-busy', message: 'Host is using the screen.' } }, {}];
     const f = await shared({ 'device-host.input.touch': () => answers.shift() });
     expect(await f.send(ann, touch('down'))).toMatchObject({ code: 'device-busy', busy: 'Host' });
+    expect(f.hub.touch.mock.calls.at(-1)?.slice(1)).toEqual([ann, expect.objectContaining({ phase: 'up' })]);
     expect(await f.send(bob, touch('down', 0.9))).toBeNull();
   });
 
