@@ -1,4 +1,5 @@
 import { lstatSync, readdirSync } from 'node:fs';
+import { lstat, readdir } from 'node:fs/promises';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { gitQuietAsync } from './git.ts';
@@ -16,17 +17,55 @@ export const ARTIFACT_DIRS: Record<ArtifactKind, readonly string[]> = {
   dependencies: ['node_modules', 'ios/Pods'],
 };
 
+type DirRead = { names: string } | { directory: string };
+type DirReads<T> = Generator<DirRead, T, string[] | boolean>;
+
+function* namesIn(path: string): DirReads<string[]> {
+  const names = yield { names: path };
+  return Array.isArray(names) ? names : [];
+}
+
+function* realDirectory(path: string): DirReads<boolean> {
+  return (yield { directory: path }) === true;
+}
+
+function answerSync(read: DirRead): string[] | boolean {
+  try {
+    return 'names' in read ? readdirSync(read.names) : lstatSync(read.directory).isDirectory();
+  } catch {
+    return 'names' in read ? [] : false;
+  }
+}
+
+async function answerAsync(read: DirRead): Promise<string[] | boolean> {
+  try {
+    return 'names' in read ? await readdir(read.names) : (await lstat(read.directory)).isDirectory();
+  } catch {
+    return 'names' in read ? [] : false;
+  }
+}
+
+function readSync<T>(reads: DirReads<T>): T {
+  let step = reads.next();
+  while (!step.done) step = reads.next(answerSync(step.value));
+  return step.value;
+}
+
+async function readAsync<T>(reads: DirReads<T>): Promise<T> {
+  let step = reads.next();
+  while (!step.done) step = reads.next(await answerAsync(step.value));
+  return step.value;
+}
+
+function* existingDirsReads(root: string, dirs: readonly string[]): DirReads<string[]> {
+  const found: string[] = [];
+  for (const path of dirs.map((dir) => join(root, dir))) if (yield* realDirectory(path)) found.push(path);
+  return found;
+}
+
 /** The existing real directories among `dirs` under `root`, never through a link. */
 export function existingDirsOf(root: string, dirs: readonly string[]): string[] {
-  return dirs
-    .map((dir) => join(root, dir))
-    .filter((path) => {
-      try {
-        return lstatSync(path).isDirectory();
-      } catch {
-        return false;
-      }
-    });
+  return readSync(existingDirsReads(root, dirs));
 }
 
 const DERIVED_DATA_NAME = '.dd';
@@ -34,20 +73,14 @@ const CXX_NAME = '.cxx';
 const NOT_SCANNED = new Set(['node_modules', 'Pods', '.git', '.worktrees', ...ARTIFACT_DIRS.build]);
 const ANDROID_OUTPUT = new Set(['build', '.gradle']);
 
-function realDirectory(path: string): boolean {
-  try {
-    return lstatSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-function namesIn(path: string): string[] {
-  try {
-    return readdirSync(path);
-  } catch {
-    return [];
-  }
+function* derivedDataLayout(dir: string): DirReads<boolean> {
+  const names = yield* namesIn(dir);
+  if (!names.includes('Build') || !(yield* realDirectory(join(dir, 'Build')))) return false;
+  const build = yield* namesIn(join(dir, 'Build'));
+  if (!build.includes('Products') && !build.includes('Intermediates.noindex')) return false;
+  for (const name of names)
+    if ((name === 'ModuleCache.noindex' || name === 'Logs') && (yield* realDirectory(join(dir, name)))) return true;
+  return false;
 }
 
 /**
@@ -56,29 +89,34 @@ function namesIn(path: string): string[] {
  * `-derivedDataPath`, whatever the directory is called.
  */
 export function isDerivedDataLayout(dir: string): boolean {
-  const names = namesIn(dir);
-  if (!names.includes('Build') || !realDirectory(join(dir, 'Build'))) return false;
-  const build = namesIn(join(dir, 'Build'));
-  if (!build.includes('Products') && !build.includes('Intermediates.noindex')) return false;
-  return names.some((name) => (name === 'ModuleCache.noindex' || name === 'Logs') && realDirectory(join(dir, name)));
+  return readSync(derivedDataLayout(dir));
 }
 
-function cxxDirs(root: string): string[] {
+function* cxxDirs(root: string): DirReads<string[]> {
   const android = join(root, 'android');
-  const modules = namesIn(android)
+  const modules = (yield* namesIn(android))
     .filter((name) => !ANDROID_OUTPUT.has(name) && name !== CXX_NAME)
     .map((name) => join(android, name, CXX_NAME));
-  return [join(android, CXX_NAME), ...modules].filter(realDirectory);
+  const found: string[] = [];
+  for (const path of [join(android, CXX_NAME), ...modules]) if (yield* realDirectory(path)) found.push(path);
+  return found;
 }
 
-function derivedDataDirs(root: string): { path: string; named: boolean }[] {
-  return namesIn(root)
-    .filter((name) => !NOT_SCANNED.has(name))
-    .map((name) => ({
-      path: join(root, name),
-      named: name === DERIVED_DATA_NAME,
-    }))
-    .filter(({ path }) => realDirectory(path) && isDerivedDataLayout(path));
+function* derivedDataDirs(root: string): DirReads<{ path: string; named: boolean }[]> {
+  const found: { path: string; named: boolean }[] = [];
+  for (const name of yield* namesIn(root)) {
+    if (NOT_SCANNED.has(name)) continue;
+    const path = join(root, name);
+    if ((yield* realDirectory(path)) && (yield* derivedDataLayout(path)))
+      found.push({ path, named: name === DERIVED_DATA_NAME });
+  }
+  return found;
+}
+
+function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
+  const cxx = yield* cxxDirs(root);
+  const derived = yield* derivedDataDirs(root);
+  return [...cxx, ...derived.filter(({ named }) => named).map(({ path }) => path)];
 }
 
 /**
@@ -87,17 +125,22 @@ function derivedDataDirs(root: string): { path: string; named: boolean }[] {
  * out as DerivedData. A `.dd` that is not laid out as DerivedData is not one.
  */
 export function discoveredBuildDirs(root: string): string[] {
-  return [
-    ...cxxDirs(root),
-    ...derivedDataDirs(root)
-      .filter(({ named }) => named)
-      .map(({ path }) => path),
-  ];
+  return readSync(discoveredBuildDirsReads(root));
+}
+
+/** `discoveredBuildDirs` without blocking the event loop. */
+export function discoveredBuildDirsAsync(root: string): Promise<string[]> {
+  return readAsync(discoveredBuildDirsReads(root));
+}
+
+function* existingBuildDirsReads(root: string): DirReads<string[]> {
+  const fixed = yield* existingDirsReads(root, ARTIFACT_DIRS.build);
+  return [...fixed, ...(yield* discoveredBuildDirsReads(root))];
 }
 
 /** Every existing regenerable build directory under `root`: the fixed names and the discovered ones. */
-export function existingBuildDirs(root: string): string[] {
-  return [...existingDirsOf(root, ARTIFACT_DIRS.build), ...discoveredBuildDirs(root)];
+export function existingBuildDirsAsync(root: string): Promise<string[]> {
+  return readAsync(existingBuildDirsReads(root));
 }
 
 /**
@@ -105,12 +148,12 @@ export function existingBuildDirs(root: string): string[] {
  * a rn-tester `build-device`. The project chose the name and what else uses it, so Stim reports it and never deletes it.
  */
 export function xcodebuildOutputDirs(root: string): string[] {
-  return derivedDataDirs(root)
+  return readSync(derivedDataDirs(root))
     .filter(({ named }) => !named)
     .map(({ path }) => path);
 }
 
-/** Whether `path` is a directory that `existingBuildDirs` lists for the checkout or app containing it. */
+/** Whether `path` is a directory that `existingBuildDirsAsync` lists for the checkout or app containing it. */
 export function isBuildDirPath(path: string): boolean {
   if (ARTIFACT_DIRS.build.some((dir) => path.endsWith(`${sep}${dir.split('/').join(sep)}`))) return true;
   const name = basename(path);

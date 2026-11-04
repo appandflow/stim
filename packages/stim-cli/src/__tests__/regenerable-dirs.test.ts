@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   discoveredBuildDirs,
-  existingBuildDirs,
+  existingBuildDirsAsync,
   isBuildDirPath,
   isDerivedDataLayout,
   xcodebuildOutputDirs,
@@ -77,7 +77,7 @@ test('a .dd without the DerivedData layout, or a link to one, is not build outpu
   expect(xcodebuildOutputDirs(root)).toEqual([]);
 });
 
-test('xcodebuild output under another name is reported and never listed as deletable', () => {
+test('xcodebuild output under another name is reported and never listed as deletable', async () => {
   writeDerivedData(dir('build'));
   writeDerivedData(dir('build-device'));
   writeDerivedData(dir('.dd'));
@@ -85,7 +85,7 @@ test('xcodebuild output under another name is reported and never listed as delet
   dir('src', 'Build', 'Products');
 
   expect(xcodebuildOutputDirs(root).toSorted()).toEqual([join(root, 'build'), join(root, 'build-device')]);
-  expect(existingBuildDirs(root)).toEqual([join(root, '.dd')]);
+  expect(await existingBuildDirsAsync(root)).toEqual([join(root, '.dd')]);
 });
 
 test('isBuildDirPath re-recognizes build output at the moment of deletion', () => {

@@ -1,5 +1,6 @@
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -392,8 +393,9 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     return [repo, linked];
   }
 
-  test('a tick with every maintenance check due, the dormant stage due and disk pressure high starts no child process synchronously', async () => {
-    for (const root of idleWorkspaces()) {
+  test('a tick with every maintenance check due, the dormant stage due and disk pressure high starts no child process synchronously and lists no directory synchronously', async () => {
+    const roots = idleWorkspaces();
+    for (const root of roots) {
       mkdirSync(macosDir(root), { recursive: true });
       mkdirSync(join(root, 'node_modules'));
     }
@@ -412,6 +414,12 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       vi.restoreAllMocks();
     });
     const calls = asyncOnlyTools();
+    const listed = vi.spyOn(fs, 'readdirSync');
+    syncBuiltinESMExports();
+    onTestFinished(() => {
+      listed.mockRestore();
+      syncBuiltinESMExports();
+    });
 
     const passes = await runHomePasses({ act: true, log: () => {} });
     const lane = createMaintenanceLane(() => {});
@@ -421,6 +429,8 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     expect(passes.pressure.level).not.toBe('normal');
     expect(readMaintenanceState()?.lastPass?.trigger).toBe('daemon');
     expect(calls.sync).toEqual([]);
+    const walked = new Set([tmpdir(), ...roots]);
+    expect(listed.mock.calls.map(([path]) => String(path)).filter((path) => walked.has(path))).toEqual([]);
   }, 60_000);
 
   test.skipIf(process.platform !== 'darwin')(

@@ -35,7 +35,7 @@ import { MODE_COMMAND } from '../supervisor/state.ts';
 import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { existingBuildDirs, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
+import { existingBuildDirsAsync, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
 import {
   idleMinutesSetting,
   maintenanceKeepSetting,
@@ -201,7 +201,7 @@ async function decide(
 export async function idleOutputs(path: string, config: Config): Promise<{ paths: string[]; kept: string[] }> {
   const paths = workspaceOutputPaths(workspaceDir(path));
   const kept: string[] = [];
-  for (const dir of existingBuildDirs(path)) {
+  for (const dir of await existingBuildDirsAsync(path)) {
     const problem = await regenerableDirProblem(path, dir);
     if (problem) kept.push(`kept ${dir}: ${problem}`);
     else paths.push(dir);
