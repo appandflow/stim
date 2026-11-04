@@ -34,7 +34,8 @@ export interface ShareRestoreDeps {
  * Starts every unexpired share that `stim share` saved as `live` and no stim-server runs now, the way `--reuse` would:
  * the same link and passwords, until the saved expiry. A share the server cannot start yet (for example Tailscale is
  * not up after a restart) is tried again with a growing wait; one that is refused for its own sake (bad params, a link
- * already live) is left alone. A share stopped or replaced while a start was pending never stays up. Nothing here
+ * already live) is left alone; one refused because the workspace's native-run claim is busy is tried again for as long
+ * as the saved entry is wanted. A share stopped or replaced while a start was pending never stays up. Nothing here
  * writes the saved links.
  */
 export async function restoreSavedShares(
@@ -53,7 +54,7 @@ async function restoreOne(deps: ShareRestoreDeps, link: LiveShareLink): Promise<
       if (!deps.wanted(link)) return deps.end(link, answer.id);
       return deps.log(`restored the web share of ${what}`);
     }
-    if (answer.code !== 'action-failed' || attempt >= RETRY_MS.length) {
+    if (answer.code !== 'action-failed' || (attempt >= RETRY_MS.length && !answer.busy)) {
       return deps.log(`did not restore the web share of ${what}: ${answer.message}`);
     }
     await deps.wait(RETRY_MS[attempt] ?? 60_000);

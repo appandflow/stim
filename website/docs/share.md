@@ -386,6 +386,16 @@ Run `stim share stop`, or let the share expire, and a workspace with no
 activity for `idle.minutes` goes idle on the daemon's next tick. When
 stim-server cannot list its shares, Stim keeps the workspace running.
 
+Starting a share, and starting a saved share again when `stim-server` restarts,
+holds the workspace's `native-run.lock` while Stim reads the device and registers
+the share. An automatic shutdown or device deletion therefore runs before or
+after the start, never in between. The start waits up to 30 seconds for a
+`stim ios`, `stim android` or `stim stop` run or an automatic shutdown that holds
+the claim, then fails with `STIM_SHARE_REFUSED` naming it; run `stim share` again
+once it ends. A saved share retries on its own for as long as its saved entry is live.
+`stim stop` and `stim ios` wait for a start to finish, including opening the
+share's route.
+
 ## Options
 
 | Option                | Meaning                                                                                                                                  |

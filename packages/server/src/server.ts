@@ -190,6 +190,7 @@ import {
 } from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
 import { pauseShareLinkAsync, pauseShareLinksAsync } from 'stim/share-links';
+import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
 import { restoreSavedShares } from './share-restore.ts';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
@@ -1881,6 +1882,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     lookup: { adbEmulators },
     limits: leaseGrace(controlLimits.leaseFor),
     recordingChanged: () => recorder?.refresh(),
+    holdWorkspace: (workspace, stop) => holdNativeRun(workspace, { waitMs: SHARE_CLAIM_WAIT_MS, stop }),
     ...(options.shareServer ? { idle: options.shareServer.idle } : {}),
   });
   const restoreShares = () =>

@@ -11,6 +11,7 @@ import { viewerPage } from '../src/share-page.ts';
 import {
   BUTTONS,
   ShareHub,
+  type ShareDeps,
   type ShareLimits,
   type ShareRequest,
   type StartedShare,
@@ -84,7 +85,7 @@ interface Fixture {
   }[];
 }
 
-function fixture(limits: Partial<ShareLimits> = {}): Fixture {
+function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {}): Fixture {
   const listeners = new Set<StatusListener>();
   let latest = payload();
   const f: Fixture = {
@@ -240,6 +241,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
     },
     limits: { maxFailures: 3, ...limits },
     idle: () => f.idle++,
+    ...deps,
   });
   return f;
 }
@@ -1960,5 +1962,79 @@ describe('a web share', () => {
       expect((await http(url, { cookie })).status).toBe(200);
       socket.close();
     });
+  });
+});
+
+describe("a web share starting while the workspace's devices may be shut down", () => {
+  function claim() {
+    const events: string[] = [];
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let refusal: { code: 'action-failed'; message: string } | null = null;
+    const holdWorkspace: ShareDeps['holdWorkspace'] = async (workspace) => {
+      events.push(`hold ${workspace}`);
+      await gate;
+      if (refusal) return refusal;
+      return { release: () => events.push('release') };
+    };
+    return {
+      events,
+      open,
+      holdWorkspace,
+      refuse: (message: string) => {
+        refusal = { code: 'action-failed', message };
+      },
+    };
+  }
+
+  it('reads the device only after a shutdown that held the claim has finished', async () => {
+    const held = claim();
+    const f = fixture({}, { holdWorkspace: held.holdWorkspace });
+    const starting = f.hub.start(shareRequest());
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.hub.list()).toEqual([]);
+    f.status(payload('Shutdown'));
+    held.open();
+    expect(await starting).toMatchObject({ code: 'action-failed' });
+    expect(f.hub.list()).toEqual([]);
+    expect(f.routeOpens).toEqual([]);
+    expect(held.events).toEqual([`hold ${WORKSPACE}`, 'release']);
+  });
+
+  it('is refused with the claim holder named, and registers nothing, when the claim cannot be taken', async () => {
+    const held = claim();
+    held.refuse('`stim ios` holds the native-run claim');
+    const f = fixture({}, { holdWorkspace: held.holdWorkspace });
+    const starting = f.hub.start(shareRequest());
+    held.open();
+    expect(await starting).toEqual({ code: 'action-failed', message: '`stim ios` holds the native-run claim' });
+    expect(f.hub.list()).toEqual([]);
+    expect(f.routeOpens).toEqual([]);
+    expect(held.events).toEqual([`hold ${WORKSPACE}`]);
+  });
+
+  it('keeps the claim until the share is registered', async () => {
+    const held = claim();
+    held.open();
+    const registeredAtRelease: number[] = [];
+    const f: Fixture = fixture(
+      {},
+      {
+        holdWorkspace: async (workspace, stop) => {
+          const hold = await held.holdWorkspace!(workspace, stop);
+          if ('code' in hold) return hold;
+          return {
+            release: () => {
+              registeredAtRelease.push(f.hub.list().length);
+              hold.release();
+            },
+          };
+        },
+      },
+    );
+    await f.hub.start(shareRequest());
+    expect(registeredAtRelease).toEqual([1]);
   });
 });

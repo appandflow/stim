@@ -29,7 +29,7 @@ import { readWorkspaceState } from './workspace-state.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
 
 const NATIVE_RUN = 'native-run';
-const NATIVE_RUN_HELD = 'a stim ios, android or stop run holds its native-run.lock';
+const NATIVE_RUN_HELD = 'a stim ios, android, share or stop run holds its native-run.lock';
 
 interface InUseChecks {
   supervisor?: boolean;

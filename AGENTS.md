@@ -477,7 +477,9 @@ outside it moves to its own issue and pull request.
   stim-server writes and prunes (it never creates a workspace directory). The CLI
   moves closed segments into `archive/` during removal under `native-run.lock`.
   stim-server never writes or prunes under `archive/` and reads archived segments
-  through core's recording readers. The other exceptions are
+  through core's recording readers. Another exception: stim-server takes the
+  workspace's native-run claim (`workspaceNativeRunClaim`) while a web share
+  starts, and releases it after. The other exceptions are
   the build worker root (`server.workerRoot`, default `build-worker/`),
   with its Windows short directories, which stim-server and the builds it runs own, and the build slot
   stim-server takes under `build-slots/` for each offloaded build it runs,

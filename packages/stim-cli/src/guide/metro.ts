@@ -257,7 +257,7 @@ the workflow, stop the workspace and the specific unit you created:
   logs, in-app console logs, dev server output and log file times never count, so an open app that only hot-reloads or logs
   is idle, and a live view that only streams frames does not keep it. It
   stays running while a bundle response is in flight, while a build in the
-  workspace is in progress, while a stim ios, android or stop run holds the
+  workspace is in progress, while a stim ios, android, share or stop run holds the
   workspace's native-run lock, while the workspace holds an unexpired device
   lease (\`stim device lock\` or a --device run, physical devices included),
   while one of its devices is driven, a live agent-device session included,
