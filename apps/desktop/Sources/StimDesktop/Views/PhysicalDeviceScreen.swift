@@ -266,7 +266,8 @@ final class PhysicalDisplayView: NSView {
         y: (self.bounds.height - fitted.height) / 2 + (1 - point.y) * fitted.height)
     },
     send: { [weak self] phase, first, second in
-      self?.stream?.touch(phase.wire, x: first.x, y: first.y, second: (second.x, second.y)) ?? false
+      self?.stream?.touch(
+        phase.wire, x: Double(first.x), y: Double(first.y), second: (x: Double(second.x), y: Double(second.y))) ?? false
     })
   lazy var decoder = H264Decoder { [weak self] image in
     guard let surface = CVPixelBufferGetIOSurface(image)?.takeUnretainedValue() else { return }
