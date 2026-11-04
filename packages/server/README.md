@@ -167,17 +167,29 @@ which run Noise, never get a challenge.
 
 On a server Desktop started, only a socket that passed this proof can call the
 Desktop-only methods (`route.setup`, `machines.update.*`, `device-host.sessions`
-and `device-host.sessions.stop`, plus `desktop.reports.*`, `desktop.settings.get`,
-`desktop.logs.subscribe`, `desktop.doctor.run` and `desktop.stop.subscribe`); another client of this user on the socket, such
+and `device-host.sessions.stop`, plus `desktop.reports.*`, `desktop.settings.*`,
+`desktop.logs.subscribe`, `desktop.doctor.run` and the `desktop.*` actions); another client of this user on the socket, such
 as the CLI, keeps read and control without them. A server Desktop adopted or that
 runs on its own, such as a `stim-server service`, has no private key: it offers no
-challenge and keeps serving those methods to this user's socket. Starting a fresh
-bundled child establishes a new private key. Desktop also refuses a socket whose
+challenge and serves those methods, the actions included, to every client of this
+user on its local socket, and it advertises their `desktop-*` features to that
+socket only. The socket's 0600 mode in a 0700 directory owned by this user is
+the proof, the same trust the `stim` CLI has: it runs the same actions for this
+user. A network connection, even one from this machine's own loopback address,
+never gets them and does not see the features. The exception is
+`desktop.setup.subscribe` and `desktop.setup.answer`, which approve another
+machine's build or device-host access: they need the private proof on every
+server, so a key-less server never advertises `desktop-setup`. Starting a fresh
+bundled child establishes a new private key, and that server advertises the
+`desktop-*` write features only to a connection that asked for the challenge, so
+a client without the key reads the missing features as no Desktop authority.
+Desktop also refuses a socket whose
 server reports another TCP port than the server it adopted, before it sends any
 proof.
 
-`desktop.settings.write` requires the private proof even on an adopted or
-standalone server. Only a server started by Desktop advertises the local-only
+`desktop.settings.write` follows the same rule: a server started by Desktop
+requires the private proof; a key-less server serves it to its local socket. The
+server advertises the local-only
 `desktop-settings-write` feature. The method accepts an absolute existing `cwd`,
 setting `key`, optional `scope`, and either `"action": "set"` with a text `value`,
 or `"action": "unset"` without `value`. It runs the shared settings API in process
@@ -694,7 +706,8 @@ socket is mode 0600 in a mode 0700 directory owned by this user and needs no han
 That connection gets read and control. The Desktop-only methods (`route.setup`,
 `machines.update.*`, `device-host.sessions` and `device-host.sessions.stop`)
 work only there; on a server Desktop started, only after the private Desktop
-bootstrap proof (see [Private Desktop bootstrap](#private-desktop-bootstrap)).
+bootstrap proof (see [Private Desktop bootstrap](#private-desktop-bootstrap)),
+which a key-less server does not ask for.
 Windows has no socket.
 
 The network address, `tailscale whois` and the `X-Forwarded-For` header that

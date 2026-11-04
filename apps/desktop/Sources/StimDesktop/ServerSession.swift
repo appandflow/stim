@@ -107,12 +107,6 @@ import StimKit
     return feed
   }
 
-  var localActionConnection: (client: ServerClient, home: String)? {
-    guard let feed = statsConnection else { return nil }
-    if feed.client.hasDesktopAuthority, controller?.desktopBootstrap == nil { return nil }
-    return feed
-  }
-
   /// The connection for the status feed, which reads only, so it is offered while the adoption is provisional.
   var feedConnection: (client: ServerClient, home: String)? {
     guard let controller, let connection, case .running(let health, _) = controller.state,

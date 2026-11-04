@@ -380,6 +380,8 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
             throw ServerError(code: "forbidden", message: "The server did not authorize private Desktop access.")
           }
           hasDesktopAuthority = true
+        } else if !isRemote, hello.features?.contains("desktop-settings-write") == true {
+          hasDesktopAuthority = true
         }
         retry = Self.minimumRetry
         state = .open(hello)

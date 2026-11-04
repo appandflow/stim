@@ -15,7 +15,7 @@ public struct ServerSettingWrite: Sendable {
   try Task.checkCancellation()
   let client = try desktopActionServer(connection, stimHome: stimHome, action: "change settings for this Stim home")
   guard case .open(let hello) = client.state, hello.features?.contains("desktop-settings-write") == true else {
-    throw ServerError(code: "unsupported", message: "Update the bundled stim-server to change settings from Desktop.")
+    throw ServerError(code: "unsupported", message: "Update stim-server to change settings from Desktop.")
   }
   var params: [String: JSONValue] = [
     "cwd": .string(cwd), "key": .string(key), "scope": .string(scope.rawValue),
