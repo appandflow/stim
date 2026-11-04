@@ -81,8 +81,8 @@ hosted-android), and the session (stim-<slot>-<platform> unless you pass
 revives an idle-stopped workspace before the command (progress on stderr).
 For a hosted session, a single-action command (snapshot, press, tap, scroll,
 type and the like) that fails with SESSION_NOT_FOUND because the host lost the
-agent-device session (it restarted, or no command reached it for an hour) is retried once after opening the app the
-workspace last launched on the same session; the command acts on that app's
+agent-device session (it restarted, or no command reached it for an hour) is
+retried once after opening the app the workspace last launched on the same session; the command acts on that app's
 screen as it is after the reopen, so take a fresh snapshot when a coordinate
 gesture matters. Only the final run's output is printed, so --json output stays
 one document. Multi-step commands (batch, replay,
