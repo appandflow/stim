@@ -330,7 +330,6 @@ interface Share {
   controlSession: string | null;
   controlStarting: Promise<string | null> | null;
   controlRetryAt: number;
-  /** Whether a viewer sent input in the current control session. */
   controlUsed: boolean;
   recordKey: string | null;
   latest: StatusPayload | null;
@@ -1330,9 +1329,8 @@ export class ShareHub {
     });
   }
 
-  /** Starts the control session of a viewer that can control, so its first input does not wait for the lease. */
   private warmControl(share: Share, viewer: Viewer): void {
-    if (this.accessOf(share, viewer.login) === 'control' && share.request.control) {
+    if (this.accessOf(share, viewer.login) === 'control') {
       void this.controlSession(share, viewer);
     }
   }
@@ -1429,7 +1427,7 @@ export class ShareHub {
     ) {
       return;
     }
-    share.controlUsed = true;
+    if (!polling) share.controlUsed = true;
     const refused = await source.input(share.owner, session, method, { ...params }, command, viewer.who);
     const open = viewer.socket.readyState === viewer.socket.OPEN;
     if (refused && 'code' in refused) {
@@ -1486,7 +1484,7 @@ export class ShareHub {
           return null;
         }
         if ('code' in outcome) {
-          share.controlRetryAt = Date.now() + 5000;
+          if (share.viewers.size > 0) share.controlRetryAt = Date.now() + 5000;
           this.releaseRecording(share, outcome.code !== 'device-busy');
           console.error(`stim-server: web share ${share.id} control refused: ${outcome.message}`);
           if (viewer.socket.readyState === viewer.socket.OPEN) {

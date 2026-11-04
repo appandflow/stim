@@ -305,7 +305,7 @@ SECURITY MODEL
 - Control goes through the same control session and device lease stim-server
   uses for Desktop and the phone app. A viewer that can control starts the
   session, and so takes the device lease, when it connects, and the session ends
-  after 5 minutes without input or when the last viewer leaves: taps, two-finger gestures, text, the arrow keys and Escape, rotation and the
+  after 5 minutes without input or when the last viewer leaves. It carries taps, two-finger gestures, text, the arrow keys and Escape, rotation and the
   hardware buttons of the shared device, plus the device clipboard on an iOS simulator, an Android emulator or an
   Android phone only. A device an agent or another client drives answers
   busy instead of being taken over.

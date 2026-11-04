@@ -54,7 +54,6 @@ interface Fixture {
   beginGate: Promise<void> | null;
   /** How many times the fake control hub's `begin` was called, including calls still held by `beginGate`. */
   beginCalls: number;
-  /** The owner the fake control hub last began a session for, through which it can end that session. */
   owner: Pick<Controller, 'send'> | null;
   /** A frame the fake frame pool hands every new subscriber at once, as the real one replays its latest frame. */
   replay: Frame | null;
@@ -568,14 +567,36 @@ describe('a web share', () => {
     });
     await vi.waitFor(() => expect(f.begins).toHaveLength(1));
     const idle = { event: 'control-ended', session: 'c1', reason: 'idle', message: 'No input for 5 minutes.' } as const;
+    f.inputResult = { text: 'from the device' };
+    socket.send(JSON.stringify({ type: 'clipboard-get', id: 1, poll: true }));
+    await vi.waitFor(() => expect(messages).toContainEqual({ type: 'clipboard', id: 1, text: 'from the device' }));
     f.owner?.send(idle);
     socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
     await vi.waitFor(() => expect(f.begins).toHaveLength(2));
-    await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(2));
     f.owner?.send(idle);
     await vi.waitFor(() => expect(messages).toContainEqual({ type: 'control', message: 'Control ended.' }));
     expect(messages.filter((message) => message.type === 'control')).toHaveLength(1);
     socket.close();
+  });
+
+  it('with --control, starts control again for a viewer that reconnects after the last one left during the start', async () => {
+    let release = () => {};
+    f.beginGate = new Promise<void>((resolve) => (release = resolve));
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const cookie = await login(url, share.password ?? '');
+    const first = await connect(url, { origin: origin(url), cookie });
+    await vi.waitFor(() => expect(f.beginCalls).toBe(1));
+    first.socket.close();
+    await vi.waitFor(() => expect(f.hub.list()[0]?.viewers).toBe(0));
+    release();
+    await vi.advanceTimersByTimeAsync(20);
+    f.beginGate = null;
+    const second = await connect(url, { origin: origin(url), cookie });
+    await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+    expect(second.messages.map((message) => message.type)).not.toContain('control');
+    second.socket.close();
   });
 
   it('with --control, passes the second finger of a touch on and drops a half pair', async () => {
