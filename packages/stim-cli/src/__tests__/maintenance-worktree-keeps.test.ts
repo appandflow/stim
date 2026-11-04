@@ -8,6 +8,8 @@ vi.mock('../commands/gc/worktrees.ts', async (importOriginal) => ({
 
 type Candidate = WorktreeSweep['worktrees'][number];
 
+const live: Candidate['merge'] = { merged: false, unknown: false, detail: 'not merged into origin/main' };
+
 const candidate = (path: string, skipCode: WorktreeSkipCode | null, skipped: string | null): Candidate => ({
   path,
   keys: [path],
@@ -21,7 +23,7 @@ const candidate = (path: string, skipCode: WorktreeSkipCode | null, skipped: str
   activity: null,
 });
 
-const plan = async (worktrees: Candidate[]) => {
+const plan = async (worktrees: Candidate[], idleDays: number | null = null) => {
   vi.mocked(collectWorktreeSweep).mockResolvedValue({
     idle: null,
     graceMs: 0,
@@ -29,7 +31,7 @@ const plan = async (worktrees: Candidate[]) => {
     noOwnCommitsIdleMs: null,
     worktrees,
   });
-  return planWorktrees({ protectedRoot: '/elsewhere', pinned: () => false, now: 0 });
+  return planWorktrees({ protectedRoot: '/elsewhere', pinned: () => false, now: 0, idleDays });
 };
 
 test('the worktree check reports a code and the path for every reason it keeps a worktree', async () => {
@@ -51,14 +53,20 @@ test('the worktree check reports a code and the path for every reason it keeps a
   expect(result.actions).toEqual([]);
 });
 
-test('the worktree check stays silent about the main checkout and about a live unmerged branch', async () => {
+test('the worktree check stays silent about the main checkout and a directory that is no worktree', async () => {
   const result = await plan([
     candidate('/w/main', 'source-checkout', 'source checkout'),
     candidate('/w/not-git', 'not-a-worktree', 'not inside a git worktree'),
-    candidate('/w/live', 'not-merged', 'not merged into origin/main'),
   ]);
 
   expect(result.skips).toEqual([]);
+});
+
+test('an unmerged worktree is reported only when the idle sweep is on', async () => {
+  const dirty = { ...candidate('/w/live', 'dirty', 'dirty: 1 uncommitted or untracked file (a.ts)'), merge: live };
+
+  expect((await plan([dirty])).skips).toEqual([]);
+  expect((await plan([dirty], 7)).skips).toMatchObject([{ target: '/w/live', code: 'dirty' }]);
 });
 
 test('a removable worktree is planned for removal and not reported as kept', async () => {

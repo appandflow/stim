@@ -269,7 +269,6 @@ const UNREPORTED_KEEPS: ReadonlySet<WorktreeSkipCode> = new Set([
   'not-a-worktree',
   'bare-repository',
   'source-checkout',
-  'not-merged',
 ]);
 
 export interface WorktreePlan extends MaintenancePlan {
@@ -333,7 +332,11 @@ export async function planWorktrees({
         !keptReason(worktree)
       )
         nextRemoval = { target: worktree.path, at };
-      if (worktree.skipCode && !UNREPORTED_KEEPS.has(worktree.skipCode))
+      if (
+        worktree.skipCode &&
+        !UNREPORTED_KEEPS.has(worktree.skipCode) &&
+        (idleDays !== null || worktree.merge?.merged || endedPullRequest(worktree.pullRequest))
+      )
         skips.push({
           target: worktree.path,
           reason: worktree.skipped,

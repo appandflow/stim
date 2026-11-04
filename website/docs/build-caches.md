@@ -776,12 +776,13 @@ In report mode actions and explaining skips are logged only when newly planned.
 In on mode every action taken, failure and explaining skip is logged with its
 size, and pass records carry the bytes freed. Removed worktrees and orphaned
 directories appear in the machine log only.
-A linked worktree the worktree check keeps gets a `maintenance_skip` record with
-its path, the reason and a `code` (`locked`, `dirty`, `unpushed`, `in-use`,
-`submodules`, `last-use-unknown`, `recent-activity` for the grace window, and
-the other worktree skip codes except `not-merged`), logged again when the code
-changes. `stim gc` lists the same lines as `kept <path>: <reason>`, and
-`stim gc --json` carries them in `maintenance.skips`.
+A merged or ended worktree the worktree check keeps, and with
+`maintenance.removeIdleWorktrees` any other linked worktree it keeps, gets a
+`maintenance_skip` record with its path, the reason and a `code` (`locked`,
+`dirty`, `unpushed`, `in-use`, `submodules`, `last-use-unknown`,
+`recent-activity` for the grace window, and the other worktree skip codes),
+logged again when the code changes. `stim gc` lists every worktree's reason in
+its worktrees section.
 Every run that deletes or changes something also appends one record per item
 to the machine gc log, `$STIM_HOME/gc/gc.ndjson`: `stim gc --delete` with any
 flags, including the pressure ladder actions it runs, and each maintenance
