@@ -1471,6 +1471,14 @@ Ending a subscription or session sends `device-host.unsubscribe` or
 `device-host.control.end`, and the connection closes when the last one ends.
 The host's per-connection limits, such as its 32 subscriptions and input
 budgets, therefore apply to all of the client's relayed use of that host.
+When the host connection drops (the host's stim-server restarted, or the network broke), each
+relayed frame subscription keeps its local subscription id. It waits 1 second, doubling to 15,
+and subscribes again on a new connection with the same parameters once `device-host.attach`
+reports the session `ready`; `preparing`, `stopping` and `unknown` keep waiting. A `stopped`
+session, a `forbidden`, `unauthorized`, `unknown-session` or `protocol-unsupported` refusal
+(including an ended approval), a host that streams another video format, or three minutes
+without success end it with `frames-failed`. A relayed control session still ends with
+`control-ended` (`failed`), and the viewer begins it again.
 While a local client is behind on a relayed H.264 subscription, the relay drops
 its packets until the next keyframe and, when the host advertises the
 `hosted-congestion` feature, sends `device-host.frames.congested` at most every
