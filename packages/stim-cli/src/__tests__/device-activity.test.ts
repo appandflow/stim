@@ -271,6 +271,15 @@ describe('createActivityReader', () => {
     });
   });
 
+  test("stim-server's own screenshot captures do not drive a device, another tool's simctl io still does", () => {
+    const simctl = (output: string) =>
+      `   300     1 20480   1.0 ${RUNNER_START}     /Applications/Xcode.app/Contents/Developer/usr/bin/simctl io ${UDID} screenshot --type=jpeg --display=primary ${output}\n`;
+    ps = simctl('/Users/me/.stim/server/frames-aB3dE9/frame.jpg');
+    expect(read({})).toMatchObject({ state: 'idle' });
+    ps = simctl('/tmp/shot.png');
+    expect(read({})).toMatchObject({ state: 'driven', driver: { tool: 'simctl', pid: 300 } });
+  });
+
   test('input a stim-server client sent dates a device, frames it only streams count for nothing, and its logs never do', () => {
     const inputAt = new Date(NOW - 60_000).toISOString();
     writeLogs([{ ts: NOW - 30_000, src: 'device', platform: 'ios', msg: 'chatty app' }]);

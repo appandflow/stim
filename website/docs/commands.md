@@ -1986,7 +1986,7 @@ be read. Stim counts as drivers a live agent-device session (its recorded
 processes must still be alive with their recorded start times, so a stale or
 reused pid does not count), an unexpired `stim device lock`, a host process
 that names the device (Argent, xcodebuild test runners, idb, Maestro, Appium,
-`simctl io|spawn`), and on Android a `uiautomator`, `androidx.test` or Argent
+`simctl io|spawn`, except the screenshots stim-server itself takes of the device), and on Android a `uiautomator`, `androidx.test` or Argent
 helper process.
 `lastActivityAt` is the newest of the device's app log records, changes to the
 workspace's `client.ndjson` and `device.ndjson` logs, the platform's Metro
