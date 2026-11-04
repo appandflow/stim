@@ -34,13 +34,16 @@ import {
   capabilitiesFor,
   createPairingToken,
   grantDevice,
+  isDesktopClient,
   readBuildClients,
   readDeviceHostClients,
   readDevices,
+  readUnreadable,
   renameDevice,
   revokeDevice,
   serverIdentity,
   type PairedDevice,
+  type UnreadableRecord,
 } from '../src/registry.ts';
 import { keyFingerprint } from '@stim-cli/core/noise-session';
 import { hostFromExecutable, hostPermissionPanes } from '../src/stim-host.ts';
@@ -50,7 +53,7 @@ import { readDesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { loadTransport } from '@stim-cli/transport';
 import { localTransport, resolveLanAddresses } from '@stim-cli/transport-local';
-import { readLanAddresses, watchLanAddresses } from '../src/lan.ts';
+import { readLanAddresses, watchServerSettings } from '../src/lan.ts';
 import {
   findTailscale,
   serveCommand,
@@ -179,7 +182,7 @@ async function serve(
     fail('@stim-cli/transport-tailscale did not create a Tailscale transport');
   const transport = loaded.transport;
   const { state: tailscale } = transport.snapshot();
-  const lanSetting = watchLanAddresses();
+  const lanSetting = watchServerSettings();
   await Promise.race([lanSetting.ready, new Promise((done) => setTimeout(done, 1000).unref())]);
   const lan = localTransport({ entries: lanSetting.current });
   const stim = bundledStim();
@@ -220,6 +223,7 @@ async function serve(
       env,
       currentEnv,
       transports: [transport, lan],
+      keepAwake: { setting: lanSetting.keepAwake, onChange: lanSetting.onKeepAwakeChange },
       service: {
         label: serviceManagerOrNull()?.runningLabel(process.env) ?? null,
         node: process.execPath,
@@ -359,6 +363,12 @@ function describe(device: PairedDevice): string {
   return `${device.id}  ${device.name}  ${scope}  from ${from}  paired ${device.pairedAt}  last seen ${device.lastSeenAt ?? 'never'}`;
 }
 
+function describeUnreadable({ file, index, id, version }: UnreadableRecord): string {
+  if (version !== undefined)
+    return `unreadable  ${file} registry version ${version}, written by a newer Stim  left as it is`;
+  return `unreadable  ${file} entry ${index}${id ? `  ${id}` : ''}  left as it is`;
+}
+
 const KINDS = { device: 'phone', build: 'build-client', 'device-host': 'device-host-client' } as const;
 
 const ACCESS: Record<Capability, string> = {
@@ -369,7 +379,7 @@ const ACCESS: Record<Capability, string> = {
 };
 
 function listed(device: PairedDevice, registry: keyof typeof KINDS) {
-  const { id, name, from, publicKey, pairedAt, lastSeenAt, capabilities } = device;
+  const { id, name, from, publicKey, pairedAt, lastSeenAt, capabilities, clientApp, clientVersion } = device;
   return {
     id,
     name,
@@ -378,18 +388,38 @@ function listed(device: PairedDevice, registry: keyof typeof KINDS) {
     pairedAt,
     lastSeenAt,
     capabilities,
-    kind: KINDS[registry],
+    ...(clientApp ? { clientApp } : {}),
+    ...(clientVersion ? { clientVersion } : {}),
+    kind: registry === 'device' && isDesktopClient(device) ? 'desktop' : KINDS[registry],
     access: capabilities.map((capability) => ACCESS[capability]),
     owner: registry === 'device' ? 'this-machine' : 'theirs-running-here',
   };
+}
+
+function refuseUnreadable(id: string): void {
+  const unreadable = readUnreadable();
+  const entry = unreadable.find((each) => each.id === id);
+  if (entry) {
+    fail(
+      `${id} is an entry of ${entry.file} that this stim-server cannot read, so it is left as it is. Edit that file to change or remove it.`,
+    );
+  }
+  const whole = unreadable.filter((each) => each.version !== undefined);
+  if (whole.length) {
+    fail(
+      `no paired device or approved client ${id} that this stim-server can read. ${whole.map((each) => `${each.file} is registry version ${each.version}, written by a newer Stim`).join('; ')}, and is left as it is.`,
+    );
+  }
 }
 
 function rename(id: string, args: string[]): void {
   const [name, ...extra] = args;
   if (name === undefined || extra.length) fail(`unknown command.\n${USAGE}`);
   const outcome = renameDevice(id, name);
-  if (outcome === 'unknown')
+  if (outcome === 'unknown') {
+    refuseUnreadable(id);
     fail(`no paired device or approved client ${id}. Run \`stim-server devices\` to list them.`);
+  }
   if (outcome === 'invalid-name') fail('the name must be 1 to 64 characters of printable text on one line.');
   console.log(`Renamed ${id}.`);
 }
@@ -578,6 +608,7 @@ async function main(): Promise<void> {
     const capabilities = capabilitiesFor(scope === 'control');
     const outcome = grantDevice(arg, [...capabilities]);
     if (outcome === 'unknown') {
+      refuseUnreadable(arg);
       fail(`no paired device or approved client ${arg}. Run \`stim-server devices\` to list them.`);
     }
     if (outcome === 'build-mismatch' || outcome === 'device-host-mismatch') {
@@ -614,18 +645,23 @@ async function main(): Promise<void> {
     } catch (error) {
       console.error(`Could not read hosted sessions: ${(error as Error).message}`);
     }
+    const unreadable = readUnreadable();
     if (values.json) {
       const rows = sources.map(([device, registry]) => listed(device, registry));
-      return void console.log(JSON.stringify({ devices: rows, hostedSessions }));
+      return void console.log(JSON.stringify({ devices: rows, hostedSessions, unreadable }));
     }
     if (!devices.length) console.log('No paired devices.');
     for (const device of devices) console.log(describe(device));
+    for (const entry of unreadable) console.log(describeUnreadable(entry));
     for (const line of formatHostedSessions(hostedSessions)) console.log(line);
     return;
   }
   if (command === 'devices' && sub === 'rename' && arg !== undefined) return rename(arg, rest);
   if (command === 'devices' && sub === 'revoke' && arg !== undefined && rest.length === 0) {
-    if (!revokeDevice(arg)) fail(`no paired device ${arg}. Run \`stim-server devices\` to list them.`);
+    if (!revokeDevice(arg)) {
+      refuseUnreadable(arg);
+      fail(`no paired device ${arg}. Run \`stim-server devices\` to list them.`);
+    }
     console.log(`Revoked ${arg}.`);
     return;
   }

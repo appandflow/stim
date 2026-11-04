@@ -44,6 +44,7 @@ import {
   type ErrorCode,
   type InputButton,
   type InputClipboardGetResult,
+  type InputClipboardSetResult,
   type SimulatorCommand,
   type SimulatorOptions,
   type Platform,
@@ -66,6 +67,18 @@ type Parsed<T> = { value: T } | Refusal;
 
 export const SLOT_NAME: RegExp = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const TEXT = /^[\x20-\x7e\n\t\b]+$/;
+
+const PASTE_TYPEABLE = /^[\x20-\x7e\n\t]+$/;
+
+export function pasteTypingChunks(text: string): string[] | null {
+  const typed = text.replaceAll('\r\n', '\n');
+  if (!PASTE_TYPEABLE.test(typed)) return null;
+  const chunks: string[] = [];
+  for (let at = 0; at < typed.length; at += MAX_INPUT_TEXT) chunks.push(typed.slice(at, at + MAX_INPUT_TEXT));
+  return chunks;
+}
+
+export const PASTE_TYPING_CHARS_PER_SECOND = 32;
 
 export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
   if (!isJsonObject(params)) return { code: 'bad-request', message: 'params must be an object.' };
@@ -632,6 +645,8 @@ interface Session {
   unwatch: () => void;
   renewing: Promise<void>;
   adb: Promise<void>;
+  pasteTimer: NodeJS.Timeout | null;
+  pasteTypingUntil: number;
   ended: boolean;
   /** The driver this session took over, and whether another one was already pushed to the owner. */
   driver: string | null;
@@ -880,6 +895,8 @@ export class ControlHub {
       renewing: Promise.resolve(),
       unwatch: () => {},
       adb: Promise.resolve(),
+      pasteTimer: null,
+      pasteTypingUntil: 0,
       ended: false,
       driver,
       driverNoticed: false,
@@ -945,7 +962,7 @@ export class ControlHub {
     id: string,
     command: InputCommand,
     participant?: PresenceParticipant,
-  ): Promise<Refusal | BusyRefusal | SimulatorOptions | InputClipboardGetResult | null> {
+  ): Promise<Refusal | BusyRefusal | SimulatorOptions | InputClipboardGetResult | InputClipboardSetResult | null> {
     const session = this.sessions.get(id);
     if (!session || session.owner !== owner || session.ended) {
       return Promise.resolve({ code: 'unknown-session', message: `No control session ${id} on this connection.` });
@@ -1017,7 +1034,7 @@ export class ControlHub {
   private clipboard(
     session: Session,
     command: Extract<InputCommand, { input: 'clipboard' | 'clipboard-get' }>,
-  ): Promise<Refusal | InputClipboardGetResult | null> {
+  ): Promise<Refusal | InputClipboardGetResult | InputClipboardSetResult | null> {
     const { device } = session;
     const set = command.input === 'clipboard' ? command : null;
     const read = async (): Promise<string> => {
@@ -1027,10 +1044,20 @@ export class ControlHub {
       }
       return text;
     };
-    const run = async (): Promise<Refusal | InputClipboardGetResult | null> => {
+    const run = async (): Promise<Refusal | InputClipboardGetResult | InputClipboardSetResult | null> => {
+      let reserved = false;
       try {
         if (!set) return { text: await read() };
         if (device.platform === 'ios') {
+          const chunks = set.paste ? pasteTypingChunks(set.text) : null;
+          if (chunks) {
+            if (Date.now() < session.pasteTypingUntil) {
+              return { code: 'device-busy', message: 'The device is still typing the previous paste.' };
+            }
+            const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+            session.pasteTypingUntil = Date.now() + (total / PASTE_TYPING_CHARS_PER_SECOND) * 1000;
+            reserved = true;
+          }
           const claim = session.claim ? takeHostedInputClaim(session.claim) : undefined;
           await runQuietly(
             simctlEnv(this.options.env),
@@ -1043,7 +1070,13 @@ export class ControlHub {
               input: set.text,
             },
           );
-          if (set.paste && !session.ended) session.input.send({ clipboard: 'paste' });
+          if (set.paste && !session.ended) {
+            if (!chunks) session.input.send({ clipboard: 'paste' });
+            else {
+              this.typePaste(session, chunks);
+              return { typed: true };
+            }
+          }
         } else if (device.platform === 'android') {
           await session.input.clipboard({
             text: set.text,
@@ -1055,6 +1088,7 @@ export class ControlHub {
         }
         return null;
       } catch (cause) {
+        if (reserved) session.pasteTypingUntil = 0;
         return { code: 'action-failed', message: cause instanceof Error ? cause.message : String(cause) };
       }
     };
@@ -1063,6 +1097,19 @@ export class ControlHub {
     const queued = previous.then(run);
     session.adb = queued.then(() => undefined);
     return this.pending.track(queued);
+  }
+
+  private typePaste(session: Session, chunks: string[]): void {
+    const feed = (index: number): void => {
+      session.pasteTimer = null;
+      const chunk = chunks[index];
+      if (session.ended || chunk === undefined) return;
+      session.input.send({ input: 'text', text: chunk });
+      if (index + 1 < chunks.length) {
+        session.pasteTimer = setTimeout(() => feed(index + 1), (chunk.length / PASTE_TYPING_CHARS_PER_SECOND) * 1000);
+      }
+    };
+    feed(0);
   }
 
   private async readClipboard(session: Session, device: Device): Promise<string> {
@@ -1244,6 +1291,7 @@ export class ControlHub {
     clearTimeout(session.idle);
     clearInterval(session.renew);
     if (session.grabIdle) clearTimeout(session.grabIdle);
+    if (session.pasteTimer) clearTimeout(session.pasteTimer);
     if (session.hostShown) this.hideHost(session);
     session.unwatch();
     session.input.detach();

@@ -327,6 +327,12 @@ lock, honors `signal`, and rejects unavailable state. `stim.runningPath` is null
 you imported the library rather than running the executable. Existing remote
 approval checks can refresh their own pending credential records.
 
+`remoteMachines({ signal? })` returns `{ machines, findings }` as `stim remote list --json`
+prints it: each `remote.machines` entry in placement order with its build and
+device-host report, the fingerprint of the server key this machine pinned for it,
+its reachability and the revoke commands to run there. It works from any directory
+and asks no machine for anything new.
+
 `repairDoctor({ platform?, signal?, beforeRepair? })` applies the same project repairs as
 `stim doctor --fix`, then returns `{ report, exitCode }`. Stop native builds in
 that checkout first. A refused repair returns `exitCode: 1`; it never changes

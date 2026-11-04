@@ -27,20 +27,20 @@ export function OpenWorkspace({ query }: { query: string }) {
   const message = !resolved
     ? t`This workspace link is incomplete or unsupported.`
     : resolved.kind === 'pending'
-      ? t`Waiting for the paired Mac's workspace list.`
+      ? t`Waiting for the paired machine's workspace list.`
       : resolved.kind === 'offline'
-        ? t`The Mac is not connected. Connect to it and try the link again.`
+        ? t`The machine is not connected. Connect to it and try the link again.`
         : resolved.kind === 'unsupported'
           ? t`Update Stim and its server to open shared workspace links.`
           : resolved.kind === 'stale'
-            ? t`The Mac no longer lists this workspace. Ask for a new link.`
-            : t`Pair or reconnect the Mac to open this workspace.`;
+            ? t`The machine no longer lists this workspace. Ask for a new link.`
+            : t`Pair or reconnect the machine to open this workspace.`;
   return (
     <>
       <Stack.Screen options={{ title: t`Open Workspace` }} />
       <EmptyState title={t`Open Workspace`} message={message}>
         {resolved?.kind === 'unknown-machine' ? (
-          <Button title={t`Pair a Mac`} onPress={() => router.push('/pair')} />
+          <Button title={t`Pair a Machine`} onPress={() => router.push('/pair')} />
         ) : null}
         {resolved?.kind === 'offline' ? (
           <Button

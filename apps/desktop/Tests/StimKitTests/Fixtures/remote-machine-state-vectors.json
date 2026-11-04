@@ -1,0 +1,15 @@
+[
+  { "state": "approved", "title": "Approved", "tone": "success" },
+  { "state": "pending", "title": "Waiting for approval", "tone": "warning" },
+  { "state": "not-asked", "title": "Not asked", "tone": "neutral" },
+  { "state": "revoked", "title": "Revoked", "tone": "error" },
+  { "state": "lapsed", "title": "Request lapsed", "tone": "error" },
+  { "state": "key-changed", "title": "Different machine", "tone": "error" },
+  { "state": "key-unconfirmed", "title": "Key not confirmed", "tone": "warning" },
+  { "state": "outdated", "title": "Server is outdated", "tone": "warning" },
+  { "state": "not-on-tailnet", "title": "Not on the tailnet", "tone": "warning" },
+  { "state": "tailscale-off", "title": "Tailscale is off", "tone": "warning" },
+  { "state": "unreachable", "title": "Unreachable", "tone": "warning" },
+  { "state": "invalid", "title": "Not a tailnet name", "tone": "error" },
+  { "state": "from-the-future", "title": "Unknown", "tone": "neutral" }
+]

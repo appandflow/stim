@@ -255,23 +255,23 @@ new checks.
 
 The fresh reviewer records the outcome with labels. When the review is clear, it
 adds `review: ai-approved` and marks the pull request ready with `gh pr ready`.
-When the diff has a change in one of these that no maintainer has approved, it
-adds `review: needs-human` and removes any `review: human-approved`:
+When the diff contains a product decision that no maintainer has made, it adds
+`review: needs-human` and removes any `review: human-approved`. A product
+decision is a new, removed or renamed command, flag or setting; a changed
+default; or a change to user-visible behavior beyond what the linked issue
+asked for. This is the "explicit product decision" that new commands and flags
+require. A decision recorded in the issue or in a maintainer comment counts as
+approved.
 
-- what another machine can reach or do on this machine: a new or wider network
-  listener, authentication or pairing path, or stim-server capability;
-- how secrets, tokens or signing keys are stored, passed or exposed;
-- deleting or killing something Stim does not own, or a new way to decide that
-  Stim owns it;
-- a release or publishing workflow that holds secrets;
-- a breaking change to on-disk state or a published contract that existing
-  installs or clients cannot read.
-
-Refactors, hardening, stricter validation and bug fixes inside those areas do
-not qualify unless they widen what is exposed or deleted, expose a secret, or
-break what existing installs or clients can read. When it is unclear, leave the
-label off and name the concern in the review; that alone does not block
-`review: ai-approved`.
+Other concerns do not add the label. The reviewer still names them in its
+review: a new or wider way for another machine to reach or act on this one (a
+network listener, an authentication or pairing path, a stim-server capability),
+how secrets, tokens or signing keys are stored, passed or exposed, deleting or
+killing something Stim does not own, a new ownership rule, a release or
+publishing workflow that holds secrets, and a breaking change to on-disk state
+or a published contract. The Required invariants and `RELEASE.md` govern them.
+When it is unclear, leave the label off and name the concern in the review;
+that alone does not block `review: ai-approved`.
 
 With that label, the reviewer posts a comment that starts with `Human review:`
 and lists each unapproved `path:lines`, linked at the reviewed commit, with one
@@ -524,7 +524,23 @@ outside it moves to its own issue and pull request.
   `share.publicUrl`, and the frame socket accepts exactly that URL's origin,
   never Host or `X-Forwarded-*`. The CLI asks this Stim home's stim-server over its Unix socket
   (`share.start|stop|list`, refused on every network connection); a share
-  lives only in that server's memory and always expires. The server serves
+  lives only in that server's memory and always expires. The CLI saves each
+  share it starts, with its URL token and passwords, in the workspace's
+  `share-links.json` (mode 0600, written under the workspace state lock, removed
+  with the workspace, by `share stop --forget` and once expired) so that
+  `share ios|android --reuse` can start the same link again through
+  `share.start`'s `token` and `expiresAt`; stim-server writes nothing to disk and
+  an expired link is never extended or reused. Each saved entry has a `state`:
+  `live` from when `share` starts or reuses it, `stopped` after a deliberate
+  `share stop`, `stim stop` or reclaim of its workspace. Only the CLI writes it,
+  so a stim-server restart or crash leaves `live`, and `@stim-cli/core/state`'s
+  `readLiveShareLinks` lists a home's live, unexpired entries for anything that
+  starts them again. A share outlives its
+  device: when the device goes away on its own (frames fail, the device or hosted
+  session changes or is not ready) the share waits, keeping its token, passwords,
+  viewer sessions and expiry, and resumes on the slot's device when it is back.
+  Only `share.stop` (which `stim stop`, `stim worktree remove` and Desktop's Stop
+  send), expiry and the server stopping end it. The server serves
   shares on a separate loopback listener, not the Noise protocol: per share
   the viewer page, the frames of its one device and, with control, input to
   that device through `ControlHub` (on a simulator, emulator or Android phone that includes

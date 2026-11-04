@@ -26,20 +26,22 @@
       installs: [String: StimInstall] = [:],
       poolDisabled: [String: [String]]? = nil, failure: String? = nil, hosted: [HostedOnMachine] = [],
       linux: Set<String> = [],
-      settingsReadFailure: String? = nil, showsThisMac: Bool = false
+      settingsReadFailure: String? = nil
     ) -> some View {
-      BuildMachinesContent(
+      let hosts = [
+        BuildMachineStatus(machine: "mini", state: .approved), BuildMachineStatus(machine: "janics-mac-mini", state: .approved),
+      ]
+      return BuildMachinesContent(
         entries: entries, statuses: statuses,
-        hosts: [
-          BuildMachineStatus(machine: "mini", state: .approved), BuildMachineStatus(machine: "janics-mac-mini", state: .approved),
-        ], updates: updates, installs: installs,
+        connections: Connections.outgoing(
+          entries: entries ?? [], statuses: statuses, hosts: hosts, listing: nil, paired: []),
+        updates: updates, installs: installs,
         working: nil, progress: nil, refreshing: false, failure: failure, tailscaleRunning: tailscale,
         settingsReadFailure: settingsReadFailure, canAsk: true,
         addDisabled: false,
         updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in },
         remove: { _ in }, poolDisabled: poolDisabled, hostsSimulators: { !linux.contains($0) }, hosted: { _ in hosted },
-        showsThisMac: showsThisMac, thisMacName: "MacBook Pro",
-        thisMac: EmptyView()
+        thisMachineName: "MacBook Pro", notices: EmptyView()
       )
       .font(.stim(.body))
       .foregroundStyle(Palette.text)
@@ -74,7 +76,7 @@
               "message":"Tailscale and the serve route on studio work, but nothing listens behind the route: stim-server is not running there (HTTP 502).",
               "remedy":"On studio, run `stim-server service status`; `stim-server service install --serve` starts it and keeps it running."}},
            {"machine":"air","state":"unreachable","dnsName":"air.tail1234.ts.net","deviceId":"c9d0e1f2",
-            "diagnosis":{"layer":"peer","code":"peer-offline","title":"Mac is offline",
+            "diagnosis":{"layer":"peer","code":"peer-offline","title":"Machine is offline",
               "message":"air is offline on Tailscale (last seen 3 h ago).",
               "remedy":"Wake air or check that it is powered on, connected to a network and signed in to Tailscale, then run `stim doctor` again."}}]
           """#.utf8))
@@ -379,14 +381,6 @@
               failure: "Keep at least one approved member enabled in the build pool."))
         ),
         ("empty", AnyView(content(entries: [], statuses: [], tailscale: true))),
-        (
-          "settings-unreadable-this-mac",
-          AnyView(
-            content(
-              entries: nil, statuses: nil, tailscale: true,
-              settingsReadFailure: "The local stim-server is not ready to read settings for this Stim home.",
-              showsThisMac: true))
-        ),
         (
           "settings-unreadable",
           AnyView(

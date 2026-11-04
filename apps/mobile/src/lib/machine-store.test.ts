@@ -71,6 +71,7 @@ describe('createMachineStore', () => {
       capabilities: ['read'],
       features: [],
       deviceId: null,
+      deviceName: null,
     });
     machines.patchLink('a', { state: opened('first-home') });
     machines.receiveStatus('a', clone());

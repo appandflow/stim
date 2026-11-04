@@ -627,12 +627,12 @@ msgid "{tool}, {text}"
 msgstr "{tool}, {text}"
 
 #: src/lib/drawer-status.ts
-msgid "{total, plural, one {# Mac connected} other {# Macs connected}}"
-msgstr "{total, plural, one {# Mac connected} other {# Macs connected}}"
+msgid "{total, plural, one {# machine connected} other {# machines connected}}"
+msgstr "{total, plural, one {# machine connected} other {# machines connected}}"
 
 #: src/lib/drawer-status.ts
-msgid "{total, plural, one {# Mac, {pending} connecting} other {# Macs, {pending} connecting}}"
-msgstr "{total, plural, one {# Mac, {pending} connecting} other {# Macs, {pending} connecting}}"
+msgid "{total, plural, one {# machine, {pending} connecting} other {# machines, {pending} connecting}}"
+msgstr "{total, plural, one {# machine, {pending} connecting} other {# machines, {pending} connecting}}"
 
 #: src/screens/mac-status.tsx
 msgid "{totalCount} in all"
@@ -711,10 +711,6 @@ msgstr "11 PM to 8 AM"
 #: src/components/usage-charts.tsx
 msgid "60 min ago"
 msgstr "60 min ago"
-
-#: src/lib/settings-options.ts
-msgid "A Mac keeps the last 15 minutes of device screens. Turning this off deletes them."
-msgstr "A Mac keeps the last 15 minutes of device screens. Turning this off deletes them."
 
 #: src/lib/archived-page.ts
 msgid "a newer workspace"
@@ -971,8 +967,8 @@ msgid "Back to Workspaces"
 msgstr "Back to Workspaces"
 
 #: src/lib/settings-options.ts
-msgid "Background notifications need an iPhone and a Mac that sends push."
-msgstr "Background notifications need an iPhone and a Mac that sends push."
+msgid "Background notifications need an iPhone and a machine that sends push."
+msgstr "Background notifications need an iPhone and a machine that sends push."
 
 #: src/components/viewer-keyboard.tsx
 msgid "Backspace"
@@ -1103,8 +1099,8 @@ msgid "Builds"
 msgstr "Builds"
 
 #: src/screens/mac-status.tsx
-msgid "Builds for Other Macs"
-msgstr "Builds for Other Macs"
+msgid "Builds for Other Machines"
+msgstr "Builds for Other Machines"
 
 #: src/lib/format.ts
 msgid "Built"
@@ -1477,8 +1473,8 @@ msgid "Connect"
 msgstr "Connect"
 
 #: src/screens/workspace-diff.tsx
-msgid "Connect to the Mac to view changes."
-msgstr "Connect to the Mac to view changes."
+msgid "Connect to the machine to view changes."
+msgstr "Connect to the machine to view changes."
 
 #: src/components/mac-chip.tsx
 msgid "Connected"
@@ -1919,19 +1915,6 @@ msgstr "Folder gone"
 msgid "Follow Front Window"
 msgstr "Follow Front Window"
 
-#: src/screens/mac-list.tsx
-#: src/screens/mac-list.tsx
-msgid "Forget"
-msgstr "Forget"
-
-#: src/screens/mac-list.tsx
-msgid "Forget {name}"
-msgstr "Forget {name}"
-
-#: src/screens/mac-list.tsx
-msgid "Forget {name}?"
-msgstr "Forget {name}?"
-
 #: src/lib/workspaces.ts
 msgid "Frames are only served for devices Stim owns."
 msgstr "Frames are only served for devices Stim owns."
@@ -2077,6 +2060,10 @@ msgstr "Idle for {spoken}"
 msgid "if {machine} or its Stim home was replaced, run stim remote remove {machine}, then stim remote add {machine} on the computer this phone is paired with"
 msgstr "if {machine} or its Stim home was replaced, run stim remote remove {machine}, then stim remote add {machine} on the computer this phone is paired with"
 
+#: src/lib/machine-record.ts
+msgid "If the machine still lists this phone, revoke it there: run stim-server devices to find this phone's id, then stim-server devices revoke <id>."
+msgstr "If the machine still lists this phone, revoke it there: run stim-server devices to find this phone's id, then stim-server devices revoke <id>."
+
 #: src/screens/home.tsx
 msgid "In Stim Desktop, open Pair a Phone and scan its QR code. This phone and the machine both need Tailscale."
 msgstr "In Stim Desktop, open Pair a Phone and scan its QR code. This phone and the machine both need Tailscale."
@@ -2134,8 +2121,8 @@ msgid "iOS {version}"
 msgstr "iOS {version}"
 
 #: src/lib/build-machines.ts
-msgid "iOS and macOS builds need a Mac"
-msgstr "iOS and macOS builds need a Mac"
+msgid "iOS and macOS builds need macOS"
+msgstr "iOS and macOS builds need macOS"
 
 #: src/lib/workspaces.ts
 msgid "iOS device"
@@ -2272,6 +2259,14 @@ msgstr "Likely cold"
 msgid "Linking"
 msgstr "Linking"
 
+#: src/screens/mac-list.tsx
+msgid "Listed there as {record}"
+msgstr "Listed there as {record}"
+
+#: src/screens/mac-list.tsx
+msgid "Listed there as {record}, id {recordId}"
+msgstr "Listed there as {record}, id {recordId}"
+
 #: src/components/replay-bar.tsx
 #: src/components/replay-bar.tsx
 #: src/components/replay-bar.tsx
@@ -2370,10 +2365,6 @@ msgstr "Machine"
 #: src/lib/settings-options.ts
 msgid "Machine in trouble"
 msgstr "Machine in trouble"
-
-#: src/screens/rename.tsx
-msgid "Machine name"
-msgstr "Machine name"
 
 #: src/screens/workspace-detail.tsx
 msgid "Machine Status"
@@ -2504,9 +2495,17 @@ msgstr "Muted"
 msgid "Name"
 msgstr "Name"
 
+#: src/screens/rename.tsx
+msgid "Name on this phone"
+msgstr "Name on this phone"
+
 #: src/screens/pair.tsx
-msgid "Name this machine"
-msgstr "Name this machine"
+msgid "Name on This Phone"
+msgstr "Name on This Phone"
+
+#: src/screens/mac-list.tsx
+msgid "Named {serverName} on the machine"
+msgstr "Named {serverName} on the machine"
 
 #: src/screens/mac-status.tsx
 msgid "Native Builds"
@@ -2640,8 +2639,8 @@ msgid "No Device Running"
 msgstr "No Device Running"
 
 #: src/screens/workspace-diff.tsx
-msgid "No diff remains in this section. Refresh the file list if the file changed on the Mac."
-msgstr "No diff remains in this section. Refresh the file list if the file changed on the Mac."
+msgid "No diff remains in this section. Refresh the file list if the file changed on the machine."
+msgstr "No diff remains in this section. Refresh the file list if the file changed on the machine."
 
 #: src/screens/workspace-diff.tsx
 msgid "No diff remains. Refresh the file list."
@@ -2677,8 +2676,8 @@ msgid "No Machine Paired"
 msgstr "No Machine Paired"
 
 #: src/lib/drawer-status.ts
-msgid "No Macs paired"
-msgstr "No Macs paired"
+msgid "No machines paired"
+msgstr "No machines paired"
 
 #: src/screens/filters.tsx
 msgid "No matching projects"
@@ -2752,10 +2751,6 @@ msgid "Not a git checkout"
 msgstr "Not a git checkout"
 
 #: src/lib/build-machines.ts
-msgid "Not a Mac"
-msgstr "Not a Mac"
-
-#: src/lib/build-machines.ts
 msgid "Not a tailnet name"
 msgstr "Not a tailnet name"
 
@@ -2787,6 +2782,10 @@ msgstr "Not connected."
 #: src/lib/machine-report.ts
 msgid "Not in use; rebuilt on the next run"
 msgstr "Not in use; rebuilt on the next run"
+
+#: src/lib/build-machines.ts
+msgid "Not macOS"
+msgstr "Not macOS"
 
 #: src/components/workspace-cards.tsx
 msgid "Not measured"
@@ -2934,8 +2933,8 @@ msgid "On a Remote Machine"
 msgstr "On a Remote Machine"
 
 #: src/lib/format.ts
-msgid "on this Mac"
-msgstr "on this Mac"
+msgid "on the machine"
+msgstr "on the machine"
 
 #: src/lib/home.ts
 msgid "only below the hard floor"
@@ -3060,15 +3059,12 @@ msgstr "Page failed to load"
 msgid "Pair"
 msgstr "Pair"
 
-#: src/screens/open-workspace.tsx
-msgid "Pair a Mac"
-msgstr "Pair a Mac"
-
 #: src/app/_layout.tsx
 #: src/screens/home.tsx
 #: src/screens/home.tsx
 #: src/screens/home.tsx
 #: src/screens/menu.tsx
+#: src/screens/open-workspace.tsx
 msgid "Pair a Machine"
 msgstr "Pair a Machine"
 
@@ -3077,16 +3073,16 @@ msgid "Pair again"
 msgstr "Pair again"
 
 #: src/screens/open-workspace.tsx
-msgid "Pair or reconnect the Mac to open this workspace."
-msgstr "Pair or reconnect the Mac to open this workspace."
+msgid "Pair or reconnect the machine to open this workspace."
+msgstr "Pair or reconnect the machine to open this workspace."
+
+#: src/screens/welcome.tsx
+msgid "Pair with a Machine"
+msgstr "Pair with a Machine"
 
 #: src/screens/pair.tsx
 msgid "Pair with this machine?"
 msgstr "Pair with this machine?"
-
-#: src/screens/welcome.tsx
-msgid "Pair with Your Mac"
-msgstr "Pair with Your Mac"
 
 #: src/screens/pair.tsx
 msgid "Paired"
@@ -3257,8 +3253,8 @@ msgid "Read-only"
 msgstr "Read-only"
 
 #: src/screens/mac-status.tsx
-msgid "Read-only here. Free space and manage these on your Mac, in Stim Desktop or with stim."
-msgstr "Read-only here. Free space and manage these on your Mac, in Stim Desktop or with stim."
+msgid "Read-only here. Free space and manage these on the machine, in Stim Desktop or with stim."
+msgstr "Read-only here. Free space and manage these on the machine, in Stim Desktop or with stim."
 
 #: src/lib/build-machines.ts
 #: src/lib/home-list.ts
@@ -3395,6 +3391,19 @@ msgstr "Remote only"
 msgid "Removal"
 msgstr "Removal"
 
+#: src/screens/mac-list.tsx
+#: src/screens/mac-list.tsx
+msgid "Remove"
+msgstr "Remove"
+
+#: src/screens/mac-list.tsx
+msgid "Remove {name}"
+msgstr "Remove {name}"
+
+#: src/screens/mac-list.tsx
+msgid "Remove {name}?"
+msgstr "Remove {name}?"
+
 #: src/screens/workspace-resources.tsx
 msgid "Removed"
 msgstr "Removed"
@@ -3412,12 +3421,12 @@ msgid "Rename"
 msgstr "Rename"
 
 #: src/screens/mac-list.tsx
-msgid "Rename {name}"
-msgstr "Rename {name}"
+msgid "Rename {name} on this phone"
+msgstr "Rename {name} on this phone"
 
 #: src/app/_layout.tsx
-msgid "Rename Machine"
-msgstr "Rename Machine"
+msgid "Rename on This Phone"
+msgstr "Rename on This Phone"
 
 #: src/screens/workspace-detail.tsx
 msgid "Replaced By"
@@ -3615,8 +3624,8 @@ msgid "Server is outdated"
 msgstr "Server is outdated"
 
 #: src/screens/settings.tsx
-msgid "Set by STIM_RECORDING on the Mac"
-msgstr "Set by STIM_RECORDING on the Mac"
+msgid "Set by STIM_RECORDING on the machine"
+msgstr "Set by STIM_RECORDING on the machine"
 
 #: src/app/_layout.tsx
 #: src/screens/menu.tsx
@@ -3640,8 +3649,8 @@ msgid "Shared by the machine"
 msgstr "Shared by the machine"
 
 #: src/screens/mac-status.tsx
-msgid "Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache."
-msgstr "Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache."
+msgid "Shared caches builds refill. Empty one on the machine with stim gc --delete --cache."
+msgstr "Shared caches builds refill. Empty one on the machine with stim gc --delete --cache."
 
 #: src/screens/workspace-resources.tsx
 msgid "Shared with other folders"
@@ -3702,8 +3711,8 @@ msgid "Show token"
 msgstr "Show token"
 
 #: src/screens/workspace-diff.tsx
-msgid "Showing up to 200 files within the preview size limit. More changes are available on the Mac."
-msgstr "Showing up to 200 files within the preview size limit. More changes are available on the Mac."
+msgid "Showing up to 200 files within the preview size limit. More changes are available on the machine."
+msgstr "Showing up to 200 files within the preview size limit. More changes are available on the machine."
 
 #: src/components/agent-feed.tsx
 msgid "Shows every agent action on this device"
@@ -3880,13 +3889,13 @@ msgstr "Stim build differs"
 msgid "Stim Caches and Outputs"
 msgstr "Stim Caches and Outputs"
 
-#: src/screens/welcome.tsx
-msgid "Stim Desktop on Your Mac, with Serve to Phones On"
-msgstr "Stim Desktop on Your Mac, with Serve to Phones On"
-
 #: src/screens/pair.tsx
 msgid "Stim Desktop shows the code under Pair a Phone. The phone connects through Tailscale, so it works on any network where both devices are signed in to the same tailnet."
 msgstr "Stim Desktop shows the code under Pair a Phone. The phone connects through Tailscale, so it works on any network where both devices are signed in to the same tailnet."
+
+#: src/screens/welcome.tsx
+msgid "Stim Desktop with Serve to Phones On"
+msgstr "Stim Desktop with Serve to Phones On"
 
 #: src/lib/machine-report.ts
 msgid "Stim Devices"
@@ -3905,8 +3914,8 @@ msgid "Stim needs the camera to scan the pairing QR code."
 msgstr "Stim needs the camera to scan the pairing QR code."
 
 #: src/screens/mac-status.tsx
-msgid "Stim never deletes these. Remove one no device uses from Xcode or Android Studio on your Mac."
-msgstr "Stim never deletes these. Remove one no device uses from Xcode or Android Studio on your Mac."
+msgid "Stim never deletes these. Remove one no device uses from Xcode or Android Studio on the machine."
+msgstr "Stim never deletes these. Remove one no device uses from Xcode or Android Studio on the machine."
 
 #: src/screens/workspace-work.tsx
 msgid "Stim reports no git state for this workspace."
@@ -3937,8 +3946,8 @@ msgid "Stim workspace directory"
 msgstr "Stim workspace directory"
 
 #: src/screens/mac-status.tsx
-msgid "Stim-owned devices that stim status has measured. The Mac lists every simulator and emulator once stim-server serves machine details."
-msgstr "Stim-owned devices that stim status has measured. The Mac lists every simulator and emulator once stim-server serves machine details."
+msgid "Stim-owned devices that stim status has measured. The machine lists every simulator and emulator once stim-server serves machine details."
+msgstr "Stim-owned devices that stim status has measured. The machine lists every simulator and emulator once stim-server serves machine details."
 
 #: src/screens/welcome.tsx
 msgid "stim.appandflow.com/desktop"
@@ -4059,33 +4068,62 @@ msgid "The endpoint port must be between 1 and 65535."
 msgstr "The endpoint port must be between 1 and 65535."
 
 #: src/components/read-only.tsx
-msgid "the Mac"
-msgstr "the Mac"
+msgid "the machine"
+msgstr "the machine"
+
+#: src/screens/build-details.tsx
+#: src/screens/build-details.tsx
+msgid "The machine"
+msgstr "The machine"
 
 #: src/screens/open-workspace.tsx
-msgid "The Mac is not connected. Connect to it and try the link again."
-msgstr "The Mac is not connected. Connect to it and try the link again."
+msgid "The machine is not connected. Connect to it and try the link again."
+msgstr "The machine is not connected. Connect to it and try the link again."
+
+#: src/lib/settings-options.ts
+msgid "The machine keeps the last 15 minutes of device screens. Turning this off deletes them."
+msgstr "The machine keeps the last 15 minutes of device screens. Turning this off deletes them."
+
+#: src/lib/connection.ts
+msgid "The machine no longer knows this phone."
+msgstr "The machine no longer knows this phone."
+
+#: src/lib/machine-record.ts
+msgid "The machine no longer lists this phone, so there is nothing to revoke there."
+msgstr "The machine no longer lists this phone, so there is nothing to revoke there."
 
 #: src/screens/open-workspace.tsx
-msgid "The Mac no longer lists this workspace. Ask for a new link."
-msgstr "The Mac no longer lists this workspace. Ask for a new link."
+msgid "The machine no longer lists this workspace. Ask for a new link."
+msgstr "The machine no longer lists this workspace. Ask for a new link."
 
 #: src/lib/connection.ts
 #: src/lib/connection.ts
-msgid "The Mac sent an invalid pairing response."
-msgstr "The Mac sent an invalid pairing response."
+msgid "The machine sent an invalid pairing response."
+msgstr "The machine sent an invalid pairing response."
 
 #: src/lib/connection.ts
-msgid "The Mac sent an invalid RPC message. Reconnecting."
-msgstr "The Mac sent an invalid RPC message. Reconnecting."
+msgid "The machine sent an invalid RPC message. Reconnecting."
+msgstr "The machine sent an invalid RPC message. Reconnecting."
 
 #: src/lib/connection.ts
-msgid "The Mac sent an invalid RPC response."
-msgstr "The Mac sent an invalid RPC response."
+msgid "The machine sent an invalid RPC response."
+msgstr "The machine sent an invalid RPC response."
 
-#: src/screens/workspace-resources.tsx
-msgid "The Mac volume that holds workspaces has {freeSpace} free."
-msgstr "The Mac volume that holds workspaces has {freeSpace} free."
+#: src/lib/connection.ts
+msgid "The machine speaks a newer protocol. Update the app."
+msgstr "The machine speaks a newer protocol. Update the app."
+
+#: src/lib/machine-record.ts
+msgid "The machine still lists this phone until you revoke it: on {machine}, find this phone's id with stim-server devices, then run {command}."
+msgstr "The machine still lists this phone until you revoke it: on {machine}, find this phone's id with stim-server devices, then run {command}."
+
+#: src/lib/machine-record.ts
+msgid "The machine still lists this phone until you revoke it: on {machine}, run {command}."
+msgstr "The machine still lists this phone until you revoke it: on {machine}, run {command}."
+
+#: src/lib/connection.ts
+msgid "The machine's key does not match the pairing code or the key this phone paired with."
+msgstr "The machine's key does not match the pairing code or the key this phone paired with."
 
 #: src/lib/workspaces.ts
 msgid "The page failed to load."
@@ -4115,11 +4153,19 @@ msgstr "The screen stayed in {name}. The app in front may not support rotating."
 msgid "the upstream"
 msgstr "the upstream"
 
+#: src/screens/workspace-resources.tsx
+msgid "The volume that holds workspaces has {freeSpace} free."
+msgstr "The volume that holds workspaces has {freeSpace} free."
+
 #: src/screens/build-details.tsx
 #: src/screens/workspace-detail.tsx
 #: src/screens/workspace-resources.tsx
 msgid "This archive is no longer available."
 msgstr "This archive is no longer available."
+
+#: src/screens/rename.tsx
+msgid "This changes only the name this phone shows for the machine. The name on the machine and its record of this phone stay the same."
+msgstr "This changes only the name this phone shows for the machine. The name on the machine and its record of this phone stay the same."
 
 #: src/lib/device-unavailable.ts
 msgid "This device is not running."
@@ -4128,24 +4174,6 @@ msgstr "This device is not running."
 #: src/screens/pair.tsx
 msgid "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 msgstr "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
-
-#: src/screens/build-details.tsx
-#: src/screens/build-details.tsx
-#: src/screens/build-details.tsx
-msgid "This Mac"
-msgstr "This Mac"
-
-#: src/lib/connection.ts
-msgid "This Mac no longer knows this phone."
-msgstr "This Mac no longer knows this phone."
-
-#: src/lib/connection.ts
-msgid "This Mac speaks a newer protocol. Update the app."
-msgstr "This Mac speaks a newer protocol. Update the app."
-
-#: src/lib/connection.ts
-msgid "This Mac's key does not match the pairing code or the key this phone paired with."
-msgstr "This Mac's key does not match the pairing code or the key this phone paired with."
 
 #: src/screens/mac-status.tsx
 msgid "This machine is not paired."
@@ -4156,12 +4184,12 @@ msgid "This package does not include a license file."
 msgstr "This package does not include a license file."
 
 #: src/lib/connection.ts
-msgid "This pairing code expired or was already used. Show a new one on the Mac."
-msgstr "This pairing code expired or was already used. Show a new one on the Mac."
+msgid "This pairing code expired or was already used. Show a new one on the machine."
+msgstr "This pairing code expired or was already used. Show a new one on the machine."
 
 #: src/lib/pairing.ts
-msgid "This pairing code is from an older stim-server. Update stim-server on this Mac."
-msgstr "This pairing code is from an older stim-server. Update stim-server on this Mac."
+msgid "This pairing code is from an older stim-server. Update stim-server on the machine that showed it."
+msgstr "This pairing code is from an older stim-server. Update stim-server on the machine that showed it."
 
 #: src/lib/pairing.ts
 msgid "This pairing code needs a newer version of the app."
@@ -4188,8 +4216,8 @@ msgid "This phone is read-only: it cannot reload or stop workspaces, or control 
 msgstr "This phone is read-only: it cannot reload or stop workspaces, or control devices."
 
 #: src/screens/mac-list.tsx
-msgid "This phone stops connecting to it. Pair again from Stim Desktop to undo."
-msgstr "This phone stops connecting to it. Pair again from Stim Desktop to undo."
+msgid "This phone stops connecting to it. {notice}"
+msgstr "This phone stops connecting to it. {notice}"
 
 #: src/lib/pairing.ts
 #: src/lib/pairing.ts
@@ -4215,8 +4243,8 @@ msgid "This workspace is no longer in the status."
 msgstr "This workspace is no longer in the status."
 
 #: src/lib/device-unavailable.ts
-msgid "This workspace is no longer on this Mac."
-msgstr "This workspace is no longer on this Mac."
+msgid "This workspace is no longer on the machine."
+msgstr "This workspace is no longer on the machine."
 
 #: src/screens/open-workspace.tsx
 msgid "This workspace link is incomplete or unsupported."
@@ -4374,37 +4402,37 @@ msgid "Update Stim and its server to open shared workspace links."
 msgstr "Update Stim and its server to open shared workspace links."
 
 #: src/components/viewer-keyboard.tsx
-msgid "Update Stim on the Mac to use modifiers with letters and digits. The extra keys and shortcuts still work."
-msgstr "Update Stim on the Mac to use modifiers with letters and digits. The extra keys and shortcuts still work."
+msgid "Update Stim on the machine to use modifiers with letters and digits. The extra keys and shortcuts still work."
+msgstr "Update Stim on the machine to use modifiers with letters and digits. The extra keys and shortcuts still work."
 
 #: src/screens/workspace-diff.tsx
-msgid "Update Stim on the Mac to view workspace diffs."
-msgstr "Update Stim on the Mac to view workspace diffs."
+msgid "Update Stim on the machine to view workspace diffs."
+msgstr "Update Stim on the machine to view workspace diffs."
+
+#: src/lib/connection.ts
+msgid "Update stim-server on the machine to load its live status."
+msgstr "Update stim-server on the machine to load its live status."
 
 #: src/screens/mac-status.tsx
-msgid "Update stim-server on the Mac to see caches, runtimes and what Stim can free."
-msgstr "Update stim-server on the Mac to see caches, runtimes and what Stim can free."
+msgid "Update stim-server on the machine to see caches, runtimes and what Stim can free."
+msgstr "Update stim-server on the machine to see caches, runtimes and what Stim can free."
 
 #: src/lib/workspaces.ts
 #: src/lib/workspaces.ts
-msgid "Update stim-server on the Mac to see this device's screen."
-msgstr "Update stim-server on the Mac to see this device's screen."
+msgid "Update stim-server on the machine to see this device's screen."
+msgstr "Update stim-server on the machine to see this device's screen."
 
 #: src/lib/workspaces.ts
-msgid "Update stim-server on the Mac to view this app window."
-msgstr "Update stim-server on the Mac to view this app window."
+msgid "Update stim-server on the machine to view this app window."
+msgstr "Update stim-server on the machine to view this app window."
 
 #: src/lib/connection.ts
-msgid "Update stim-server on this Mac to load its live status."
-msgstr "Update stim-server on this Mac to load its live status."
-
-#: src/lib/connection.ts
-msgid "Update stim-server on this Mac. It speaks an older protocol than this app."
-msgstr "Update stim-server on this Mac. It speaks an older protocol than this app."
+msgid "Update stim-server on the machine. It speaks an older protocol than this app."
+msgstr "Update stim-server on the machine. It speaks an older protocol than this app."
 
 #: src/screens/inbox.tsx
-msgid "Update stim-server on your Macs to keep a history of their notifications."
-msgstr "Update stim-server on your Macs to keep a history of their notifications."
+msgid "Update stim-server on your machines to keep a history of their notifications."
+msgstr "Update stim-server on your machines to keep a history of their notifications."
 
 #: src/lib/archived.ts
 msgid "Update stim-server to view archived logs"
@@ -4431,8 +4459,8 @@ msgid "USB"
 msgstr "USB"
 
 #: src/lib/build-machines.ts
-msgid "use a Mac with the same CPU"
-msgstr "use a Mac with the same CPU"
+msgid "use a machine with the same CPU"
+msgstr "use a machine with the same CPU"
 
 #: src/lib/build-machines.ts
 msgid "use the same JDK there"
@@ -4493,8 +4521,8 @@ msgid "Waiting for the {buildName} Build"
 msgstr "Waiting for the {buildName} Build"
 
 #: src/screens/open-workspace.tsx
-msgid "Waiting for the paired Mac's workspace list."
-msgstr "Waiting for the paired Mac's workspace list."
+msgid "Waiting for the paired machine's workspace list."
+msgstr "Waiting for the paired machine's workspace list."
 
 #: src/lib/workspace-view.ts
 msgid "warmed {since} ago"
@@ -4547,8 +4575,8 @@ msgid "Website"
 msgstr "Website"
 
 #: src/screens/inbox.tsx
-msgid "What your Macs notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days."
-msgstr "What your Macs notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days."
+msgid "What your machines notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days."
+msgstr "What your machines notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days."
 
 #: src/screens/mac-status.tsx
 msgid "Where Builds Ran"

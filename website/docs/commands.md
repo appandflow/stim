@@ -106,7 +106,7 @@ inspected platforms in Stim's state, which also registers the project for
 `stim status`, so `stim guide` can tell when doctor is due again. A run in a
 directory that is not an app records nothing.
 
-The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote Machines > Add**.
+The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Connections > This machine uses > Add**.
 
 The `readiness-markers-missing` note appears when no JavaScript or TypeScript source under the app directory contains `[stim:readiness]`. The scan skips `node_modules`, the native project and build output directories (`ios`, `android`, `macos`, `windows`, `Pods`, `build`, `dist`, `web-build`, `coverage`) and dot-directories. It does not read shared packages outside the app directory, and it reports nothing in an app with more than 5000 source files. It points to `stim guide lifecycle readiness` and the [app-declared readiness](./dev-server-and-logs.md#recommended-app-declared-readiness) logs.
 
@@ -1116,7 +1116,8 @@ check stim logs --source agent.
 
 ```text
 stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--view-password [value]] [--slug <name>] [--device] [--slot <name>] [--json]
-stim share stop [--json]
+stim share ios|android --reuse [--expires <minutes>] [--device] [--slot <name>] [--json]
+stim share stop [--forget] [--json]
 stim share list [--json]
 ```
 
@@ -1128,9 +1129,13 @@ password is generated unless you set one with `--password` or drop it with
 `--no-password`. With `--control`, `--view-password` adds a second password that
 only watches. `--slug <name>` makes the link `/s/<name>/` instead of a random
 token and needs a password. Viewers see each other's touches live. Every share expires (60 minutes by default, at most 480) and ends with
-`stim share stop`, `stim stop` (without `--slot`), `stim worktree remove`, its
-device, or stim-server. It refuses with `STIM_SERVER_NOT_RUNNING` when it cannot start a
-stim-server and `STIM_SHARE_REFUSED` with the reason otherwise, including at once on Windows. See
+`stim share stop`, `stim stop` (the workspace, or one slot with `--slot`),
+`stim worktree remove`, or stim-server. A device that goes away, as it does when
+you rebuild or relaunch the app, only makes it wait and resume. It refuses with
+`STIM_SERVER_NOT_RUNNING` when it cannot start a stim-server and
+`STIM_SHARE_REFUSED` with the reason otherwise, including at once on Windows. `--reuse` starts the saved link and passwords of the workspace's last share of
+that target again, until it expires, and `stop --forget` also deletes the saved
+links. See
 [Share a running app](./share.md) for the requirements and the security model.
 
 ## `logs`

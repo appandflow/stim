@@ -6,7 +6,14 @@ agent-device record start [path] --remote-config <file> records the ${noun};
 record stop downloads the video to path, or ./recording-<time>.mp4, on this
 machine. The host writes it only in a private directory for the session in its
 temporary directory and deletes the files after the download, on stim stop or session teardown and
-when its daemon restarts. One recording runs per session; a second start, a host output
+when its daemon restarts.${
+  noun === 'simulator'
+    ? `
+The host stops the recorder before it parks or deletes the simulator, and a
+stim-server that restarts stops a recorder its previous run left.`
+    : ''
+}
+One recording runs per session; a second start, a host output
 path, record inside batch and a record stop from another agent-device session
 are refused. The host stops a recording after 10 minutes; a record stop within
 the next 15 minutes downloads it. A finished recording over 512 MiB is deleted
@@ -824,14 +831,22 @@ independent and selects a compatible build worker for a cache miss.
 The host's own owned devices count toward concurrency.maxDevices and its per-platform cap
 (concurrency.maxIosDevices, concurrency.maxAndroidDevices; macOS apps use concurrency.maxMacosApps).
 
-Each record in stim-server devices --json carries kind (phone for a pairing
-from stim-server pair, which Stim Desktop on another machine also uses,
-build-client or device-host-client), access (view, control, build or
-run-devices), owner (this-machine for a phone, theirs-running-here for a
-build or device-host client) and keyFingerprint, the client key one machine's
-build and device-host records share. A person on the host renames a record
+Each record in stim-server devices --json carries kind (phone or desktop for
+a pairing from stim-server pair, build-client or device-host-client), access
+(view, control, build or run-devices), owner (this-machine for a phone or
+desktop, theirs-running-here for a build or device-host client) and
+keyFingerprint, the client key one machine's build and device-host records
+share. clientApp and clientVersion are the app and version the client named in
+its last hello, shown once it has connected; a pairing is desktop when
+clientApp is Stim Desktop or Stim Dev and phone otherwise. They are display
+only and never change access. A person on the host renames a record
 with stim-server devices rename <id> <name>; the client sees the name on its
-next connection, and its access does not change.
+next connection, and its access does not change. An entry of a registry file
+that this stim-server cannot read is never dropped: every write keeps it as the
+text it had, it grants nothing, and devices --json lists it in unreadable as
+{ file, index, id? }. A file with a registry version newer than 2 is listed as
+{ file, version }, its records are not read, and writes to it are refused.
+Rename, grant and revoke refuse an unreadable id; the person edits the file.
 
 The host's person sees Hosted here rows in stim-server devices; --json adds
 hostedSessions beside devices. Rows show client, platform, device, installed
@@ -950,8 +965,10 @@ rebuilt; it never blocks reading collected records. The client waits up to
 park and worker termination paths fit within
 that wait; an in-flight handoff copy and closing Metro or view transports are
 outside those worker bounds.
-Collected records remain in the session home after parking or deletion;
-app blobs and materialized bundles are removed. Native queries read persisted
+Collected records remain in the session home after parking or deletion, for the
+client to copy, until the host removes the home an hour after the session stopped
+(a parked session's home stays while it lists the device); app blobs and
+materialized bundles are removed at stop. Native queries read persisted
 entries, overlap by five seconds and de-duplicate; info-level or later-persisted
 entries may be unavailable. JavaScript logs arrive through Metro.
 The host advertises hosted-ios-data for iOS handoff and native logs. An older
@@ -1022,7 +1039,7 @@ daemon startup or grant issuance on client support. The client checks the host's
 hosted-ios-agent feature before using a grant.
 
 Stim Desktop and the phone app view and control the simulator through this
-machine's stim-server relay, with an "on <machine>" label. Turn on Serve to phones
+machine's stim-server relay, with an "on <machine>" label. Turn on Allow connections
 in Desktop; pair the phone with this machine, not the hosting Mac. frames.subscribe
 and control.begin address workspace, platform ios and slot, including named
 slots. The relay shares one authenticated host connection with hosted macOS
@@ -1411,6 +1428,13 @@ result as proof instead of requiring an unrelated screenshot.`,
   containers, the pasteboard, photos, Safari data and Simulator settings are
   not cleared; \`gc --cache parked --delete\` erases a parked simulator when a
   clean system image is needed.
+  Every install \`stim ios\` makes on a local owned iOS simulator, an adopted one included, also allows
+  "Paste from Other Apps" for the installed bundle id alone, so a Command-V from
+  Desktop, the phone app or a share lands in that app without an "Allow Paste"
+  prompt. Stim writes that app's \`kTCCServicePasteboard\` row (Allow) in the
+  simulator's own TCC.db after the install and before the launch, once it has
+  checked the simulator is still Stim-owned. No setting turns it off. \`stim ios\` prints a warning for a failure and the install stands. Other apps on the simulator, Safari
+  included, keep iOS's own prompt.
 
   A parked simulator keeps its apps and data, so it can hold gigabytes. It
   uses the Mac's disk, not a fixed partition, so there is no free-space check
@@ -2241,10 +2265,12 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   $STIM_HOME/build-waits, boots in $STIM_HOME/device-waits. A waiter takes a
   freed slot only when every run ahead of it has one, and the stim-daemon
   wakes the oldest waiter as soon as a build or boot finishes; without a
-  daemon each waiter polls (1s for builds, 2s for boots). Runs behind the
-  head of the boot queue reuse the last device listing while it is under 10s
-  old instead of listing again, and a boot starts only on a listing taken
-  under the admission lock. Every 10s a waiting
+  daemon each waiter polls (1s for builds, 2s for boots). A waiter keeps its
+  position when the daemon hands over to one from an installed upgrade: the
+  order lives in those directories, and it reconnects on its next poll. Runs
+  behind the head of the boot queue reuse the last device listing while it
+  is under 10s old instead of listing again, and a boot starts only on a
+  listing taken under the admission lock. Every 10s a waiting
   run prints its queue position and what it waits for:
 
     build       waiting for a build slot: queue position 2 of 3, all 1 in use, 40s elapsed -- stim guide lifecycle concurrency

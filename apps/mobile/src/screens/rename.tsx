@@ -1,4 +1,5 @@
 import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { TextInput } from 'react-native';
@@ -6,6 +7,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Button } from '@/components/button';
 import { ScrollView } from '@/components/lists';
+import { Text } from '@/components/text';
 import { useMacs } from '@/hooks/machines';
 import { listMacs, renameMac } from '@/lib/macs';
 
@@ -35,11 +37,17 @@ export function Rename({ id }: { id: string }) {
         value={name}
         onChangeText={setName}
         autoFocus
-        accessibilityLabel={t`Machine name`}
+        accessibilityLabel={t`Name on this phone`}
         onSubmitEditing={save}
         returnKeyType="done"
         style={styles.input}
       />
+      <Text variant="footnote" tone="secondary">
+        <Trans>
+          This changes only the name this phone shows for the machine. The name on the machine and its record of this
+          phone stay the same.
+        </Trans>
+      </Text>
       <Button title={t`Save`} onPress={save} />
     </ScrollView>
   );

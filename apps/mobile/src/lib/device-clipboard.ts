@@ -27,22 +27,23 @@ export function utf8Bytes(text: string): number {
 
 export const CLIPBOARD_LIMIT_KIB = MAX_CLIPBOARD_BYTES / 1024;
 
-export type PasteOutcome = 'pasted' | 'empty' | 'too-large';
+export type PasteOutcome = 'typed' | 'pasted' | 'empty' | 'too-large';
 export type CopyOutcome = 'copied' | 'empty';
 
 /**
  * Reads the phone clipboard and sets the device clipboard with `paste`. Nothing is sent for an empty clipboard or
- * for text over the 8 KiB the server takes.
+ * for text over the 8 KiB the server takes. `typed` means an iOS simulator typed the text into the focused field, so
+ * iOS showed no paste prompt; any other outcome of a paste on iOS can leave a paste suggestion to tap.
  */
 export async function pasteFromPhone(io: {
   read: () => Promise<string>;
-  set: (text: string, paste: boolean) => Promise<void>;
+  set: (text: string, paste: boolean) => Promise<{ typed?: true } | void>;
 }): Promise<PasteOutcome> {
   const text = await io.read();
   if (text === '') return 'empty';
   if (utf8Bytes(text) > MAX_CLIPBOARD_BYTES) return 'too-large';
-  await io.set(text, true);
-  return 'pasted';
+  const result = await io.set(text, true);
+  return result?.typed ? 'typed' : 'pasted';
 }
 
 /** Reads the device clipboard and writes it to the phone clipboard; an empty device clipboard leaves the phone's alone. */

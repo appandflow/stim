@@ -172,7 +172,7 @@ export function checkOffloadCandidate(
       'note',
       'Builds could run on another machine',
       `Cold builds averaged ~${Math.round(average / 60_000)} min over ${cold.length} builds this week.`,
-      'In Stim Desktop, open Settings > Remote Machines > Add.',
+      'In Stim Desktop, open Settings > Connections > This machine uses > Add.',
     ),
   };
 }

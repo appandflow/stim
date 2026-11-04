@@ -89,6 +89,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
  * `desktop-machine-history` adds machine-wide build and cleanup history to those reports.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
+ * `desktop-report-remote` serves `{ "report": "remote" }`, the remote machines as `stim remote list --json` prints them.
  * `desktop-report-invalidate-target` accepts a report target in `desktop.reports.invalidate`, which then invalidates only it.
  * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
  * `desktop-settings-schema` supplies this server's registry-derived settings schema to local Desktop clients.
@@ -101,6 +102,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
  * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
+ * `share-reuse` is `share.start`'s `token` and `expiresAt`, which start a share under a URL token a stopped share had.
+ * `share-waiting` is the rows' `state` (a share waits for its device instead of ending) and `share.stop`'s `slot`.
  * `share-slug` is `share.start`'s `slug` parameter and the rows' `slug`.
  * `hosted-presence` is `device-host.presence.subscribe`: the `presence` events of a hosted session, which carry what the
  * agent drives on it. A host lists it only with `presence`.
@@ -154,6 +157,7 @@ export const FEATURES = [
   'desktop-reports',
   'desktop-machine-history',
   'desktop-report-platform',
+  'desktop-report-remote',
   'desktop-report-invalidate-target',
   'desktop-settings',
   'desktop-settings-schema',
@@ -176,8 +180,10 @@ export const FEATURES = [
   'presence',
   'device-clipboard',
   'share-view-password',
+  'share-waiting',
   'hosted-presence',
   'share-slug',
+  'share-reuse',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -529,7 +535,7 @@ export interface DesktopPlanRefusal {
 
 export type DesktopReportTarget =
   | { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' }
-  | { report: 'gc' | 'gc-history' | 'builds' };
+  | { report: 'gc' | 'gc-history' | 'builds' | 'remote' };
 
 export interface DesktopReportSnapshot {
   pending: boolean;
@@ -1030,11 +1036,22 @@ export const MAX_CLIPBOARD_READ_BYTES = 65536;
  * (Command-V on an iOS simulator, a paste key event on Android). A web page, a native macOS app and a physical iPhone
  * refuse it. It takes ten inputs of a connection's input budget, not the characters of `input.text`. Stim never logs
  * or records `text`.
+ *
+ * On an iOS simulator, `paste` text made only of printable ASCII, line breaks and tabs is typed into the focused
+ * field as `input.text` pieces instead of pasted, because iOS asks before an app reads text another process put on
+ * the clipboard, and a slimmed simulator cannot ask. The typed text takes the field's own typing rules (smart
+ * quotes and dashes), the request answers once the first piece is sent, and a second typed paste is refused with
+ * `device-busy` until the first has been typed. Other text is pasted with Command-V.
  */
 export interface InputClipboardSetParams {
   session: string;
   text: string;
   paste?: boolean;
+}
+
+/** `typed` is true when `paste` typed the text instead of pasting it; absent otherwise, so no paste prompt was avoided. */
+export interface InputClipboardSetResult {
+  typed?: true;
 }
 
 /** Reads the device clipboard's text; a clipboard over {@link MAX_CLIPBOARD_READ_BYTES} bytes of UTF-8 is refused, not cut. */
@@ -1710,7 +1727,10 @@ export interface HostedSessionRow {
   workspace: string;
 }
 
-/** A live web share, as `share.list` lists it; never its URL token or password. */
+/**
+ * A web share, as `share.list` lists it; never its URL token or password. It is `live` while its device streams and
+ * `waiting` while the device is away; a server before `share-waiting` sends no `state`, which means `live`.
+ */
 export interface WebShareRow {
   id: string;
   workspace: string;
@@ -1720,6 +1740,7 @@ export interface WebShareRow {
   control: boolean;
   expiresAt: string;
   viewers: number;
+  state?: 'live' | 'waiting';
   /** How viewers get in: a generated password, one the person set, or the URL alone. */
   auth: 'generated' | 'set' | 'none';
   /** How a separate view-only password was made; null when the share has none. */
@@ -1735,6 +1756,10 @@ export interface WebShareStartParams {
   physical?: boolean;
   control?: boolean;
   expiresMinutes?: number;
+  /** The URL token to register instead of a generated one, as `stim share --reuse` restarts a stopped share. */
+  token?: string;
+  /** The share's exact expiry (an ISO time within the next 480 minutes) instead of `expiresMinutes`. */
+  expiresAt?: string;
   /** 8 to 128 characters; never sent back. Without it, and without `passwordless`, the server generates one. */
   password?: string;
   passwordless?: boolean;
@@ -1749,7 +1774,10 @@ export interface Methods {
     params: WebShareStartParams;
     result: WebShareRow & { url: string; password?: string; viewPassword?: string; warning?: string };
   };
-  'share.stop': { params: { workspace: string; id?: string }; result: { stopped: WebShareRow[] } };
+  'share.stop': {
+    params: { workspace: string; id?: string; slot?: string };
+    result: { stopped: WebShareRow[] };
+  };
   'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
   'presence.publish': { params: PresencePublishParams; result: Record<string, never> };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };
@@ -1909,7 +1937,7 @@ export interface Methods {
   'input.scroll': { params: InputScrollParams; result: Record<string, never> };
   'input.key': { params: InputKeyParams; result: Record<string, never> };
   'input.window': { params: InputWindowParams; result: Record<string, never> };
-  'input.clipboard.set': { params: InputClipboardSetParams; result: Record<string, never> };
+  'input.clipboard.set': { params: InputClipboardSetParams; result: InputClipboardSetResult };
   'input.clipboard.get': { params: InputClipboardGetParams; result: InputClipboardGetResult };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };

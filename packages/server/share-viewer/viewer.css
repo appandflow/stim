@@ -44,6 +44,9 @@ body {
   height: 100%;
 }
 html:has(body.viewer) {
+  background: var(--card);
+}
+html:has(body.viewer) {
   overflow: hidden;
   overscroll-behavior: none;
 }
@@ -52,6 +55,14 @@ body.viewer {
   height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+body.viewer input,
+body.viewer textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 body {
   margin: 0;
@@ -105,6 +116,8 @@ footer .credit a:hover {
   text-decoration: underline;
 }
 .viewer footer {
+  position: sticky;
+  bottom: 0;
   flex: none;
   display: flex;
   flex-wrap: wrap;
@@ -117,7 +130,9 @@ footer .credit a:hover {
 }
 
 .topbar {
-  position: relative;
+  position: sticky;
+  top: 0;
+  z-index: 5;
   flex: none;
   display: flex;
   align-items: center;
@@ -284,6 +299,7 @@ body[data-control='true'] .aperture {
   height: 100%;
   background: var(--screen);
   touch-action: none;
+  -webkit-user-select: none;
   user-select: none;
   outline: none;
 }
@@ -312,6 +328,28 @@ body[data-control='true'] #screen {
 }
 .note:empty {
   display: none;
+}
+.away {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0 12%;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 500;
+  text-align: center;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+body[data-away='true'] .away {
+  display: flex;
+}
+body[data-away='true'] #screen {
+  filter: brightness(0.4);
+  cursor: default;
 }
 
 .toolbar {
@@ -364,6 +402,39 @@ body[data-control='true'] #screen {
 .toolbar svg {
   width: 17px;
   height: 17px;
+}
+@media (min-width: 340px) and (max-width: 600px) and (min-aspect-ratio: 19/40) and (max-aspect-ratio: 1/1) {
+  body.viewer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+  .viewer .topbar,
+  .viewer footer {
+    grid-column: 1 / -1;
+  }
+  .viewer .stage {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .viewer .stage:has(+ .toolbar .group:not([hidden])) {
+    padding-right: 8px;
+  }
+  .viewer .toolbar {
+    grid-column: 2;
+    grid-row: 2;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-self: center;
+    padding: 0 max(8px, env(safe-area-inset-right)) 0 0;
+  }
+  .toolbar .group {
+    flex-direction: column;
+  }
+  .toolbar button {
+    width: 44px;
+    height: 44px;
+  }
 }
 svg.symbol {
   fill: none;
@@ -603,7 +674,9 @@ button.primary.small {
 .options[hidden],
 .options-panel[hidden],
 .chip[hidden],
-.options-help[hidden] {
+.options-help[hidden],
+.options-panel .link[hidden],
+.copy-fallback[hidden] {
   display: none;
 }
 .options-panel {
@@ -667,6 +740,29 @@ input.switch:checked::after {
   display: block;
   margin-top: 10px;
   font-size: 12px;
+}
+.copy-fallback {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  resize: none;
+}
+@media (pointer: coarse) {
+  .options-panel .link {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    margin-top: 0;
+    font-size: 14px;
+  }
 }
 .chip {
   position: absolute;

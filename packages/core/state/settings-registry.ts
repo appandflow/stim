@@ -1046,6 +1046,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       "Whether a machine approved for builds or device hosting here may update this machine's stim-server service to that machine's own stim-server build; releases from npm need no setting",
   },
   {
+    key: 'server.keepAwake',
+    type: { kind: 'boolean' },
+    scopes: MACHINE,
+    default: false,
+    description:
+      'Keep this Mac from idle system sleep while it runs on AC power and stim-server accepts connections from other machines on its tailnet or local network (caffeinate -s: the display may still sleep). A --loopback-only server holds nothing, and the setting has no effect on Linux and Windows',
+  },
+  {
     key: 'share.exposure',
     type: { kind: 'choice', choices: SHARE_EXPOSURES },
     scopes: MACHINE,

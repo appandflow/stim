@@ -94,8 +94,10 @@ jobs:
           path: ${{ runner.temp }}/build-machines-screenshots
           if-no-files-found: warn
       - name: Compile the Release configuration
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: swift build -c release -Xswiftc -warnings-as-errors
       - name: Compile the stim-server frames helper
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           sed 's|^|Sources/|' ../../packages/server/helper/desktop-sources.txt \
             | xargs xcrun swiftc -O -swift-version 5 -module-name StimFrames -o "$RUNNER_TEMP/stim-frames" \
@@ -104,6 +106,7 @@ jobs:
               ../../packages/server/helper/FrameArtwork.swift ../../packages/server/helper/DuoFrameRenderer.swift \
               ../../packages/server/helper/DuoHingeMonitor.swift ../../packages/server/helper/DuoCaptureSource.swift
       - name: Start the bundled stim-server under the hardened runtime
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           runtime="$RUNNER_TEMP/stim-server"
           codesign --force --options runtime --sign - --entitlements Support/Node/node.entitlements "$runtime/bin/node"

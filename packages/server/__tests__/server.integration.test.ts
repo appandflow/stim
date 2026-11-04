@@ -83,7 +83,9 @@ import {
   readDeviceHostClients,
   readDevices,
   revokeDevice,
+  serverDir,
   serverIdentity,
+  spendSecret,
   storeSetupSecret,
 } from '../src/registry.ts';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
@@ -100,6 +102,7 @@ import {
 } from './noise-client.ts';
 import { watchTailscale, type TailscaleState } from '@stim-cli/transport-tailscale';
 import { localTransport } from '@stim-cli/transport-local';
+import { FakeHolder } from './keep-awake-holder.ts';
 import type { Transport } from '@stim-cli/transport';
 import { createRequestLog } from '../src/request-log.ts';
 import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
@@ -452,6 +455,7 @@ async function start(
   overrides: {
     host?: ServerOptions['host'];
     loopbackOnly?: boolean;
+    keepAwake?: ServerOptions['keepAwake'];
     hostsDevices?: boolean;
     exit?: boolean;
     whoisDelayMs?: number;
@@ -541,6 +545,7 @@ async function start(
     foldHelper: overrides.foldHelper,
     record: overrides.record ?? false,
     loopbackOnly: overrides.loopbackOnly,
+    keepAwake: overrides.keepAwake,
     recordLimits: overrides.recordLimits,
     controlLimits: overrides.controlLimits,
     history: overrides.history ?? false,
@@ -1051,10 +1056,31 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(await local.request('share.stop', { workspace: root, id: '' })).toMatchObject({
       error: { code: 'bad-request' },
     });
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+    for (const params of [
+      { token: 'short' },
+      { token: TOKEN, expiresAt: '2000-01-01T00:00:00.000Z' },
+      { token: TOKEN, expiresAt: new Date(Date.now() + 3600_000).toISOString(), expiresMinutes: 30 },
+      { token: TOKEN, expiresAt: new Date(Date.now() + 10 * 3600_000).toISOString() },
+    ]) {
+      expect(await local.request('share.start', { workspace: root, platform: 'ios', ...params })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+    }
+    expect(await local.request('share.stop', { workspace: root, slot: 'beta' })).toEqual(
+      expect.objectContaining({ result: { stopped: [] } }),
+    );
+    for (const params of [
+      { workspace: root, slot: 'not a slot' },
+      { workspace: root, id: 'w1', slot: 'beta' },
+    ]) {
+      expect(await local.request('share.stop', params)).toMatchObject({ error: { code: 'bad-request' } });
+    }
     for (const [params, message] of [
       [{ slug: 'Pokedex' }, 'params.slug must be'],
       [{ slug: 'assets' }, 'params.slug cannot be assets'],
       [{ slug: 'pokedex', passwordless: true }, 'needs a password'],
+      [{ slug: 'pokedex', token: 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ' }, 'a slug or a token'],
     ] as const) {
       expect(await local.request('share.start', { workspace: root, platform: 'ios', ...params })).toMatchObject({
         error: { code: 'bad-request', message: expect.stringContaining(message) },
@@ -1277,6 +1303,40 @@ describe('pairing', () => {
     });
   });
 
+  it('records the app and version a hello names without changing what the device may do', async () => {
+    const port = await start();
+    const keyPair = generateNoiseKeyPair();
+    const { token } = createPairingToken();
+    const first = await connect(port, undefined, { secret: token, keyPair });
+    const paired = await first.request('hello', { client: { name: 'Stim Desktop', version: '1.4.0' } });
+    expect(paired).toMatchObject({ result: { capabilities: ['read'] } });
+    first.socket.close();
+    expect(readDevices()).toEqual([
+      expect.objectContaining({ clientApp: 'Stim Desktop', clientVersion: '1.4.0', capabilities: ['read'] }),
+    ]);
+
+    const returningHello = await (await connect(port, undefined, { keyPair })).request('hello', { client: CLIENT });
+    expect(returningHello).toMatchObject({ result: { capabilities: ['read'] } });
+    expect(readDevices()[0]).toMatchObject({ clientApp: 'Stim Desktop', clientVersion: '1.4.0' });
+  });
+
+  it('fills in the app of a record paired before it was recorded on its next connection', async () => {
+    const port = await start();
+    const keyPair = generateNoiseKeyPair();
+    const { token } = createPairingToken();
+    const spent = spendSecret(
+      secretValues(Buffer.from(token, 'base64url')).lookup.toString('hex'),
+      keyPair.publicKey.toString('base64url'),
+      'Old phone',
+      'test',
+    );
+    assert(spent?.device);
+    expect(spent.device).not.toHaveProperty('clientApp');
+    const client = await connect(port, undefined, { keyPair });
+    await client.request('hello', { client: { name: 'stim-mobile', version: '0.9.0' } });
+    expect(readDevices()).toEqual([{ ...spent.device, clientApp: 'stim-mobile', clientVersion: '0.9.0' }]);
+  });
+
   it('records the key that spends a pairing token, with the token capabilities, and refuses a second use', async () => {
     const port = await start();
     const keyPair = generateNoiseKeyPair();
@@ -1349,8 +1409,10 @@ describe('pairing', () => {
           'presence',
           'device-clipboard',
           'share-view-password',
+          'share-waiting',
           'hosted-presence',
           'share-slug',
+          'share-reuse',
         ],
         actions: [],
         device: { name: 'Test phone' },
@@ -1360,6 +1422,16 @@ describe('pairing', () => {
     const second = await connect(port, undefined, { secret: token });
     expect(await second.closedWith).toEqual({ code: 4401, reason: 'unknown-secret' });
     expect(readDevices()).toHaveLength(1);
+  });
+
+  it('logs why it could not record a new client when a newer Stim wrote the registry', async () => {
+    const port = await start();
+    const { token } = createPairingToken();
+    writeFileSync(join(serverDir(), 'devices.json'), JSON.stringify({ version: 3, devices: [] }));
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const client = await connect(port, undefined, { secret: token });
+    expect(await client.closedWith).toEqual({ code: 4401, reason: 'home-unavailable' });
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('registry version 3, which a newer Stim wrote'));
   });
 
   it('refuses an expired pairing token', async () => {
@@ -1553,6 +1625,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-machine-history']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-remote']) } });
     expect(hello).toMatchObject({
       result: { features: expect.not.arrayContaining(['desktop-report-invalidate-target']) },
     });
@@ -1573,6 +1646,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
           'desktop-reports',
           'desktop-machine-history',
           'desktop-report-platform',
+          'desktop-report-remote',
           'desktop-report-invalidate-target',
         ]),
       },
@@ -1613,6 +1687,9 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       expect(await client.request('desktop.reports.get', { report })).toMatchObject({
         result: { pending: false, value: { records: [record] } },
       });
+    expect(await client.request('desktop.reports.get', { report: 'remote' })).toMatchObject({
+      result: { pending: false, value: { machines: [], findings: [] } },
+    });
     const subscribed = await client.request('desktop.reports.subscribe', { report: 'gc' });
     expect(subscribed).toHaveProperty('result.subscription');
     expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: first.result });
@@ -4159,6 +4236,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       busy: { builds: 0, hostedSessions: 0, hostedWork: 0, resumes: true },
       tailscale: { state: 'not-running', backendState: 'Stopped' },
       nativeViewerOpened: false,
+      keepAwake: { setting: false, held: false, reason: 'off' },
     });
     const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
     expect(forwarded.status).toBe(200);
@@ -4238,6 +4316,96 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       { host: '127.0.0.1', port },
       { host: '::1', port },
     ]);
+  });
+
+  describe('keep awake', () => {
+    function holders() {
+      const spawned: FakeHolder[] = [];
+      const spawnHolder = () => {
+        const holder = new FakeHolder(7000 + spawned.length);
+        spawned.push(holder);
+        return holder;
+      };
+      return { spawned, spawnHolder };
+    }
+    function remoteTransport(initial: string[]) {
+      const state = { addresses: initial, listeners: new Set<() => void>() };
+      const transport: Transport = {
+        id: 'static',
+        traits: { privateNetwork: true, tls: 'none', peerIdentity: false },
+        bindAddresses: () => state.addresses,
+        watch: (listener) => {
+          state.listeners.add(listener);
+          return () => state.listeners.delete(listener);
+        },
+      };
+      const change = (addresses: string[]) => {
+        state.addresses = addresses;
+        for (const listener of state.listeners) listener();
+      };
+      return { transport, change };
+    }
+    const eventually = async (done: () => boolean) => {
+      for (let attempt = 0; attempt < 200 && !done(); attempt++) await new Promise((r) => setTimeout(r, 10));
+      expect(done()).toBe(true);
+    };
+    const keepAwakeHealth = async (port: number) => {
+      const body = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
+      return isJsonObject(body) ? body.keepAwake : undefined;
+    };
+
+    it('holds the assertion while the setting is on and a listener for other machines is up, and releases it with either', async () => {
+      const { spawned, spawnHolder } = holders();
+      const remote = remoteTransport(['::1']);
+      const setting = { on: true, listeners: new Set<() => void>() };
+      const port = await start({
+        transports: [remote.transport],
+        keepAwake: {
+          setting: () => setting.on,
+          onChange: (listener) => {
+            setting.listeners.add(listener);
+            return () => setting.listeners.delete(listener);
+          },
+          platform: 'darwin',
+          spawnHolder,
+        },
+      });
+      expect(spawned).toHaveLength(1);
+      expect(await keepAwakeHealth(port)).toEqual({ setting: true, held: true, pid: 7000 });
+
+      remote.change([]);
+      await eventually(() => spawned[0]?.stopped === true);
+      expect(await keepAwakeHealth(port)).toEqual({ setting: true, held: false, reason: 'not-listening' });
+
+      remote.change(['::1']);
+      await eventually(() => spawned.length === 2);
+      setting.on = false;
+      for (const listener of setting.listeners) listener();
+      expect(spawned[1]?.stopped).toBe(true);
+      expect(await keepAwakeHealth(port)).toEqual({ setting: false, held: false, reason: 'off' });
+    });
+
+    it('releases the assertion when the server closes', async () => {
+      const { spawned, spawnHolder } = holders();
+      await start({
+        transports: [remoteTransport(['::1']).transport],
+        keepAwake: { setting: () => true, platform: 'darwin', spawnHolder },
+      });
+      expect(spawned).toHaveLength(1);
+      await server?.close();
+      expect(spawned[0]?.stopped).toBe(true);
+    });
+
+    it('never holds it for a loopback-only server, whatever the transports and setting say', async () => {
+      const { spawned, spawnHolder } = holders();
+      const port = await start({
+        loopbackOnly: true,
+        transports: [remoteTransport(['::1']).transport],
+        keepAwake: { setting: () => true, platform: 'darwin', spawnHolder },
+      });
+      expect(spawned).toEqual([]);
+      expect(await keepAwakeHealth(port)).toEqual({ setting: true, held: false, reason: 'loopback-only' });
+    });
   });
 
   it('reports Tailscale but never listens on its addresses when loopback only', async () => {

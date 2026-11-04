@@ -1,7 +1,7 @@
 import StimKit
 import SwiftUI
 
-/// One remote machine's page in Settings > Remote Machines: why this Mac can or cannot use it, every problem and note
+/// One remote machine's page in Settings > Connections: why this machine can or cannot use it, every problem and note
 /// by platform with the command that fixes it, its capacity, versions and approvals, and the switches that decide
 /// which work goes to it.
 struct MachineDetailPage<Toggles: View>: View {
@@ -70,7 +70,7 @@ struct MachineDetailPage<Toggles: View>: View {
   private var header: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
       Button(action: back) {
-        Label("Remote Machines", systemImage: "chevron.left").font(.stim(.callout))
+        Label("Connections", systemImage: "chevron.left").font(.stim(.callout))
       }
       .buttonStyle(.plain)
       .foregroundStyle(Palette.accent)

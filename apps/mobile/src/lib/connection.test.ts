@@ -386,14 +386,14 @@ describe('StimConnection', () => {
     expect(states.at(-1)).toMatchObject({ kind: 'open', actions: null, features: ['physical-android'] });
   });
 
-  it('reconnects at once on request, so a grant made on the Mac shows without waiting for a drop', async () => {
+  it('reconnects at once on request, so a grant made on the machine shows without waiting for a drop', async () => {
     const { connection, sockets, timers, states } = setup();
     connection.subscribe('workspace.subscribe', { workspace: '/w' }, () => {});
     connection.start();
     sockets[0].onopen?.('k');
     sockets[0].reply('hello', { ...hello, actions: [], device: { id: '1a2b3c4d', name: 'Phone' } });
     await flush();
-    expect(states.at(-1)).toMatchObject({ kind: 'open', actions: [], deviceId: '1a2b3c4d' });
+    expect(states.at(-1)).toMatchObject({ kind: 'open', actions: [], deviceId: '1a2b3c4d', deviceName: 'Phone' });
     expect(pairingScope(states.at(-1)!)).toBe('read');
 
     connection.reconnect();
@@ -405,7 +405,12 @@ describe('StimConnection', () => {
     sockets[1].onopen?.('k');
     sockets[1].reply('hello', { ...hello, capabilities: ['read', 'control'], actions: ['reload', 'stop'] });
     await flush();
-    expect(states.at(-1)).toMatchObject({ kind: 'open', actions: ['reload', 'stop'], deviceId: null });
+    expect(states.at(-1)).toMatchObject({
+      kind: 'open',
+      actions: ['reload', 'stop'],
+      deviceId: null,
+      deviceName: null,
+    });
     expect(pairingScope(states.at(-1)!)).toBe('control');
     expect(sockets[1].sent.map((m) => m.method)).toEqual(['hello', 'workspace.subscribe']);
   });
@@ -505,7 +510,7 @@ describe('pair', () => {
     const old = new FakeSocket();
     const refused = pair('wss://mac', { pairingToken: 'p' }, 'iPhone', { name: 'test', version: '0' }, () => old);
     old.drop({ code: 4400, reason: 'unexpected binary frame', serverAnswered: false, handshakeComplete: false });
-    await expect(refused).rejects.toThrow('Update stim-server on this Mac.');
+    await expect(refused).rejects.toThrow('Update stim-server on the machine.');
     const spent = new FakeSocket();
     const expired = pair('wss://mac', { pairingToken: 'p' }, 'iPhone', { name: 'test', version: '0' }, () => spent);
     spent.drop({ code: 4401, reason: 'unknown-secret', serverAnswered: true, handshakeComplete: false });

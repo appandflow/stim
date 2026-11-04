@@ -296,6 +296,32 @@ describe.skipIf(process.platform === 'win32')(
         expect(await exitsAfterTwoQuietTicks(mode)).toBe(true);
       });
 
+      test('a finished worktree waiting for its grace period keeps it until a maintenance pass clears the record, and the exit tick starts no pass', async () => {
+        vi.stubEnv('STIM_DAEMON', 'on');
+        awaitRemoval();
+        let passes = 0;
+        const maintenance = vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(async () => {
+          passes += 1;
+          if (passes !== 2) return;
+          const state = readMaintenanceState();
+          if (state) writeFileSync(maintenanceStateFile(), JSON.stringify({ ...state, nextRemoval: undefined }));
+        });
+        const started = Date.now();
+        let exited = false;
+        const daemon = (async () => {
+          await runDaemon({ mode: 'on' });
+          exited = true;
+        })();
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+        expect(ticks()[0]?.msg).toContain('the finished worktree /w/merged becomes removable at');
+        await vi.advanceTimersByTimeAsync(3 * 5 * MINUTE_MS);
+        await vi.waitFor(() => expect(exited).toBe(true));
+        await daemon;
+        expect(ticks().map(({ at }) => Math.round((at - started) / MINUTE_MS))).toEqual([1, 6, 11, 16]);
+        expect(maintenance).toHaveBeenCalledTimes(3);
+      });
+
       test('a finished worktree the last worktree check kept for its grace period does', async () => {
         vi.stubEnv('STIM_DAEMON', 'on');
         awaitRemoval();
@@ -344,7 +370,15 @@ describe.skipIf(process.platform === 'win32')(
       await daemon;
     });
 
-    test('the daemon_tick record carries how long each phase of the tick took', async () => {
+    function records(event: string): Record<string, unknown>[] {
+      return readFileSync(daemonNdjsonFile(), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+        .filter((entry) => entry.event === event);
+    }
+
+    test('the daemon_tick record carries how long each phase of the tick took, and the daemon_maintenance record the slow passes', async () => {
       saveConfig({ version: 2, projects: {}, repos: {} });
       freeMb = 10 * 1024;
       const measured = await measure.measureTick(null, Date.now());
@@ -357,28 +391,52 @@ describe.skipIf(process.platform === 'win32')(
       vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(() => after(5000, undefined));
       vi.spyOn(reclaim, 'reclaimForBootWaiters').mockImplementation(() => after(6000, null));
       const daemon = runDaemon({ mode: 'on' });
-      await vi.advanceTimersByTimeAsync(MINUTE_MS + 28_000);
-      await vi.waitFor(() => expect(ticks()).toHaveLength(1));
-      const record = readFileSync(daemonNdjsonFile(), 'utf8')
-        .trim()
-        .split('\n')
-        .map((line) => JSON.parse(line))
-        .find((entry) => entry.event === 'daemon_tick');
-      expect(record).toMatchObject({
-        tickMs: 28_000,
-        phases: {
-          measureMs: 7000,
-          idleMs: 1000,
-          dormantMs: 2000,
-          dependenciesMs: 3000,
-          ladderMs: 4000,
-          maintenanceMs: 5000,
-          reclaimMs: 6000,
-        },
+      await vi.advanceTimersByTimeAsync(MINUTE_MS + 29_000);
+      await vi.waitFor(() => expect(records('daemon_maintenance')).toHaveLength(1));
+      expect(records('daemon_tick')[0]).toMatchObject({
+        tickMs: 20_000,
+        phases: { measureMs: 7000, idleMs: 1000, dormantMs: 2000, ladderMs: 4000, reclaimMs: 6000 },
         eventLoopDelay: { maxMs: expect.any(Number), p99Ms: expect.any(Number) },
+      });
+      expect(records('daemon_maintenance')[0]).toMatchObject({
+        tookMs: 8000,
+        phases: { dependenciesMs: 3000, maintenanceMs: 5000 },
       });
       await vi.advanceTimersByTimeAsync(2 * 5 * MINUTE_MS);
       await daemon;
+    });
+
+    test('a slow maintenance pass runs beside the ticks: they keep their cadence and serve boot waiters, no second pass starts before it ends, and the daemon outlives it', async () => {
+      saveConfig({ version: 2, projects: {}, repos: {} });
+      const after = <T>(ms: number, value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
+      const maintenance = vi
+        .spyOn(maintenanceRun, 'runMaintenance')
+        .mockImplementationOnce(() => after(12 * MINUTE_MS, undefined));
+      const reclaims = vi.spyOn(reclaim, 'reclaimForBootWaiters').mockResolvedValue(null);
+      const started = Date.now();
+      let exited = false;
+      const daemon = (async () => {
+        await runDaemon({ mode: 'on' });
+        exited = true;
+      })();
+
+      await vi.advanceTimersByTimeAsync(MINUTE_MS);
+      await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+      await vi.advanceTimersByTimeAsync(2 * 5 * MINUTE_MS);
+      await vi.waitFor(() => expect(ticks()).toHaveLength(3));
+      expect(reclaims).toHaveBeenCalledTimes(3);
+      expect(maintenance).toHaveBeenCalledTimes(1);
+      expect(records('daemon_maintenance')).toEqual([]);
+      expect(ticks()[2]?.msg).toContain('nothing running; automatic maintenance runs');
+
+      await vi.advanceTimersByTimeAsync(2 * MINUTE_MS);
+      await vi.waitFor(() => expect(records('daemon_maintenance')).toHaveLength(1));
+      expect(exited).toBe(false);
+      await vi.advanceTimersByTimeAsync(3 * 5 * MINUTE_MS);
+      await vi.waitFor(() => expect(exited).toBe(true));
+      await daemon;
+      expect(maintenance).toHaveBeenCalledTimes(2);
+      expect(ticks().map(({ at }) => Math.round((at - started) / MINUTE_MS))).toEqual([1, 6, 11, 16, 21]);
     });
   },
 );

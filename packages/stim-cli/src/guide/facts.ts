@@ -602,7 +602,7 @@ leased until <time>" for each one.`,
                   (deviceHosts carries it too); the codes are
                   tailscale-stopped, tailscale-logged-out, tailscale-unavailable
                   (this machine's Tailscale), peer-not-found, peer-ambiguous,
-                  peer-wrong-tailnet (no peer is named so, and this Mac is
+                  peer-wrong-tailnet (no peer is named so, and this machine is
                   signed in to another tailnet than the one it was on when it
                   asked the machine for access; both are named; tailnet is
                   { name, suffix?, id? }),
@@ -655,7 +655,7 @@ leased until <time>" for each one.`,
                   memory-culprit is a costs-time finding naming a process
                   with an abnormally large footprint and, when it is safe to
                   restart, the command
-                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Remote Machines > Add
+                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Connections > This machine uses > Add
                   readiness-markers-missing is a note when no JS or TS source under the app directory contains [stim:readiness]; the scan skips node_modules, native and build output directories and dot-directories, and reports nothing past 5000 source files; see stim guide lifecycle readiness
 
 ON FAILURE

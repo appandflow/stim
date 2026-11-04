@@ -36,6 +36,8 @@ final class BuildMachinesModel {
   private(set) var stats = Fetched<MachineStats>()
   private(set) var updates: [String: MachineUpdatePhase] = [:]
   private(set) var localStim: LocalStim?
+  /// `stim remote list --json`, which pins each machine's server key; nil until read or from an older stim-server.
+  private(set) var listing: RemoteMachineListing?
   private var remoteServers: [String: MachineUpdateStatus] = [:]
   private var statusRefreshes: [String: Task<Void, Never>] = [:]
   private var refreshedEntries: [String: [String]] = [:]
@@ -59,6 +61,7 @@ final class BuildMachinesModel {
   private let machineAccess: @MainActor (String, Bool) async throws -> DoctorReport
   private let androidDoctor: @MainActor (String) async throws -> DoctorReport
   private let serverVersion: @MainActor (String, Int) async -> String?
+  private let remoteListing: @MainActor () async throws -> RemoteMachineListing
   private let pollInterval: Duration
   private let unreachableLimit: Duration
 
@@ -70,9 +73,15 @@ final class BuildMachinesModel {
     androidDoctor: (@MainActor (String) async throws -> DoctorReport)? = nil,
     serverVersion: @escaping @MainActor (String, Int) async -> String? = { await Tailnet.health(dnsName: $0, port: $1)?.version },
     localStim: @escaping @MainActor () async -> LocalStim? = BuildMachinesModel.currentLocalStim,
-    request: @escaping @MainActor (String, [String: JSONValue]) async throws -> JSONValue = BuildMachinesModel.localRequest
+    request: @escaping @MainActor (String, [String: JSONValue]) async throws -> JSONValue = BuildMachinesModel.localRequest,
+    remoteListing: (@MainActor () async throws -> RemoteMachineListing)? = nil
   ) {
     self.environment = environment
+    self.remoteListing =
+      remoteListing ?? {
+        try await readRemoteMachines(
+          stimHome: StimHome.path(environment: await environment.value), connection: ServerSession.shared.statsConnection)
+      }
     self.settings = settings
     self.statsReader = statsReader
     self.pollInterval = pollInterval
@@ -330,11 +339,21 @@ final class BuildMachinesModel {
       (status.map(Tailnet.peers(statusJSON:)) ?? []).filter(\.mac.buildsAndroidOnly).flatMap { [$0.mac.machine, $0.mac.dnsName] })
   }
 
+  /// The listing runs after doctor, never beside it: both take the device-host inspection claim, and the one that
+  /// loses it reports every hosting machine as busy.
   func load(checkout: String?) async {
     async let settingsRead: Void = settings.refresh()
     await checkTailscale()
     await settingsRead
     await refreshStatuses(checkout: checkout, ask: false)
+    await refreshListing()
+  }
+
+  private func refreshListing() async {
+    runs += 1
+    defer { runs -= 1 }
+    guard let listed = try? await remoteListing(), !Task.isCancelled else { return }
+    listing = listed
   }
 
   func checkTailscale() async {

@@ -742,6 +742,15 @@ test('the agent guide shares the Stim Desktop link the commands print, once', ()
   expect(agent).toContain(`"${printed}"`);
 });
 
+test('the agent guide tells agents to report Stim problems under the issue template headings', () => {
+  const template = readFileSync(new URL('../../../../.github/ISSUE_TEMPLATE/report.md', import.meta.url), 'utf-8');
+  const headings = [...template.matchAll(/^## (.+)$/gm)].map((match) => match[1]);
+  expect(headings.length).toBeGreaterThan(0);
+  const agent = renderTopic('agent')?.replaceAll(/\s+/g, ' ');
+  assert(agent);
+  for (const heading of headings) expect(agent).toContain(`${heading} (`);
+});
+
 test('the agent guide protects other workspaces device lease files', () => {
   const agent = renderTopic('agent');
   expect(agent).toMatch(/Never delete another\s+workspace's lease file/);
@@ -1010,7 +1019,16 @@ test('hosting setup routes approval through doctor and a separate person-granted
 
 test('the guides name the connection fields of stim-server devices and stim remote list, and rename', () => {
   const lifecycle = renderSection('lifecycle', 'hosted-ios');
-  for (const term of ['kind', 'access', 'owner', 'run-devices', 'theirs-running-here', 'stim-server devices rename'])
+  for (const term of [
+    'kind',
+    'access',
+    'owner',
+    'run-devices',
+    'theirs-running-here',
+    'clientApp',
+    'desktop',
+    'stim-server devices rename',
+  ])
     expect(lifecycle).toContain(term);
   const settings = renderTopic('settings');
   for (const field of ['serverKeyFingerprint', 'reachability', 'revoke']) expect(settings).toContain(field);
@@ -1035,7 +1053,7 @@ test('agents tell the user about remote machines and the phone app and never set
     const rendered = renderTopic(topic);
     assert(rendered);
     const body = rendered.replace(/\s+/g, ' ');
-    expect(body).toContain('Stim Desktop > Settings > Remote Machines > Add');
+    expect(body).toContain('Stim Desktop > Settings > Connections > This machine uses > Add');
     expect(body).toContain('Pair a Phone');
   }
   const settings = renderTopic('settings');

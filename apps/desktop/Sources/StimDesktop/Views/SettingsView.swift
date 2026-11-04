@@ -9,11 +9,11 @@ struct SettingsView: View {
   @StateObject private var history: GcHistoryModel
   @StateObject private var builds: BuildLedgerModel
   @ObservedObject private var openRequests = OpenRequests.shared
-  @ObservedObject private var flags = FeatureFlagStore.shared
   @State private var workspace: String?
   @AppStorage("settingsTab") private var tab = "app"
   @AppStorage("settingsWorkspace") private var lastWorkspace = ""
   @AppStorage("settingsScope") private var scope = SettingScope.machine.rawValue
+  @AppStorage("connectionsSegment") private var segment = ConnectionsSegment.incoming
   private let machine: MachineSettingsStore
   private let buildMachines: BuildMachinesModel
   private let actions: ActionCenter
@@ -37,22 +37,12 @@ struct SettingsView: View {
       AppPreferencesView(stimHome: store.stimHome, settings: machine, history: history)
         .tabItem { Label("App", systemImage: "macwindow") }
         .tag("app")
-      if flags.phoneApp {
-        PhonesView(server: ServerController.shared, stimHome: store.stimHome)
-          .tabItem { Label("Paired Devices", systemImage: "iphone.gen3.radiowaves.left.and.right") }
-          .tag("phones")
-      }
-      if flags.pairedMachines {
-        PairedMachinesView(servers: .shared)
-          .tabItem { Label("Paired Machines", systemImage: "server.rack") }
-          .tag("paired-machines")
-      }
-      WebSharesView(store: store)
-        .tabItem { Label("Web Shares", systemImage: "link") }
-        .tag("web-shares")
-      BuildMachinesView(model: buildMachines, ledger: builds, store: store, workspace: workspace, actions: actions)
-        .tabItem { Label("Remote Machines", systemImage: "hammer") }
-        .tag("build-machines")
+      ConnectionsView(
+        segment: $segment, store: store, machine: machine, buildMachines: buildMachines, ledger: builds,
+        workspace: workspace, actions: actions
+      )
+      .tabItem { Label("Connections", systemImage: "point.3.connected.trianglepath.dotted") }
+      .tag("connections")
       stimSettings
         .tabItem { Label("Stim Settings", systemImage: "slider.horizontal.3") }
         .tag("stim-settings")
@@ -65,8 +55,7 @@ struct SettingsView: View {
     .foregroundStyle(Palette.text)
     .tint(Palette.primary)
     .onAppear {
-      if tab == "phones", !flags.phoneApp { tab = "app" }
-      if tab == "paired-machines", !flags.pairedMachines { tab = "app" }
+      openConnections(tab)
       if SettingScope(rawValue: tab) != nil {
         scope = tab
         tab = "stim-settings"
@@ -74,6 +63,7 @@ struct SettingsView: View {
       workspace = openRequests.selectedWorkspace ?? workspace ?? (lastWorkspace.isEmpty ? nil : lastWorkspace)
       model.load(directory: workspace)
     }
+    .onChange(of: tab) { _, new in openConnections(new) }
     .onReceive(openRequests.$selectedWorkspace) { path in
       if let path { workspace = path }
     }
@@ -87,6 +77,12 @@ struct SettingsView: View {
       lastWorkspace = path ?? ""
       model.load(directory: path)
     }
+  }
+
+  private func openConnections(_ legacyTab: String) {
+    guard let opened = ConnectionsSegment(legacyTab: legacyTab) else { return }
+    segment = opened
+    tab = "connections"
   }
 
   private var stimSettings: some View {

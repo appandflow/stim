@@ -239,17 +239,11 @@ show refusals for removals started from its own workspace actions.
 
 :::note[Phone app feature flag]
 Stim Desktop hides everything about the phone app unless the **Phone app**
-feature flag is on: the Paired Devices page, **Serve to phones**, pairing, the phone
-steps of the setup guide and tutorial, and phone suggestions. Turn it on in
+feature flag is on: **Add... > Pair a Phone...** in **Settings > Connections** (paired phones stay listed there),
+the phone steps of the setup guide and tutorial, and phone suggestions. Turn it on in
 **Settings > Advanced > Feature flags**. A Mac that already serves phones or has
-a paired phone starts with it on. Turning the flag off revokes no pairings;
-Desktop's own `stim-server` then listens on loopback only.
-:::
-
-:::note[Paired machines feature flag]
-**Settings > Paired Machines**, where this Mac pairs with another machine's
-`stim-server`, appears only while the **Paired machines** feature flag is on
-(**Settings > Advanced > Feature flags**). It is off by default.
+a paired phone starts with it on. Turning the flag off revokes no pairings and
+leaves **Allow connections** as it is.
 :::
 
 Desktop runs its own `stim-server` whenever it is open, on loopback only (it refuses
@@ -262,12 +256,12 @@ service` LaunchAgent on a Mac that hosts for others, Desktop uses that one and n
 stops or reconfigures it. If the default port belongs to another Stim home,
 a copy using an explicit separate home starts its loopback-only server on a free
 port chosen by the OS. This lets hosted Desktop test copies coexist with the
-host's server. An explicit port override or serving phones keeps the selected
+host's server. An explicit port override or **Allow connections** keeps the selected
 port and reports a home mismatch. Desktop reads workspace status from that server's status
 feed while the server allows reads and serves the same Stim home; the server reads status itself from the
 moment it starts. Refresh requests fresh workspace, machine and archive views. If the connection or a view fails, Desktop keeps the last good display and reports the error until the server delivers fresh data. Status never falls back to a CLI process. When the server cannot start, a warning icon in the
-sidebar footer says why; click it to retry. Serving phones over the tailnet stays
-opt-in (**Serve to phones**, with the Phone app flag on).
+sidebar footer says why; click it to retry. Letting phones and other machines reach
+it over the tailnet stays opt-in: **Allow connections** in **Settings > Connections**.
 
 - **Every workspace at a glance.** Each workspace shows its stage (warming,
   building, running, failed), its devices side by side, and its branch and pull
@@ -394,21 +388,23 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   **Builds** shows recent build placements and explains when history is unavailable.
   Overview includes the latest three placements when available. Remote machine
   choices show their reported readiness; only the selected choice uses the accent color.
-  The toolbar's **Load** figure is the 5-minute load average per core, amber at or over
-  `server.maxLoadPerCore` and red while new local work waits; CPU reads 100% from about
-  one load per core, and Load keeps counting past that. While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
+  The toolbar's **CPU** figure shows the share of processor time in use and, after a dot,
+  the 5-minute load average per core, such as `83% · 2.7/core`. It takes the worse color
+  of the two: load is amber at or over `server.maxLoadPerCore` and red while new local work
+  waits. CPU tops out at 100%; load keeps counting past one per core. A Mac that reports no
+  load shows CPU alone. While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
   `concurrency.maxAndroidDevices` or `concurrency.maxBuilds` is set, **This Mac** shows **Devices**, **iOS simulators**, **Android emulators** and **Builds** meters, such as
   `6 / 6`. A full device meter lists the devices holding the slots with their slot and idle
   time, each with **Stop**, which runs `stim stop --slot` in that workspace; builds are listed
   by workspace, or as offloaded for a client. A device no workspace records has no **Stop**.
-  Click the toolbar's CPU, load, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
+  Click the toolbar's CPU, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
   in each popover opens the Machines page. CPU covers active workspace processes,
   while memory covers the whole Mac.
   CPU and memory popovers graph recent whole-machine usage. Each disk volume
   graphs its used space. Graphs retain up to 40 samples from Desktop's existing
   visible-window sampling; they do not record background history.
-  **Link Machine** opens the existing **Remote Machines** settings flow, whose
-  **Add...** button walks through picking a Mac, choosing Builds and Hosted
+  **Link Machine** opens **Settings > Connections > This machine uses**, whose
+  **Add... > Build or Run Simulators There...** walks through picking a Mac, choosing Builds and Hosted
   simulators, and running a generated `stim-server setup` command in Terminal on
   that Mac. Running it there, and answering its Y/n question for each request, is
   the approval. Desktop mirrors the setup live and waits for both approvals.
@@ -416,7 +412,7 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   installs this Mac's npm release there, or this checkout's own build when the
   machine allows it with `server.acceptClientBuilds`. The update goes over the
   tailnet, with no ssh, and the old server comes back if the new one does not
-  start. **Settings > Remote Machines** can keep them on this Mac's Stim version automatically.
+  start. **Settings > Connections** can keep them on this machine's Stim version automatically.
   The install only moves a machine forward: when the machine runs a newer Stim than
   this Mac, the button is replaced by a note to update Stim Desktop.
   A removed selection returns to **This Mac**; remote selections have no local
@@ -440,11 +436,11 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   password. A share with control and a password can also have a separate
   view-only password (generated or chosen), shown as **View password** next to
   the control one. The link and generated passwords appear once, each with a Copy button;
-  Desktop does not keep them. **Settings > Web Shares** lists the live shares with
-  their viewers and time left ("View and control, view password" for a share with
-  two passwords). **Stop** on a row ends that one share; a workspace with
-  several shares also has **Stop All**. A stim-server older than this (without the
-  `share-stop-id` feature) has only the workspace-wide **Stop**, which ends every share of
+  Desktop does not keep them. **Settings > Connections > Using this machine > Share
+  links** lists the shares, live or waiting, with their viewers and time left ("View and control, view password" for a share with
+  two passwords). A share whose device is away waits and keeps its row; Desktop
+  does not mark it yet, but `stim share list` does. **Stop** on a row ends that one share. With a stim-server older than this (without the
+  `share-stop-id` feature) each row has **Stop All** instead, which ends every share of
   the workspace. Quitting
   Desktop asks first while the server it started holds live shares, since quitting ends them.
 - **Cleanup history.** **Settings > App > Cleanup History** lists every run that deleted
@@ -473,7 +469,7 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   missing app or failed launch reports an error.
 - **Phones.** Pair the Stim phone app, and watch a leased phone from the
   desktop: Android can be controlled, an iPhone over USB is view only. Needs
-  **Serve to phones**. The phone's workspace list groups app projects from one
+  **Allow connections**. The phone's workspace list groups app projects from one
   linked Git checkout under one branch heading. The heading and each app child
   open one screen for the whole checkout, with every app's devices, builds,
   logs and commands; a child scrolls to its app's devices. In the phone's **Work** sheet, **Changed** and
@@ -630,10 +626,14 @@ device's apps, and agents driving it, can read text sent to it. Opening a viewer
 Turn it off with **Sync clipboard** in the options popover (the sliders button),
 which also has **Paste Mac Clipboard** and **Copy Device Clipboard** for one-off
 transfers. Syncing only sets the device clipboard; to insert text, paste in the
-guest. An iOS simulator shows its own "Allow Paste" prompt for text that came from
-another source; click **Allow Paste** in the viewer. After a paste on an iOS simulator
-Desktop shows a notice that says to tap the paste suggestion on the device if nothing
-appears. Unicode and line breaks are preserved.
+guest. **Paste Mac Clipboard** on an iOS simulator types printable ASCII, line breaks and tabs
+into the focused field, about 35 characters a second, so no paste prompt appears and a
+SimSlim-slimmed simulator takes it too; the field's own typing rules (smart quotes and dashes)
+still apply. Text with other characters, such as accents and emoji, is pasted instead. In an app
+Stim installed on an owned simulator it lands without a prompt, because Stim allows that app's
+"Paste from Other Apps" permission when it installs it. In another app an iOS simulator shows its
+own "Allow Paste" prompt: click **Allow Paste** in the viewer. Desktop then shows a notice that says to
+tap the paste suggestion on the device if nothing appears. Unicode and line breaks are preserved.
 
 A device Desktop shows through stim-server has the same options once **Control** is on, with sync on by default, so the current Mac text is sent to the device's machine as soon as Control starts:
 a hosted iOS or Android session, a device of a paired machine, or a leased Android phone.
@@ -733,7 +733,7 @@ linked checkout.
 Unless you are already set up, the first launch opens a setup guide that
 installs the `stim` CLI with npm, pnpm or
 bun, whichever of them you use, and the agent skill, asks for notification
-permission, offers an optional step that turns on Serve to phones and pairs a phone, and checks Xcode, the Android SDK and a project with `stim doctor`.
+permission, offers an optional step that turns on Allow connections and pairs a phone, and checks Xcode, the Android SDK and a project with `stim doctor`.
 Each step shows the command it runs and runs
 it only when you press **Run**. The project check lists each `stim doctor`
 finding with its fix, and offers **Fix** for the findings `stim doctor --fix`
@@ -759,8 +759,8 @@ stim ios`}
    shows in the app instead of a separate Simulator window.
 2. Click a device to open its viewer. **Take over** lets you use it; Escape
    gives it back.
-3. To use the phone app, open **Stim > Settings > Paired Devices** and choose **Pair a
-   Phone…**. The wizard checks Tailscale, turns on serving, sets up a private
+3. To use the phone app, open **Stim > Settings > Connections > Using this machine**
+   and choose **Add... > Pair a Phone…**. The wizard checks Tailscale, allows connections, sets up a private
    tailnet route, shows a code and waits for the phone. Setup keeps existing
    Tailscale routes and never enables Funnel. If Tailscale asks to enable HTTPS,
    approve its browser setup and retry. Pairing waits for a verified private
@@ -779,11 +779,11 @@ See [Phone app](./phone-app.md) for installation, pairing, notifications and acc
 ### Pair with another machine
 
 Desktop can pair with the `stim-server` of another machine on your tailnet or local network, such as
-a Linux server where an agent starts workspaces, the same way a phone does. With
-the **Paired machines** flag on:
+a Linux server where an agent starts workspaces, the same way a phone does:
 
 1. On that machine, run `stim-server pair`. Add `--json` if you like; Desktop reads either form.
-2. In **Stim > Settings > Paired Machines**, choose **Pair with a Machine…** and paste everything
+2. In **Stim > Settings > Connections > This machine uses**, choose **Add... > View or Control
+   Its Work…** and paste everything
    the command printed. The sheet shows the machine's name, endpoint and the fingerprint of its key.
    Desktop pairs only with the machine whose key has that fingerprint. It accepts a
    `wss://` endpoint on a `.ts.net` name, or `ws://` to a Tailscale or private network address
@@ -796,10 +796,10 @@ the **Paired machines** flag on:
 3. The code works once, for 5 minutes. A pairing made from `stim-server pair` can only read;
    one made from `stim-server pair --control` can also run actions and control devices.
 
-**Forget** deletes this Mac's key for the machine from the macOS Keychain, so the machine's
+**Remove...** on the machine's row deletes this machine's key for the machine from the macOS Keychain, so the machine's
 record can never connect again, but it does not remove that record. Run
 `stim-server devices revoke <id>` on the machine for that. Desktop shows the command
-after Forget, or `stim-server devices` to find this Mac's record when the machine never told it the id. A key that changes on the machine is never accepted again: forget the
+before and after removing it, or `stim-server devices` to find this machine's record when the machine never told it the id. A key that changes on the machine is never accepted again: remove the
 pairing and pair again. A build of Desktop without the Keychain entitlement, such as a development
 copy, keeps pairings only until it quits and says so in the sheet.
 
@@ -821,6 +821,15 @@ remote machine reads "on MACHINE", and one a paired machine placed reads "theirs
 offline, Desktop keeps showing its last status with "Offline since" and the
 time. Hiding a paired machine's workspace lasts until Desktop quits.
 
+**Active Workspaces** and the **Overview** list the machine's active workspaces next to this Mac's,
+each card marked with the machine's name and **View Only** or **View and Control**, and
+**Overview** counts each machine's active workspaces, running builds and devices. **Builds**
+shows **Running now** with the builds in progress on every machine and their phases. A card
+opens the same workspace page as the sidebar, and its device screen is live, view only.
+The **This Mac** and **All Machines** switch limits these screens to this Mac. A machine that is offline,
+or whose pairing was revoked, drops out of these lists, and a note names it, rather than
+showing its last status.
+
 Select an iOS or Android device on that page, including a hosted one, to open its
 screen in the viewer. Desktop streams it through the paired machine's server,
 which relays hosted devices from the Mac that runs them, so this Mac needs no
@@ -831,8 +840,8 @@ the same as the phone: **Reload App** and **Stop** for the workspace, and **Cont
 in the viewer, which sends your clicks and keys to the device. Desktop never takes
 control of another machine's device on its own; choose **Control** first. With a
 read-only pairing those buttons are disabled and the page says what to run on the
-machine, `stim-server devices grant <id> --control`. Choose **Reconnect** in
-**Settings > Paired Machines** after the grant. The machine checks its record on
+machine, `stim-server devices grant <id> --control`. Choose **Reconnect** in the
+machine's menu in **Settings > Connections** after the grant. The machine checks its record on
 every request, so `stim-server devices grant <id> --read` ends control at once.
 
 The paired workspace's sidebar menu also offers **Reload App** and **Stop** with
@@ -846,8 +855,8 @@ status and logs, changed and untracked text files including `.env` files that
 Git does not ignore, the doctor report, and the live screens of every local and hosted
 device there. Pair only with machines you own.
 
-On the hosting Mac, **Stim > Settings > Remote Machines > Running here**, below
-**Macs Using This Mac**, lists the simulators, emulators and apps approved Macs run
+On the hosting Mac, **Stim > Settings > Connections > Using this machine > Running
+here** lists the simulators, emulators and apps approved Macs run
 here, with their client, device, app, state and session age. **Stop** asks for
 confirmation, then ends the session and deletes or parks its device on this Mac.
 Parked sessions remain listed without a Stop button. The list refreshes every
@@ -887,9 +896,53 @@ native app build and Apple's domain association; an OTA update alone cannot
 enable them. Older local `stim-desktop://workspace?path=...` links retain their
 existing workspace and archive behavior.
 
+## Connections
+
+**Settings > Connections** lists every connection of this machine in two segments.
+
+**Using this machine** lists what uses this machine:
+
+- **Allow connections** lets paired phones and machines reach Desktop's own
+  `stim-server` over your tailnet. Off, the server answers this machine only and every
+  pairing is kept. Share links use their own route either way. A warning under it
+  says when Tailscale is off, the server is public through Funnel, or its private
+  tailnet route is missing, with a button that fixes it. The first launch of this
+  version turns it off once on a machine whose Phone app flag is off, since that
+  machine's server answered it alone until now.
+- **Keep this machine awake** prevents sleep while the machine is plugged in and
+  connections are allowed. It shows when your Stim has the setting.
+- One row per phone or machine, grouped by its key, whatever the Phone app flag says, with its name, **Device**
+  (a `stim-server pair` pairing, which a phone and Stim Desktop on another machine
+  both use) or **Machine**, when it last connected, and its access: **View**,
+  **Control**, **Build** or **Run devices**. Build and Run devices run that machine's
+  code here, so they show in the warning color. **Revoke Access...** revokes every
+  record of that key. The row's menu changes a pairing between **View** and
+  **Control**, renames every record of the row with `stim-server devices rename`
+  (the client sees the name on its next connection), and copies each record id.
+  Build and Run devices are approved only with `stim-server setup` on this machine.
+- **Share links** lists the live [web shares](./share.md), each with **Stop**.
+- **Running here** lists the hosted simulators, emulators and apps other machines
+  run on this machine, each with **Stop**.
+- **Add...** offers **Pair a Phone...** (with the Phone app flag on) and explains how
+  another machine asks to build here and how to share a device.
+
+**This machine uses** lists one row per machine this machine uses: its
+`remote.machines` entries in placement order, and the machines it paired with to
+view or control their work. A remote machine and a pairing that pinned the same
+`stim-server` key, as `stim remote list --json` reports it, share one row. Each row
+shows the machine's state, such as **Ready**, **Waiting for approval**, **Key not
+confirmed** (run `stim remote list` in a terminal and answer `y` only if the
+fingerprint matches the one `stim-server setup` printed there) or **Server is
+outdated**, and its access. **Remove...** forgets the machine here, removing it
+from `remote.machines` and deleting the pairing's key from the Keychain, and shows
+the `stim-server devices revoke <id>` commands to run on that machine, since
+removing it here never revokes this machine there. **Add...** offers **Build or Run
+Simulators There...**, the setup wizard below, and **View or Control Its Work...**,
+the pairing sheet described in [Pair with another machine](#pair-with-another-machine).
+
 ## Add a remote machine
 
-**Settings > Remote Machines** also shows **Builds enabled** and **Simulators enabled**
+**Settings > Connections > This machine uses** also shows **Builds enabled** and **Simulators enabled**
 for this Mac, in a card under **This Machine**, and on each remote machine's card; a
 machine Tailscale reports as Linux or Windows shows only **Builds enabled**, since it cannot
 host. These switches control new automatic placement
@@ -897,9 +950,9 @@ requested by this Mac without unpairing or stopping anything. Each pool retains 
 least one local or configured, approved remote member. Explicit placement is unchanged.
 See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for CLI controls.
 
-**Settings > Remote Machines** lists your remote machines with a status
-(**Approved**, **Waiting for approval**, the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading),
-a line with its running builds and free disk, what each does (**Builds**, **Simulators**), up and down buttons, **Details** and
+**Settings > Connections > This machine uses** lists your remote machines with a status
+(**Approved**, **Waiting for approval**, **Key not confirmed**, **Server is outdated**, the layer that stopped an unreachable machine (such as **Server not ready** or **Machine is offline**), **Needs update** or the reason it is not offloading),
+a line with its running builds and free disk, its access (**Build**, **Run devices**, and **View** or **Control** when this machine also paired with it), up and down buttons, **Details** and
 **Remove...**. The status shows only a state that stops this Mac using the machine; notes, such as an
 Android SDK package Gradle downloads on the first build, never change it. With two or more machines each row shows its place in the list. The order is the placement priority: builds, simulators, emulators and macOS apps go to the first machine that has room and a load under its own limit, and to the next only when it has none. The buttons write the new order to `remote.machines`. Right-clicking a row shows the same actions. A machine's page also lists the ten newest builds that ran there, each opening to its phases and failure like the **Builds** page. It updates itself; there is no Refresh button. With none, it
 offers **Add Remote Machine…**, which guides you through five steps:
@@ -931,8 +984,8 @@ test build with a sample app** builds Desktop's own pinned Expo SDK 58 sample
 on the new Mac, as an optional test. Desktop also uses that sample for setup
 requests if you have no listed workspace. The wizard removes it when it closes.
 Cancel removes only settings the wizard added and shows revoke commands for the
-worker Mac. **Remove** in Remote Machines shows the optional cleanup to run on that
-Mac.
+worker Mac. **Remove** in Connections shows the revoke commands to run on that
+machine, since removing it here never revokes this machine there.
 
 **Details** opens the page of one machine. It shows why this Mac cannot use the machine, with
 the remedy and a **Copy** button for each command; every problem and note grouped by iOS, Android,
