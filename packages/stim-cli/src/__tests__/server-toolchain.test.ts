@@ -47,23 +47,37 @@ describe('service toolchain', () => {
     expect(serviceToolchainFindings(setup({ services: [pinned], missingPaths: [] }))).toEqual([]);
   });
 
-  it("lists each tool the way the server's own discovery finds it, with the service's node and --env pinned", () => {
+  it("finds tools the way the server's own discovery does: the service's node, pinned --env and --path-prepend", () => {
+    const files = new Set([
+      '/opt/homebrew/Cellar/node/24.1.0/bin/node',
+      '/Volumes/SSD/sdk/platform-tools/adb',
+      '/opt/homebrew/opt/cocoapods/bin/brew',
+    ]);
+    const dirs = new Set([
+      '/opt/homebrew/Cellar/node/24.1.0/bin',
+      '/Volumes/SSD/sdk/platform-tools',
+      '/opt/homebrew/opt/cocoapods/bin',
+    ]);
     const probe: ToolchainProbe = {
       home: '/Users/me',
       execPath: '/doctor/node',
-      isDir: (path) => path === '/opt/homebrew/Cellar/node/24.1.0/bin',
-      isFile: (path) => path === '/opt/homebrew/Cellar/node/24.1.0/bin/node',
+      isDir: (path) => dirs.has(path),
+      isFile: (path) => files.has(path),
       read: () => null,
       list: () => [],
       link: () => null,
     };
-    const entries = serviceToolchainEntries(pinned.installed, '/Users/me', probe);
-    const byName = Object.fromEntries(entries.map((entry) => [entry.name, entry]));
-    expect(byName.JAVA_HOME).toMatchObject({
-      value: '/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home',
-      source: 'environment',
-    });
+    const custom = {
+      ...pinned.installed,
+      env: ['ANDROID_HOME=/Volumes/SSD/sdk', 'JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home'],
+    };
+    const byName = Object.fromEntries(
+      serviceToolchainEntries(custom, '/Users/me', probe).map((entry) => [entry.name, entry]),
+    );
     expect(byName.node?.value).toBe('/opt/homebrew/Cellar/node/24.1.0/bin/node');
-    expect(byName.ANDROID_HOME?.source).not.toBe('environment');
+    expect(byName.ANDROID_HOME).toMatchObject({ value: '/Volumes/SSD/sdk', source: 'environment' });
+    expect(byName.adb?.value).toBe('/Volumes/SSD/sdk/platform-tools/adb');
+    expect(byName.brew?.value).toBe('/opt/homebrew/opt/cocoapods/bin/brew');
+    expect(byName.JAVA_HOME?.source).toBe('environment');
   });
 });
