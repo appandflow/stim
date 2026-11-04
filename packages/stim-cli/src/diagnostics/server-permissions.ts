@@ -52,7 +52,6 @@ function socketFindings(setup: ServerSetup): Finding[] {
 
 const appName = (host: string): string => basename(dirname(dirname(dirname(host))), '.app');
 
-/** The app macOS attributes a server's file and screen permissions to. */
 function responsibleApp(server: ServerReading | undefined, services: readonly InstalledServerService[]): string {
   if (server?.kind === 'desktop') return 'Stim Desktop';
   const service = services.find((each) => each.label === server?.label) ?? services[0];
@@ -122,7 +121,6 @@ function lingerFindings(setup: ServerSetup): Finding[] {
   ];
 }
 
-/** Socket ownership, macOS privacy grants and systemd lingering findings about this machine's stim-server setup. */
 export function serverPermissionFindings(setup: ServerSetup): Finding[] {
   return [...socketFindings(setup), ...macosFindings(setup), ...lingerFindings(setup)];
 }

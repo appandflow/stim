@@ -9,7 +9,6 @@ const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '0.0.0.0', '[::]'])
 const LOWAT_UNLIMITED = 4_294_967_295;
 const RECOMMENDED_LOWAT = 16_384;
 
-/** A `tailscale serve` handler that proxies to a loopback port: `port` is its HTTPS port. */
 export interface ServeProxy {
   port: number;
   target: number;
@@ -44,7 +43,6 @@ export function parseServeProxies(serve: unknown): ServeProxy[] {
   });
 }
 
-/** The first HTTPS port from the one setup uses that no handler or listener in `serve` already takes. */
 function freeServePort(serve: unknown): number {
   const used = new Set<number>();
   if (isJsonObject(serve)) {
@@ -65,7 +63,6 @@ function freeServePort(serve: unknown): number {
 const serveCommand = (port: number, target: number): string =>
   `tailscale serve --bg --https=${port} http://127.0.0.1:${target}`;
 
-/** Whether the status shows a node that is signed in and running, as share exposure `auto` decides on. */
 function loggedIn(status: unknown): boolean {
   if (!isJsonObject(status) || status.BackendState !== 'Running') return false;
   const self = isJsonObject(status.Self) ? status.Self : null;
@@ -192,7 +189,6 @@ function shareFindings(setup: ServerSetup): Finding[] {
   return findings;
 }
 
-/** The tailnet, Funnel, share exposure and share-host kernel findings about this machine's stim-server setup. */
 export function serverNetworkFindings(setup: ServerSetup): Finding[] {
   return [...tailscaleFindings(setup), ...funnelFindings(setup), ...shareFindings(setup)];
 }
