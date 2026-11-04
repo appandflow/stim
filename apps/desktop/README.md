@@ -1043,6 +1043,13 @@ provider in each posture. Apps keep their supported orientations, and its home
 screen stays portrait. Hardware buttons, rotation and posture controls are
 available only while **Control** is on.
 
+Keys follow the Mac keyboard while **Control** is on. A local simulator gets every key as a HID event. A device reached
+through stim-server (hosted, paired or a leased phone) gets printable ASCII, Return, Tab and Delete as `input.text`,
+and the arrows and Escape as `input.key`. When the server advertises `device-keyboard`, an iOS simulator or an Android
+emulator also takes Shift with the arrows and Escape, and Command, Control and Option chords with Tab, Return, Delete,
+the arrows, letters and digits as `input.key` with the modifiers (Command acts as Control on Android). A local emulator
+sends those chords with `adb shell input keycombination`. A phone and a server without `device-keyboard` take no chords.
+
 **Simulator Options** below the screen reads the selected iOS simulator's
 appearance, text size and accessibility settings from Xcode. Change light/dark,
 text size, Larger accessibility sizes, Increase contrast, Reduce motion,

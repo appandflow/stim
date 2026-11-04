@@ -29,7 +29,8 @@ import ImageIO
 // and y on the upright screen, and on an iOS simulator or an Android device optionally
 // "x2" and "y2" for a second finger, sent with every phase of its gesture; {"input": "text", "text": s}, printable ASCII where "\n"
 // is Return, "\t" is Tab and "\u{8}" is Delete; {"input": "key", "key": "left|right|up|down|escape",
-// "modifiers": []} on an iOS simulator or an Android device; and {"input": "button", "button":
+// "modifiers": []} on an Android device or emulator, and on an iOS simulator also tab, return, backspace, a-z and
+// 0-9 with command, shift, option and control held; and {"input": "button", "button":
 // "home|lock"}, or on an emulator also "back|app-switch"; {"input": "rotate", "direction":
 // "left|right"}; and on an emulator {"input": "posture", "posture":
 // "folded|half-open|unfolded"}. An emulator types and presses buttons only with a hardware
@@ -1141,6 +1142,29 @@ let deviceKeys: [String: (macCode: UInt16, androidCode: Int32)] = [
   "left": (0x7B, 21), "right": (0x7C, 22), "down": (0x7D, 20), "up": (0x7E, 19), "escape": (0x35, 111),
 ]
 
+// The macOS virtual key codes of `input.key`'s keys and modifiers on an iOS simulator.
+let namedKeyCodes: [String: UInt16] = [
+  "escape": 0x35, "tab": 0x30, "return": 0x24, "backspace": 0x33, "left": 0x7B, "right": 0x7C, "down": 0x7D, "up": 0x7E,
+]
+let modifierKeyCodes: [String: UInt16] = ["command": 0x37, "shift": 0x38, "option": 0x3A, "control": 0x3B]
+
+func keyCode(named name: String) -> UInt16? {
+  if let code = namedKeyCodes[name] { return code }
+  guard name.count == 1, let character = name.first, let key = keyCodes[character], !key.shift else { return nil }
+  return key.code
+}
+
+/// Presses `name` while holding `modifiers`, which are macOS key codes, through `press`.
+func pressChord(_ name: String, modifiers: [UInt16], gap: UInt32, press: (UInt16, Bool) -> Void) -> Bool {
+  guard let code = keyCode(named: name) else { return false }
+  for modifier in modifiers { press(modifier, true) }
+  press(code, true)
+  usleep(gap)
+  press(code, false)
+  for modifier in modifiers.reversed() { press(modifier, false) }
+  return true
+}
+
 extension SimulatorSource: Source {
   func input(_ command: Command) {
     if case .duoTouch(let phase, let point, let revision) = command {
@@ -1204,11 +1228,10 @@ extension SimulatorSource: Source {
       hid.button(button, down: true)
       usleep(100_000)
       hid.button(button, down: false)
-    case .key(let name, _):
-      guard let key = deviceKeys[name] else { return Output.notice(["inputError": "iOS takes no \(name) key."]) }
-      hid.hardwareKey(code: key.macCode, down: true)
-      usleep(10_000)
-      hid.hardwareKey(code: key.macCode, down: false)
+    case .key(let name, let modifiers):
+      let held = modifiers.compactMap { modifierKeyCodes[$0] }
+      let pressed = pressChord(name, modifiers: held, gap: 10_000) { hid.hardwareKey(code: $0, down: $1) }
+      if !pressed { Output.notice(["inputError": "iOS takes no \(name) key."]) }
     case .clipboard(.paste):
       let command: UInt16 = 0x37
       let v: UInt16 = 0x09

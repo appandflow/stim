@@ -53,6 +53,7 @@ struct PhysicalDeviceScreen: View {
       content(screen)
         .onChange(of: screen, initial: true) { _, screen in follow(screen) }
         .onChange(of: clipboardAccess, initial: true) { _, access in clipboard?.access = access }
+        .onChange(of: keyboardChords, initial: true) { _, chords in stream.keyboardChords = chords }
     }
     .onChange(of: interactive, initial: true) { _, interactive in
       if interactive, ServerSession.screen(for: owned, now: Date()).canControl {
@@ -130,6 +131,13 @@ struct PhysicalDeviceScreen: View {
     return ServerClipboard.Access(
       platform: device.platform, physical: device.isPhysical, link: session?.link ?? .connecting, control: stream.control,
       server: owner.isLocal ? nil : session?.name ?? "the paired machine")
+  }
+
+  private var keyboardChords: Bool {
+    guard !device.isPhysical, device.platform == "ios" || device.platform == "android",
+      case .open(let features, _) = ServerSession.session(for: owner)?.link ?? .connecting
+    else { return false }
+    return features?.contains("device-keyboard") == true
   }
 
   private var isControlling: Bool {
@@ -344,9 +352,16 @@ final class PhysicalDisplayView: NSView {
   }
 
   override func keyDown(with event: NSEvent) {
-    guard interactive, !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control),
-      let text = physicalInputText(characters: event.characters, keyCode: event.keyCode)
+    let flags = event.modifierFlags
+    guard interactive,
+      let input = physicalKeyInput(
+        characters: event.characters, charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+        keyCode: event.keyCode, command: flags.contains(.command), control: flags.contains(.control),
+        option: flags.contains(.option), shift: flags.contains(.shift), chords: stream?.keyboardChords == true)
     else { return super.keyDown(with: event) }
-    stream?.text(text)
+    switch input {
+    case .text(let text): stream?.text(text)
+    case .key(let name, let modifiers): stream?.key(name, modifiers: modifiers)
+    }
   }
 }

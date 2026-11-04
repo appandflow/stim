@@ -1482,6 +1482,7 @@ describe('pairing', () => {
           'share-stop-id',
           'presence',
           'device-clipboard',
+          'device-keyboard',
           'share-view-password',
           'share-waiting',
           'hosted-presence',

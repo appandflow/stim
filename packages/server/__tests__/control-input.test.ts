@@ -14,17 +14,32 @@ it.each(['ios', 'android'] as const)('accepts the arrows and Escape as input.key
   }
 });
 
-it.each(['ios', 'android'] as const)('refuses other keys and any modifier as input.key on %s', (platform) => {
-  for (const params of [
-    { key: 'tab' },
-    { key: 'a' },
-    { key: 'return' },
-    { key: 'f1' },
-    { key: 'left', modifiers: ['shift'] },
-    { key: 'left', modifiers: 'shift' },
-    {},
-  ]) {
-    expect(parse(platform, params)).toHaveProperty('code', 'bad-request');
+it.each(['ios', 'android'] as const)(
+  'takes a hardware keyboard key with its modifiers as input.key on %s',
+  (platform) => {
+    expect(parse(platform, { key: 'a', modifiers: ['command'] })).toEqual({
+      value: { session: 's', command: { input: 'key', key: 'a', modifiers: ['command'] } },
+    });
+    expect(parse(platform, { key: 'left', modifiers: ['shift', 'option'] })).toHaveProperty('value');
+    expect(parse(platform, { key: 'tab' })).toHaveProperty('value');
+    for (const params of [
+      { key: 'f1' },
+      { key: 'a', modifiers: ['command', 'command'] },
+      { key: 'a', modifiers: ['meta'] },
+      { key: 'left', modifiers: 'shift' },
+      {},
+    ]) {
+      expect(parse(platform, params)).toHaveProperty('code', 'bad-request');
+    }
+  },
+);
+
+it('keeps a physical Android phone to the arrows and Escape without modifiers', () => {
+  const physical = (params: Record<string, unknown>) =>
+    parseInput('input.key', { session: 's', ...params }, () => ({ ...target('android'), physical: true }));
+  expect(physical({ key: 'left' })).toHaveProperty('value');
+  for (const params of [{ key: 'a' }, { key: 'tab' }, { key: 'left', modifiers: ['shift'] }]) {
+    expect(physical(params)).toHaveProperty('code', 'bad-request');
   }
 });
 
@@ -47,6 +62,21 @@ it('presses the Android D-pad and Escape key events for input.key over adb', () 
       ['shell', 'input', 'keyevent', `KEYCODE_${code}`],
     ]);
   }
+});
+
+it('presses a chord over adb as one key combination, with Command acting as Control', () => {
+  expect(adbInputArgs({ input: 'key', key: 'a', modifiers: ['command'] })).toEqual([
+    ['shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_A'],
+  ]);
+  expect(adbInputArgs({ input: 'key', key: 'left', modifiers: ['shift', 'option'] })).toEqual([
+    ['shell', 'input', 'keycombination', 'KEYCODE_SHIFT_LEFT', 'KEYCODE_ALT_LEFT', 'KEYCODE_DPAD_LEFT'],
+  ]);
+  expect(adbInputArgs({ input: 'key', key: 'backspace', modifiers: [] })).toEqual([
+    ['shell', 'input', 'keyevent', 'KEYCODE_DEL'],
+  ]);
+  expect(adbInputArgs({ input: 'key', key: '7', modifiers: ['command', 'control'] })).toEqual([
+    ['shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_7'],
+  ]);
 });
 
 const touch = (platform: SessionTarget['platform'], params: Record<string, unknown>, extra?: Partial<SessionTarget>) =>
