@@ -6,9 +6,11 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
   createFingerprintPrecompute,
   MAX_PRECOMPUTES_PER_PASS,
+  treeSignature,
   type PrecomputeInput,
 } from '../daemon/fingerprint-precompute.ts';
 import type { FingerprintPrecomputeRequest } from '../fingerprint-precompute.ts';
+import { getExecutor } from '../exec.ts';
 import { testContext } from './_context.ts';
 
 const live = (path: string, outcome: DaemonWorkspaceDecision['outcome'] = 'active'): DaemonWorkspaceDecision => ({
@@ -156,5 +158,36 @@ describe('the project a precompute fingerprints', () => {
       { root, platform: 'ios', iosProjectPath: 'custom-ios' },
       { root, platform: 'android', androidLayout: { gradleRootRelative: 'android' } },
     ]);
+  });
+});
+
+describe('what starts a precompute', () => {
+  test('changes with the git HEAD, the lockfile and the finished install of node_modules, and with nothing else', async () => {
+    const git = (...args: string[]) =>
+      getExecutor().runFile('git', ['-C', base, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args], {
+        timeoutMs: 20_000,
+      });
+    git('init', '--quiet');
+    writeFileSync(join(base, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+    git('add', '.');
+    git('commit', '--quiet', '-m', 'one');
+    const signal = new AbortController().signal;
+    const first = await treeSignature(base, signal);
+    expect(await treeSignature(base, signal)).toBe(first);
+
+    writeFileSync(join(base, 'unrelated.txt'), 'x');
+    expect(await treeSignature(base, signal)).toBe(first);
+
+    git('commit', '--quiet', '--allow-empty', '-m', 'two');
+    const afterCommit = await treeSignature(base, signal);
+    expect(afterCommit).not.toBe(first);
+
+    writeFileSync(join(base, 'pnpm-lock.yaml'), 'lockfileVersion: 9\npackages: {}\n');
+    const afterLockfile = await treeSignature(base, signal);
+    expect(afterLockfile).not.toBe(afterCommit);
+
+    mkdirSync(join(base, 'node_modules'));
+    writeFileSync(join(base, 'node_modules', '.modules.yaml'), 'layoutVersion: 5\n');
+    expect(await treeSignature(base, signal)).not.toBe(afterLockfile);
   });
 });

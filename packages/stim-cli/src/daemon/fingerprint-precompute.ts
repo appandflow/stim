@@ -48,17 +48,30 @@ function precomputeHold({
 
 const present = async (path: string) => stat(path).catch(() => null);
 
+const INSTALL_STAMPS = ['.modules.yaml', '.package-lock.json', '.yarn-integrity'];
+
+async function installSignature(dir: string): Promise<string> {
+  const stamps = await Promise.all(
+    INSTALL_STAMPS.map(async (name) => {
+      const info = await present(join(dir, 'node_modules', name));
+      return info ? `${name}:${info.mtimeMs}` : '';
+    }),
+  );
+  return stamps.join(',');
+}
+
 async function lockfileSignature(root: string): Promise<string> {
   for (let dir = root; ; dir = dirname(dir)) {
     for (const name of LOCKFILES) {
       const info = await present(join(dir, name));
-      if (info) return `${relative(root, join(dir, name))}:${info.size}:${info.mtimeMs}`;
+      if (info)
+        return `${relative(root, join(dir, name))}:${info.size}:${info.mtimeMs}|${await installSignature(root)}|${await installSignature(dir)}`;
     }
     if ((await present(join(dir, '.git'))) || dirname(dir) === dir) return 'none';
   }
 }
 
-async function treeSignature(root: string, signal: AbortSignal): Promise<string> {
+export async function treeSignature(root: string, signal: AbortSignal): Promise<string> {
   const head = await gitAsync(root, ['rev-parse', 'HEAD'], { signal }).catch(() => 'no-head');
   return `${head}|${await lockfileSignature(root)}`;
 }
@@ -131,6 +144,7 @@ export function createFingerprintPrecompute(log: Log, overrides: Partial<Precomp
       if (hold) return;
       let started = 0;
       for (const { path, project } of live) {
+        if (started >= MAX_PRECOMPUTES_PER_PASS) break;
         const where = canonicalPath(path);
         let signature: string;
         try {
