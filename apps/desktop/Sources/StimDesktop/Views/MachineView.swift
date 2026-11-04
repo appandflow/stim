@@ -169,7 +169,8 @@ struct MachineView: View {
     ) { workspace in
       Button("Remove worktree", role: .destructive) {
         actions.run(
-          "Remove \(status.names(ofPath: workspace.path).title)", StimCommand(["worktree", "remove"], cwd: workspace.path))
+          "Remove \(status.names(ofPath: workspace.path).title)",
+          StimCommand(["worktree", "remove"], cwd: workspace.isCheckout ? workspace.path : workspace.worktreePath))
       }
     } message: { workspace in
       Text(

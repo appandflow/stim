@@ -180,10 +180,10 @@ struct WorkspaceActions<Content: View>: View {
       presenting: removal
     ) { _ in
       Button("Run stim worktree remove", role: .destructive) {
-        actions.run("Remove \(env.names.title)", StimCommand(["worktree", "remove"], cwd: env.path))
+        actions.run("Remove \(env.names.title)", StimCommand(["worktree", "remove"], cwd: env.checkoutPath ?? env.path))
       }
     } message: { removal in
-      Text(worktreeRemovalMessage(path: env.path, branch: removal.branch))
+      Text(worktreeRemovalMessage(path: env.checkoutPath ?? env.path, branch: removal.branch))
     }
   }
 }
