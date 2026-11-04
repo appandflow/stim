@@ -950,8 +950,10 @@ rebuilt; it never blocks reading collected records. The client waits up to
 park and worker termination paths fit within
 that wait; an in-flight handoff copy and closing Metro or view transports are
 outside those worker bounds.
-Collected records remain in the session home after parking or deletion;
-app blobs and materialized bundles are removed. Native queries read persisted
+Collected records remain in the session home after parking or deletion, for the
+client to copy, until the host removes the home an hour after the session stopped
+(a parked session's home stays while it lists the device); app blobs and
+materialized bundles are removed at stop. Native queries read persisted
 entries, overlap by five seconds and de-duplicate; info-level or later-persisted
 entries may be unavailable. JavaScript logs arrive through Metro.
 The host advertises hosted-ios-data for iOS handoff and native logs. An older

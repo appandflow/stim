@@ -3255,10 +3255,52 @@ describe('the home of an ended hosted session', () => {
       seedHosted({ stoppedAt: OLD }, 'empty'),
       seedHosted({ stoppedAt: OLD, platform: 'macos' }, 'missing'),
     ];
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
     await host.reclaimEndedHomes();
+    await host.reclaimEndedHomes();
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(String(stderr.mock.calls[0]?.[0])).toContain(malformed.id);
     for (const kept of [listed, missing, parked, malformed]) expect(existsSync(area(kept.id))).toBe(true);
     for (const gone of removable) expect(existsSync(area(gone.id))).toBe(false);
+  });
+
+  test('of a session that stopped before it created a device goes, while a home with an unread device record stays', async () => {
+    const never = seedHosted({ stoppedAt: OLD }, 'missing');
+    rmSync(join(area(never.id), 'home', 'hosted-device.json'));
+    const recorded = seedHosted({ stoppedAt: OLD }, 'missing');
+    await host.reclaimEndedHomes();
+    expect(existsSync(area(never.id))).toBe(false);
+    expect(existsSync(area(recorded.id))).toBe(true);
+  });
+
+  test('is not removed when the journal cannot be read, even for a home it does not list', async () => {
+    const orphan = randomUUID();
+    mkdirSync(join(area(orphan), 'home'), { recursive: true });
+    writeFileSync(
+      join(area(orphan), 'home', 'created-devices.json'),
+      JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
+    );
+    mkdirSync(deviceHostRoot(), { recursive: true });
+    writeFileSync(join(deviceHostRoot(), 'sessions.json'), '{');
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    await host.reclaimEndedHomes(true);
+    expect(existsSync(area(orphan))).toBe(true);
+  });
+
+  test('without a journal entry stays when a device record exists but no ledger, and goes for a macOS record', async () => {
+    seedHosted({ stoppedAt: OLD }, 'empty');
+    const ios = randomUUID();
+    const macos = randomUUID();
+    for (const [id, record] of [
+      [ios, { udid: '12345678-1234-1234-1234-123456789abc', name: 'stim-hosted' }],
+      [macos, { appSlot: 1, architecture: 'arm64', macosVersion: '27.0' }],
+    ] as const) {
+      mkdirSync(join(area(id), 'home'), { recursive: true });
+      writeFileSync(join(area(id), 'home', 'hosted-device.json'), JSON.stringify(record));
+    }
+    await host.reclaimEndedHomes(true);
+    expect(existsSync(area(ios))).toBe(true);
+    expect(existsSync(area(macos))).toBe(false);
   });
 
   test('is kept while the agent driver or another process holds a claim on the session', async () => {

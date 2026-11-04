@@ -16,8 +16,8 @@ import {
   clearClaimChild,
   ClaimRefusedError,
   markClaimChildPending,
+  clearFreeClaimSet,
   processGroupAlive,
-  readClaimSet,
   releaseClaim,
   setClaimChild,
   tryAcquireClaim,
@@ -256,6 +256,7 @@ export class DeviceHost {
   private reconciling?: Promise<void>;
   private reclaiming?: Promise<void>;
   private reclaimOrphans = false;
+  private readonly homeNotes = new Map<string, string>();
   private draining: string | null = null;
   private readonly limits: DeviceHostLimits;
   private readonly debug: DebugLog;
@@ -1981,16 +1982,27 @@ export class DeviceHost {
         )
           await this.reclaimHome(record.id);
       }
-      if (!this.reclaimOrphans) return;
-      this.reclaimOrphans = false;
-      const listed = new Set(records.map((record) => record.id));
-      for (const id of readdirSync(deviceHostAreasRoot())) {
-        if (this.closed) return;
-        if (/^[a-f0-9-]{36}$/.test(id) && !listed.has(id)) await this.reclaimHome(id);
+      if (this.reclaimOrphans) {
+        this.reclaimOrphans = false;
+        const listed = new Set(records.map((record) => record.id));
+        for (const id of readdirSync(deviceHostAreasRoot())) {
+          if (this.closed) return;
+          if (/^[a-f0-9-]{36}$/.test(id) && !listed.has(id)) await this.reclaimHome(id);
+        }
       }
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
-      this.logIdleKept('homes', `hosted session homes were not reclaimed: ${oneLine(error)}`);
+      this.noteHome('sweep', `Hosted session homes were not reclaimed: ${oneLine(error)}`);
+      return;
+    }
+    this.noteHome('sweep', null);
+  }
+
+  private noteHome(key: string, note: string | null): void {
+    if (note === null) this.homeNotes.delete(key);
+    else if (this.homeNotes.get(key) !== note) {
+      this.homeNotes.set(key, note);
+      process.stderr.write(`${note}\n`);
     }
   }
 
@@ -2011,11 +2023,15 @@ export class DeviceHost {
       if (record && (record.state !== 'stopped' || record.parked || !this.homeExpired(record, Date.now()))) return;
       const area = deviceHostArea(id);
       if (!ownsNoDevice(join(area, 'home'), record?.platform)) return;
-      const agents = readClaimSet(join(area, 'agent-device.claims'));
-      if (agents.live.length || agents.unresolved.length) return;
+      for (const entry of readdirSync(area)) {
+        if (!entry.endsWith('.claims')) continue;
+        const cleared = clearFreeClaimSet({ root: join(area, entry), label: 'hosted agent driver' });
+        if (cleared.status !== 'cleared') return;
+      }
       await rm(area, { recursive: true, force: true });
+      this.noteHome(id, null);
     } catch (error) {
-      process.stderr.write(`Hosted session ${id} home kept: ${oneLine(error)}\n`);
+      this.noteHome(id, `Hosted session ${id} home kept: ${oneLine(error)}`);
     } finally {
       this.release(id, owned);
     }
@@ -2506,13 +2522,12 @@ export class DeviceHost {
   }
 }
 
-/** Whether a worker home provably lists no device: a readable empty ledger, or a macOS home, which never has one. */
 function ownsNoDevice(home: string, platform: HostedDeviceSession['platform'] | undefined): boolean {
   const ledger = readHostedDeviceLedger(home);
   if (ledger) return !ledger.ios.length && !ledger.android.length && !ledger.web.length;
-  return platform === undefined
-    ? parseHostedMacosDevice(readJsonObject(join(home, 'hosted-device.json'))) !== null
-    : platform === 'macos';
+  if (platform === 'macos') return true;
+  if (!existsSync(join(home, 'hosted-device.json'))) return true;
+  return platform === undefined && parseHostedMacosDevice(readJsonObject(join(home, 'hosted-device.json'))) !== null;
 }
 
 function oneLine(error: unknown): string {
