@@ -765,7 +765,7 @@ stim ios`}
 1. The workspace appears in the sidebar as soon as it warms. Its simulator
    shows in the app instead of a separate Simulator window.
 2. Click a device to open its viewer. **Control** lets you use it, alongside
-   an agent or anyone else controlling it; Escape stops.
+   an agent or anyone else controlling it; Escape stops controlling.
 3. To use the phone app, open **Stim > Settings > Connections > Using this machine**
    and choose **Add... > Pair a Phone…**. The wizard checks Tailscale, allows connections, sets up a private
    tailnet route, shows a code and waits for the phone. Setup keeps existing

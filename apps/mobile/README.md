@@ -756,13 +756,15 @@ did not apply.
 
 When status reports the device driven by something else, such as
 agent-device, a `stim device lock`, or another phone, a small chip with a
-cursor icon next to the model names it. **Control** starts at once on a server
-with `shared-control`: the phone, Stim Desktop, web share viewers and agents
-all send input to the device together, and nobody is refused or taken over.
-The chip stays while you have control, because that driver still sends input
-too. An older server refuses Control while someone else drives the device; the
-banner gives its reason with **Take Over**, which takes the device from them
-and starts control immediately when tapped.
+cursor icon next to the model names it. On a server with `shared-control`,
+**Control** starts at once while others drive the device: the phone, Stim
+Desktop, web share viewers and agents all send input to it together. The chip
+stays while you have control, because that driver still sends input too. The
+server still refuses Control while another workspace holds the device's lease,
+and an older server also refuses it while someone else drives the device. The
+banner then gives its reason with **Take Over**, which starts control
+immediately when tapped: without the other workspace's lease, or by taking the
+device from whoever drove it on an older server.
 
 ## Actions
 

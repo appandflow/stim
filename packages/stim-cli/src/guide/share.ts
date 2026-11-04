@@ -378,7 +378,7 @@ SECURITY MODEL
   after 5 minutes without input or when the last viewer leaves. It carries taps, two-finger gestures, text, the arrow keys, Escape and keyboard shortcuts, rotation and the
   hardware buttons of the shared device, plus the device clipboard on an iOS simulator, an Android emulator or an
   Android phone only. Viewers, Stim Desktop, the phone app and agents control
-  the device at the same time; nobody is refused or taken over. The device has
+  the device at the same time; none of them refuses or takes over the others' control. The device has
   one touch pointer: whoever puts a finger down holds it until they lift it,
   and a touch from anyone else meanwhile is dropped with "Name is using the
   screen".
