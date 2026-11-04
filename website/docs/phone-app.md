@@ -176,6 +176,12 @@ The phone must pair again to reconnect.
 To rename a paired phone on the Mac, run `stim-server devices rename <id> <name>`
 there; the phone gets the new name the next time it connects.
 
+`stim-server devices --json` reports each pairing's `kind`: `desktop` for Stim
+Desktop on another machine, which also pairs with `stim-server pair`, and `phone`
+for any other app. Each pairing records the app and version it names when it
+connects, so `kind` and the `clientApp` and `clientVersion` fields appear after
+a pairing's next connection. They are labels only and never change what it may do.
+
 **Forget** on the phone removes the saved Mac and its local status. To revoke
 the server's authorization, use the Mac-side action above.
 

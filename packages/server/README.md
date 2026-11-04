@@ -47,11 +47,18 @@ without `--json` the single-use note and the route note go to stderr, and
 `from` (where it paired from, as a label only), `keyFingerprint`, `pairedAt`,
 `lastSeenAt` (refreshed by a hello at most once a minute) and `capabilities`, followed by the [build clients](#build-access)
 and [device-host clients](#device-host-approval). Each record also carries
-`kind` (`phone` for a pairing from `stim-server pair`, which Stim Desktop on
-another machine also uses; `build-client`; `device-host-client`), `access`
+`kind` (`phone` or `desktop` for a pairing from `stim-server pair`;
+`build-client`; `device-host-client`), `access`
 (its capabilities as `view`, `control`, `build` and `run-devices`) and `owner`
-(`this-machine` for a phone, which works with this machine's workspaces;
+(`this-machine` for a phone or Desktop, which works with this machine's workspaces;
 `theirs-running-here` for a build or device-host client, whose work runs here).
+Each hello records `client.name` and `client.version` on the record, cleaned
+like a pairing name, and `devices --json` reports them as `clientApp` and
+`clientVersion` once the client has connected (a record paired earlier fills in
+on its next connection). `kind` is `desktop` when a pairing's `clientApp` is
+`Stim Desktop` or `Stim Dev`, and `phone` otherwise or while none is recorded.
+A client names itself, so these fields are for display: they never decide
+authorization or capabilities.
 `keyFingerprint` is the client's own key, so one machine's build and
 device-host records share it; the server never learns a client's server key.
 The plain listing shows `from` and the first 12 characters of the key fingerprint.

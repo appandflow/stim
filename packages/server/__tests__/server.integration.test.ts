@@ -84,6 +84,7 @@ import {
   readDevices,
   revokeDevice,
   serverIdentity,
+  spendSecret,
   storeSetupSecret,
 } from '../src/registry.ts';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
@@ -1275,6 +1276,40 @@ describe('pairing', () => {
         features: expect.arrayContaining(['ios-hosted', 'android-hosted', 'macos-hosted', 'device-frames']),
       },
     });
+  });
+
+  it('records the app and version a hello names without changing what the device may do', async () => {
+    const port = await start();
+    const keyPair = generateNoiseKeyPair();
+    const { token } = createPairingToken();
+    const first = await connect(port, undefined, { secret: token, keyPair });
+    const paired = await first.request('hello', { client: { name: 'Stim Desktop', version: '1.4.0' } });
+    expect(paired).toMatchObject({ result: { capabilities: ['read'] } });
+    first.socket.close();
+    expect(readDevices()).toEqual([
+      expect.objectContaining({ clientApp: 'Stim Desktop', clientVersion: '1.4.0', capabilities: ['read'] }),
+    ]);
+
+    const returningHello = await (await connect(port, undefined, { keyPair })).request('hello', { client: CLIENT });
+    expect(returningHello).toMatchObject({ result: { capabilities: ['read'] } });
+    expect(readDevices()[0]).toMatchObject({ clientApp: 'Stim Desktop', clientVersion: '1.4.0' });
+  });
+
+  it('fills in the app of a record paired before it was recorded on its next connection', async () => {
+    const port = await start();
+    const keyPair = generateNoiseKeyPair();
+    const { token } = createPairingToken();
+    const spent = spendSecret(
+      secretValues(Buffer.from(token, 'base64url')).lookup.toString('hex'),
+      keyPair.publicKey.toString('base64url'),
+      'Old phone',
+      'test',
+    );
+    assert(spent?.device);
+    expect(spent.device).not.toHaveProperty('clientApp');
+    const client = await connect(port, undefined, { keyPair });
+    await client.request('hello', { client: { name: 'stim-mobile', version: '0.9.0' } });
+    expect(readDevices()).toEqual([{ ...spent.device, clientApp: 'stim-mobile', clientVersion: '0.9.0' }]);
   });
 
   it('records the key that spends a pairing token, with the token capabilities, and refuses a second use', async () => {

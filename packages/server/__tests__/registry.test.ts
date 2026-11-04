@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { randomBytes } from 'node:crypto';
 import {
   mkdirSync,
@@ -16,6 +17,7 @@ import {
   capabilitiesFor,
   createPairingToken,
   grantDevice,
+  isDesktopClient,
   PAIRING_TTL_MS,
   readBuildClients,
   readDeviceHostClients,
@@ -28,6 +30,7 @@ import {
   dropSetupSecret,
   spendSecret,
   storeSetupSecret,
+  touchDevice,
 } from '../src/registry.ts';
 
 let home: string;
@@ -97,6 +100,8 @@ describe('pairing tokens', () => {
     ],
     ['a long name ending in a split emoji', `${'x'.repeat(63)}\u{1F4F1}`, 'x'.repeat(63)],
     ['nothing printable', '\u0000\u2028', 'Phone'],
+    ['a lone surrogate inside', 'a\ud800b', 'ab'],
+    ['only a lone surrogate', '\udc00', 'Phone'],
   ])('pairs a client whose name has %s under a cleaned-up name', (_case, name, stored) => {
     pair(name);
     expect(readDevices().map((device) => device.name)).toEqual([stored]);
@@ -196,6 +201,62 @@ describe('registries', () => {
     ];
     for (const name of invalid) expect(renameDevice(phone.id, name)).toBe('invalid-name');
     expect(readRegistries()).toEqual(before);
+  });
+});
+
+describe('the client app a hello names', () => {
+  it('fills in a record that has none at once, in whichever registry holds it, and keeps the rest', () => {
+    const phone = pair();
+    const { ticket, key } = setup(['build']);
+    spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net');
+    const [build] = readBuildClients();
+    assert(build);
+    touchDevice(phone.id, { name: 'stim-mobile', version: '2.3.4' });
+    touchDevice(build.id, { name: 'Stim Desktop', version: '1.0.0' });
+    expect(readDevices()).toEqual([{ ...phone, clientApp: 'stim-mobile', clientVersion: '2.3.4' }]);
+    expect(readBuildClients()).toEqual([{ ...build, clientApp: 'Stim Desktop', clientVersion: '1.0.0' }]);
+  });
+
+  it('cleans what the client chose like a pairing name, and stores nothing for a missing or empty name', () => {
+    const phone = pair();
+    touchDevice(phone.id, { name: 'Stim\u202eDesktop\n  ', version: 7 });
+    expect(readDevices()[0]).toMatchObject({ clientApp: 'StimDesktop' });
+    expect(readDevices()[0]).not.toHaveProperty('clientVersion');
+    const other = pair('Other');
+    touchDevice(other.id, { name: '\u200b ', version: '1' });
+    touchDevice(other.id, {});
+    touchDevice(other.id, { name: 4 });
+    expect(readDevices()[1]).toEqual(other);
+    touchDevice(other.id, { name: 'a\ud800b', version: '\udc00' });
+    expect(readDevices()[1]).toMatchObject({ clientApp: 'ab' });
+    expect(readDevices()[1]).not.toHaveProperty('clientVersion');
+    const long = pair('Long');
+    touchDevice(long.id, { name: 'x'.repeat(100), version: 'v'.repeat(100) });
+    expect(readDevices()[2]).toMatchObject({ clientApp: 'x'.repeat(64), clientVersion: 'v'.repeat(64) });
+  });
+
+  it('records a new version only when the minute throttle lets the touch through', () => {
+    const phone = pair();
+    const at = Date.parse(phone.lastSeenAt ?? '');
+    touchDevice(phone.id, { name: 'stim-mobile', version: '1' }, at + 1000);
+    touchDevice(phone.id, { name: 'stim-mobile', version: '2' }, at + 30_000);
+    expect(readDevices()[0]).toMatchObject({ clientVersion: '1', lastSeenAt: phone.lastSeenAt });
+    touchDevice(phone.id, { name: 'stim-mobile', version: '2' }, at + 61_000);
+    expect(readDevices()[0]).toMatchObject({ clientVersion: '2', lastSeenAt: new Date(at + 61_000).toISOString() });
+  });
+
+  it('survives a rename and a grant, and reads Stim Desktop and Stim Dev as Desktop only', () => {
+    const phone = pair('Phone', newKey(), capabilitiesFor(false));
+    touchDevice(phone.id, { name: 'Stim Dev', version: '1' });
+    renameDevice(phone.id, 'Studio');
+    grantDevice(phone.id, ['read', 'control']);
+    const [record] = readDevices();
+    assert(record);
+    expect(record).toMatchObject({ name: 'Studio', clientApp: 'Stim Dev', capabilities: ['read', 'control'] });
+    expect(isDesktopClient(record)).toBe(true);
+    expect(isDesktopClient({ ...record, clientApp: 'stim-mobile' })).toBe(false);
+    expect(isDesktopClient({ ...record, clientApp: 'Stim Desktop 2' })).toBe(false);
+    expect(isDesktopClient(pair('Plain'))).toBe(false);
   });
 });
 
