@@ -1414,6 +1414,20 @@ connect is listed whatever the Phone app flag says; the flag hides only **Add...
 wizard. **Revoke Access...** revokes the records one after another and keeps the first failure shown. **Share links**
 and **Running here** follow.
 
+**Add... > Machine to Build or Run Simulators Here...** opens the approval sheet (`ApproveMachineSheet`). It shows
+`stim remote add <this machine>` for the other machine and a field for the `stim-server setup` command that machine
+prints. `SetupRequest.parse` (StimKit) reads the ticket, `--expires`, `--build` and `--device-host` and refuses any other
+option, which still needs a terminal. **Continue** sends `desktop.setup.subscribe` on the proved bundled-server
+connection, and the server runs the same setup in process. Each grant shows **Allow** and **Don't Allow**, answered
+with `desktop.setup.answer` naming that capability; a missing macOS permission shows **Skip**, naming that permission. When Desktop uses a server it did not start, or a `stim-server service` is installed, the request is refused with a pointer to Terminal, since this path never installs or changes a service. The sheet then waits for the requesting machine
+to connect; closing it withdraws the request. It ends on the confirmation screen. **Add... > Share Link...** still
+explains where shares start, because a share needs a running device.
+
+Every Add path ends on `ConnectionConfirmationView`: the name, the direction (**Using this machine** or **This machine
+uses**), the access pills and where to revoke it, with the `stim-server devices revoke` commands. Outgoing paths say that
+removing the connection here forgets it here only. The phone wizard, **Pair with a Machine**, the remote machine
+wizard's Done step and the approval sheet use it.
+
 `servesPhones` used to open the tailnet listener only together with the Phone app flag. On the first launch with
 Connections, `FeatureFlags.resetServingWithoutPhoneApp` runs once after `FeatureFlags.seed` and turns `servesPhones`
 off where the flag is off, so no server that was loopback-only starts listening on the tailnet by itself.

@@ -239,9 +239,15 @@ export interface SetupDeps {
   now(): number;
   sleep(ms: number, signal?: AbortSignal): Promise<void>;
   tty: boolean;
+  /**
+   * Stim Desktop on this machine runs this setup with its own server: the person answers each grant through `confirm`
+   * outside a terminal, and setup refuses instead of installing or changing a service, Stim Host or a route.
+   */
+  desktop?: boolean;
   stdout(line: string): void;
   stderr(line: string): void;
-  confirm(question: string, timeoutMs: number): Promise<boolean>;
+  /** Asks the person whether to approve `capability`; false after `timeoutMs`. */
+  confirm(question: string, timeoutMs: number, capability: SetupCapability): Promise<boolean>;
   permissionWait(ms: number): Promise<boolean>;
   /**
    * The tailnet name, null without Tailscale, and whether `server.lanAddresses` is set. Setup checks the local network
@@ -472,7 +478,7 @@ export function defaultSetupDeps(): SetupDeps {
 }
 
 function requireApprovalMode(deps: SetupDeps, options: SetupOptions): void {
-  if (deps.tty || options.yes) return;
+  if (deps.tty || deps.desktop || options.yes) return;
   if (selectGrants(deps.records(), options).length !== options.capabilities.length)
     throw new SetupRefusal('To approve requests, rerun with --yes or in a terminal.');
 }
@@ -491,7 +497,7 @@ type StepWriter = (
 async function checkPermissions(
   deps: SetupDeps,
   options: SetupOptions,
-  host: HostApp,
+  host: HostApp | null,
   desktop: boolean,
   output: SetupOutput,
   report: StepWriter,
@@ -528,13 +534,13 @@ async function checkPermissions(
       id,
       'running',
       title,
-      `Click Allow for ${desktop ? 'the app serving this port' : host.name}. Prompts appear on this Mac's screen. Press s in a terminal to skip.`,
+      `Click Allow for ${desktop ? 'the app serving this port' : host?.name}. Prompts appear on this Mac's screen. Press s in a terminal to skip.`,
       undefined,
       {
-        running: `${label} permission: click Allow for ${desktop ? 'the app serving this port' : host.name} on this Mac's screen (press s to skip)`,
+        running: `${label} permission: click Allow for ${desktop ? 'the app serving this port' : host?.name} on this Mac's screen (press s to skip)`,
       },
     );
-    if (!desktop) await wait(deps.requestPermissions(host.app));
+    if (!desktop && host) await wait(deps.requestPermissions(host.app));
     const start = deps.now();
     let opened = false,
       skipped = false;
@@ -880,6 +886,10 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     await deps.withInstallClaim(opts.label, async () => {
       step('server', 'running', 'stim-server', undefined, undefined, { running: 'Checking stim-server' });
       installed = await wait(deps.installed(opts.label));
+      if (deps.desktop && installed)
+        throw new SetupRefusal(
+          `The stim-server service ${opts.label} is installed on this machine, so Stim Desktop does not approve requests here. Run the setup command in a terminal on this machine instead.`,
+        );
       if (installed && installed.port !== opts.port)
         throw new SetupRefusal(`${opts.label} uses port ${installed.port}; rerun with that --port or another --label.`);
       const health = await wait(deps.health(opts.port));
@@ -889,6 +899,10 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         );
       }
       desktop = health !== null && installed === null;
+      if (deps.desktop && !desktop)
+        throw new SetupRefusal(
+          `Stim Desktop's stim-server does not answer on port ${opts.port}. Quit and reopen Stim Desktop.`,
+        );
       output.managed = !desktop;
       const current = health ?? (installed?.script ? deps.build(installed.script) : null);
       const decision = setupVersionDecision(
@@ -945,7 +959,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           text: serverText(desktop, decision, output.server.version),
         },
       );
-      if (!androidOnly) {
+      if (!androidOnly && !deps.desktop) {
         step('host', 'running', 'Stim Host', undefined, undefined, { running: 'Installing Stim Host' });
         const installedHost = await wait(deps.installHost());
         host = installedHost;
@@ -1083,6 +1097,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           deps.confirm(
             approvalQuestion(concise, capability, here),
             Math.max(1, Date.parse(opts.expiresAt) - deps.now()),
+            capability,
           ),
         );
         if (deps.now() >= Date.parse(opts.expiresAt)) break;
@@ -1137,7 +1152,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       approvalView(journal.granted.length === opts.capabilities.length),
     );
     if (journal.granted.length) {
-      if (opts.capabilities.includes('device-host')) await checkPermissions(deps, opts, host!, desktop, output, step);
+      if (opts.capabilities.includes('device-host')) await checkPermissions(deps, opts, host, desktop, output, step);
       step('tools', 'running', 'Tools', undefined, undefined, { running: 'Checking build tools' });
       const tools = await wait(deps.toolchain(opts));
       if (!tools) throw new SetupRefusal('Could not read the local build toolchain.');

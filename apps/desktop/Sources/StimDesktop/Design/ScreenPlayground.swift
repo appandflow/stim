@@ -44,6 +44,7 @@
     case connectionsIncoming = "Connections: using this machine"
     case connectionsOutgoing = "Connections: this machine uses"
     case addMachine = "Add remote machine"
+    case approveMachine = "Approve a machine here"
     case pairPhone = "Pair a phone"
     case pairedMachines = "Paired machines"
     case sidebar = "Sidebar"
@@ -71,7 +72,7 @@
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
       case .connectionsIncoming, .connectionsOutgoing: return [.ready]
-      case .tokens, .addMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards, .deviceTools:
+      case .tokens, .addMachine, .approveMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards, .deviceTools:
         return [.ready]
       }
     }
@@ -315,6 +316,8 @@
         DiscoveryPlayground()
       case .addMachine:
         AddMachinePlayground()
+      case .approveMachine:
+        ApproveMachinePlayground()
       case .pairPhone:
         PairPhonePlayground()
       case .pairedMachines:

@@ -55,6 +55,7 @@ import {
   type StatusViews,
   type WorkspaceSummary,
   type WorktreeRow,
+  type SetupCapability,
   SHARE_TOKEN,
   readShareLinks,
   shareLinkKey,
@@ -90,6 +91,8 @@ import {
 } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
 import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
+import { defaultSetupDeps, type SetupDeps } from './setup.ts';
+import { startDesktopSetup, type DesktopSetup, type DesktopSetupAnswer } from './desktop-setup.ts';
 import {
   probeDirectories,
   STARTUP_PROBE_MS,
@@ -214,6 +217,7 @@ import {
 import {
   acceptNoise,
   decodeSecret,
+  secretValues,
   HandshakeRefusal,
   HOME_UNAVAILABLE_MESSAGE,
   CLOSE_REFUSED,
@@ -279,6 +283,8 @@ function hostedPlacement(dir: string, platform: string, slot = 'default') {
 export interface ServerOptions {
   /** Private bootstrap received from the Desktop parent; never a persisted pairing capability. */
   desktopBootstrap?: DesktopBootstrap;
+  /** What `stim-server setup` runs with when Stim Desktop approves a request here; `defaultSetupDeps` by default. */
+  setupDeps?: () => SetupDeps;
   host?: { executable: string; name: string };
   name: string;
   hosts: string[];
@@ -2077,6 +2083,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   function connection(socket: ServerSocket, peer: string | null, local: boolean, clientKey: string | null): void {
     const limitKey = peer ?? 'local';
     const subscriptions = new Map<string, () => void | Promise<void | ProtocolError>>();
+    const setupRuns = new Map<string, DesktopSetup>();
     const keyframes = new Map<string, () => void>();
     const congestion = new Map<string, () => void>();
     const replays = new Map<string, Replayable>();
@@ -2235,6 +2242,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-remedy',
               'desktop-device-tools',
               'desktop-plan',
+              'desktop-setup',
             ].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
             (local ||
@@ -2261,6 +2269,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-machine-access',
                 'desktop-remedy',
                 'desktop-device-tools',
+                'desktop-setup',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -4379,6 +4388,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.worktree.warm.subscribe',
           'desktop.plan.get',
           'desktop.plan.cancel',
+          'desktop.setup.subscribe',
+          'desktop.setup.answer',
         ].includes(method)
       )
         return null;
@@ -4412,6 +4423,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                                 : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
           ),
         );
+      }
+      if (method === 'desktop.setup.subscribe' || method === 'desktop.setup.answer') {
+        if (!desktopSessions.has(socket)) {
+          error(
+            id,
+            'forbidden',
+            'Approving another machine requires the connection of the Stim Desktop that started this server.',
+          );
+          return Promise.resolve();
+        }
+        if (method === 'desktop.setup.subscribe') subscribeDesktopSetup(id, params);
+        else answerDesktopSetup(id, params);
+        return Promise.resolve();
       }
       if (method === 'desktop.settings.write') {
         if (!desktopSessions.has(socket)) {
@@ -4600,6 +4624,81 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (method.startsWith('device-host.sessions')) return hostedSessions(id, method, params);
       return method === 'route.setup' ? setupRoute(id, params) : updateMachine(id, method, params);
+    }
+
+    function subscribeDesktopSetup(id: RequestId, params: unknown): void {
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => key !== 'ticket' && key !== 'expires' && key !== 'capabilities') ||
+        typeof params.ticket !== 'string' ||
+        typeof params.expires !== 'string' ||
+        !Array.isArray(params.capabilities) ||
+        !params.capabilities.length ||
+        new Set(params.capabilities).size !== params.capabilities.length
+      )
+        return error(id, 'bad-request', 'Choose a setup ticket, its expiry and build or device-host.');
+      const capabilities = params.capabilities.filter(
+        (capability): capability is SetupCapability => capability === 'build' || capability === 'device-host',
+      );
+      if (capabilities.length !== params.capabilities.length)
+        return error(id, 'bad-request', 'Choose a setup ticket, its expiry and build or device-host.');
+      const port = addresses[0]?.port;
+      if (port === undefined) return error(id, 'bad-request', 'This server has no port for setup to use.');
+      const ticket = decodeSecret(params.ticket);
+      if (ticket && setupRuns.has(secretValues(ticket).journal))
+        return error(id, 'bad-request', 'This connection already has that setup request open.');
+      let subscription: string | null = null;
+      let run: DesktopSetup;
+      try {
+        run = startDesktopSetup(
+          { ticket: params.ticket, expires: params.expires, capabilities },
+          port,
+          options.serverVersion,
+          (options.setupDeps ?? defaultSetupDeps)(),
+          {
+            progress: (journal, asking) => {
+              if (subscription) send(socket, { event: 'desktop-setup-progress', subscription, journal, asking });
+            },
+            ended: (exitCode, output) => {
+              setupRuns.delete(run.journal);
+              if (subscription) send(socket, { event: 'desktop-setup-ended', subscription, exitCode, output });
+            },
+          },
+        );
+      } catch (cause) {
+        return error(id, 'bad-request', cause instanceof Error ? cause.message : String(cause));
+      }
+      void cancelling.track(run.done);
+      subscription = openSubscription(id);
+      if (!subscription) return run.stop();
+      setupRuns.set(run.journal, run);
+      subscriptions.set(subscription, () => {
+        run.stop();
+        return run.done;
+      });
+    }
+
+    function answerDesktopSetup(id: RequestId, params: unknown): void {
+      const given: DesktopSetupAnswer | null = !isJsonObject(params)
+        ? null
+        : (params.answer === 'approve' || params.answer === 'refuse') &&
+            (params.capability === 'build' || params.capability === 'device-host') &&
+            Object.keys(params).every((key) => key === 'journal' || key === 'answer' || key === 'capability')
+          ? { answer: params.answer, capability: params.capability }
+          : params.answer === 'skip' &&
+              (params.permission === 'screenRecording' || params.permission === 'deviceControl') &&
+              Object.keys(params).every((key) => key === 'journal' || key === 'answer' || key === 'permission')
+            ? { answer: 'skip', permission: params.permission }
+            : null;
+      if (!given || !isJsonObject(params) || typeof params.journal !== 'string')
+        return error(
+          id,
+          'bad-request',
+          'Answer a setup request of this connection: approve or refuse with its capability, or skip with its permission.',
+        );
+      if (!setupRuns.get(params.journal)?.answer(given))
+        return error(id, 'bad-request', 'No setup request of this connection is waiting for that answer.');
+      send(socket, { id, result: {} });
     }
 
     function readDesktopSettings(id: RequestId, method: string, params: unknown): void {

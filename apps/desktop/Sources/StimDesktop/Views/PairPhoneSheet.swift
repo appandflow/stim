@@ -317,7 +317,7 @@ struct PairPhoneSheet: View {
         } else {
           Text("View only. You can allow control in Settings > Connections.").foregroundStyle(Palette.secondary)
         }
-        Text("Manage it in Settings > Connections.").foregroundStyle(Palette.secondary)
+        ConnectionConfirmationView(confirmation: .pairing(paired))
         if let openPhones {
           Button("Open Connections") {
             openPhones()

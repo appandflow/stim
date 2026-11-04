@@ -128,14 +128,12 @@ struct AddMachineSteps: View {
   private var summary: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
       Text("\(name) is set up").font(.stim(.title))
-      VStack(alignment: .leading, spacing: Space.sm) {
-        ForEach(SetupCapability.allCases.filter { model.wizard.capabilities.contains($0) }, id: \.self) { capability in
-          Label(capability == .build ? "Builds approved" : "Hosted simulators approved", systemImage: "checkmark.circle.fill")
-            .foregroundStyle(Palette.success)
-        }
-        if ![.notRun, .skipped].contains(model.testOutcome), let text = model.testOutcome.summaryText {
-          Text(text).foregroundStyle(Palette.secondary)
-        }
+      ConnectionConfirmationView(
+        confirmation: .outgoing(
+          name: name, access: model.wizard.capabilities.map { $0 == .build ? .build : .runDevices },
+          ids: model.wizard.revokeIds.sorted()))
+      if ![.notRun, .skipped].contains(model.testOutcome), let text = model.testOutcome.summaryText {
+        Text(text).foregroundStyle(Palette.secondary)
       }
       if model.wizard.capabilities.contains(.build), let machine = model.machineEntry {
         tryIt(machine)
@@ -167,8 +165,6 @@ struct AddMachineSteps: View {
           }
         }
       }
-      Text("You can remove \(name) later in Settings > Connections > This machine uses.")
-        .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
     }
   }
 

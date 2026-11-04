@@ -31,6 +31,8 @@ type PhoneMethod = Exclude<
   | 'desktop.worktree.warm.subscribe'
   | 'desktop.plan.get'
   | 'desktop.plan.cancel'
+  | 'desktop.setup.subscribe'
+  | 'desktop.setup.answer'
   | 'route.setup'
   | 'machines.update.start'
   | 'machines.update.status'

@@ -862,7 +862,11 @@ A remote machine approves this one when a person there runs
 base64url characters) in STIM_SETUP_TICKET. Stim Desktop's Add wizard makes the
 ticket and sets STIM_ACCESS_TICKET for one \`doctor --fix\` run; without it,
 \`stim remote add <machine>\` or \`doctor --fix\` makes one and prints the setup
-command to run on the worker.
+command to run on the worker. On a worker Mac with Stim Desktop, the person can
+instead paste that command in Settings > Connections > Using this machine >
+Add > Machine to Build or Run Simulators Here and answer each grant there; the
+same setup runs with the same rules and installs nothing. Only the Desktop that
+started the worker's server gets this; the terminal command still approves too.
 Agents never set STIM_ACCESS_TICKET, never run \`stim-server setup\`, never edit
 \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never approve requests.
 Until setup approves, the worker answers unknown-secret and the entry stays
@@ -1034,8 +1038,8 @@ Only \`stim remote add\` and \`doctor --fix\` ask for device-host access: they
 make a setup ticket and print the command. A person approves by running \`stim-server setup\` on the
 worker with that ticket: one ticket, one expiry, one record per capability for
 the key that holds the ticket, with a per-grant Y/n question (Enter approves) in a
-terminal or \`--yes\` otherwise. Agents never run \`stim-server setup\` or
-approve requests. Setup never changes TCC or enables Funnel; an SSH-driven
+terminal or \`--yes\` otherwise, or in Stim Desktop on the worker (see SETUP
+TICKETS). Agents never run \`stim-server setup\` or approve requests. Setup never changes TCC or enables Funnel; an SSH-driven
 run is not offered. Without a terminal or --yes, setup refuses before installing
 unless every chosen capability already has a matching approval. Desktop reuse
 requires an existing tailnet route. Ctrl-C or SIGTERM completes the journal,

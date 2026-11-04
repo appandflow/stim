@@ -428,6 +428,43 @@ device-host approvals are separate records. A build grant carries no `read` or
 A rerun before expiry reports capabilities the ticket already recorded as
 already approved. After expiry it refuses with exit 2 before any change.
 
+### Approve in Stim Desktop on the worker
+
+On a worker Mac where Stim Desktop runs its own server, the person can paste
+the generated command into Desktop instead of a terminal: Settings >
+Connections > Using this machine > Add > Machine to Build or Run Simulators
+Here. Desktop reads the ticket, `--expires`, `--build` and `--device-host` from
+the command and refuses any other option (`--yes`, `--port`, `--label`,
+`--env`, `--path-prepend`), which still needs a terminal. It sends them to its
+server with `desktop.setup.subscribe { ticket, expires, capabilities }`. The
+server runs the same setup in process, on its own port, with the same ticket
+and expiry checks, the same exclusive setup claim (one setup at a time on this
+Stim home, terminal runs included), the same journal and the same wait for the
+requesting machine. It never installs or changes a service, Stim Host or a
+route: when `stim-server service` has installed a service for its label, or its
+own port does not answer as this server, it refuses and the person runs the
+command in a terminal instead. The 5-minute limit on each macOS permission wait
+stays. Where a terminal asks Y/n, the server sends
+`desktop-setup-progress { journal, asking }` with the capability it asks about,
+and nothing is stored until the person answers
+`desktop.setup.answer { journal, answer: "approve", capability }`. `"refuse"`
+declines that grant, and `{ answer: "skip", permission }` skips the missing
+macOS permission (`screenRecording` or `deviceControl`) setup is waiting for.
+An answer naming another grant or permission than the one asked is refused, so
+a late or repeated answer cannot land on the next question. A second subscribe
+with the same ticket on one connection is refused. `desktop-setup-ended`
+carries setup's exit code and its `--json` payload. Unsubscribing or closing
+the connection interrupts setup, which deletes the ticket's secret unless the
+requesting machine already spent it.
+
+Both methods require the connection that proved Desktop's private bootstrap
+key, even on an adopted or standalone server, and only a server Desktop started
+advertises the local-only `desktop-setup` feature. A tailnet peer, a paired
+phone or machine, a build or device-host client, another client of this user on
+the Unix socket and an SSH session get `forbidden` on both methods. Running the
+setup command in a terminal on this machine, `--yes` included, approves as
+before.
+
 Setup installs its exact server release into the service's `versions/`
 directory (`~/Library/Application Support/Stim/services/<label>/versions/` on
 macOS), installs Stim Host on macOS, installs or reuses the managed

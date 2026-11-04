@@ -597,6 +597,9 @@ so there is no Check again button:
    mirrors setup progress live and sends the requests by itself until the
    command's ticket expires. Already approved capabilities are omitted from the
    command. When every chosen capability is approved and setup finished, Desktop moves to Tools by itself.
+   When Stim Desktop runs on the worker Mac, you can paste the command there instead of
+   Terminal and answer each grant in Desktop; see
+   [Approve in Stim Desktop on the worker](#approve-in-stim-desktop-on-the-worker).
    A skipped permission keeps this step open and shows its fix. There is no SSH option.
    For a Linux machine the command first runs `sudo tailscale set --operator=$USER`
    and `sudo loginctl enable-linger $USER` (see [Linux worker](#linux-worker)),
@@ -649,6 +652,36 @@ setup. Closing the wizard before Done puts the previous value back. An expired t
 
 Agents never run `stim-server setup`, edit `remote.*`, `server.*` or `hosting.*` for you,
 or approve requests; use Desktop or perform the setup yourself.
+
+## Approve in Stim Desktop on the worker
+
+A person at the worker Mac can approve a request in Stim Desktop instead of a terminal:
+
+1. On the requesting machine, start **Settings > Connections > This machine uses > Add... >
+   Build or Run Simulators There** and pick the worker, or run `stim remote add <worker>`. Copy
+   the `stim-server setup` command it shows.
+2. On the worker, open **Settings > Connections > Using this machine > Add... > Machine to Build
+   or Run Simulators Here** and paste the command. Desktop shows what it asks for and when its
+   ticket expires.
+3. Choose **Continue**. Desktop asks about each grant, as setup asks Y/n in a terminal:
+   **Allow** or **Don't Allow** for builds, then for hosted simulators. Nothing is approved
+   before you answer.
+4. Keep the window open until the requesting machine connects. Stim Desktop there connects by
+   itself; after `stim remote add`, run `stim remote list` there. Closing the window withdraws
+   the request.
+5. The last screen names the machine, the direction (**Using this machine**), its access
+   (**Build**, **Run devices**) and the `stim-server devices revoke` commands that end it.
+   **Revoke Access** in the Connections list does the same.
+
+The same setup runs with the same rules: one ticket, one expiry at most two hours ahead, one
+record per approved capability for the key that spends the ticket, and one setup at a time on
+the worker. Desktop takes only `--expires`, `--build` and `--device-host`; a command with any
+other option, such as `--yes`, `--port` or `--label`, runs only in a terminal. Desktop never
+installs or changes a service, Stim Host or a route: on a worker with a `stim-server service`,
+or where Desktop uses a server it did not start, run the command in a terminal instead. Only the
+Stim Desktop that started the worker's server can use this approval; another machine, a paired
+phone, an SSH session and any other program on the worker are refused. Running the command in a
+terminal on the worker still approves as before.
 
 ## CLI equivalent
 
