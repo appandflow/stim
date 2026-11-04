@@ -21,12 +21,26 @@ import { pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
 import { BuildArtifactCache } from 'stim/build-artifact-cache';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import { tryAcquireBuildSlotClaim, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
 import { BuildHost, type BuildHostOptions, type BuildLimits } from '../src/build.ts';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
+const processList = vi.hoisted((): { requested: (() => void) | null } => ({ requested: null }));
+vi.mock('../src/processes.ts', async (original) => {
+  const real = await original<typeof import('../src/processes.ts')>();
+  return {
+    ...real,
+    listCommandLines: () => {
+      processList.requested?.();
+      return real.listCommandLines();
+    },
+  };
+});
+
 const DAY = 24 * 60 * 60_000;
 const realStatfs = fs.statfsSync;
+const IDENTITY = { fingerprint: 'fingerprint', cacheKey: 'key' };
 const socket = { readyState: WebSocket.OPEN, OPEN: WebSocket.OPEN, send: () => {}, bufferedAmount: 0 };
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 
@@ -116,7 +130,10 @@ beforeEach(() => {
 
 afterEach(async () => {
   await running?.close();
+  await running?.evictAreas();
   running = null;
+  processList.requested = null;
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   syncBuiltinESMExports();
   delete process.env.STIM_HOME;
@@ -158,6 +175,30 @@ test.each([
   expect(logs.filter((line) => /removed the build area a\/old: unused for 8\.0 days/.test(line))).toHaveLength(
     gone ? 1 : 0,
   );
+});
+
+test('low space spares an area used in the last 3 hours, saying so once while it lasts', async () => {
+  config({ workerAreaMaxAgeDays: 0 });
+  area('a', 'newest', 0.01);
+  const recent = area('a', 'recent', 0.1);
+  freeGb(() => 40);
+  const host = start();
+  await host.evictAreas();
+  await host.evictAreas();
+  expect(existsSync(recent)).toBe(true);
+  expect(logs.filter((line) => /stays under 50\.0 GB free/.test(line))).toHaveLength(1);
+});
+
+test('under the floor recent areas go too, until the floor is cleared, but never a newest', async () => {
+  config({ workerAreaMaxAgeDays: 0 });
+  area('a', 'newest', 0.01);
+  const newer = area('a', 'newer', 0.02);
+  const older = area('a', 'older', 0.03);
+  freeGb(() => 5 + 10 * (3 - readdirSync(join(root, 'a', 'repos')).length));
+  await start().evictAreas();
+  expect(existsSync(older)).toBe(false);
+  expect(existsSync(newer)).toBe(true);
+  expect(existsSync(areaPath('a', 'newest'))).toBe(true);
 });
 
 test("keeps each client's newest area however old and however low the disk", async () => {
@@ -306,6 +347,35 @@ test('retains an area whose Gradle daemon log names a live process the process l
   expect(logs.join('\n')).toMatch(/may still use/);
 });
 
+test('a build refused for a build slot leaves no area and records no use', () => {
+  writeFileSync(
+    join(home, 'config.json'),
+    JSON.stringify({ server: { maxLoadPerCore: 1000 }, concurrency: { maxBuilds: 1 } }),
+  );
+  const slot = tryAcquireBuildSlotClaim({ max: 1, details: {} });
+  assert(slot);
+  const old = area('a', 'old', 30);
+  const recorded = readFileSync(join(old, 'last-used'), 'utf8');
+  const host = start();
+  expect(launch(host, 'a', 'fresh')).toHaveProperty('error.code', 'build-busy');
+  expect(launch(host, 'a', 'old')).toHaveProperty('error.code', 'build-busy');
+  expect(existsSync(areaPath('a', 'fresh'))).toBe(false);
+  expect(readFileSync(join(old, 'last-used'), 'utf8')).toBe(recorded);
+  releaseClaim(slot.claim);
+});
+
+test('a cached artifact miss creates no area', async () => {
+  const real = area('a', 'real', 1);
+  freeGb(() => 40);
+  const host = start();
+  const session = host.session('a', socket, () => {});
+  expect(await session.cachedArtifact({ repo: 'gone', artifact: IDENTITY })).toEqual({ result: null });
+  session.close(false);
+  expect(existsSync(areaPath('a', 'gone'))).toBe(false);
+  await host.evictAreas();
+  expect(existsSync(real)).toBe(true);
+});
+
 test('a build refused while an eviction holds the claim creates nothing in the area', () => {
   const path = areaPath('a', 'subject');
   const claim = tryAcquireClaim({ root: `${path}.claims`, mode: 'exclusive' }).acquired;
@@ -321,14 +391,25 @@ test('a build that starts while a pass lists processes keeps its area', async ()
   const path = area('a', 'subject', 30);
   const gate = join(home, 'gate');
   const host = start();
-  const pass = host.evictAreas();
-  const job = launch(host, 'a', 'subject', gate);
-  assert(!('error' in job));
-  await pass;
+  let job: ReturnType<typeof launch> | undefined;
+  processList.requested = () => {
+    processList.requested = null;
+    job = launch(host, 'a', 'subject', gate);
+  };
+  await host.evictAreas();
   expect(existsSync(join(path, 'src', 'file'))).toBe(true);
-  expect(logs.join('\n')).toMatch(/retaining the build area a\/subject: a build is running in it/);
   writeFileSync(gate, '');
+  assert(job && !('error' in job));
   await job.done;
+});
+
+test('a use recorded while a pass lists processes saves the area', async () => {
+  area('a', 'newest', 0);
+  const path = area('a', 'subject', 30);
+  processList.requested = () => writeFileSync(join(path, 'last-used'), String(Date.now()));
+  await start().evictAreas();
+  expect(existsSync(path)).toBe(true);
+  expect(removed()).toEqual([]);
 });
 
 test('a build that starts while an evicted area is being deleted gets a clean area the deletion leaves alone', async () => {
@@ -353,12 +434,241 @@ test('a build that starts while an evicted area is being deleted gets a clean ar
   host.forget(job);
 });
 
-test('a pass deletes what an interrupted eviction left aside', async () => {
+const failDeletionOf = (matches: (path: string) => boolean) => {
+  const remove = fsPromises.rm;
+  const spy = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+    if (typeof path === 'string' && matches(path)) throw new Error('fixture: delete refused');
+    return remove(path, options);
+  });
+  syncBuiltinESMExports();
+  return () => {
+    spy.mockRestore();
+    syncBuiltinESMExports();
+  };
+};
+
+const evictedIn = (client: string) => join(root, client, 'evicted');
+const leftovers = (client: string) => (existsSync(evictedIn(client)) ? readdirSync(evictedIn(client)) : []);
+
+function interruptedEviction(external: Array<{ dir: string; aside: string }>, parked = true): string {
+  const id = 'subject-interrupted';
+  mkdirSync(evictedIn('a'), { recursive: true });
+  writeFileSync(join(evictedIn('a'), `${id}.json`), JSON.stringify({ repo: 'subject', external }));
+  if (parked) mkdirSync(join(evictedIn('a'), id, 'src'), { recursive: true });
+  return id;
+}
+
+function externalDir(name: string): { dir: string; aside: string } {
+  const dir = join(home, 'sw', name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(`${dir}.owner`, 'key');
+  return { dir, aside: `${dir}.evicted-fixture` };
+}
+
+function reportExternalDirs(dirs: string[]): void {
+  const original: unknown = Reflect.get(BuildHost.prototype, 'windowsAreaDirs');
+  Reflect.set(BuildHost.prototype, 'windowsAreaDirs', () => dirs);
+  onTestFinished(() => void Reflect.set(BuildHost.prototype, 'windowsAreaDirs', original));
+}
+
+test('a failed delete is reported as what happened, once, and a later pass finishes it', async () => {
   area('a', 'newest', 0);
-  mkdirSync(join(root, 'a', 'evicted', 'subject-interrupted'), { recursive: true });
-  await start().evictAreas();
-  expect(existsSync(join(root, 'a', 'evicted'))).toBe(false);
+  const path = area('a', 'subject', 30);
+  const restore = failDeletionOf((target) => dirname(target) === evictedIn('a') && !target.endsWith('.json'));
+  const host = start();
+  await host.evictAreas();
+  await host.evictAreas();
+  expect(existsSync(path)).toBe(false);
+  expect(leftovers('a')).toHaveLength(2);
+  expect(removed()).toEqual([]);
+  expect(
+    logs.filter((line) => /moved the build area a\/subject out of repos .* could not delete it/.test(line)),
+  ).toHaveLength(1);
+  expect(logs.filter((line) => /could not/.test(line))).toHaveLength(1);
+
+  restore();
+  await host.evictAreas();
+  expect(leftovers('a')).toEqual([]);
+  expect(logs.join('\n')).toMatch(/finished deleting the evicted build area a\/subject-/);
 });
+
+test('an external directory that cannot be deleted keeps the evicted area and its record until it can', async () => {
+  area('a', 'newest', 0);
+  const path = area('a', 'subject', 30);
+  const external = join(home, 'sw', 'abc');
+  mkdirSync(external, { recursive: true });
+  writeFileSync(`${external}.owner`, 'key');
+  reportExternalDirs([external]);
+  const restore = failDeletionOf((target) => target.startsWith(`${external}.evicted-`));
+  const host = start();
+  await host.evictAreas();
+  expect(existsSync(path)).toBe(false);
+  expect(existsSync(external)).toBe(false);
+  expect(readdirSync(join(home, 'sw')).filter((name) => name.startsWith('abc.evicted-'))).toHaveLength(1);
+  expect(leftovers('a')).toHaveLength(2);
+  expect(removed()).toEqual([]);
+
+  restore();
+  await host.evictAreas();
+  expect(readdirSync(join(home, 'sw'))).toEqual([]);
+  expect(leftovers('a')).toEqual([]);
+});
+
+test.each([
+  { name: 'before its external directory moved', moved: false },
+  { name: 'after its external directory moved', moved: true },
+])('a new server finishes an eviction interrupted $name', async ({ moved }) => {
+  area('a', 'newest', 0);
+  const external = externalDir('abc');
+  if (moved) fs.renameSync(external.dir, external.aside);
+  interruptedEviction([external]);
+  await start().evictAreas();
+  expect(existsSync(external.dir)).toBe(false);
+  expect(existsSync(external.aside)).toBe(false);
+  expect(existsSync(`${external.dir}.owner`)).toBe(false);
+  expect(leftovers('a')).toEqual([]);
+});
+
+test('an external directory stays with a new area of the same repository', async () => {
+  area('a', 'newest', 0);
+  const fresh = area('a', 'subject', 0);
+  const external = externalDir('abc');
+  interruptedEviction([external]);
+  await start().evictAreas();
+  expect(existsSync(external.dir)).toBe(true);
+  expect(existsSync(fresh)).toBe(true);
+  expect(leftovers('a')).toEqual([]);
+});
+
+test('a record written just before a failed rename leaves the area alone', async () => {
+  area('a', 'newest', 0);
+  const path = area('a', 'subject', 0);
+  interruptedEviction([], false);
+  await start().evictAreas();
+  expect(existsSync(join(path, 'src', 'file'))).toBe(true);
+  expect(leftovers('a')).toEqual([]);
+});
+
+test('an interrupted eviction waits while the area claim is held, naming why once', async () => {
+  area('a', 'newest', 0);
+  const external = externalDir('abc');
+  interruptedEviction([external]);
+  const claim = tryAcquireClaim({ root: `${areaPath('a', 'subject')}.claims`, mode: 'exclusive' }).acquired;
+  assert(claim);
+  const host = start();
+  await host.evictAreas();
+  await host.evictAreas();
+  expect(existsSync(external.dir)).toBe(true);
+  expect(leftovers('a')).toHaveLength(2);
+  expect(logs.filter((line) => /could not finish deleting .* is held/.test(line))).toHaveLength(1);
+
+  releaseClaim(claim);
+  await host.evictAreas();
+  expect(existsSync(external.dir)).toBe(false);
+  expect(leftovers('a')).toEqual([]);
+});
+
+test.each(['{', '{}'])('an unreadable record %s keeps its evicted area', async (content) => {
+  area('a', 'newest', 0);
+  interruptedEviction([]);
+  writeFileSync(join(evictedIn('a'), 'subject-interrupted.json'), content);
+  await start().evictAreas();
+  expect(leftovers('a')).toHaveLength(2);
+  expect(logs.join('\n')).toMatch(/its record is unreadable/);
+});
+
+test.each([
+  {
+    name: 'its record cannot be written',
+    fail: () => {
+      const write = fs.writeFileSync;
+      vi.spyOn(fs, 'writeFileSync').mockImplementation((target, ...rest) => {
+        if (String(target).endsWith('.json.tmp')) throw new Error('fixture: disk full');
+        write(target, ...rest);
+      });
+    },
+  },
+  {
+    name: 'it cannot be renamed',
+    fail: () => {
+      const rename = fs.renameSync;
+      vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+        if (String(from) === areaPath('a', 'subject')) throw new Error('fixture: busy');
+        rename(from, to);
+      });
+    },
+  },
+])('an area stays whole, with nothing left aside, when $name', async ({ fail }) => {
+  area('a', 'newest', 0);
+  const path = area('a', 'subject', 30);
+  const host = start();
+  fail();
+  syncBuiltinESMExports();
+  await host.evictAreas();
+  expect(existsSync(join(path, 'src', 'file'))).toBe(true);
+  expect(leftovers('a')).toEqual([]);
+  expect(logs.join('\n')).toMatch(/retaining the build area a\/subject: it could not be moved aside/);
+});
+
+test("revoking a client finishes its evictions first, and keeps the client while one can't", async () => {
+  area('a', 'newest', 0);
+  const external = externalDir('abc');
+  interruptedEviction([external]);
+  const restore = failDeletionOf((target) => target === external.aside);
+  const host = start();
+  await host.remove('a');
+  expect(existsSync(join(root, 'a'))).toBe(true);
+  expect(existsSync(external.aside)).toBe(true);
+
+  restore();
+  await host.remove('a');
+  expect(existsSync(join(root, 'a'))).toBe(false);
+  expect(existsSync(external.aside)).toBe(false);
+});
+
+test('closing does not wait for a deletion, and a closed server starts none', async () => {
+  area('a', 'newest', 0);
+  const path = area('a', 'subject', 30);
+  const { reached, release } = gateRemovalOf((target) => dirname(target) === evictedIn('a'));
+  const host = start();
+  const pass = host.evictAreas();
+  await reached;
+  await host.close();
+  expect(existsSync(path)).toBe(false);
+  release();
+  await pass;
+
+  interruptedEviction([]);
+  await host.evictAreas();
+  expect(leftovers('a')).toHaveLength(2);
+});
+
+test(
+  'windows short directories go with their area, junction and all',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    vi.stubEnv('SystemDrive', home);
+    area('a', 'newest', 0);
+    const path = areaPath('a', 'subject');
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, 'last-used'), String(Date.now() - 30 * DAY));
+    const real = fs.realpathSync(path);
+    const checkout = windowsShortDir(real);
+    mkdirSync(checkout, { recursive: true });
+    writeFileSync(join(checkout, 'file'), 'x');
+    writeFileSync(`${checkout}.owner`, windowsShortDirKey('checkout', real));
+    symlinkSync(checkout, join(path, 'src'), 'junction');
+    const gradle = windowsShortDir(join(path, 'cache', 'gradle'));
+    mkdirSync(gradle, { recursive: true });
+    writeFileSync(`${gradle}.owner`, windowsShortDirKey('gradle', path));
+    await start().evictAreas();
+
+    expect(removed()).toEqual(['a/subject']);
+    expect(existsSync(path)).toBe(false);
+    expect(readdirSync(dirname(checkout))).toEqual([]);
+    expect(leftovers('a')).toEqual([]);
+  },
+);
 
 test('keeps an area through an unfetched build and a hosted handoff, removing it after the bundle is released', async () => {
   area('a', 'newest', 0);
@@ -406,8 +716,6 @@ test('keeps an area an open connection is sending a manifest for until the conne
   expect(existsSync(synced)).toBe(false);
 });
 
-const IDENTITY = { fingerprint: 'fingerprint', cacheKey: 'key' };
-
 test.each([
   {
     name: 'an offer',
@@ -452,7 +760,7 @@ test('serving a cached artifact counts as use', async () => {
   const archive = join(home, 'artifact');
   writeFileSync(archive, 'x');
   const artifact = { ...IDENTITY, name: 'App.app', size: 1, sha256: sha('x') };
-  vi.spyOn(BuildArtifactCache.prototype, 'lookup').mockResolvedValue(null);
+  vi.spyOn(BuildArtifactCache.prototype, 'lookup').mockResolvedValue(artifact);
   vi.spyOn(BuildArtifactCache.prototype, 'fetch').mockResolvedValue({ path: archive, artifact });
   const host = start();
   const served = await host.session('a', socket, () => {}).cachedArtifact({ repo: 'subject', artifact: IDENTITY });
@@ -468,7 +776,7 @@ test('never touches an unapproved client, a stray folder or a symlinked client',
   mkdirSync(join(outside, 'repos', 'subject'), { recursive: true });
   mkdirSync(join(outside, 'repos', 'newer'), { recursive: true });
   writeFileSync(join(outside, 'repos', 'subject', 'last-used'), String(Date.now() - 30 * DAY));
-  symlinkSync(outside, join(root, 'linked'));
+  symlinkSync(outside, join(root, 'linked'), 'junction');
   await start({}, { allowed: (client) => client !== 'revoked' }).evictAreas();
 
   expect(existsSync(revoked)).toBe(true);
@@ -546,7 +854,51 @@ test(
     const measuredAt = new Date(Date.now() - 7 * 3_600_000).toISOString();
     writeFileSync(join(root, 'usage.json'), JSON.stringify({ bytes: 42, measuredAt }));
     const host = start({ daemonSweepMs: 5, rootMeasureMs: 6 * 3_600_000 });
-    await vi.waitFor(() => expect(host.workerRootUsage()?.bytes).not.toBe(42));
+    await vi.waitFor(() => {
+      expect(host.workerRootUsage()?.bytes).toEqual(expect.any(Number));
+      expect(host.workerRootUsage()?.bytes).not.toBe(42);
+    });
     expect(JSON.parse(readFileSync(join(root, 'usage.json'), 'utf8')).bytes).toBe(host.workerRootUsage()?.bytes);
   },
 );
+
+test('a missing root reports not measured instead of a fresh zero', async () => {
+  rmSync(root, { recursive: true, force: true });
+  const host = start({ daemonSweepMs: 5 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(host.workerRootUsage()).toBeNull();
+});
+
+test('a recorded measurement is reported before the first check', () => {
+  const measuredAt = new Date(Date.now() - 3_600_000).toISOString();
+  writeFileSync(join(root, 'usage.json'), JSON.stringify({ bytes: 42, measuredAt }));
+  expect(start().workerRootUsage()).toEqual({ path: root, bytes: 42, measuredAt });
+});
+
+test('a bundle that cannot be deleted does not pin its area', async () => {
+  area('a', 'newest', 0);
+  const path = area('a', 'subject', 0);
+  const host = start();
+  const job = launch(host, 'a', 'subject');
+  assert(!('error' in job));
+  await job.done;
+  writeFileSync(join(areaPath('a', 'newest'), 'last-used'), String(Date.now()));
+  writeFileSync(join(path, 'last-used'), String(Date.now() - 30 * DAY));
+  const token = host.retain(job, { name: 'App.app', size: 1, sha256: sha('x') });
+  assert(token);
+  host.forget(job);
+  const taken = host.takeBundle(token, sha('x'), () => true);
+  assert(typeof taken !== 'string');
+  const bundleDir = dirname(taken.bundle);
+  const remove = fs.rmSync;
+  vi.spyOn(fs, 'rmSync').mockImplementation((target, options) => {
+    if (target === bundleDir) throw new Error('fixture: busy');
+    remove(target, options);
+  });
+  syncBuiltinESMExports();
+  expect(() => taken.release()).toThrow('fixture: busy');
+  vi.mocked(fs.rmSync).mockRestore();
+  syncBuiltinESMExports();
+  await host.evictAreas();
+  expect(existsSync(path)).toBe(false);
+});

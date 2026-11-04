@@ -448,10 +448,13 @@ outside it moves to its own issue and pull request.
   Unknown cleanup or a server crash retains unresolved repository and build-slot
   claims for manual inspection and recovery. stim-server evicts areas of approved
   clients unused for longer than `server.workerAreaMaxAgeDays` and, near the disk
-  floor, the least recently used; it keeps each client's most recently used area
-  and retains one with a live build, unfetched output, a running Gradle daemon or
-  a held or unresolved claim. Under the area's claim it renames the area out of
-  `repos/`, then deletes it. Windows has no process groups:
+  floor, the least recently used not used in the last 3 hours, which under the
+  floor also go; it keeps each client's most recently used area and retains one
+  with a live build, unfetched output, a running Gradle daemon or a held or
+  unresolved claim. Under the area's claim it writes a record naming the area's
+  short directories, renames the area out of `repos/` and moves those directories
+  aside, then deletes outside the claim, the record last, so a later pass finishes
+  a failed or interrupted deletion. Windows has no process groups:
   cancel stops the worker tree with `taskkill /T`; each checkout and repository's
   Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
   because the NDK's ninja cannot open longer paths. The repository's daemon

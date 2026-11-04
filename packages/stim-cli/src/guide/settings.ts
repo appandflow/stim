@@ -1407,7 +1407,8 @@ memory available. Deleting the client's directory under the worker root stops it
 The worker removes repository areas of approved clients by itself: any area with
 no build or cached artifact fetch for \`server.workerAreaMaxAgeDays\` (default 7,
 0 turns this off) and, while its volume has less than 50 GB free, the least
-recently used until it has that much. It keeps each client's most recently used
+recently used until it has that much, sparing areas used in the last 3 hours
+unless the volume is under its 10 GB floor. It keeps each client's most recently used
 area and retains an area with a running or unfetched build, a bundle a hosted
 session can take, an open connection sending it a manifest, a running Gradle
 daemon, or a held or unresolved claim; its log names each removal and why an

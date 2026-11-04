@@ -108,7 +108,7 @@ server holds the sleep assertion (`pid` is the `caffeinate` process that owns it
 it does not, `reason` is `off`, `unsupported`, `loopback-only`, `not-listening` or `failed`
 (see [Keep this machine awake](#keep-this-machine-awake)). `workerRoot` is
 `{ "path", "bytes", "measuredAt" }`, the worker root's size as `du` last measured it, about every 6 hours and kept in `<root>/usage.json` across restarts,
-or `null` before the first measurement and on Windows. A request through `tailscale serve` or on a Tailscale address
+or `null` before the first measurement, while the root is missing, and on Windows. A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
 carries, gets only `{ "version" }`, which Stim
 Desktop's Connections settings use to find stim-server on the other machines of the
@@ -2283,7 +2283,11 @@ stim-server removes areas of approved clients by itself: any area unused for
 longer than `server.workerAreaMaxAgeDays` (default 7, `0` turns this off) and,
 while the worker root's volume has less than 50 GiB free (40 GiB above the
 floor where it declines builds), the least recently used until it has that much
-again. Use means a build or a cached artifact fetch, recorded in the area's
+again, sparing any area used in the last 3 hours so two worktrees of one client
+do not evict each other in turn. Under the floor that limit no longer applies,
+until the volume is back over the floor. If only recent areas are left above the
+floor, they stay and the log says so once; builds keep running until the floor.
+Use means a build or a cached artifact fetch, recorded in the area's
 `last-used` file; an area from before that record counts from the newest change
 to its `mirror.json`, `out`, `home`, `build.ndjson` or folder. It checks about
 every 15 minutes, every minute near the floor, and when a build starts near it,
@@ -2297,9 +2301,13 @@ process), or a claim that is held or unresolved. Each retained area gets one
 `stim-server: retaining the build area <client>/<repo>: <why>` line in the log
 while the reason lasts, and each removed one a `stim-server: removed the build
 area <client>/<repo>: <why>` line. Under the area's claim the area moves to
-`<client>/evicted/` in one rename, so the next build of that checkout starts
-clean, then its blobs that nothing else references are pruned. A later pass
-deletes whatever an interrupted removal left there. Client-wide blobs and shared
+`<client>/evicted/<id>/` in one rename, after `<client>/evicted/<id>.json` records
+the short directories it owns on Windows, which move aside under the same claim,
+so the next build of that checkout starts clean. The deletion holds no claim and
+shutdown does not wait for it. The record goes last: when a delete fails, the log
+says so once and what is left stays, and a later pass, in this server or the
+next, finishes it before anything else. Then blobs that nothing else references
+are pruned. Client-wide blobs and shared
 CocoaPods, pnpm and SwiftPM caches stay until the client is removed.
 
 A build never reads or writes this machine's own Stim home. Each source mirror

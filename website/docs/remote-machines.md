@@ -563,14 +563,18 @@ Gradle home. The worker removes these areas by itself:
 - An area with no build or cached artifact fetch for
   `server.workerAreaMaxAgeDays` days (default 7, `0` turns this off).
 - While the volume of `server.workerRoot` has less than 50 GB free, the least
-  recently used areas until it has that much again. Under 10 GB free the worker
-  declines builds.
+  recently used areas until it has that much again, sparing areas used in the
+  last 3 hours. If only those are left, they stay, the log says so once, and
+  builds keep running.
+- Under 10 GB free the worker declines builds, so those recent areas can go too,
+  until the volume is back over 10 GB.
 
 It always keeps each client's most recently used area. It retains an area with a
 running or unfetched build, a bundle a hosted session can still take, an open
 connection sending it a manifest, a running Gradle daemon, or an ownership claim
 that is held or unresolved. The stim-server log has one line for each removal and
-one for each area it retains, with the reason. The next build of a removed
+one for each area it retains, with the reason. If a delete fails, the log says so
+once and a later pass finishes it. The next build of a removed
 checkout uploads what it needs again and starts cold. A client's shared blobs and
 CocoaPods, pnpm and SwiftPM caches stay until the client is removed.
 

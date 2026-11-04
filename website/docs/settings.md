@@ -672,8 +672,8 @@ builds: `concurrency.maxBuilds` on the worker, derived as
 runs one build at a time; set `concurrency.maxBuilds` there to allow more.
 It removes repository areas unused for longer than
 `server.workerAreaMaxAgeDays` (default 7, `0` turns this off) and, while that
-volume has less than 50 GB free, the least recently used, always keeping each
-client's most recently used area
+volume has less than 50 GB free, the least recently used not used in the last 3
+hours, always keeping each client's most recently used area
 (see [Worker disk](./remote-machines.md#worker-disk)).
 While an offloaded build runs, it holds one of the remote machine's build slots, so a local `stim ios` or
 `stim android` there waits for the slot and counts the machine as busy. The

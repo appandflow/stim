@@ -12,6 +12,7 @@ import {
   readSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statfsSync,
   statSync,
@@ -59,10 +60,14 @@ import {
   areaLastUsed,
   areasToEvict,
   measureTreeBytes,
+  readEvictedRecord,
   readRootUsage,
   recordAreaUse,
   recordRootUsage,
+  writeEvictedRecord,
   type AreaEviction,
+  type DiskSpace,
+  type EvictedRecord,
   type WorkerArea,
   type WorkerRootUsage,
 } from './worker-areas.ts';
@@ -106,6 +111,8 @@ export interface BuildLimits {
   handoffMs: number;
   /** Free bytes above `minFreeBytes` under which the least recently used repository areas are evicted. */
   evictionMarginBytes: number;
+  /** How long since its last use an area stays safe from eviction for space while the volume is above `minFreeBytes`. */
+  evictionRecentMs: number;
   /** How often unused repository areas are looked for while the volume is above that margin. */
   areaSweepMs: number;
   /** How often the worker root's size is measured. */
@@ -123,6 +130,7 @@ const DEFAULT_BUILD_LIMITS: BuildLimits = {
   daemonSweepMs: 60_000,
   handoffMs: 10 * 60_000,
   evictionMarginBytes: 40 * 1024 ** 3,
+  evictionRecentMs: 3 * 60 * 60_000,
   areaSweepMs: 15 * 60_000,
   rootMeasureMs: 6 * 60 * 60_000,
 };
@@ -135,7 +143,8 @@ const ARTIFACT_CHUNK = 1024 * 1024;
 const MAX_BUFFERED = 16 * 1024 * 1024;
 const MAX_WORKER_LINE = 1024 * 1024;
 const GROUP_POLL_MS = 200;
-const DAY_MS = 24 * 60 * 60_000;
+const HOUR_MS = 60 * 60_000;
+const DAY_MS = 24 * HOUR_MS;
 const EVICTED_DIR = 'evicted';
 
 type Refusal = { error: ProtocolError };
@@ -411,6 +420,27 @@ const isMissing = (error: unknown): boolean => error instanceof Error && 'code' 
 
 const areaKey = (client: string, repo: string): string => `${client}/${repo}`;
 
+async function deletionFailure(dir: string): Promise<string | null> {
+  try {
+    await rm(dir, { recursive: true, force: true, maxRetries: 10 });
+    return null;
+  } catch (error) {
+    return String(error);
+  }
+}
+
+function moveExternalsAside({ external }: EvictedRecord): string | null {
+  try {
+    for (const { dir, aside } of external) {
+      if (existsSync(dir)) renameSync(dir, aside);
+      rmSync(`${dir}.owner`, { force: true });
+    }
+    return null;
+  } catch (error) {
+    return String(error);
+  }
+}
+
 function unknownGradleProcess(home: string, known: ReadonlySet<number>): Error | null {
   const homes = [home];
   if (existsSync(home))
@@ -523,6 +553,8 @@ export class BuildHost {
   private readonly sweeper: NodeJS.Timeout;
   private readonly pins = new Map<string, number>();
   private readonly areaRefusals = new Map<string, string>();
+  private readonly deletionFailures = new Map<string, string>();
+  private reportedLow = false;
   private evicting: Promise<void> | null = null;
   private lastEviction = 0;
   private lastMeasure = 0;
@@ -1122,9 +1154,12 @@ export class BuildHost {
     for (const job of jobs) job.cancel();
     const queriesSettled = await this.stopQueries(client);
     await Promise.all(jobs.map((job) => job.done));
-    await this.evicting;
     if (!queriesSettled) {
       console.error(`stim-server: retaining the build area of ${client} because artifact query cleanup is unresolved.`);
+      return;
+    }
+    if (!(await this.resumeEvicted(client))) {
+      console.error(`stim-server: retaining the build area of ${client} because an evicted area is not deleted yet.`);
       return;
     }
     let areas: string[];
@@ -1158,13 +1193,9 @@ export class BuildHost {
   }
 
   private async removeDir(client: string, dir: string): Promise<boolean> {
-    try {
-      await rm(dir, { recursive: true, force: true, maxRetries: 10 });
-      return true;
-    } catch (error) {
-      console.error(`stim-server: could not delete the build area of ${client}: ${String(error)}`);
-      return false;
-    }
+    const failure = await deletionFailure(dir);
+    if (failure) console.error(`stim-server: could not delete the build area of ${client}: ${failure}`);
+    return failure === null;
   }
 
   private windowsAreaDirs(area: string): string[] {
@@ -1187,15 +1218,16 @@ export class BuildHost {
     return true;
   }
 
-  private nearDiskFloor(): boolean {
+  private diskSpace(): DiskSpace {
     const free = workerFreeBytes(this.root());
-    return free !== null && free < this.limits.minFreeBytes + this.limits.evictionMarginBytes;
+    if (free === null || free >= this.limits.minFreeBytes + this.limits.evictionMarginBytes) return 'ok';
+    return free < this.limits.minFreeBytes ? 'floor' : 'low';
   }
 
   private maintainAreas(): void {
     try {
       if (this.closed || !(this.options.ready?.() ?? true)) return;
-      const interval = this.nearDiskFloor() ? this.limits.daemonSweepMs : this.limits.areaSweepMs;
+      const interval = this.diskSpace() === 'ok' ? this.limits.areaSweepMs : this.limits.daemonSweepMs;
       if (Date.now() - this.lastEviction >= interval) void this.evictAreas();
       if (Date.now() - this.lastMeasure >= this.limits.rootMeasureMs)
         void this.measureRoot().catch((error: unknown) =>
@@ -1210,7 +1242,8 @@ export class BuildHost {
     this.lastMeasure = Date.now();
     const path = this.root();
     if (!existsSync(path)) {
-      this.rootUsage = { path, bytes: 0, measuredAt: new Date().toISOString() };
+      this.lastMeasure = 0;
+      this.rootUsage = null;
       return;
     }
     const recorded = readRootUsage(path);
@@ -1229,6 +1262,11 @@ export class BuildHost {
   }
 
   workerRootUsage(): WorkerRootUsage | null {
+    if (!this.rootUsage && (this.options.ready?.() ?? true)) {
+      try {
+        this.rootUsage = readRootUsage(this.root());
+      } catch {}
+    }
     return this.rootUsage;
   }
 
@@ -1245,32 +1283,67 @@ export class BuildHost {
     return this.evicting;
   }
 
+  private planEvictions(maxAgeMs: number): AreaEviction[] {
+    return areasToEvict(this.workerAreas(), {
+      now: Date.now(),
+      maxAgeMs,
+      recentMs: this.limits.evictionRecentMs,
+      space: this.diskSpace(),
+    });
+  }
+
   private async evictionPass(): Promise<void> {
     this.lastEviction = Date.now();
     const maxAgeMs = workerAreaMaxAgeDays() * DAY_MS;
+    for (const client of this.workerClients()) {
+      if (this.closed) return;
+      await this.resumeEvicted(client);
+    }
     const refused = new Set<string>();
     const emptied = new Set<string>();
-    while (!this.closed) {
-      const next = areasToEvict(this.workerAreas(), {
-        now: Date.now(),
-        maxAgeMs,
-        low: this.nearDiskFloor(),
-      }).find((area) => !refused.has(areaKey(area.client, area.repo)));
-      if (!next) break;
+    const unrefused = (area: AreaEviction) => !refused.has(areaKey(area.client, area.repo));
+    while (!this.closed && this.planEvictions(maxAgeMs).some(unrefused)) {
+      const processes = await listCommandLines();
+      if (this.closed) return;
+      const next = this.planEvictions(maxAgeMs).find(unrefused);
+      if (!next) continue;
       const key = areaKey(next.client, next.repo);
-      const kept = await this.evictArea(next, maxAgeMs);
-      if (kept === null) {
-        emptied.add(next.client);
-        this.areaRefusals.delete(key);
+      const outcome = this.evictArea(next, processes);
+      if ('kept' in outcome) {
+        refused.add(key);
+        if (this.areaRefusals.get(key) !== outcome.kept)
+          console.error(`stim-server: retaining the build area ${key}: ${outcome.kept}.`);
+        this.areaRefusals.set(key, outcome.kept);
         continue;
       }
-      refused.add(key);
-      if (this.areaRefusals.get(key) !== kept) console.error(`stim-server: retaining the build area ${key}: ${kept}.`);
-      this.areaRefusals.set(key, kept);
+      emptied.add(next.client);
+      this.areaRefusals.delete(key);
+      const days = ((Date.now() - next.usedAt) / DAY_MS).toFixed(1);
+      const why =
+        next.reason === 'age'
+          ? `unused for ${days} days, over the ${maxAgeMs / DAY_MS} of server.workerAreaMaxAgeDays`
+          : `the least recently used (${days} days ago) while the volume is near its disk floor`;
+      const failure = outcome.failure ?? (await this.deleteEvicted(next.client, outcome.id, outcome.record));
+      const free = workerFreeBytes(this.root());
+      if (failure) {
+        this.deletionFailures.set(outcome.id, failure);
+        console.error(
+          `stim-server: moved the build area ${key} out of repos (${why}) but could not delete it: ${failure}. A later pass retries.`,
+        );
+      } else
+        console.error(
+          `stim-server: removed the build area ${key}: ${why}; ${free === null ? 'free disk unknown' : `${gb(free)} GB free`}.`,
+        );
     }
+    if (this.closed) return;
     for (const key of this.areaRefusals.keys()) if (!refused.has(key)) this.areaRefusals.delete(key);
     for (const client of emptied) this.pruneBlobs(client);
-    for (const client of this.workerClients()) await this.removeDir(client, join(this.clientDir(client), EVICTED_DIR));
+    const stillLow = this.diskSpace() !== 'ok';
+    if (stillLow && !this.reportedLow)
+      console.error(
+        `stim-server: the worker root's volume stays under ${gb(this.limits.minFreeBytes + this.limits.evictionMarginBytes)} GB free: every area left is in use, a client's newest, or used in the last ${this.limits.evictionRecentMs / HOUR_MS} hours.`,
+      );
+    this.reportedLow = stillLow;
   }
 
   private workerClients(): string[] {
@@ -1333,28 +1406,55 @@ export class BuildHost {
     return null;
   }
 
-  private async evictArea({ client, repo, usedAt, reason }: AreaEviction, maxAgeMs: number): Promise<string | null> {
+  private evictArea(
+    { client, repo }: AreaEviction,
+    processes: string,
+  ): { kept: string } | { id: string; record: EvictedRecord; failure: string | null } {
     const area = join(this.clientDir(client), 'repos', repo);
-    let processes: string;
-    try {
-      processes = await listCommandLines();
-    } catch (error) {
-      return `its Gradle daemons could not be listed: ${String(error)}`;
-    }
-    if (this.closed || this.removals.has(client)) return 'this server is closing or removing the client';
     const busy = this.areaBusy(client, repo);
-    if (busy) return busy;
+    if (busy) return { kept: busy };
     try {
       const daemons = workerGradleDaemons(processes, this.root(), process.platform, [{ client, repo }]);
       if (daemons.some((daemon) => daemon.client === client && daemon.repo === repo))
-        return 'a Gradle daemon is running in it';
+        return { kept: 'a Gradle daemon is running in it' };
       const unknown = unknownGradleProcess(gradleUserHome(area), new Set());
-      if (unknown) return unknown.message;
+      if (unknown) return { kept: unknown.message };
     } catch (error) {
-      return `its Gradle processes could not be checked: ${String(error)}`;
+      return { kept: `its Gradle processes could not be checked: ${String(error)}` };
     }
     const claims = `${area}.claims`;
-    let claim: ClaimHandle;
+    const claim = this.areaClaim(client, repo);
+    if (typeof claim === 'string') return { kept: claim };
+    const id = `${repo}-${randomUUID()}`;
+    const parked = join(this.clientDir(client), EVICTED_DIR, id);
+    const record: EvictedRecord = {
+      repo,
+      external: this.windowsAreaDirs(area).map((dir) => ({ dir, aside: `${dir}.evicted-${randomUUID()}` })),
+    };
+    let failure: string | null;
+    try {
+      mkdirSync(dirname(parked), { recursive: true, mode: 0o700 });
+      writeEvictedRecord(`${parked}.json`, record);
+      try {
+        renameSync(area, parked);
+      } catch (error) {
+        rmSync(`${parked}.json`, { force: true });
+        throw error;
+      }
+      failure = moveExternalsAside(record);
+    } catch (error) {
+      return { kept: `it could not be moved aside: ${String(error)}` };
+    } finally {
+      releaseClaim(claim);
+    }
+    const clearance = clearFreeClaimSet({ root: claims, label: 'build worker' });
+    if (clearance.status !== 'cleared')
+      console.error(`stim-server: left the claim set of the evicted area at ${claims}: ${clearance.status}.`);
+    return { id, record, failure };
+  }
+
+  private areaClaim(client: string, repo: string): ClaimHandle | string {
+    const claims = `${join(this.clientDir(client), 'repos', repo)}.claims`;
     try {
       const attempt = tryAcquireClaim({
         root: claims,
@@ -1362,39 +1462,69 @@ export class BuildHost {
         details: { client, repo, eviction: true },
         label: 'build worker',
       });
-      if (!attempt.acquired) {
-        if (attempt.pending) releaseClaim(attempt.pending);
-        return `its claim at ${claims} is held${attempt.held ? ` by process ${attempt.held.owner.pid}` : ''}`;
-      }
-      claim = attempt.acquired;
+      if (attempt.acquired) return attempt.acquired;
+      if (attempt.pending) releaseClaim(attempt.pending);
+      return `its claim at ${claims} is held${attempt.held ? ` by process ${attempt.held.owner.pid}` : ''}`;
     } catch (error) {
       return `its claim is unresolved: ${String(error)}`;
     }
-    const evicted = join(this.clientDir(client), EVICTED_DIR, `${repo}-${randomUUID()}`);
+  }
+
+  /** Deletes what an eviction moved aside, the record last; what could not be deleted stays for a later pass. */
+  private async deleteEvicted(client: string, id: string, record: EvictedRecord): Promise<string | null> {
+    const parked = join(this.clientDir(client), EVICTED_DIR, id);
+    for (const dir of [...record.external.map(({ aside }) => aside), parked]) {
+      const failure = await deletionFailure(dir);
+      if (failure) return failure;
+    }
+    rmSync(`${parked}.json`, { force: true });
+    this.deletionFailures.delete(id);
     try {
-      const shortDirs = process.platform === 'win32' ? this.windowsAreaDirs(area) : [];
-      mkdirSync(dirname(evicted), { recursive: true, mode: 0o700 });
-      renameSync(area, evicted);
-      await this.removeWindowsDirs(client, shortDirs);
+      rmdirSync(dirname(parked));
+    } catch {}
+    return null;
+  }
+
+  /**
+   * Finishes the evictions an earlier pass or server left, each directory outside the worker root before the area that
+   * names it. A directory a new area of the same repository took over is its own again. Returns whether none is left.
+   */
+  private async resumeEvicted(client: string): Promise<boolean> {
+    const dir = join(this.clientDir(client), EVICTED_DIR);
+    let records: string[];
+    try {
+      records = readdirSync(dir).filter((name) => name.endsWith('.json'));
     } catch (error) {
-      return `it could not be moved aside: ${String(error)}`;
+      if (isMissing(error)) return true;
+      throw error;
+    }
+    let finished = true;
+    for (const name of records) {
+      const id = name.slice(0, -'.json'.length);
+      const record = readEvictedRecord(join(dir, name));
+      const parked = existsSync(join(dir, id));
+      const failure = record
+        ? (this.claimExternals(client, record) ?? (await this.deleteEvicted(client, id, record)))
+        : 'its record is unreadable';
+      if (failure) {
+        finished = false;
+        if (this.deletionFailures.get(id) !== failure)
+          console.error(`stim-server: could not finish deleting the evicted build area ${client}/${id}: ${failure}.`);
+        this.deletionFailures.set(id, failure);
+      } else if (parked) console.error(`stim-server: finished deleting the evicted build area ${client}/${id}.`);
+    }
+    return finished;
+  }
+
+  private claimExternals(client: string, record: EvictedRecord): string | null {
+    if (!record.external.some(({ dir }) => existsSync(dir) || existsSync(`${dir}.owner`))) return null;
+    const claim = this.areaClaim(client, record.repo);
+    if (typeof claim === 'string') return claim;
+    try {
+      return existsSync(join(this.clientDir(client), 'repos', record.repo)) ? null : moveExternalsAside(record);
     } finally {
       releaseClaim(claim);
     }
-    const clearance = clearFreeClaimSet({ root: claims, label: 'build worker' });
-    if (clearance.status !== 'cleared')
-      console.error(`stim-server: left the claim set of the evicted area at ${claims}: ${clearance.status}.`);
-    await this.removeDir(client, evicted);
-    const free = workerFreeBytes(this.root());
-    const days = ((Date.now() - usedAt) / DAY_MS).toFixed(1);
-    const why =
-      reason === 'age'
-        ? `unused for ${days} days, over the ${maxAgeMs / DAY_MS} of server.workerAreaMaxAgeDays`
-        : `the least recently used (${days} days ago) while the volume is near its disk floor`;
-    console.error(
-      `stim-server: removed the build area ${areaKey(client, repo)}: ${why}; ${free === null ? 'free disk unknown' : `${gb(free)} GB free`}.`,
-    );
-    return null;
   }
 
   /** Starts the build of one synced manifest; the job belongs to the caller's connection. */
@@ -1445,13 +1575,6 @@ export class BuildHost {
     } catch (error) {
       return refusal('build-refused', (error as Error).message);
     }
-    try {
-      mkdirSync(join(area, 'home'), { recursive: true, mode: 0o700 });
-    } catch (error) {
-      releaseClaim(claim);
-      return refusal('build-refused', String(error));
-    }
-    recordAreaUse(area);
     const id = randomUUID();
     let slot: ClaimHandle | null = null;
     const releaseClaims = () => {
@@ -1476,6 +1599,13 @@ export class BuildHost {
       releaseClaim(claim);
       return refusal('build-refused', (error as Error).message);
     }
+    try {
+      mkdirSync(join(area, 'home'), { recursive: true, mode: 0o700 });
+    } catch (error) {
+      releaseClaims();
+      return refusal('build-refused', String(error));
+    }
+    recordAreaUse(area);
     const started = Date.now();
     try {
       markClaimChildPending(claim);
@@ -1789,8 +1919,11 @@ export class BuildHost {
     return {
       bundle: entry.bundle,
       release: () => {
-        rmSync(entry.dir, { recursive: true, force: true });
-        unpin();
+        try {
+          rmSync(entry.dir, { recursive: true, force: true });
+        } finally {
+          unpin();
+        }
       },
     };
   }
@@ -1822,7 +1955,6 @@ export class BuildHost {
     await this.stopQueries();
     await Promise.all([...this.jobs].map((job) => job.done));
     await this.sweeping;
-    await this.evicting;
     await Promise.all(this.removals.values());
   }
 }
@@ -2223,8 +2355,9 @@ export class BuildSession {
     ) {
       return refusal('bad-request', 'This cached artifact needs a current build query.');
     }
+    if (!(await this.host.cache(this.client, params.repo).lookup(params.artifact, this.transfers.signal)))
+      return { result: null };
     const area = join(this.host.clientDir(this.client), 'repos', params.repo);
-    mkdirSync(area, { recursive: true, mode: 0o700 });
     const temporary = await mkdtemp(join(area, '.artifact-fetch-'));
     try {
       const cached = await this.host

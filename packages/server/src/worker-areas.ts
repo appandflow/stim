@@ -24,6 +24,39 @@ export interface AreaEviction extends WorkerArea {
   reason: 'age' | 'space';
 }
 
+/** Where the worker root's volume stands against its eviction margin and its disk floor. */
+export type DiskSpace = 'ok' | 'low' | 'floor';
+
+/**
+ * Written to `<client>/evicted/<id>.json` before the area moves to `<client>/evicted/<id>/`, and deleted last, so a
+ * later pass can always finish what an eviction started, the directories outside the worker root included.
+ */
+export interface EvictedRecord {
+  repo: string;
+  /** Short directories the area owned outside the worker root, and the names they move to for deletion. */
+  external: Array<{ dir: string; aside: string }>;
+}
+
+export function writeEvictedRecord(path: string, record: EvictedRecord): void {
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, JSON.stringify(record));
+  renameSync(tmp, path);
+}
+
+/** The record at `path`, or null when it cannot be read as one, so nothing it may name is discarded. */
+export function readEvictedRecord(path: string): EvictedRecord | null {
+  try {
+    const { repo, external }: Partial<EvictedRecord> = JSON.parse(readFileSync(path, 'utf8'));
+    const valid =
+      typeof repo === 'string' &&
+      Array.isArray(external) &&
+      external.every((entry) => typeof entry?.dir === 'string' && typeof entry?.aside === 'string');
+    return valid ? { repo, external } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Records now as the last use of `area`. An unwritable record never stops the build or fetch that uses the area. */
 export function recordAreaUse(area: string): void {
   const tmp = join(area, `${USE_RECORD}.${process.pid}.tmp`);
@@ -54,12 +87,13 @@ export function areaLastUsed(area: string): number {
 }
 
 /**
- * The areas to evict, least recently used first: those unused for longer than `maxAgeMs` (0 turns age off) and, while
- * `low`, any other. A client's most recently used area is never one of them.
+ * The areas to evict, least recently used first: those unused for longer than `maxAgeMs` (0 turns age off); while the
+ * space is `low`, those unused for at least `recentMs`; at the `floor`, where the worker declines every build, any
+ * other. A client's most recently used area is never one of them.
  */
 export function areasToEvict(
   areas: readonly WorkerArea[],
-  { now, maxAgeMs, low }: { now: number; maxAgeMs: number; low: boolean },
+  { now, maxAgeMs, recentMs, space }: { now: number; maxAgeMs: number; recentMs: number; space: DiskSpace },
 ): AreaEviction[] {
   const newest = new Map<string, WorkerArea>();
   for (const area of areas) {
@@ -70,7 +104,8 @@ export function areasToEvict(
   for (const area of areas) {
     if (newest.get(area.client) === area) continue;
     const expired = maxAgeMs > 0 && now - area.usedAt > maxAgeMs;
-    if (expired || low) evictions.push({ ...area, reason: expired ? 'age' : 'space' });
+    const spaceNeeded = space === 'floor' || (space === 'low' && now - area.usedAt >= recentMs);
+    if (expired || spaceNeeded) evictions.push({ ...area, reason: expired ? 'age' : 'space' });
   }
   return evictions.toSorted((a, b) => a.usedAt - b.usedAt);
 }
