@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { INTERACTIONS_KEY, readDeviceIdleShutdowns } from '@stim-cli/core/state';
+import { INTERACTIONS_KEY, readDeferredShutdowns, readDeviceIdleShutdowns } from '@stim-cli/core/state';
 import { processContext } from '../cli-operation.ts';
 import {
   collectOwnedDeviceActivityAsync,
@@ -20,6 +20,7 @@ import {
 import { resetExecutor } from '../exec.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { shutDownBootedParkedIosSim, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { parkSim } from '../devices/sim-pool.ts';
@@ -144,6 +145,19 @@ test('shuts a parked simulator kept booted down before any workspace device, how
   await expect(reclaim()).resolves.toMatchObject({ kind: 'reclaim-device', target: 'PARKED', outcome: 'done' });
   expect(shutDownBootedParkedIosSim).toHaveBeenCalledWith('PARKED', expect.objectContaining({ operation }));
   expect(teardownOwnedIosSim).not.toHaveBeenCalled();
+});
+
+test('shuts a simulator that stop left booted down before any workspace device, however recently its workspace stopped', async () => {
+  add('idle', 90);
+  const stopped = add('stopped', 1);
+  await recordDeferredShutdown(stopped.project, 'default', {
+    udid: 'stopped',
+    until: new Date(NOW + 10 * MINUTE).toISOString(),
+  });
+  await expect(reclaim()).resolves.toMatchObject({ kind: 'reclaim-device', target: 'stopped', outcome: 'done' });
+  expect(teardownOwnedIosSim).toHaveBeenCalledTimes(1);
+  expect(teardownOwnedIosSim).toHaveBeenCalledWith('stopped', expect.objectContaining({ workspace: stopped.project }));
+  expect(readDeferredShutdowns(readWorkspaceState(stopped.project))).toEqual({});
 });
 
 test('shuts down exactly the longest-idle device of another workspace and records the reason and log', async () => {

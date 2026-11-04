@@ -4,7 +4,7 @@ import { clearDeferredShutdown } from '../devices/deferred-shutdown.ts';
 import { deviceSlotKey, deviceSlotPlatforms, parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { isBootedParked, readParked, type ParkedSim } from '../devices/sim-pool.ts';
-import { shutDownBootedParkedIosSim, teardownOwnedIosSim } from '../devices/teardown.ts';
+import { shutDownBootedParkedIosSim, teardownOwnedIosSim, type TeardownOutcome } from '../devices/teardown.ts';
 import type { HostMemoryPressure } from '../host-memory.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { getProject, loadConfig, type Config } from '../workspace/config.ts';
@@ -52,7 +52,7 @@ export function bootedParkedDue({
 }
 
 /** A simulator `stop` left booted: the workspace's own owned device, with the time its shutdown is due. */
-interface DeferredMark {
+export interface DeferredMark {
   root: string;
   slot: string;
   udid: string;
@@ -61,7 +61,7 @@ interface DeferredMark {
 }
 
 /** The deferred shutdowns of the owned simulators the registered workspaces still hold. */
-function readDeferredMarks(config: Config | null): DeferredMark[] {
+export function readDeferredMarks(config: Config | null): DeferredMark[] {
   const marks: DeferredMark[] = [];
   for (const [root, project] of Object.entries(config?.projects ?? {})) {
     if (!projectDeviceSlots(project).some(({ platforms }) => platforms.ios?.owned === true)) continue;
@@ -138,7 +138,7 @@ export function bootedParkedPending(now: number = Date.now()): boolean {
 }
 
 /** Whether the workspace's dev server runs, so it is in use again and a deferred shutdown no longer applies. */
-function workspaceServing(root: string): boolean {
+export function workspaceServing(root: string): boolean {
   const project = getProject(root);
   const target = resolveSupervisorTarget({
     state: readWorkspaceState(root)?.supervisor,
@@ -146,6 +146,29 @@ function workspaceServing(root: string): boolean {
     reservedPort: project?.metroPort,
   });
   return target.status === 'ours' || target.status === 'unverified';
+}
+
+/**
+ * Shuts down a simulator `stop` left booted, through teardown under its workspace's native-run lock, and forgets the
+ * deferral. Null when the workspace is in use or the deferral changed meanwhile.
+ */
+export async function shutDownDeferredIosSim(
+  mark: DeferredMark,
+  operation: StimContext | undefined,
+): Promise<TeardownOutcome | null> {
+  const run = await withIdleWorkspace(
+    mark.root,
+    async () => {
+      const current = readDeferredShutdowns(readWorkspaceState(mark.root))[deviceSlotKey('ios', mark.slot)];
+      if (current?.udid !== mark.udid) return null;
+      const outcome = await teardownOwnedIosSim(mark.udid, { label: mark.name, workspace: mark.root, operation });
+      if (outcome.status === 'torn-down' || outcome.status === 'missing')
+        await clearDeferredShutdown(mark.root, mark.slot);
+      return outcome;
+    },
+    { purpose: 'deferred simulator shutdown', operation, supervisor: false, managedLocks: false },
+  );
+  return run.ran ? run.value : null;
 }
 
 /**
@@ -230,20 +253,8 @@ export async function runBootedParkedPass({
       });
       continue;
     }
-    const run = await withIdleWorkspace(
-      mark.root,
-      async () => {
-        const current = readDeferredShutdowns(readWorkspaceState(mark.root))[deviceSlotKey('ios', mark.slot)];
-        if (current?.udid !== mark.udid) return null;
-        const outcome = await teardownOwnedIosSim(mark.udid, { label: mark.name, workspace: mark.root, operation });
-        if (outcome.status === 'torn-down' || outcome.status === 'missing')
-          await clearDeferredShutdown(mark.root, mark.slot);
-        return outcome;
-      },
-      { purpose: 'deferred simulator shutdown', operation, supervisor: false, managedLocks: false },
-    );
-    if (!run.ran || run.value === null) continue;
-    const outcome = run.value;
+    const outcome = await shutDownDeferredIosSim(mark, operation);
+    if (outcome === null) continue;
     const done = outcome.status === 'torn-down' || outcome.status === 'missing';
     const detail = done ? `shut down ${label}: ${why}` : `kept ${label} booted: ${outcome.reason ?? outcome.status}`;
     log(done ? 'info' : 'warn', done ? 'deferred_shutdown_done' : 'deferred_shutdown_kept', `${mark.root}: ${detail}`, {

@@ -38,7 +38,7 @@ import {
 } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
-import { phaseLine, plural, refuseNoProject, releasedLeaseFact } from '../command-output.ts';
+import { clockTime, phaseLine, plural, refuseNoProject, releasedLeaseFact } from '../command-output.ts';
 import { clearSupervisor, getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
@@ -748,7 +748,13 @@ async function stopWorkspace({
   if (stillHolding) {
     report(chalk.dim(phaseLine('device', 'left alone (something is still running)')));
   } else {
-    outcomes.device = await shutDownDevices(proj, root, { teardownIos, deferIosShutdown, teardownAvd, report });
+    outcomes.device = await shutDownDevices(proj, root, {
+      teardownIos,
+      deferIosShutdown,
+      teardownAvd,
+      report,
+      slot: hostedSlot,
+    });
     if (Object.values(outcomes.device).some((device) => device?.status === 'failed')) ok = false;
   }
 
@@ -1105,11 +1111,14 @@ async function shutDownDevices(
     deferIosShutdown,
     teardownAvd,
     report,
+    slot: stoppedSlot,
   }: {
     teardownIos: (udid: string, opts: IosTeardownOptions) => Promise<TeardownResult>;
     deferIosShutdown?: () => Promise<string | null>;
     teardownAvd: (avdName: string, opts: { del?: boolean; workspace?: string }) => Promise<TeardownResult>;
     report: (line: string) => void;
+    /** The slot `stop --slot` stops, whose record the caller moved into the default slot. */
+    slot?: string;
   },
 ): Promise<DeviceOutcome> {
   const device: DeviceOutcome = { ios: null, android: null };
@@ -1137,12 +1146,12 @@ async function shutDownDevices(
             del: false,
             label: iosName,
             workspace,
-            ...(until ? { deferShutdown: { until, slot, appId } } : {}),
+            ...(until ? { deferShutdown: { until, slot: stoppedSlot ?? slot, appId } } : {}),
           });
         result = (deferIosShutdown ? (deferral ??= deferIosShutdown()).then(shutDown) : shutDown(null)).then(
           async (outcome) => {
             if ((outcome.status === 'torn-down' || outcome.status === 'missing') && !outcome.deferredUntil)
-              await clearDeferredShutdown(workspace, slot).catch(() => {});
+              await clearDeferredShutdown(workspace, stoppedSlot ?? slot).catch(() => {});
             debugLog.log('stop.device.end', {
               platform: 'ios',
               slot,
@@ -1288,7 +1297,7 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   for (const [platform, o] of devicesByPlatform) {
     if (!o) continue;
     if (o.status === 'shut-down') parts.push(`${platform} ${o.label} shut down`);
-    if (o.status === 'kept-booted') parts.push(`${platform} ${o.label} kept booted until ${o.until}`);
+    if (o.status === 'kept-booted') parts.push(`${platform} ${o.label} kept booted until ${clockTime(o.until ?? '')}`);
     if (o.status === 'skipped') parts.push(`${platform} ${o.label} skipped`);
     if (o.status === 'failed') parts.push(`${platform} ${o.label} failed`);
   }

@@ -2003,7 +2003,7 @@ describe('stop leaves the owned simulator booted when the booted-park gates hold
     ]);
     expect(r.ok).toBe(true);
     expect(r.outcomes.device.ios).toEqual({ status: 'kept-booted', label: 'stim-a', until: UNTIL });
-    expect(r.summary).toContain(`ios stim-a kept booted until ${UNTIL}`);
+    expect(r.summary).toContain(`ios stim-a kept booted until ${clockTime(UNTIL)}`);
   });
 
   test.each([
@@ -2040,6 +2040,22 @@ describe('stop leaves the owned simulator booted when the booted-park gates hold
     });
     await runStop(androidOnly);
     expect(reads).toBe(0);
+  });
+
+  test('stop --slot records the deferral under that slot', async () => {
+    const { calls, opts } = seams({
+      root: tmpRoot,
+      project: { metroPort: 8083, platforms: {}, deviceSlots: { second: { ios: { deviceUdid: 'U2', owned: true } } } },
+      deferIosShutdown: async () => UNTIL,
+    });
+    opts.teardownIos = echoingTeardown(calls.teardowns);
+    await runStop({ ...opts, slot: 'second' });
+    expect(calls.teardowns).toEqual([
+      expect.objectContaining({
+        udid: 'U2',
+        opts: expect.objectContaining({ deferShutdown: { until: UNTIL, slot: 'second', appId: null } }),
+      }),
+    ]);
   });
 
   test('a shutdown at once forgets the deferral an earlier stop recorded', async () => {
