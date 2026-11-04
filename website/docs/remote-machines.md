@@ -53,7 +53,7 @@ A worker that sleeps stops answering the machines that build or host simulators 
 
 The setting defaults to `false`. While it is true on a Mac, stim-server prevents idle system sleep (the same as `caffeinate -s`), so the Mac stays reachable while plugged in; on battery it can still sleep, and the display may still sleep. stim-server holds this only while it accepts connections from other machines: its Tailscale or `server.lanAddresses` listener is up and it is not a `--loopback-only` server. It lets go when the setting turns off, when those listeners go away, and when the server stops, and it reads the setting without a restart.
 
-`stim-server service status` prints a `keep awake:` line, and the local `/health` answer carries `keepAwake`, saying whether the assertion is held. If `caffeinate` cannot start or stops, the status reads `failed` and stim-server does not retry by itself: turn the setting off and on, or restart stim-server. On Linux and Windows workers the setting has no effect and the status line says so.
+`stim-server service status` prints a `keep awake:` line, and the local `/health` answer carries `keepAwake`, saying whether the assertion is held. If `caffeinate` cannot start or stops, the status reads `failed` and stim-server does not retry by itself: restart stim-server. Turning the setting off and on also retries, but stim-server polls the setting every 5 seconds, so wait more than 5 seconds between the two and confirm with `stim-server service status`. On Linux and Windows workers the setting has no effect and the status line says so.
 
 ## Choose where to build and run
 

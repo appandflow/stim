@@ -726,8 +726,10 @@ they return. It reads the setting every few seconds without a restart. On Linux 
 Windows the setting has no effect: `/health` reports `reason: "unsupported"`, the server logs
 one line saying so, and `service status` prints `keep awake: not held, only macOS supports it`.
 If `caffeinate` cannot start or stops on its own, `/health` reports `reason: "failed"` and the
-server does not start it again by itself. Turn `server.keepAwake` off and on, or restart the
-server, to retry.
+server does not start it again by itself. Restart the server to retry. Turning `server.keepAwake`
+off and on also retries, but the server reads the setting every 5 seconds and acts only on a
+change it sees, so wait more than 5 seconds between the two and confirm with
+`stim-server service status`.
 `pmset -g assertions` lists the held assertion under the `caffeinate` pid that `/health`
 and `service status` report, with the server's pid as the process it was created for.
 
