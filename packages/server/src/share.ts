@@ -157,6 +157,7 @@ const RENAME_MS = 5000;
 /** Presence a viewer's socket is sent while it is backed up: no moves, only the touches that change who is down. */
 const PRESENCE_BACKLOG_BYTES = 64 * 1024;
 const PING_MS = 30_000;
+const PAGE_ID = /^[0-9a-f]{32}$/;
 const HEADERS_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const IDLE_SOCKET_MS = 2 * PING_MS + 10_000;
@@ -287,6 +288,7 @@ interface Viewer {
   chosen: string | null;
   renamedAt: number;
   login: Login | null;
+  pageId: string | null;
   socket: WebSocket;
   /** Whether the page asked for H.264 access units. */
   video: boolean;
@@ -843,8 +845,11 @@ export class ShareHub {
         socket.terminate();
         continue;
       }
-      socket.send(JSON.stringify({ type: 'ended', message: VIEWER_TEXT.ended }));
-      socket.close(1000, 'share ended');
+      if (this.closed) socket.close(1001, 'stim-server stopped');
+      else {
+        socket.send(JSON.stringify({ type: 'ended', message: VIEWER_TEXT.ended }));
+        socket.close(1000, 'share ended');
+      }
       setTimeout(() => socket.terminate(), CLOSE_GRACE_MS).unref?.();
     }
     share.viewers.clear();
@@ -1183,12 +1188,20 @@ export class ShareHub {
     if (!sameOrigin) return refuse(403, 'Forbidden');
     const admitted = this.admit(share, request);
     if (!admitted) return refuse(401, 'Unauthorized');
-    if (share.viewers.size >= this.limits.maxViewers) return refuse(503, 'Service Unavailable');
-    const video = new URL(request.url ?? '', 'http://share.invalid').searchParams.get('codec') === 'h264';
-    this.wss.handleUpgrade(request, socket, head, (ws) => this.watch(share, ws, video, admitted.login));
+    const query = new URL(request.url ?? '', 'http://share.invalid').searchParams;
+    const video = query.get('codec') === 'h264';
+    const id = query.get('id');
+    const pageId = id !== null && PAGE_ID.test(id) ? id : null;
+    const replaced = pageId === null ? 0 : this.pageViewers(share, pageId, admitted.login).length;
+    if (share.viewers.size - replaced >= this.limits.maxViewers) return refuse(503, 'Service Unavailable');
+    this.wss.handleUpgrade(request, socket, head, (ws) => this.watch(share, ws, video, admitted.login, pageId));
   }
 
-  private watch(share: Share, socket: WebSocket, video: boolean, login: Login | null): void {
+  private pageViewers(share: Share, pageId: string, login: Login | null): Viewer[] {
+    return [...share.viewers].filter((viewer) => viewer.pageId === pageId && viewer.login === login);
+  }
+
+  private watch(share: Share, socket: WebSocket, video: boolean, login: Login | null, pageId: string | null): void {
     if (share.ended) {
       socket.close(1000, 'share ended');
       return;
@@ -1198,6 +1211,7 @@ export class ShareHub {
       chosen: login?.name ?? null,
       renamedAt: -Infinity,
       login,
+      pageId,
       socket,
       video,
       inputs: { tokens: this.limits.inputPerSecond, at: Date.now() },
@@ -1206,6 +1220,12 @@ export class ShareHub {
       gate: null,
       stopPresence: null,
     };
+    if (pageId !== null) {
+      for (const stale of this.pageViewers(share, pageId, login)) {
+        share.viewers.delete(stale);
+        stale.socket.terminate();
+      }
+    }
     this.attach(share, viewer);
     const json = (message: Record<string, unknown>) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));

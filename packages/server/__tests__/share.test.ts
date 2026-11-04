@@ -445,6 +445,42 @@ describe('a web share', () => {
     expect(f.hub.list()[0]!.viewers).toBe(0);
   });
 
+  it('replaces the stale socket of a page that reconnects, even at the viewer cap, but never another page or session', async () => {
+    f = fixture({ maxViewers: 3 });
+    const share = await started(f);
+    const url = local(share, f.hub.port ?? 0);
+    const cookie = await login(url, share.password ?? '');
+    const ask = (key: string, id: string) => connect(url, { origin: origin(url), cookie: key }, `?id=${id}`);
+    const page = 'a'.repeat(32);
+
+    const first = await ask(cookie, page);
+    const dropped = new Promise((resolve) => first.socket.once('close', resolve));
+    const second = await ask(cookie, page);
+    await dropped;
+    await vi.waitFor(() => expect(f.hub.list()[0]?.viewers).toBe(1));
+    expect(second.socket.readyState).toBe(WebSocket.OPEN);
+
+    const other = await ask(cookie, 'b'.repeat(32));
+    const stranger = await ask(await login(url, share.password ?? ''), page);
+    await vi.waitFor(() => expect(f.hub.list()[0]?.viewers).toBe(3));
+    expect([second, other, stranger].map((viewer) => viewer.socket.readyState)).toEqual([1, 1, 1]);
+
+    const third = await ask(cookie, page);
+    expect(third.status).toBeNull();
+    expect((await ask(cookie, 'c'.repeat(32))).status).toBe(503);
+    for (const viewer of [second, other, stranger, third]) viewer.socket.close();
+  });
+
+  it('closes viewers without an ended message when stim-server itself stops, so their pages reconnect', async () => {
+    const share = await started(f, { passwordless: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket, messages } = await connect(url, { origin: origin(url) });
+    const closed = new Promise<number>((resolve) => socket.once('close', (code) => resolve(code)));
+    await f.hub.close();
+    expect(await closed).toBe(1001);
+    expect(messages.map((message) => message.type)).not.toContain('ended');
+  });
+
   it('streams H.264 at 60 fps to a viewer that asks for it, from a keyframe it requests on join, and JPEG at 10 fps otherwise', async () => {
     const share = await started(f);
     const url = local(share, f.hub.port!);

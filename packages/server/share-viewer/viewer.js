@@ -28,6 +28,13 @@ let hasFrame = false;
 let away = false;
 let resuming = false;
 let noteTimer = null;
+let retryTimer = null;
+let probing = false;
+let reconnecting = false;
+let attempt = 0;
+let missingSince = null;
+let releaseInput = () => {};
+const PROBE_TIMEOUT_MS = 10000;
 
 function setStatus(state, text) {
   statusBox.dataset.state = state;
@@ -51,16 +58,21 @@ function timeLeft() {
 
 function refreshStatus() {
   if (finished) return;
-  if (away) setStatus('waiting', 'Waiting for the device');
+  if (reconnecting)
+    setStatus('waiting', missingSince === null ? 'Reconnecting...' : 'Share not found. Trying again...');
+  else if (away) setStatus('waiting', 'Waiting for the device');
   else setStatus(live ? 'live' : 'waiting', live ? 'Live' : 'Waiting');
-  leftText.textContent = timeLeft();
+  leftText.textContent = reconnecting ? '' : timeLeft();
 }
 setInterval(() => {
-  if (!finished) leftText.textContent = timeLeft();
+  if (!finished && !reconnecting) leftText.textContent = timeLeft();
 }, 1000);
 
 function finish(text) {
   finished = true;
+  reconnecting = false;
+  clearTimeout(retryTimer);
+  delete body.dataset.reconnecting;
   live = false;
   away = false;
   resuming = false;
@@ -515,9 +527,12 @@ nameEdit.addEventListener('submit', (event) => {
 });
 
 const socketUrl = location.href
-  .replace(/#.*$/, '')
+  .replace(/[?#].*$/, '')
   .replace(/^http/, 'ws')
   .replace(/\/[^/]*$/, '/ws');
+const pageId = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+  byte.toString(16).padStart(2, '0'),
+).join('');
 let socket = null;
 let kickClipboard = () => {};
 let pending = Promise.resolve();
@@ -534,8 +549,10 @@ function connect(codec) {
   me = null;
   overlay.clear();
   renderRoster();
-  const current = new WebSocket(socketUrl + (codec === 'h264' ? '?codec=h264' : ''));
+  const current = new WebSocket(`${socketUrl}?id=${pageId}${codec === 'h264' ? '&codec=h264' : ''}`);
+  const previous = socket;
   socket = current;
+  if (previous && previous.readyState <= WebSocket.OPEN) previous.close();
   body.dataset.codec = codec;
   current.binaryType = 'arraybuffer';
   current.addEventListener('open', () => {
@@ -553,6 +570,11 @@ function connect(codec) {
     }
     const message = JSON.parse(event.data);
     if (message.type === 'hello') {
+      reconnecting = false;
+      attempt = 0;
+      missingSince = null;
+      clearTimeout(retryTimer);
+      delete body.dataset.reconnecting;
       if (typeof message.title === 'string') document.title = message.title;
       expiresAt = Date.parse(message.expiresAt);
       refreshStatus();
@@ -594,10 +616,82 @@ function connect(codec) {
   });
   current.addEventListener('close', () => {
     if (finished || current !== socket) return;
-    finish('Disconnected');
-    showNote('Disconnected. Reload to reconnect.');
+    lostConnection();
   });
 }
+
+function retryIn(delay) {
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(probe, delay);
+}
+
+function lostConnection() {
+  live = false;
+  away = false;
+  resuming = false;
+  waitingForKeyframe = true;
+  delete body.dataset.away;
+  reconnecting = true;
+  body.dataset.reconnecting = 'true';
+  for (const waiting of copies.values()) waiting.reject(new Error('The connection was lost.'));
+  copies.clear();
+  releaseInput();
+  overlay.clear();
+  refreshStatus();
+  retryIn(globalThis.stimReconnect.reconnectDelay(attempt++));
+}
+
+async function probe() {
+  clearTimeout(retryTimer);
+  if (probing || finished) return;
+  probing = true;
+  let verdict = 'retry';
+  const abort = new AbortController();
+  const giveUp = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(location.href.replace(/[?#].*$/, ''), {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      signal: abort.signal,
+    });
+    verdict = globalThis.stimReconnect.probeVerdict(response.status, await response.text());
+  } catch {
+    verdict = 'retry';
+  }
+  clearTimeout(giveUp);
+  probing = false;
+  if (finished) return;
+  if (verdict === 'viewer') {
+    missingSince = null;
+    return connect(body.dataset.codec);
+  }
+  if (verdict === 'login') return location.reload();
+  if (verdict === 'missing') {
+    missingSince ??= Date.now();
+    if (Date.now() - missingSince > globalThis.stimReconnect.MISSING_GIVE_UP_MS) {
+      return finish('This share has ended.');
+    }
+    refreshStatus();
+    return retryIn(globalThis.stimReconnect.MISSING_RETRY_MS);
+  }
+  missingSince = null;
+  refreshStatus();
+  retryIn(globalThis.stimReconnect.reconnectDelay(attempt++));
+}
+
+function retryNow() {
+  if (finished || probing) return;
+  if (!reconnecting) {
+    if (socket && socket.readyState === WebSocket.CLOSED) lostConnection();
+    return;
+  }
+  attempt = 0;
+  retryIn(0);
+}
+window.addEventListener('online', retryNow);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') retryNow();
+});
 
 /** Moves this viewer to JPEG once its own socket has closed, so the replacement never counts twice against the cap. */
 function useJpeg() {
@@ -969,8 +1063,8 @@ if (control) {
       y: Math.min(1, Math.max(0, (event.clientY - box.top) / box.height)),
     };
   };
-  const mirror = createMirroredGesture();
-  const touches = createTouchTracker();
+  let mirror = createMirroredGesture();
+  let touches = createTouchTracker();
   const markers = [0, 1].map(() => {
     const marker = document.createElement('div');
     const style = marker.style;
@@ -1034,6 +1128,16 @@ if (control) {
   const touched = () => {
     clearTimeout(settle);
     if (touches.pending) settle = setTimeout(() => emit(touches.settle()), TOUCH_SETTLE_MS);
+  };
+  releaseInput = () => {
+    down = false;
+    touching = false;
+    busy = false;
+    queuedMove = null;
+    clearTimeout(settle);
+    mirror = createMirroredGesture();
+    touches = createTouchTracker();
+    drawMarkers();
   };
   screen.tabIndex = 0;
   screen.addEventListener('pointerdown', (event) => {

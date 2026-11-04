@@ -306,6 +306,9 @@ body[data-control='true'] .aperture {
 body[data-control='true'] #screen {
   cursor: pointer;
 }
+body[data-reconnecting='true'] #screen {
+  opacity: 0.5;
+}
 #screen:focus-visible {
   outline: none;
 }

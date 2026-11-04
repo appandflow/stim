@@ -93,6 +93,14 @@ retries every few seconds, up to 30 seconds apart. share list shows
 waiting share still expires at its expiry, still keeps its workspace up and its
 stim-server running.
 
+A viewer whose connection drops (a stim-server restart or update, a network change, a phone that slept) keeps the
+dimmed last frame, shows "Reconnecting..." and rejoins on its own, with no reload: it retries after 1 second,
+doubling up to 15 seconds, and at once when the browser is back online or the page becomes visible. When the server
+no longer knows its sign-in (after a restart) it shows the login page of the same link; when the link is not found
+(a stopped share) it keeps trying every 30 seconds for 10 minutes, so a share that comes back with the same link is
+joined again. When stim-server itself stops, viewers get a plain close, not "ended", and reconnect the same way.
+"This share has ended." from a stop or expiry is final.
+
 Only an explicit stop ends a share early: stim share stop, stim stop (the
 workspace, or one slot with --slot), stim worktree remove, Stop in Stim
 Desktop, or stim-server stopping. Tell the user a share survives a rebuild;
