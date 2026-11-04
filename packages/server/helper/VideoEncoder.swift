@@ -31,6 +31,10 @@ final class VideoEncoder {
   private var size = (width: 0, height: 0)
   private var forceKeyframe = true
   private var lastTimestamp = CMTime.invalid
+  private var dropped = 0
+  private var dropReportScheduled = false
+  /// Called with the cumulative count of frames the rate control dropped, at most once a second.
+  var droppedReport: (Int) -> Void = { _ in }
 
   private var maxEdge: Int
   private var fps: Int
@@ -72,6 +76,20 @@ final class VideoEncoder {
 
   func requestKeyframe() {
     queue.async { self.forceKeyframe = true }
+  }
+
+  /// VideoToolbox's low-latency rate control drops a frame it cannot fit in the bitrate. The frame never enters the
+  /// reference chain, so the stream stays decodable and needs no keyframe.
+  private func countDrop() {
+    queue.async {
+      self.dropped += 1
+      guard !self.dropReportScheduled else { return }
+      self.dropReportScheduled = true
+      self.queue.asyncAfter(deadline: .now() + 1) {
+        self.dropReportScheduled = false
+        self.droppedReport(self.dropped)
+      }
+    }
   }
 
   /// `quarterTurns` counter-clockwise quarter turns make the source upright.
@@ -137,7 +155,11 @@ final class VideoEncoder {
     VTCompressionSessionEncodeFrame(
       session, imageBuffer: buffer, presentationTimeStamp: timestamp, duration: .invalid,
       frameProperties: properties, infoFlagsOut: nil
-    ) { [output, weak self] status, _, sample in
+    ) { [output, weak self] status, flags, sample in
+      if status == noErr, sample == nil, flags.contains(.frameDropped) {
+        self?.countDrop()
+        return
+      }
       guard status == noErr, let sample, let unit = Self.annexB(sample) else {
         self?.requestKeyframe()
         return
@@ -201,6 +223,10 @@ final class VideoEncoder {
 
   private static func applyBitrate(_ session: VTCompressionSession, _ bitrate: Int) {
     VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFNumber)
+    let window = 0.5
+    let bytes = Int(Double(bitrate) / 8 * window * 1.5)
+    VTSessionSetProperty(
+      session, key: kVTCompressionPropertyKey_DataRateLimits, value: [bytes, window] as CFArray)
   }
 
   private func transferSession() -> VTPixelTransferSession? {

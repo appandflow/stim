@@ -249,7 +249,10 @@ final class Pacer {
 }
 
 func videoEncoder() -> VideoEncoder {
-  VideoEncoder(maxEdge: Config().maxEdge, fps: Int(Config().fps), bitrate: Config().bitrate, output: Output.video)
+  let encoder = VideoEncoder(
+    maxEdge: Config().maxEdge, fps: Int(Config().fps), bitrate: Config().bitrate, output: Output.video)
+  encoder.droppedReport = { Output.notice(["videoDropped": $0]) }
+  return encoder
 }
 
 func recordEncoder() -> VideoEncoder {
