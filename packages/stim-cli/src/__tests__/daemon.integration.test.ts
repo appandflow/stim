@@ -46,6 +46,7 @@ let daemons: SpawnedDaemon[] = [];
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = home;
+  vi.stubEnv('XDG_RUNTIME_DIR', '');
 });
 
 afterEach(async () => {
@@ -54,6 +55,7 @@ afterEach(async () => {
   daemons = [];
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+  vi.unstubAllEnvs();
 });
 
 /**
