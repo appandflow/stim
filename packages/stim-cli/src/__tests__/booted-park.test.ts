@@ -3,6 +3,7 @@ import { bootedParkDeadline, type BootedParkFacts } from '../devices/booted-park
 const NOW = Date.parse('2026-11-04T12:00:00.000Z');
 const open: BootedParkFacts = {
   graceMinutes: 15,
+  daemonActs: true,
   memory: 'normal',
   counts: { ios: 2, android: 1 },
   maxDevices: 6,
@@ -17,6 +18,7 @@ describe('bootedParkDeadline', () => {
 
   test.each([
     ['a grace period of 0', { graceMinutes: 0 }],
+    ['no daemon acting, which alone ends the grace period', { daemonActs: false }],
     ['memory pressure at warning', { memory: 'warning' as const }],
     ['memory pressure at critical', { memory: 'critical' as const }],
     ['unreadable memory pressure', { memory: null }],

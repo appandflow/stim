@@ -1461,7 +1461,9 @@ result as proof instead of requiring an unrelated screenshot.`,
   pool record carries \`bootedUntil\`. Stim keeps it booted only while macOS
   memory pressure reads normal and a device slot besides this simulator is
   free under \`concurrency.maxDevices\` and \`concurrency.maxIosDevices\`;
-  otherwise it shuts the simulator down as before. The leftover app is
+  otherwise it shuts the simulator down as before. It also shuts it down
+  unless \`daemon.mode\` is \`on\` on a platform with a daemon, because only
+  the stim-daemon ends the grace period. The leftover app is
   terminated at park. \`stim stop\` shuts the workspace's simulator down
   before it is parked, so run \`worktree remove\` without a prior \`stop\`
   (it stops the workspace itself) to keep it booted.

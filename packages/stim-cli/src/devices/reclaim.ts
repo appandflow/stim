@@ -15,6 +15,7 @@ import {
 import { existsSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../supervisor/stop-cause.ts';
+import { ensureDaemon } from '../daemon/client.ts';
 import { readBootedParkDeadline } from './booted-park.ts';
 import {
   teardownOwnedBrowser,
@@ -285,27 +286,19 @@ async function reclaimOwnedDevices(
     if (ios?.owned && ios.deviceUdid) {
       const udid = ios.deviceUdid as string;
       const label = (ios.deviceName as string | undefined) || udid;
+      const bootedUntil = park ? await readBootedParkDeadline('ios', operation) : null;
       const r = await teardownOwnedIosSim(udid, {
         operation,
         del: true,
         label,
-        ...(park
-          ? {
-              park: parkRequest(
-                project,
-                projectPath,
-                slot,
-                Boolean(ios.simslimManaged),
-                await readBootedParkDeadline('ios', operation),
-              ),
-            }
-          : {}),
+        ...(park ? { park: parkRequest(project, projectPath, slot, Boolean(ios.simslimManaged), bootedUntil) } : {}),
       });
       if (r.parkFallback) poolNotes.push(`could not park ${label}: ${r.parkFallback} -- deleted it instead`);
       for (const failure of r.evictionFailures ?? []) poolNotes.push(failure);
       if (r.parked) {
         parkedDevices.push(r.parked);
         evictedDevices.push(...(r.evicted ?? []));
+        if (bootedUntil) await ensureDaemon();
       } else if (r.status === 'torn-down') deletedDevices.push(r.label as string);
       if (!r.parked && (r.status === 'torn-down' || r.status === 'missing')) {
         await withConfigLockAsync(() => clearDevice(projectPath, 'ios', slot, udid));

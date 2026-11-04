@@ -770,7 +770,7 @@ deleted it instead`.
 A simulator that is booted when `stim worktree remove` parks it stays booted
 for `pool.bootedGraceMinutes` (15 by default; `0` shuts it down at park), so the
 next `stim ios` that adopts it skips the boot. Stim keeps it booted only while
-macOS memory pressure is normal and a device slot is free, terminates the
+macOS memory pressure is normal, a device slot is free and `daemon.mode` is `on`, terminates the
 leftover app, and counts the simulator against the device caps. The stim-daemon
 shuts it down, and keeps it parked, when the grace period passes, under any
 memory pressure before it touches a workspace's device, and before it reclaims

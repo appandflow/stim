@@ -45,9 +45,16 @@ export function bootedParkedDue({
   return due;
 }
 
-/** Whether a parked simulator is still kept booted, which keeps the daemon running to end it. */
+const RETRY_AFTER_EXPIRY_MS = 10 * 60_000;
+
+/**
+ * Whether a parked simulator is still kept booted, or passed its grace period within the last 10 minutes and so may
+ * need another shutdown attempt, which keeps the daemon running to end it.
+ */
 export function bootedParkedPending(now: number = Date.now()): boolean {
-  return readParked('ios').some((record) => isBootedParked(record, now));
+  return readParked('ios').some(
+    (record) => record.bootedUntil !== undefined && Date.parse(record.bootedUntil) + RETRY_AFTER_EXPIRY_MS > now,
+  );
 }
 
 /**
