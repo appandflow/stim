@@ -25,7 +25,7 @@
 # WHAT RUNS WHEN. A cold native build is ~10-20 minutes and occasionally flaky
 # (device boot, toolchain), so nothing native runs on an unlabeled pull request:
 #   - every push to main that changes `packages/`, the native e2e driver or its
-#     inputs (see `paths` above): the smoke suite on iOS and Linux Android (Windows
+#     inputs (see `paths` below): the smoke suite on iOS and Linux Android (Windows
 #     Android takes ~15 minutes, so its smoke runs only on a pull request
 #     label or dispatch, and the nightly loop covers it);
 #   - nightly (schedule), against main: the loop suite;
