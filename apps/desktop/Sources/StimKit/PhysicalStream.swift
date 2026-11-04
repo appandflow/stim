@@ -34,6 +34,7 @@ import Foundation
   private var generation = 0
   private var beginGeneration = 0
   private var pressed: (x: Double, y: Double)?
+  private var pressedSecond: (x: Double, y: Double)?
   private var keyframeRequest: Task<Void, Never>?
   private var fellBack = false
 
@@ -196,7 +197,7 @@ import Foundation
     beginGeneration += 1
     switch control {
     case .on(let session):
-      if let pressed { touch("up", x: pressed.x, y: pressed.y) }
+      if let pressed { touch("up", x: pressed.x, y: pressed.y, second: pressedSecond) }
       if let server { Task { _ = try? await server.request("control.end", ["session": .string(session)]) } }
     case .starting: break
     case .off, .failed: return
@@ -205,11 +206,20 @@ import Foundation
     control = .off(ended: nil)
   }
 
-  /// `x` and `y` are fractions of the upright screen, origin top-left.
-  public func touch(_ phase: String, x: Double, y: Double) {
-    guard case .on = control else { return }
+  /// `x` and `y` are fractions of the upright screen, origin top-left. `second` adds a second finger for a pinch or a
+  /// two-finger pan; every phase of one gesture carries it or none does. Returns whether a control session is on.
+  @discardableResult
+  public func touch(_ phase: String, x: Double, y: Double, second: (x: Double, y: Double)? = nil) -> Bool {
+    guard case .on = control else { return false }
     pressed = phase == "up" ? nil : (x, y)
-    send("input.touch", ["phase": .string(phase), "x": .number(x), "y": .number(y)])
+    pressedSecond = phase == "up" ? nil : second
+    var params: [String: JSONValue] = ["phase": .string(phase), "x": .number(x), "y": .number(y)]
+    if let second {
+      params["x2"] = .number(second.x)
+      params["y2"] = .number(second.y)
+    }
+    send("input.touch", params)
+    return true
   }
 
   public func text(_ text: String) {
