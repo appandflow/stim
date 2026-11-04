@@ -24,6 +24,7 @@ stim share android --control    # viewers can tap, type and press buttons
 stim share ios --expires 15     # 1 to 480 minutes; every share expires
 stim share ios --password '<value>'  # your own password, 8 to 128 characters
 stim share ios --no-password    # no login: the link alone opens it
+stim share ios --slug pokedex   # a readable link, /s/pokedex/
 stim share android --control --view-password  # a second, watch-only password
 stim share list                 # live shares
 stim share stop                 # end this workspace's shares now`}
@@ -46,6 +47,37 @@ shell history and in `ps` output while the command runs, so the generated one
 is safer. With `--no-password` there is no login: anyone with the link can
 watch, or control with `--control`. `stim share` warns about it on stderr and
 `stim share list` marks the share "no password".
+
+### A readable link
+
+`--slug <name>` puts a name you choose in the link instead of the random token,
+for a demo link someone can type or read aloud:
+
+```text
+Shared ios of /Users/me/app: view only, link /s/pokedex/, 0 viewers, expires 2026-11-02T19:12:00.000Z.
+URL:      https://demo.example.com/s/pokedex/
+Password: k7mfx2rbq9tnh4ze
+Anyone with both can open it from the internet until it expires. The password is shown only now.
+The link uses a chosen slug, so anyone can guess it: only the password keeps the share private.
+Stop it with: stim share stop
+```
+
+A slug is 3 to 32 lowercase letters, digits and hyphens, starting and ending
+with a letter or digit; `assets` is reserved. Because anyone can guess a slug,
+the password becomes the share's only secret: `--slug` refuses with
+`--no-password`, so keep the generated password or set a long one. Anyone who
+knows the link reaches the login page and can use up the share's wrong-password
+budget (see [Security model](#security-model)), which locks new logins for a while but
+never signs out a viewer. While a share uses a slug, another `stim share
+--slug` with the same name refuses with `STIM_SHARE_REFUSED` and names that
+share; stopping it or its expiry frees the slug. `stim share list` and `--json`
+show the slug. The stim-server must be as new as `stim`.
+
+Prompt to try it:
+
+```text
+Share the iOS app of this workspace with stim share ios --slug <a short name for the app>, and send me the link and the password.
+```
 
 ### A view password next to the control one
 
@@ -232,17 +264,18 @@ stim-server cannot list its shares, Stim keeps the workspace running.
 
 ## Options
 
-| Option                | Meaning                                                                                                                          |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `ios` / `android`     | Which of the workspace's devices to share.                                                                                       |
-| `--control`           | Let viewers tap, type, rotate and press Home, Lock, Back or Apps.                                                                |
-| `--expires <minutes>` | Minutes until the share ends, 1 to 480 (default 60). No "never".                                                                 |
-| `--password <value>`  | Use this password, 8 to 128 characters, instead of a generated one.                                                              |
-| `--no-password`       | No login: anyone with the link can open the share.                                                                               |
-| `--view-password [v]` | With `--control`, a second password that only watches (generated without a value).                                               |
-| `--device`            | Share the physical device the workspace leases.                                                                                  |
-| `--slot <name>`       | Share the device of another [device slot](./commands.md#named-device-slots).                                                     |
-| `--json`              | Print one payload: `url`, `auth`, `viewAuth`, `expiresAt`, `control`, target; `password` and `viewPassword` only when generated. |
+| Option                | Meaning                                                                                                                                  |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `ios` / `android`     | Which of the workspace's devices to share.                                                                                               |
+| `--control`           | Let viewers tap, type, rotate and press Home, Lock, Back or Apps.                                                                        |
+| `--expires <minutes>` | Minutes until the share ends, 1 to 480 (default 60). No "never".                                                                         |
+| `--password <value>`  | Use this password, 8 to 128 characters, instead of a generated one.                                                                      |
+| `--no-password`       | No login: anyone with the link can open the share.                                                                                       |
+| `--view-password [v]` | With `--control`, a second password that only watches (generated without a value).                                                       |
+| `--slug <name>`       | Use `/s/<name>/` as the link instead of a random token; needs a password.                                                                |
+| `--device`            | Share the physical device the workspace leases.                                                                                          |
+| `--slot <name>`       | Share the device of another [device slot](./commands.md#named-device-slots).                                                             |
+| `--json`              | Print one payload: `url`, `auth`, `viewAuth`, `slug`, `expiresAt`, `control`, target; `password` and `viewPassword` only when generated. |
 
 `stim share list` lists the live shares of this Stim home with their target,
 control, viewer count and expiry, never their link or password.
@@ -398,7 +431,7 @@ reload.
   stylesheet and script are static files under `/s/assets/`; they hold no
   share data. Anything else, including an unknown or expired link, answers 404. No other device, log, file,
   command or stim-server method is reachable through it.
-- **Secrets.** The link carries 256 random bits. The generated password is 16
+- **Secrets.** The link carries 256 random bits, unless `--slug` chose it; then the password is the only secret. The generated password is 16
   random characters (about 79 bits); one you set is 8 to 128 characters.
   Either is kept only as a SHA-256 digest and checked in constant time. With
   `--view-password` a login is compared with both digests, always both, and the
