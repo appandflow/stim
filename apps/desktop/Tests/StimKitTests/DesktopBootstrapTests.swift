@@ -749,6 +749,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       Issue.record("Settings must refuse this connection")
     } catch let error as ServerError {
       #expect(error.code == (reason == "feature" ? "unsupported" : "not-connected"))
+      #expect(error.message.contains("did not start this stim-server") == (reason == "authority"))
     }
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.settings.write") })
   }

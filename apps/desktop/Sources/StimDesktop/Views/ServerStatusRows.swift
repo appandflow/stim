@@ -21,6 +21,13 @@ struct ServerStatusRows: View {
     case .running(let health, let owned):
       Text("stim-server \(health.version) on port \(String(server.port))\(owned ? "" : ", started outside Stim Desktop")")
         .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      if server.desktopBootstrap == nil {
+        Text(
+          "Stim Desktop did not start this server with its private key, so cleanup, settings changes and app runs from Desktop are unavailable until Desktop runs its own."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.warning)
+        .textSelection(.enabled)
+      }
       if StimHome.isDefault(stimHome), !health.servesDefaultHome() {
         Text(
           "This server keeps its state in \(abbreviatingHome(health.stimHome)), not ~/.stim.\(FeatureFlags.isEnabled(.phoneApp) ? " Phones paired now stop working when Stim Desktop serves ~/.stim again." : "")"

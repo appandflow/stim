@@ -101,7 +101,14 @@ struct ActivitySheet: View {
 
   private var failureMessage: String? {
     if let launchError = run.launchError { return launchError }
-    if case .failure(let error) = report { return error.localizedDescription }
+    if case .failure(let error) = report {
+      if let failure = error as? GcPreview.Failure, case .unreadable = failure, let status = run.exitStatus, status != 0,
+        let refusal = run.summary
+      {
+        return refusal
+      }
+      return error.localizedDescription
+    }
     if case .failure(let error as GcPreview.Failure) = outcome, case .refused = error { return error.localizedDescription }
     if case .success = outcome { return nil }
     guard let status = run.exitStatus, status != 0 else { return nil }

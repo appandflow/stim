@@ -253,7 +253,8 @@ the server always matches the app; a Mac that serves without Desktop, such as a
 build worker, installs `@stim-cli/server` from npm instead. Replay, the diff viewer, archived logs, hosted views and recordings use it. If
 a stim-server already serves the same Stim home, for example the `stim-server
 service` LaunchAgent on a Mac that hosts for others, Desktop uses that one and never
-stops or reconfigures it. If the default port belongs to another Stim home,
+stops or reconfigures it. Cleanup, settings changes and app runs from Desktop work only on
+the server Desktop started, so with an adopted server each of them refuses and says why. If the default port belongs to another Stim home,
 a copy using an explicit separate home starts its loopback-only server on a free
 port chosen by the OS. This lets hosted Desktop test copies coexist with the
 host's server. An explicit port override or **Allow connections** keeps the selected
