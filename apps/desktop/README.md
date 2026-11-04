@@ -821,8 +821,9 @@ gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
   outputs `stim gc --delete` clears; a lock marks ones it keeps, with the
   reason. Scissors mark logs `stim gc --delete` trims to their newest 8 MiB; a
   lock marks logs over the cap it keeps. The lifecycle reads **Merged into
-  main** from `stim gc --json`, **PR #n open** from `gh pr list` in the
-  repository when the GitHub CLI is signed in, **Stale Nd** after 7 days without
+  main** from `stim gc --json`, **PR #n open** from the pull request
+  state in `stim gc --json`, which Stim reads through its shared pull request
+  cache, **Stale Nd** after 7 days without
   recorded use, **Active**, **Checkout** for a source checkout, or **Folder
   gone**. A row's menu reveals the worktree in Finder or runs `stim worktree
 remove` in it, with what that frees: its `node_modules`, build outputs and

@@ -600,10 +600,6 @@ struct MachineView: View {
         .accessibilityHidden(true)
       Spacer()
     } content: { shown in
-      if storage.hasGitHubCLI == false {
-        Text("Install the GitHub CLI (gh) to show open pull requests.").font(.stim(.footnote))
-          .foregroundStyle(Palette.tertiary)
-      }
       if report.repositories.isEmpty {
         Text("stim status reports no workspaces.").foregroundStyle(Palette.tertiary)
       } else {
@@ -678,8 +674,7 @@ struct MachineView: View {
     let project = status.project(ofPath: workspace.path)
     let title =
       workspace.worktreePath == project.root && names.title == project.name ? status.title(of: project) : names.title
-    let lifecycle = WorktreeLifecycle(
-      worktree: workspace.worktree, branch: workspace.branch, pulls: storage.pulls(for: workspace))
+    let lifecycle = WorktreeLifecycle(worktree: workspace.worktree)
     return HStack(spacing: Space.lg) {
       VStack(alignment: .leading, spacing: Space.xxs) {
         Text(title).lineLimit(1).truncationMode(.middle)
