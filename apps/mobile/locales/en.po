@@ -4054,6 +4054,10 @@ msgstr "The endpoint is not a ws:// or wss:// URL."
 msgid "The endpoint must start with wss://, or use ws:// with a private IP address."
 msgstr "The endpoint must start with wss://, or use ws:// with a private IP address."
 
+#: src/lib/pairing.ts
+msgid "The endpoint port must be between 1 and 65535."
+msgstr "The endpoint port must be between 1 and 65535."
+
 #: src/components/read-only.tsx
 msgid "the Mac"
 msgstr "the Mac"

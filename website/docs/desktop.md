@@ -778,7 +778,7 @@ See [Phone app](./phone-app.md) for installation, pairing, notifications and acc
 
 ### Pair with another machine
 
-Desktop can pair with the `stim-server` of another machine on your tailnet, such as
+Desktop can pair with the `stim-server` of another machine on your tailnet or local network, such as
 a Linux server where an agent starts workspaces, the same way a phone does. With
 the **Paired machines** flag on:
 
@@ -786,7 +786,13 @@ the **Paired machines** flag on:
 2. In **Stim > Settings > Paired Machines**, choose **Pair with a Machine…** and paste everything
    the command printed. The sheet shows the machine's name, endpoint and the fingerprint of its key.
    Desktop pairs only with the machine whose key has that fingerprint. It accepts a
-   `wss://` endpoint on a `.ts.net` name, or `ws://` to a Tailscale address.
+   `wss://` endpoint on a `.ts.net` name, or `ws://` to a Tailscale or private network address
+   (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, link-local or unique local), which is what
+   `stim-server pair` prints when Tailscale is off, but only when the machine's
+   `server.lanAddresses` setting lists an address (it is empty by default). For a local
+   network address the sheet asks you to paste a code copied directly from the machine's own
+   terminal. Without a listed address, `stim-server pair` prints a loopback endpoint
+   (`127.0.0.1`), which Desktop refuses because it only works on the machine that printed it.
 3. The code works once, for 5 minutes. A pairing made from `stim-server pair` can only read;
    one made from `stim-server pair --control` can also run actions and control devices.
 

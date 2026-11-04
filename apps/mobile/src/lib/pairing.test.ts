@@ -1,3 +1,4 @@
+import vectors from '../../../desktop/Tests/StimKitTests/Fixtures/pairing-endpoint-vectors.json';
 import { endpointHost, isExpectedHost, manualPairing, parsePairingCode } from '@/lib/pairing';
 
 const TOKEN = 'TzVwCxX0F3_3bAXKpgOSMq7xNgGMdHUpcnWL3yIrj5w';
@@ -26,11 +27,11 @@ describe('parsePairingCode', () => {
     });
   });
 
-  it('accepts plain ws:// only to a private address, since Noise encrypts the session', () => {
-    for (const endpoint of ['ws://127.0.0.1:7787', 'ws://192.168.1.4:7787', 'ws://10.0.0.2', 'ws://[fd7a::1]:7443'])
-      expect(parsePairingCode(code({ endpoint })).ok).toBe(true);
-    for (const endpoint of ['ws://8.8.8.8', 'ws://mac.local', 'ws://172.32.0.1'])
-      expect(parsePairingCode(code({ endpoint })).ok).toBe(false);
+  it('accepts the endpoints the shared vectors list for the phone app', () => {
+    expect(vectors.endpoints.some((vector) => vector.kind === 'localNetwork')).toBe(true);
+    for (const { endpoint, phone } of vectors.endpoints) {
+      expect([endpoint, parsePairingCode(code({ endpoint })).ok]).toEqual([endpoint, phone]);
+    }
   });
 
   it('refuses a code without a fingerprint, a malformed token, and other QR codes', () => {
