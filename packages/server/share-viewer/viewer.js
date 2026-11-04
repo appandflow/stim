@@ -173,10 +173,29 @@ function askForKeyframe() {
   send({ type: 'keyframe' });
 }
 
+/** The newest decoded frame, drawn on the next display refresh; a frame replaced before then is never drawn. */
+let undrawn = null;
+let drawScheduled = 0;
+
 function closeDecoder() {
   if (decoder && decoder.state !== 'closed') decoder.close();
   decoder = null;
   decoderKey = '';
+  undrawn?.close();
+  undrawn = null;
+}
+
+function drawUndrawn() {
+  drawScheduled = 0;
+  const frame = undrawn;
+  undrawn = null;
+  if (!frame) return;
+  renderFrame(frame, frame.displayWidth, frame.displayHeight);
+  frame.close();
+  if (!live && !finished) {
+    live = true;
+    refreshStatus();
+  }
 }
 
 /** A decoder that never produced a frame means this browser cannot play the stream; a later failure gets a keyframe. */
@@ -241,12 +260,9 @@ function configure(sps, pps) {
   decoder = new VideoDecoder({
     output: (frame) => {
       decoded = true;
-      renderFrame(frame, frame.displayWidth, frame.displayHeight);
-      frame.close();
-      if (!live && !finished) {
-        live = true;
-        refreshStatus();
-      }
+      undrawn?.close();
+      undrawn = frame;
+      drawScheduled ||= requestAnimationFrame(drawUndrawn);
     },
     error: decoderFailed,
   });
@@ -990,7 +1006,9 @@ if (control) {
       marker.style.top = 100 * pair[index].y + '%';
     });
   };
+  let queuedMove = null;
   const sendTouch = (message) => {
+    if (message.phase !== 'move') queuedMove = null;
     if (message.phase === 'down') busy = false;
     if (!busy || message.phase === 'down') send(message);
     if (me) {
@@ -999,7 +1017,6 @@ if (control) {
     }
     if (message.phase === 'up') busy = false;
   };
-  let queuedMove = null;
   let frame = 0;
   const flushMove = () => {
     frame = 0;
@@ -1008,11 +1025,10 @@ if (control) {
   };
   const emit = (messages) => {
     for (const message of messages) {
-      if (message.phase === 'move' && message.x2 !== undefined) {
+      if (message.phase === 'move') {
         queuedMove = message;
         frame ||= requestAnimationFrame(flushMove);
       } else {
-        queuedMove = null;
         sendTouch(message);
       }
     }
@@ -1047,7 +1063,7 @@ if (control) {
     if (mirror.active) {
       emit(mirror.move(at(event), event.shiftKey, event.altKey));
       if (!event.altKey) emit(mirror.release());
-    } else if (down) sendTouch({ type: 'touch', phase: 'move', ...at(event) });
+    } else if (down) emit([{ type: 'touch', phase: 'move', ...at(event) }]);
     else if (event.altKey) mirror.hover(at(event), event.shiftKey);
     else emit(mirror.release());
     drawMarkers();
