@@ -148,7 +148,7 @@ test('preserves five real runs, their durations, failures and actual build machi
     [129383, 'succeeded', 'janics-mac-mini', null],
   ]);
   expect(historyDetail(history[1], now)).toContain('on janics-mac-mini');
-  expect(historyDetail(history[2], now)).toContain('this Mac');
+  expect(historyDetail(history[2], now)).toContain('the machine');
   expect(page.totals).toEqual({ builds: 5, cacheHits: 0, offloaded: 2, errors: 3 });
   expect(page.recordings[0]).toEqual({
     platform: 'ios',

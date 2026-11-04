@@ -66,9 +66,9 @@ function knownProblem(code: string): [string, string | null] | undefined {
     case 'stim-build':
       return [t`Stim build differs`, t`update the remote machine`];
     case 'arch':
-      return [t`Other CPU`, t`use a Mac with the same CPU`];
+      return [t`Other CPU`, t`use a machine with the same CPU`];
     case 'platform':
-      return [t`Not a Mac`, t`iOS and macOS builds need a Mac`];
+      return [t`Not macOS`, t`iOS and macOS builds need macOS`];
     case 'xcode':
       return [t`Xcode differs`, t`select the same Xcode on both`];
     case 'simulator-sdk':

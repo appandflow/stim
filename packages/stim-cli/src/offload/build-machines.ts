@@ -26,6 +26,7 @@ import { configuredMachines } from '../device-host/machines.ts';
 import { readHostPermissions } from './access-ticket.ts';
 import {
   diagnoseLocalUnreachable,
+  localMachineName,
   diagnosisFinding,
   notOnTailnetDiagnosis,
   unconfirmedKeyFinding,
@@ -310,6 +311,7 @@ async function inspectMachine(
   if (!local && 'off' in tailnet)
     return { report: { machine: entry, state: 'tailscale-off', diagnosis: tailnet.off }, finding: null };
   const status = 'status' in tailnet ? tailnet.status : {};
+  const localName = localMachineName(status);
   const peer = local ? null : findPeer(status, parsed.name);
   const credential = readBuildMachines().find((each) => each.machine === entry);
   const signedIn = local ? null : currentTailnet(status);
@@ -318,6 +320,7 @@ async function inspectMachine(
       entry,
       peer === 'ambiguous',
       credential ? wrongTailnet(credential, status) : null,
+      localName,
     );
     return {
       report: {
@@ -396,7 +399,7 @@ async function inspectMachine(
     case 'unconfirmed':
       return {
         report: { ...paired, state: 'key-unconfirmed', fingerprint: outcome.fingerprint },
-        finding: unconfirmedKeyFinding('build-machine', entry, outcome.fingerprint),
+        finding: unconfirmedKeyFinding('build-machine', entry, outcome.fingerprint, localName),
       };
     case 'pending':
       return {
@@ -430,7 +433,7 @@ async function inspectMachine(
         ),
       };
     case 'outdated': {
-      const outdated = outdatedServer(entry, version, outcome.command);
+      const outdated = outdatedServer(entry, version, outcome.command, localName);
       const diagnosis: RemoteDiagnosis = {
         layer: 'compat',
         code: 'server-outdated',
@@ -457,8 +460,8 @@ async function inspectMachine(
           ? await io.startup?.(target)
           : null;
       const diagnosis = peer
-        ? await diagnoseOutcome(io, { ...failure, peer })
-        : diagnoseLocalUnreachable({ ...failure, startup });
+        ? await diagnoseOutcome(io, { ...failure, peer, host: localName })
+        : diagnoseLocalUnreachable({ ...failure, startup, host: localName });
       return {
         report: { ...paired, state: 'unreachable', diagnosis },
         finding: diagnosisFinding('build-machine', entry, diagnosis),

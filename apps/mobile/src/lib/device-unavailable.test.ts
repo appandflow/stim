@@ -32,7 +32,7 @@ test('names a removed workspace before recording state once status confirms it i
       range: empty,
       device: undefined,
     }),
-  ).toBe('This workspace is no longer on this Mac.');
+  ).toBe('This workspace is no longer on the machine.');
   for (const overrides of [{ hasStatus: false }, { hasArchive: true }]) {
     expect(deviceUnavailable({ ...unavailable, workspaceListed: false, device: undefined, ...overrides })).toBe(
       'This device is not running.',
