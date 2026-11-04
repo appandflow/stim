@@ -61,10 +61,10 @@ struct BuildMachinesEmptyState: View {
         Text(tailscaleOff ? "Tailscale Is Off" : "No Remote Machines").font(.stim(.headline))
         Text(
           tailscaleOff
-            ? "Turn on Tailscale on this Mac. Remote machines reach it over your tailnet, and they show up here once it is connected."
+            ? "Turn on Tailscale on this machine. Remote machines reach it over your tailnet, and they show up here once it is connected."
             : needsTailscale
               ? "Remote machines need Tailscale on both machines, signed in to the same tailnet. No other Mac, Linux or Windows machine is on this tailnet yet. It shows up here once both are connected."
-              : "A remote machine is another Mac, Linux or Windows machine on your tailnet that compiles your apps for this Mac. A Mac can also host simulators."
+              : "A remote machine is another Mac, Linux or Windows machine on your tailnet that compiles your apps for this machine. A Mac can also host simulators."
         )
         .foregroundStyle(Palette.secondary)
         .multilineTextAlignment(.center)

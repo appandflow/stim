@@ -7,6 +7,7 @@
   struct ConnectionsPlayground: View {
     var segment: ConnectionsSegment
     var now: Date
+    var height: CGFloat = 640
     @State private var allows = true
     @State private var awake = false
 
@@ -99,7 +100,7 @@
         case .outgoing: outgoing
         }
       }
-      .frame(width: 780, height: 640)
+      .frame(width: 780, height: height)
       .background(Palette.background)
     }
 

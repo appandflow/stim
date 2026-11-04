@@ -28,15 +28,15 @@
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
       let fixtures: [(String, AnyView)] = [
         ("advanced", AnyView(advanced())),
-        ("connections-incoming", AnyView(ConnectionsPlayground(segment: .incoming, now: Date()))),
-        ("connections-outgoing", AnyView(ConnectionsPlayground(segment: .outgoing, now: Date()))),
+        ("connections-incoming", AnyView(ConnectionsPlayground(segment: .incoming, now: Date(), height: 1000))),
+        ("connections-outgoing", AnyView(ConnectionsPlayground(segment: .outgoing, now: Date(), height: 1000))),
       ]
       for (name, view) in fixtures {
         for dark in [false, true] {
           let host = NSHostingView(
             rootView: view.font(.stim(.body)).foregroundStyle(Palette.text).background(Palette.background)
               .environment(\.colorScheme, dark ? .dark : .light))
-          host.frame = NSRect(x: 0, y: 0, width: 780, height: 640)
+          host.frame = NSRect(x: 0, y: 0, width: 780, height: name.hasPrefix("connections") ? 1000 : 640)
           host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
           let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
           window.appearance = host.appearance
