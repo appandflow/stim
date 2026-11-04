@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { configDir } from '@stim-cli/core';
 import {
   isJsonObject,
@@ -11,6 +12,7 @@ import {
   readServerClientCounts,
   SHOW_PROPERTIES,
   serverLocalSocket,
+  stimBuildDigest,
   type InstalledService,
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
@@ -40,9 +42,20 @@ const resolved = (path: string): string => {
   }
 };
 
+/** Whether a service file names the server script: `service install --label` accepts any label, so the file name says nothing. */
+function mentionsServer(file: string): boolean {
+  try {
+    return readFileSync(file, 'utf8').includes('stim-server');
+  } catch {
+    return false;
+  }
+}
+
 async function readLaunchdServices(): Promise<InstalledServerService[]> {
   const dir = join(homedir(), 'Library', 'LaunchAgents');
-  const files = existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith('.plist') && /stim/i.test(name)) : [];
+  const files = existsSync(dir)
+    ? readdirSync(dir).filter((name) => name.endsWith('.plist') && mentionsServer(join(dir, name)))
+    : [];
   const exec = getExecutor();
   const services = await Promise.all(
     files.map(async (name): Promise<InstalledServerService | null> => {
@@ -73,7 +86,7 @@ async function readLaunchdServices(): Promise<InstalledServerService[]> {
 async function readSystemdServices(): Promise<InstalledServerService[]> {
   const dir = join(homedir(), '.config', 'systemd', 'user');
   const files = existsSync(dir)
-    ? readdirSync(dir).filter((name) => name.endsWith('.service') && /stim/i.test(name))
+    ? readdirSync(dir).filter((name) => name.endsWith('.service') && mentionsServer(join(dir, name)))
     : [];
   const env: Record<string, string> = {
     ...Object.fromEntries(
@@ -115,6 +128,7 @@ async function readHealth(port: number): Promise<ServerHealthReading | null> {
     return {
       version: body.version,
       stim: body.stim,
+      ...(typeof body.stimBuild === 'string' ? { stimBuild: body.stimBuild } : {}),
       stimHome: resolved(body.stimHome),
       ...(isJsonObject(body.startup) && typeof body.startup.state === 'string'
         ? { startup: { state: body.startup.state } }
@@ -134,11 +148,6 @@ async function readHealth(port: number): Promise<ServerHealthReading | null> {
   }
 }
 
-/**
- * Reads this machine's stim-server setup: installed services, running servers with their `/health`, and the server
- * on this Stim home's local socket. Null when there is no sign of a server, so a machine without one pays only for
- * the process list. Only macOS and Linux have services doctor reads.
- */
 export async function readServerSetup(version: string): Promise<ServerSetup | null> {
   const platform = process.platform;
   if (platform !== 'darwin' && platform !== 'linux') return null;
@@ -163,6 +172,7 @@ export async function readServerSetup(version: string): Promise<ServerSetup | nu
     platform,
     stimHome: resolved(configDir()),
     version,
+    build: stimBuildDigest(dirname(fileURLToPath(import.meta.url))),
     services,
     servers,
     local,

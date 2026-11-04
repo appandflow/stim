@@ -13,22 +13,18 @@ export const SERVER_FINDING_CODES = [
   'server-keep-awake',
 ] as const;
 
-/** Whether `finding` reports this machine's stim-server setup rather than the checkout. */
 export const isServerFinding = (finding: Finding): boolean =>
   SERVER_FINDING_CODES.some((code) => code === finding.code);
 
 const DEFAULT_SERVER_PORT = 7787;
 const FLAPPING_RUNS = 3;
 
-/** Who started a stim-server process: an installed service, Stim Desktop, `stim share`, or a person or script. */
 export type ServerKind = 'service' | 'desktop' | 'share' | 'manual';
 
-/** A running `stim-server` read from the process list. */
 export interface ServerProcess {
   pid: number;
   ppid: number;
   command: string;
-  /** The script the process runs, as its command line names it. */
   script: string;
   port: number;
   share: boolean;
@@ -40,16 +36,15 @@ export interface ProcessRow {
   command: string;
 }
 
-/** The `/health` fields doctor reads; everything is optional because a server older than a field omits it. */
 export interface ServerHealthReading {
   version: string;
   stim: string;
+  stimBuild?: string;
   stimHome: string;
   startup?: { state: string };
   keepAwake?: { setting: boolean; held: boolean; reason?: string };
 }
 
-/** One installed service: its file, the job its manager runs, and the answer on its port. */
 export interface InstalledServerService {
   manager: 'launchd' | 'systemd';
   label: string;
@@ -59,12 +54,10 @@ export interface InstalledServerService {
 
 export interface ServerReading extends ServerProcess {
   kind: ServerKind;
-  /** The service label, for a `service` server. */
   label?: string;
   health: ServerHealthReading | null;
 }
 
-/** What the server at this Stim home's local socket said in `hello`. */
 interface LocalServerReading {
   port: number | null;
   version: string;
@@ -73,41 +66,36 @@ interface LocalServerReading {
 
 export interface ServerSetup {
   platform: 'darwin' | 'linux';
-  /** This CLI's Stim home, resolved. */
   stimHome: string;
-  /** The version of the stim running doctor. */
   version: string;
+  build: string | null;
   services: InstalledServerService[];
   servers: ServerReading[];
   local: LocalServerReading | null;
-  /** How many clients this machine's stim-server approved for builds and for hosted devices. */
   clients: { build: number; deviceHost: number };
 }
 
-/** The signed launcher a macOS service runs the server under: its command line repeats the server's, but the node child is the server. */
+/** The launcher a macOS service runs the server under repeats the server's command line; its node child is the server. */
 const STIM_HOST_LAUNCHER = /\/Contents\/MacOS\/stim-host run /;
 
-const SERVER_COMMAND =
-  /^(?:\S+\s)*?\S*[/\\]?node(?:\.exe)?\s+(?:-\S+\s+)*(.*?stim-server(?:\.mjs)?)(?=\s|$)(?:\s+(.*))?$/;
+const SERVER_COMMAND = /^\S*[/\\]?node(?:\.exe)?\s+(?:-\S+\s+)*(.*?stim-server(?:\.mjs)?)(?=\s|$)(?:\s+(.*))?$/;
+const SERVER_SCRIPT = /(?:^|\/)stim-server(?:\.mjs)?$/;
 
-/**
- * The `stim-server` processes in `ps -axo pid=,ppid=,command=` output: node running the server script with no
- * subcommand. `stim-server service update` and the other subcommands are short-lived and not servers.
- */
 export function parseServerProcesses(ps: string): ServerProcess[] {
   const servers: ServerProcess[] = [];
   for (const row of parseProcessRows(ps)) {
     if (STIM_HOST_LAUNCHER.test(row.command)) continue;
     const [, script, rest = ''] = SERVER_COMMAND.exec(row.command) ?? [];
-    if (script === undefined) continue;
+    if (script === undefined || !SERVER_SCRIPT.test(script)) continue;
     const args = rest.split(/\s+/).filter(Boolean);
     if (args[0] !== undefined && !args[0].startsWith('-')) continue;
     if (args.includes('--version') || args.includes('--help')) continue;
-    const port = Number(args[args.indexOf('--port') + 1]);
+    const flag = args.findIndex((each) => each === '--port' || each.startsWith('--port='));
+    const port = Number(args[flag]?.startsWith('--port=') ? args[flag]?.slice('--port='.length) : args[flag + 1]);
     servers.push({
       ...row,
       script,
-      port: args.includes('--port') && Number.isInteger(port) ? port : DEFAULT_SERVER_PORT,
+      port: flag >= 0 && Number.isInteger(port) ? port : DEFAULT_SERVER_PORT,
       share: args.includes('--share'),
     });
   }
@@ -123,11 +111,6 @@ export function parseProcessRows(ps: string): ProcessRow[] {
 
 const BUNDLED_SERVER = /\.app\/Contents\/Resources\/stim-server\//;
 
-/**
- * Who started each server. A server is a service's when the service's job process, or a launcher it runs, is that
- * process or its ancestor; Stim Desktop's when it is the server bundled in an app or has a Desktop process as an
- * ancestor; `stim share`'s when it runs with `--share`; otherwise started by hand.
- */
 export function classifyServers(
   servers: readonly ServerProcess[],
   rows: readonly ProcessRow[],
@@ -167,13 +150,8 @@ const describe = (server: ServerReading): string => {
 
 const labelFlag = (label: string): string => (label === 'dev.stim.server' ? '' : ` --label ${label}`);
 
-/** `a` and `b` name one Stim home: equal after trailing slashes are dropped. Callers pass resolved paths. */
 const sameHome = (a: string, b: string): boolean => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
 
-/**
- * How to bring a server on another version to this CLI's: its service updates in place, Stim Desktop carries its own
- * server with the app, and a server started by hand restarts from the stim-server on PATH.
- */
 function updateRemedy(server: ServerReading, version: string): string {
   if (server.kind === 'service')
     return `Run \`stim-server service update${labelFlag(server.label ?? '')} --release ${version}\`.`;
@@ -186,7 +164,19 @@ function versionFindings(setup: ServerSetup): Finding[] {
   return setup.servers.flatMap((server): Finding[] => {
     if (!server.health || server.kind === 'share') return [];
     const compared = compareStimVersions(server.health.stim, setup.version);
-    if (compared === null ? server.health.stim === setup.version : compared === 0) return [];
+    if (compared === null ? server.health.stim === setup.version : compared === 0) {
+      const { stimBuild } = server.health;
+      if (!stimBuild || !setup.build || stimBuild === setup.build) return [];
+      return [
+        {
+          code: 'server-version',
+          level: 'note',
+          title: `A stim-server runs another build of stim ${setup.version} than this machine's`,
+          detail: `${describe(server)}. Both report ${setup.version}, but their builds differ (${stimBuild} and ${setup.build}), as with a checkout build beside a release; machines with another build compatibility version refuse each other's builds.`,
+          fix: updateRemedy(server, setup.version),
+        },
+      ];
+    }
     const older = compared !== null && compared < 0;
     return [
       {
@@ -221,11 +211,12 @@ function homeFindings(setup: ServerSetup): Finding[] {
   });
 }
 
-const exitCode = (job: LaunchdJob | UnitJob | null): number | null => {
+/** The exit a job last made: its code, `signal N` from systemd, or null for a job that has not exited (launchd prints `(never exited)`). */
+const lastExit = (job: LaunchdJob | UnitJob | null): { failed: boolean; text: string } | null => {
   const text = job?.lastExitCode;
   if (!text) return null;
-  const code = /^-?\d+$/.test(text) ? Number(text) : null;
-  return code === 0 ? 0 : (code ?? NaN);
+  if (/^-?\d+$/.test(text)) return { failed: Number(text) !== 0, text };
+  return text.startsWith('signal') ? { failed: true, text } : null;
 };
 
 function serviceStateFindings(setup: ServerSetup): Finding[] {
@@ -236,9 +227,9 @@ function serviceStateFindings(setup: ServerSetup): Finding[] {
     const rollback = installed.previousScript
       ? ` The previous server is still installed: \`stim-server service rollback${labelFlag(service.label)}\` switches back to it.`
       : '';
-    const code = exitCode(job);
-    const failed = code !== 0 && code !== null;
-    const exit = failed ? `, and its last exit was ${Number.isNaN(code) ? job?.lastExitCode : code}` : '';
+    const last = lastExit(job);
+    const failed = last?.failed === true;
+    const exit = failed ? `, and its last exit was ${last?.text}` : '';
     if (!job) {
       return [
         {
@@ -283,7 +274,7 @@ function serviceStateFindings(setup: ServerSetup): Finding[] {
 
 const homeOf = (server: ServerReading): string | null => server.health?.stimHome ?? null;
 
-function multipleFindings(setup: ServerSetup): Finding[] {
+function homeGroups(setup: ServerSetup): Array<[string, ServerReading[]]> {
   const groups = new Map<string, ServerReading[]>();
   for (const server of setup.servers) {
     const home = homeOf(server);
@@ -291,8 +282,11 @@ function multipleFindings(setup: ServerSetup): Finding[] {
     const key = [...groups.keys()].find((each) => sameHome(each, home)) ?? home;
     groups.set(key, [...(groups.get(key) ?? []), server]);
   }
-  return [...groups].flatMap(([home, members]): Finding[] => {
-    if (members.length < 2) return [];
+  return [...groups].filter(([, members]) => members.length >= 2);
+}
+
+function multipleFindings(setup: ServerSetup): Finding[] {
+  return homeGroups(setup).flatMap(([home, members]): Finding[] => {
     const owner = setup.local?.port == null ? null : members.find((each) => each.port === setup.local?.port);
     const keep =
       members.find((each) => each.kind === 'service') ??
@@ -321,11 +315,7 @@ function multipleFindings(setup: ServerSetup): Finding[] {
 }
 
 function leftoverFindings(setup: ServerSetup): Finding[] {
-  const grouped = new Set(
-    multipleFindings(setup).length === 0
-      ? []
-      : setup.servers.filter((server) => server.kind !== 'share' && homeOf(server) !== null),
-  );
+  const grouped = new Set(homeGroups(setup).flatMap(([, members]) => members));
   const loose = setup.servers.filter((server) => server.kind === 'manual' && !grouped.has(server));
   if (loose.length === 0) return [];
   const rows = loose.map((server) => `${describe(server)}${homeOf(server) ? `, Stim home ${homeOf(server)}` : ''}`);
@@ -345,7 +335,9 @@ function keepAwakeFindings(setup: ServerSetup): Finding[] {
   const sleepy = setup.servers.find(
     (server) =>
       server.kind !== 'share' &&
-      server.health?.keepAwake &&
+      server.health !== null &&
+      sameHome(server.health.stimHome, setup.stimHome) &&
+      server.health.keepAwake &&
       !server.health.keepAwake.held &&
       server.health.keepAwake.reason === 'off',
   );
@@ -366,7 +358,6 @@ function keepAwakeFindings(setup: ServerSetup): Finding[] {
   ];
 }
 
-/** The release that first advertises `desktop-local-authority` on a server without Desktop's private key. */
 const DESKTOP_AUTHORITY_FEATURE = 'desktop-local-authority';
 
 function desktopAuthorityFindings(setup: ServerSetup): Finding[] {
@@ -392,7 +383,6 @@ function desktopAuthorityFindings(setup: ServerSetup): Finding[] {
   ];
 }
 
-/** Every process-level and service-level finding about this machine's stim-server setup, in report order. */
 export function serverSetupFindings(setup: ServerSetup): Finding[] {
   return [
     ...multipleFindings(setup),
