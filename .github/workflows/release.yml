@@ -31,6 +31,9 @@ jobs:
   tag-on-main:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -43,6 +46,13 @@ jobs:
             echo "::error::$GITHUB_REF_NAME is not on main. Tag a commit from main."
             exit 1
           fi
+      - name: A stable release has a green Full suite on this commit
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=workflow_dispatch&per_page=100" |
+            node scripts/full-suite-gate.mjs "$GITHUB_SHA"
 
   publish:
     needs: tag-on-main

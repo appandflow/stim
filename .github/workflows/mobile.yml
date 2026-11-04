@@ -2,6 +2,16 @@ name: Mobile
 
 on:
   workflow_dispatch:
+    inputs:
+      full:
+        description: Also run the license check
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      full:
+        type: boolean
+        default: true
   push:
     branches: [main]
     paths:
@@ -27,7 +37,7 @@ on:
       - 'scripts/type-assertion*'
 
 concurrency:
-  group: mobile-${{ github.ref }}
+  group: mobile-${{ github.workflow }}-${{ github.ref }}${{ inputs.full && '-full' || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -58,6 +68,7 @@ jobs:
           key: libsodium-${{ hashFiles('apps/mobile/modules/stim-session/libsodium.json') }}
       - run: pnpm test --ci
       - run: pnpm run licenses:check
+        if: inputs.full
 
   knip:
     runs-on: ubuntu-latest
