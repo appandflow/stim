@@ -54,15 +54,15 @@ When Stim misbehaves, refuses for a reason its guide does not explain, documents
 something that proves wrong, or forces an awkward workaround, the agent offers to
 report it as an issue on [appandflow/stim](https://github.com/appandflow/stim/issues).
 It searches existing issues first and comments on a match instead of filing a
-duplicate. The draft follows the issue template: the problem and the
+duplicate (with your approval). The draft follows the issue template: the problem and the
 expected behavior, the exact command, the `STIM_*` code and output,
 `stim --version`, the OS, Xcode or Android tool versions, the `stim doctor`
 findings and the workaround it used. It removes secrets, tokens, private paths,
 project names and project code unless you agree to include them.
 
-The agent shows you the draft and files it only after you approve, with
+The agent shows you the draft and files it only after you approve, since the issue is public, with
 `gh issue create --repo appandflow/stim`. Without `gh`, it gives you the draft
-and the [new issue page](https://github.com/appandflow/stim/issues/new).
+and the [new issue page](https://github.com/appandflow/stim/issues/new?template=report.md).
 
 To ask for a report yourself:
 

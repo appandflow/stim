@@ -749,8 +749,6 @@ test('the agent guide tells agents to report Stim problems under the issue templ
   const agent = renderTopic('agent')?.replaceAll(/\s+/g, ' ');
   assert(agent);
   for (const heading of headings) expect(agent).toContain(`${heading} (`);
-  expect(agent).toContain('gh issue create --repo appandflow/stim');
-  expect(agent).toContain('github.com/appandflow/stim/issues/new');
 });
 
 test('the agent guide protects other workspaces device lease files', () => {

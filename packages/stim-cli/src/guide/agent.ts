@@ -415,8 +415,9 @@ something that proves wrong, or needs an awkward workaround, offer to report it
 to appandflow/stim on GitHub. Finish the user's task first.
 
 1. Search first: gh issue list --repo appandflow/stim --state all --search
-   "<code or symptom>". On a match, add a comment or a thumbs-up reaction with
-   your new evidence instead of filing a duplicate.
+   "<code or symptom>". On a match, offer a comment with your new evidence
+   (gh issue comment <number> --repo appandflow/stim --body-file <file>)
+   instead of filing a duplicate.
 2. Draft the issue under the headings of the report template:
    Problem (what happened and what you expected, with the STIM_* code), Evidence
    (the exact command, the relevant output, stim --version, the OS, the Xcode
@@ -424,10 +425,10 @@ to appandflow/stim on GitHub. Finish the user's task first.
    an honest answer) and Fix idea (optional, including the workaround you used).
 3. Remove secrets, tokens, passwords, private paths, project names and project
    code, unless the user agrees to include them.
-4. Show the user the draft. File it only after their OK, since filing publishes
-   on their behalf: gh issue create --repo appandflow/stim --title "<title>"
-   --body-file <file>. Without gh, give them the draft and
-   https://github.com/appandflow/stim/issues/new.
+4. Show the user the draft. File the issue or comment only after their OK, since
+   it is public and publishes on their behalf: gh issue create --repo
+   appandflow/stim --title "<title>" --body-file <file>. Without gh, give them
+   the draft and https://github.com/appandflow/stim/issues/new?template=report.md.
 
 LOAD ADVANCED GUIDANCE WHEN NEEDED
 
