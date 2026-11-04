@@ -43,7 +43,6 @@ export interface KeptStatusCaches {
   count: number;
 }
 
-/** The entries whose folder is provably gone, and, per cache folder and reason, how many Stim keeps. */
 export function judgeStatusCaches(
   entries: readonly StatusCacheEntry[],
   mountedVolumes: string[],

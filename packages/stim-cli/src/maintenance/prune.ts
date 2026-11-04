@@ -17,7 +17,6 @@ const isCleanupError = (error: unknown) =>
 
 const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
 
-/** Why an expired lease file stays: its workspace is pinned by `maintenance.keep` or in use. Null when it may go. */
 export async function leaseKeepReason(entry: LeaseFileEntry, operation?: StimContext): Promise<string | null> {
   const holder = entry.lease?.holder;
   if (!holder || !existsSync(holder)) return null;

@@ -558,7 +558,6 @@ export async function worktreeArchiveBytes(signal?: AbortSignal): Promise<number
 
 const pastAge = (at: number, now: number, days: number) => now - at >= days * DAY;
 
-/** The worktree archives no process holds or may hold: a live or unresolved claim keeps one. */
 function unclaimed<T extends { path: string }>(entries: readonly T[]): T[] {
   return entries.filter((entry) => {
     const claims = readClaimSet(`${entry.path}.claims`);
@@ -587,7 +586,6 @@ async function pruneWorktreeArchives(now: number, limits: Record<string, number>
   }
 }
 
-/** The archives that stay, given `archive.maxAgeDays` and `archive.maxCount`; `listed` runs newest first. */
 function retainedArchives(
   listed: readonly ArchivedWorkspace[],
   limits: Record<string, number>,
@@ -601,7 +599,6 @@ function retainedArchives(
   );
 }
 
-/** The kinds of a kept archive that have outlived their own age limit, or the recordings of a disabled setting. */
 function expiredKinds(
   record: ArchivedWorkspace,
   limits: Record<string, number>,

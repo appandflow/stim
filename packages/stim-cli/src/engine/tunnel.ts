@@ -223,7 +223,6 @@ async function isEmptyDir(dir: string, allowEmptyStim = false): Promise<boolean>
   }
 }
 
-/** The lock directories under `process-locks` that hold nothing, not even a claim: a held lock keeps a file in its own. */
 export async function emptyProcessLockDirs(signal?: AbortSignal): Promise<string[]> {
   const empty: string[] = [];
   for (const top of await childDirs(join(getConfigDir(), 'process-locks'))) {
@@ -236,7 +235,6 @@ export async function emptyProcessLockDirs(signal?: AbortSignal): Promise<string
   return empty;
 }
 
-/** Removes the lock directories `emptyProcessLockDirs` lists; `rmdir` refuses one that gained a claim since. */
 export async function pruneEmptyProcessLockDirs(signal?: AbortSignal): Promise<number> {
   let removed = 0;
   for (const entry of await emptyProcessLockDirs(signal)) {

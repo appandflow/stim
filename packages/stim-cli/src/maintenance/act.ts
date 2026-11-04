@@ -13,7 +13,7 @@ import { deleteTempLeftovers } from '../commands/gc/temp-leftovers.ts';
 import { deleteTrash } from '../commands/gc/trash.ts';
 import { collectStaleStatusCachesAsync, deleteStaleStatusCaches } from '../commands/gc/status-caches.ts';
 import { archivesPastRetention, enforceArchiveRetention } from '../archive.ts';
-import { removeExpiredLease } from '../engine/device-lease.ts';
+import { removeExpiredLeaseAsync } from '../engine/device-lease.ts';
 import { pruneEmptyProcessLockDirs } from '../engine/tunnel.ts';
 import { plural } from '../command-output.ts';
 import { takeGcResults, GC_OUTPUT, type GcResult, type GcOutput } from '../commands/gc/results.ts';
@@ -447,7 +447,7 @@ async function deleteDeviceLeaseAction(action: MaintenanceAction, context: ActCo
   if (!entry) return kept('it is no longer an expired lease');
   const keep = await leaseKeepReason(entry, context.operation);
   if (keep) return kept(`the lease expired, but ${keep}`);
-  return removeExpiredLease(entry)
+  return (await removeExpiredLeaseAsync(entry, context.operation?.signal))
     ? { status: 'done', bytes: 0, detail: entry.name }
     : kept('it was renewed or removed since the pass planned it');
 }
