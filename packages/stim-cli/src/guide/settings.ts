@@ -1490,8 +1490,9 @@ The doctor toolchain section also lists, for each installed service, where it fi
 tool the way the server does at start: tool discovery over launchd's default PATH with the
 service's own node, with its --env entries and --path-prepend directories. The tailscale checks read \`tailscale
 status --json\` and \`tailscale serve status --json\` (3 seconds each) only when a service,
-server process or socket exists. A build machine pinned in build-machines.json whose
-tailnet node changed is the existing build-machine finding with state node-changed.
+server process or socket exists. A build machine in build-machines.json that no longer proves
+its pinned stim-server key is the existing build-machine finding with state key-changed, and one
+that left the tailnet is not-on-tailnet; doctor adds nothing for them.
 
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
 \`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes
