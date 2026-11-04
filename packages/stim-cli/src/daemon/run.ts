@@ -43,7 +43,7 @@ import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode }
 import { ownedHere } from './idle.ts';
 import type { TickMeasurement } from './measure.ts';
 import { listWaiting } from '../engine/wait-queue.ts';
-import { createMaintenanceLane, runHomePasses } from './passes.ts';
+import { createMaintenanceLane, runHomePasses, type HomePasses } from './passes.ts';
 import { reclaimForBootWaiters } from './reclaim.ts';
 import { pendingDormant } from './stages.ts';
 
@@ -226,8 +226,8 @@ async function pendingWork(
 /**
  * The per-home daemon: holds `$STIM_HOME/daemon/claim`, serves its socket, and ticks every minute while something
  * runs in the home or the pressure level is above normal, every 5 minutes otherwise, and on demand, each tick measuring
- * once, running the activity, dormant and pressure passes and writing `snapshot.json`, then starting the slow passes
- * (`createMaintenanceLane`) unless the last ones still run. A command's contact brings it back to the minute. It exits
+ * once, running the activity, dormant and pressure passes and writing `snapshot.json`, then, unless it exits, starting
+ * the slow passes (`createMaintenanceLane`) unless the last ones still run. A command's contact brings it back to the minute. It exits
  * after two ticks in a row with nothing running, no work pending (`pendingWork`), no slow pass running and no contact,
  * when `daemon.mode` turns off, or when a tick throws, releasing its claim so each supervisor's own idle timer takes
  * over. Asked to hand over, by a daemon a command from a newer installed Stim build started, it exits at once between
@@ -454,6 +454,7 @@ export async function runDaemon({
     let pending: string | null = null;
     let wentDormant = false;
     let phases: Record<string, number> = {};
+    let ticked: HomePasses | null = null;
     try {
       const passes = await runHomePasses({
         act: mode === 'on',
@@ -533,7 +534,7 @@ export async function runDaemon({
       };
       writeSnapshot(lastSnapshot);
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
-      if (!handover && !closing) lane.start(passes, mode === 'on');
+      ticked = passes;
     } catch (error) {
       for (const socket of replying) socket.destroy();
       shutdown(
@@ -565,6 +566,7 @@ export async function runDaemon({
       shutdown('nothing runs in this Stim home');
       break;
     }
+    if (ticked && !handover && !closing) lane.start(ticked, mode === 'on');
   }
   await lane.settled();
 }

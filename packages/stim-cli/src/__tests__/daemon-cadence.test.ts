@@ -326,7 +326,7 @@ describe.skipIf(process.platform === 'win32')(
       vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(() => after(5000, undefined));
       vi.spyOn(reclaim, 'reclaimForBootWaiters').mockImplementation(() => after(6000, null));
       const daemon = runDaemon({ mode: 'on' });
-      await vi.advanceTimersByTimeAsync(MINUTE_MS + 28_000);
+      await vi.advanceTimersByTimeAsync(MINUTE_MS + 29_000);
       await vi.waitFor(() => expect(records('daemon_maintenance')).toHaveLength(1));
       expect(records('daemon_tick')[0]).toMatchObject({
         tickMs: 20_000,
@@ -370,7 +370,7 @@ describe.skipIf(process.platform === 'win32')(
       await vi.advanceTimersByTimeAsync(3 * 5 * MINUTE_MS);
       await vi.waitFor(() => expect(exited).toBe(true));
       await daemon;
-      expect(maintenance).toHaveBeenCalledTimes(3);
+      expect(maintenance).toHaveBeenCalledTimes(2);
       expect(ticks().map(({ at }) => Math.round((at - started) / MINUTE_MS))).toEqual([1, 6, 11, 16, 21]);
     });
   },

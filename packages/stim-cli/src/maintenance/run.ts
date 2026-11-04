@@ -13,7 +13,7 @@ import {
   type MaintenanceState,
   type MaintenanceRecord,
 } from '@stim-cli/core/state';
-import { tryAcquireClaim, releaseClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
+import { tryAcquireClaim, releaseClaim, type ClaimHandle, type ClaimHolder } from '@stim-cli/core/ownership-claim';
 import { tickListsSims, type TickMeasurement } from '../daemon/measure.ts';
 import { listAvdsAsync } from '../devices/android.ts';
 import { listAllIosSimsAsync } from '../devices/ios.ts';
@@ -75,7 +75,7 @@ function keepReserve(): void {
   }
 }
 
-function claimPass(trigger: string): ClaimHandle | undefined {
+function claimPass(trigger: string): { acquired?: ClaimHandle; held?: ClaimHolder } {
   const take = () => {
     const attempt = tryAcquireClaim({
       root: maintenanceRunClaims(),
@@ -84,7 +84,7 @@ function claimPass(trigger: string): ClaimHandle | undefined {
       details: { trigger },
     });
     if (attempt.pending) releaseClaim(attempt.pending);
-    return attempt.acquired;
+    return attempt;
   };
   try {
     return take();
@@ -217,21 +217,25 @@ function tickDeviceActivity({ measured }: MaintenanceTick) {
  * One automatic maintenance pass in this process, when a check is due. Its idle check stops only workspaces with a
  * hosted device, after `maintenance.idleStopHours`; the activity pass decides idle for every other one. `report`
  * plans and logs without acting, whatever `daemon.mode` says. Within a daemon `tick`, the pass reuses the tick's
- * measurement and runs no child process synchronously.
+ * measurement and runs no child process synchronously. Returns why no pass ran when another process holds the pass.
  */
 export async function runMaintenance(
   trigger: string,
   { report = false, tick }: { report?: boolean; tick?: MaintenanceTick } = {},
-): Promise<void> {
+): Promise<string | void> {
   const startedAt = Date.now();
   let claim: ClaimHandle | undefined;
   try {
-    claim = claimPass(trigger);
+    const attempt = claimPass(trigger);
+    claim = attempt.acquired;
+    if (!claim)
+      return attempt.held
+        ? `pid ${attempt.held.owner.pid} runs a maintenance pass (${String(attempt.held.details.trigger ?? 'unknown trigger')})`
+        : undefined;
   } catch (error) {
     crashLine(error);
     return;
   }
-  if (!claim) return;
   let logger: ReturnType<typeof maintenanceLogger> | undefined;
   let gcLog: GcLog | undefined;
   try {

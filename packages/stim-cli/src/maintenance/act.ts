@@ -84,7 +84,16 @@ function freedSince(beforeMb: number, disk = measureDisk()): number {
 
 const kept = (detail: string): ActionOutcome => ({ status: 'kept', bytes: 0, detail });
 
-async function quietly<T>(run: () => Promise<T> | T): Promise<{ value: T; results: GcResult[] }> {
+let quietTurn: Promise<unknown> = Promise.resolve();
+
+/** One runs at a time per process: the gc result buffer, the console and the exit code it swaps are process-wide. */
+function quietly<T>(run: () => Promise<T> | T): Promise<{ value: T; results: GcResult[] }> {
+  const turn = quietTurn.then(() => quietlyNow(run));
+  quietTurn = turn.catch(() => {});
+  return turn;
+}
+
+async function quietlyNow<T>(run: () => Promise<T> | T): Promise<{ value: T; results: GcResult[] }> {
   const { log, error } = { log: console.log, error: console.error };
   const exitCode = process.exitCode;
   takeGcResults();

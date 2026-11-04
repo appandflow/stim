@@ -183,14 +183,16 @@ export function createMaintenanceLane(
       };
       current = (async () => {
         const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
-        taken.push(...(await runDormantDependencies({ config, act, log, ...reading })));
+        const deleted = await runDormantDependencies({ config, act, log, ...reading });
+        taken.push(...deleted);
         const dependenciesMs = lap();
-        await runMaintenance('daemon', { report: !act, tick: { operation, measured } });
+        const skipped = await runMaintenance('daemon', { report: !act, tick: { operation, measured } });
         const maintenanceMs = lap();
         const tookMs = Math.round(performance.now() - started);
-        log('debug', 'daemon_maintenance', `maintenance ${tookMs}ms`, {
+        log('debug', 'daemon_maintenance', `maintenance ${tookMs}ms${skipped ? `; skipped: ${skipped}` : ''}`, {
           tookMs,
           phases: { dependenciesMs, maintenanceMs },
+          ...(skipped ? { skipped } : {}),
         });
       })()
         .catch((error: unknown) => {
