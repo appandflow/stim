@@ -567,7 +567,7 @@ describe('a web share', () => {
     socket.send(touch('up'));
     await vi.waitFor(() => expect(f.inputs.at(-1)).toMatchObject({ command: { phase: 'up' } }));
     expect(f.inputs[0]).toMatchObject({ command: { phase: 'down' } });
-    expect(f.inputs.length).toBeLessThan(22);
+    expect(f.inputs.length).toBeLessThan(10);
     socket.close();
   });
 
