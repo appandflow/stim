@@ -180,6 +180,25 @@ final class ServerController: ObservableObject {
     "Port \(port) is held by a program that does not answer as a stim-server, such as a stim-server too busy to reply. Stop it, or start Stim Desktop with -stimServerPort <port> to use another port."
   }
 
+  /// Whether the `dev.stim.server` LaunchAgent that `stim-server setup` installs exists for this user.
+  static var serviceInstalled: Bool {
+    let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
+    return FileManager.default.fileExists(atPath: "\(home)/Library/LaunchAgents/dev.stim.server.plist")
+  }
+
+  static func adoptedServerSilentReason(port: Int, serviceInstalled: Bool) -> String {
+    let server =
+      serviceInstalled
+      ? "The stim-server on port \(port), the dev.stim.server LaunchAgent,"
+      : "The stim-server on port \(port), which Stim Desktop did not start,"
+    let remedy =
+      serviceInstalled
+      ? "Check it with `stim-server service status`."
+      : "Start it again."
+    return
+      "\(server) is not answering. Stim Desktop waits for it and does not start its own server on that port. \(remedy) To use Desktop's own server instead, stop it and reopen Stim Desktop."
+  }
+
   static func announcedLoopbackPort(_ line: OutputLine) -> Int? {
     let prefix = "listening on ws://127.0.0.1:"
     guard line.channel == .stdout, line.text.hasPrefix(prefix),
@@ -533,15 +552,8 @@ final class ServerController: ObservableObject {
         if !owned {
           missedProbes += 1
           guard missedProbes >= 2 else { return }
-          let held = probe == nil ? await StimServerCLI.portIsHeld(port) : false
-          guard current == generation, isResponding, !provisional else { return }
-          if held {
-            state = .notReady(.degraded(Self.portHeldReason(port: port)), owned: false)
-            return
-          }
-          missedProbes = 0
-          state = .off
-          start()
+          state = .notReady(
+            .degraded(Self.adoptedServerSilentReason(port: port, serviceInstalled: Self.serviceInstalled)), owned: false)
         }
       }
     }

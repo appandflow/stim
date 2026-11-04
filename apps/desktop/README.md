@@ -1265,7 +1265,7 @@ Instead of a screen, the tile says:
   unreachable.
 - **The stim-server on this port is older than Stim Desktop** when the server's
   hello lacks `physical-ios` or `physical-android` for the device: Desktop adopted
-  a server it did not start. Updating or stopping that server lets Desktop start its own.
+  a server it did not start. Update that server, or stop it and reopen Stim Desktop so Desktop starts its own.
 - **Disconnected** when `stim status` reads the device as disconnected.
 - **The workspace's lease on this device ended**, with the `--device` command
   that leases it again, once the lease's end time passes, before `stim status`
@@ -1324,8 +1324,13 @@ runs, such as Metro or Gradle, never write there. A test copy can move the port 
 `defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
 the Mac's own server. While a server runs, **Settings > Connections > Using this machine** re-checks it every 5
 seconds and the app every 10 seconds while it is active, otherwise every 60
-seconds. When a server the app did not start misses two checks in a row, the app starts its
-own. With **Allow connections** on, whatever the Phone app flag says, Desktop starts its server without
+seconds. When a server the app adopted misses two checks in a row, the app shows it as
+degraded and keeps checking: it never starts its own server onto that port while the adopted
+server is gone, so a `stim-server service` LaunchAgent that restarts, updates or crashes keeps
+its port. The message names the `dev.stim.server` LaunchAgent when its plist is installed for this
+user. The app starts its own server only when none answers on the port and nothing holds it,
+which is at launch. To use Desktop's own server instead, stop the adopted one and reopen Stim
+Desktop. With **Allow connections** on, whatever the Phone app flag says, Desktop starts its server without
 `--loopback-only`, so it also listens on this Mac's Tailscale addresses, and restarts the
 server it started when the setting changes. The pairing and device commands use the
 `STIM_HOME` its health reports, so they act on that server's pairing state. When that `STIM_HOME` is
