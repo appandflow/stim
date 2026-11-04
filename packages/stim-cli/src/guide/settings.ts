@@ -682,7 +682,15 @@ run waiting to boot, and automatic maintenance.
           into the idle stage (idle.minutes) and dormant ones into the dormant
           stage (idle.dormantDays), runs the pressure ladder above normal,
           reclaims a device for a run waiting to boot, and runs automatic
-          maintenance.
+          maintenance. When one of those commands runs from an installed
+          Stim (a global install or a node_modules dependency) with a newer
+          version than the running daemon, or the daemon runs a development
+          build, the daemon keeps serving the command and one new daemon
+          from the installed build takes over once its current tick
+          finishes, so an upgrade reaches the daemon with the next such
+          command. The same or an older version never replaces it. A
+          development build (a checkout's dist, npm link or pnpm link
+          --global) never replaces a daemon.
   report  the same passes log what they would do and act on nothing.
   off     no daemon and no pass: each dev server supervisor stops its own dev
           server and devices after idle.minutes, and nothing times a device
