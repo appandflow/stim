@@ -174,6 +174,10 @@ final class ServerController: ObservableObject {
     return serverHome.map { !StimHome.adopts(serverHome: $0, resolved: resolvedHome) } ?? false
   }
 
+  static func portHeldReason(port: Int) -> String {
+    "Port \(port) is held by a program that does not answer as a stim-server, such as a stim-server too busy to reply. Stop it, or start Stim Desktop with -stimServerPort <port> to use another port."
+  }
+
   static func announcedLoopbackPort(_ line: OutputLine) -> Int? {
     let prefix = "listening on ws://127.0.0.1:"
     guard line.channel == .stdout, line.text.hasPrefix(prefix),
@@ -278,7 +282,13 @@ final class ServerController: ObservableObject {
       await waitForExiting()
       guard current == generation else { return }
       var automaticPortRefusal: State?
-      if let probe = await StimServerCLI.health(port: port) {
+      let probe = await StimServerCLI.health(port: port)
+      if probe == nil, await StimServerCLI.portIsHeld(port) {
+        guard current == generation else { return }
+        state = .notReady(.degraded(Self.portHeldReason(port: port)), owned: false)
+        return
+      }
+      if let probe {
         guard current == generation else { return }
         if resolvedEnvironment == nil, let health = ServerAdoption.provisional(probe, provisionalHome: provisionalHome) {
           provisional = true
@@ -508,6 +518,12 @@ final class ServerController: ObservableObject {
         if !owned {
           missedProbes += 1
           guard missedProbes >= 2 else { return }
+          let held = await StimServerCLI.portIsHeld(port)
+          guard current == generation, isResponding, !provisional else { return }
+          if held {
+            state = .notReady(.degraded(Self.portHeldReason(port: port)), owned: false)
+            return
+          }
           missedProbes = 0
           state = .off
           start()
