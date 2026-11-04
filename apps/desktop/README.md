@@ -1294,7 +1294,6 @@ if it has not exited after 3 seconds. A
 killed server leaves its `stim status --watch` child running until that child's
 next write fails. A stim-server older than the `--loopback-only` flag exits at once,
 and the sidebar footer shows a warning icon that says to update it. A failure of any
-<<<<<<< HEAD
 other kind, such as a server for another Stim home, shows the same icon with the reason
 in its tooltip; click it to retry now. A port that something holds without answering
 `/health`, such as a stim-server too busy to reply, is neither adopted nor replaced:
@@ -1304,15 +1303,6 @@ such as when another stim-server for the same Stim home owns its local socket; t
 is the server's refusal, repeated under the server's version in **Settings > Advanced** and
 on the Phones page, and the click connects again. The warning stays until the connection
 is open again. Desktop also retries a failed start every 30 seconds or more, except for an outdated server. No dialog
-=======
-other kind, such as a port held by another program or a server for another Stim home,
-shows the same icon with the reason in its tooltip; click it to retry now. The icon also
-shows while the server runs but refuses Desktop's connection, such as when another
-stim-server for the same Stim home owns its local socket; the reason is the server's
-refusal, repeated under the server's version in **Settings > Advanced** and on the
-Phones page, and the click connects again. The warning stays until the connection is open
-again. Desktop also retries a failed start every 30 seconds or more, except for an outdated server. No dialog
->>>>>>> 3e61213d8 (fix(desktop): keep the refusal warning until the connection is open)
 interrupts. `--loopback-only` removes the server's own Tailscale listeners and makes it refuse any
 request that a `tailscale serve --https` route forwards to the port, so paired phones and other
 Macs cannot reach it; Desktop never removes or edits the route. Turning **Allow connections** off restarts the
