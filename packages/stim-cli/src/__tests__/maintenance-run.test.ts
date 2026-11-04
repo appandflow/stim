@@ -357,6 +357,45 @@ test('in on mode a pass where only the idle check is due neither plans cap trims
   expect(state?.skipKeys).not.toContain(metro);
 });
 
+test.each(['report', 'on'])(
+  'in %s mode turning the sweep and worktree checks off drops what they last blocked, skipped and kept',
+  async (mode) => {
+    process.env.STIM_DAEMON = mode;
+    onTestFinished(() => {
+      delete process.env.STIM_MAINTENANCE_SWEEP_HOURS;
+      delete process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES;
+    });
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const action = (check: 'sweep' | 'worktree') => ({
+      kind: 'would-clear-outputs' as const,
+      target: join(home, check),
+      bytes: 1,
+      reason: check,
+      check,
+    });
+    const part = (check: 'sweep' | 'worktree') => ({
+      blocked: [`${check} blocked`],
+      skips: [{ target: `${check} skip`, reason: check }],
+    });
+    const planned = vi.spyOn(preview, 'plannedMaintenance').mockResolvedValue({
+      actions: [action('sweep'), action('worktree')],
+      blocked: ['sweep blocked', 'worktree blocked'],
+      skips: [...part('sweep').skips, ...part('worktree').skips],
+      byCheck: { sweep: part('sweep'), worktree: part('worktree') },
+    });
+    await runMaintenance('status');
+    expect(readMaintenanceState()?.lastPass?.blocked).toEqual(['sweep blocked', 'worktree blocked']);
+    process.env.STIM_MAINTENANCE_SWEEP_HOURS = '0';
+    process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
+    planned.mockResolvedValue({ actions: [], blocked: [], skips: [], byCheck: {} });
+    now += 61 * 60_000;
+    await runMaintenance('status');
+
+    expect(readMaintenanceState()).toMatchObject({ lastPass: { blocked: [] }, skipKeys: [], plan: [] });
+  },
+);
+
 test('cached Swift CAS observations refresh build protection before each plan', async () => {
   process.env.STIM_DISK_HARD_FLOOR_GB = '5';
   vi.spyOn(measurements, 'measurePressure').mockReturnValue({

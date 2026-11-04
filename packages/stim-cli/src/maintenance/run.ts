@@ -24,7 +24,7 @@ import { memoryCulpritsUnderAsync } from '../host-memory.ts';
 import { memoryCulpritAdvice } from '../memory-culprits.ts';
 import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { measureOwnedDevices, type OwnedDeviceReads } from './devices.ts';
-import { resolveMaintenanceSettings } from './settings.ts';
+import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
 import { capChildLog } from './attempt.ts';
 import { measurePressure, measureSizes, pressureFromMeasurement, sizeScanDeferred } from './measure.ts';
@@ -203,19 +203,25 @@ function partsAfter(
   const parts: PlanParts = { ...previous };
   for (const part of planned) {
     const own = outcomes.filter(({ action }) => planPart(action) === part);
-    parts[part] = {
-      blocked: [
-        ...(result.byCheck[part]?.blocked ?? []),
-        ...own.flatMap(({ outcome }) => (outcome.shortfall ? [outcome.shortfall] : [])),
-      ],
-      skipKeys: [
-        ...(result.byCheck[part]?.skips ?? []).map((skip) => skip.target),
-        ...own.filter(({ outcome }) => outcome.status === 'kept').map(({ action }) => action.target),
-      ],
-    };
+    const blocked = [
+      ...(result.byCheck[part]?.blocked ?? []),
+      ...own.flatMap(({ outcome }) => (outcome.shortfall ? [outcome.shortfall] : [])),
+    ];
+    const skipKeys = [
+      ...(result.byCheck[part]?.skips ?? []).map((skip) => skip.target),
+      ...own.filter(({ outcome }) => outcome.status === 'kept').map(({ action }) => action.target),
+    ];
+    if (blocked.length || skipKeys.length) parts[part] = { blocked, skipKeys };
+    else delete parts[part];
   }
   return parts;
 }
+
+/** The parts whose check its settings turn off: they plan nothing, so nothing of theirs is kept. */
+const disabledParts = (settings: MaintenanceSettings): MaintenancePlanPart[] => [
+  ...(settings.removeFinishedWorktrees ? [] : (['worktree'] as const)),
+  ...(settings.sweepHours > 0 ? [] : (['sweep'] as const)),
+];
 
 const partsBlocked = (parts: PlanParts) => PLAN_PARTS.flatMap((part) => parts[part]?.blocked ?? []);
 const partsSkipKeys = (parts: PlanParts) => [...new Set(PLAN_PARTS.flatMap((part) => parts[part]?.skipKeys ?? []))];
@@ -418,7 +424,7 @@ export async function runMaintenance(
       return;
     }
     const partPlanned = { caps, sweep: ran.has('sweep'), worktree: plannedWorktrees, idle: ran.has('idle') };
-    const plannedParts = new Set(PLAN_PARTS.filter((part) => partPlanned[part]));
+    let plannedParts = new Set([...PLAN_PARTS.filter((part) => partPlanned[part]), ...disabledParts(settings)]);
     let result: PlannedMaintenance;
     try {
       result = await plannedMaintenance(state.sizes, settings, {
@@ -437,7 +443,7 @@ export async function runMaintenance(
         error: message,
       });
       result = { actions: [], blocked: [], skips: [], byCheck: {} };
-      plannedParts.clear();
+      plannedParts = new Set(disabledParts(settings));
       for (const check of ['sweep', 'worktree'] as const) if (ran.has(check)) delete state.lastAt[check];
     }
     if (plannedWorktrees) {
