@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { readShareLinks, workspaceShareLinksFile, type SavedShare } from '@stim-cli/core/state';
-import { withWorkspaceStateLock } from './workspace-state.ts';
+import { withWorkspaceStateLock, withWorkspaceStateLockAsync } from './workspace-state.ts';
 
 /**
  * Replaces the workspace's saved links. The file holds URL tokens and passwords, so it is written privately (mode
@@ -49,18 +49,46 @@ export function forgetShareLinks(root: string): number {
   });
 }
 
+type LinkMatch = (key: string, link: SavedShare) => boolean;
+
+/** Marks the matching live links stopped and writes the file; call it under the workspace state lock. */
+function markStopped(root: string, matches: LinkMatch): void {
+  const links = readShareLinks(root);
+  let changed = false;
+  for (const [key, link] of Object.entries(links)) {
+    if (link.state === 'live' && matches(key, link)) {
+      link.state = 'stopped';
+      changed = true;
+    }
+  }
+  if (changed) writeLinks(root, links);
+}
+
+function pauseWhere(root: string, matches: LinkMatch): void {
+  if (existsSync(workspaceShareLinksFile(root))) withWorkspaceStateLock(root, () => markStopped(root, matches));
+}
+
+async function pauseWhereAsync(root: string, matches: LinkMatch): Promise<void> {
+  if (existsSync(workspaceShareLinksFile(root)))
+    await withWorkspaceStateLockAsync(root, () => markStopped(root, matches));
+}
+
+const inSlot =
+  (slot: string | undefined): LinkMatch =>
+  (_key, link) =>
+    slot === undefined || link.slot === slot;
+
 /** Marks the workspace's saved shares, or those of one `slot`, as stopped on purpose so nothing restarts them on its own. */
 export function pauseShareLinks(root: string, slot?: string): void {
-  if (!existsSync(workspaceShareLinksFile(root))) return;
-  withWorkspaceStateLock(root, () => {
-    const links = readShareLinks(root);
-    let changed = false;
-    for (const link of Object.values(links)) {
-      if (link.state === 'live' && (slot === undefined || link.slot === slot)) {
-        link.state = 'stopped';
-        changed = true;
-      }
-    }
-    if (changed) writeLinks(root, links);
-  });
+  pauseWhere(root, inSlot(slot));
+}
+
+/** {@link pauseShareLinks} for a caller that must not block on the workspace state lock, such as stim-server. */
+export function pauseShareLinksAsync(root: string, slot?: string): Promise<void> {
+  return pauseWhereAsync(root, inSlot(slot));
+}
+
+/** Marks the saved share filed under `key` (see {@link shareLinkKey}) as stopped on purpose, without blocking. */
+export function pauseShareLinkAsync(root: string, key: string): Promise<void> {
+  return pauseWhereAsync(root, (entry) => entry === key);
 }

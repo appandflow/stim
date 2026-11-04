@@ -51,9 +51,12 @@ import {
   loadConfig,
   settingsJsonSchema,
   serverLocalSocket,
+  workspaceMetadataFile,
+  workspaceShareLinksFile,
   workspaceStateFile,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
+import { ShareHub } from '../src/share.ts';
 import * as stim from 'stim';
 import { BuildHost } from '../src/build.ts';
 import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
@@ -904,6 +907,8 @@ for (;;) { fs.closeSync(fs.openSync(${JSON.stringify(config)}, 'w')); fs.writeFi
 });
 
 describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   async function routeServer(config: unknown = {}, env: Record<string, string> = {}) {
     const status = join(root, 'serve.json');
     const commandLog = join(root, 'serve-calls.ndjson');
@@ -1086,6 +1091,65 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
         error: { code: 'bad-request', message: expect.stringContaining(message) },
       });
     }
+  });
+
+  it('starts the saved live shares again when it starts, never a stopped one, and marks a share stopped before share.stop ends it', async () => {
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+    const saved = {
+      slot: 'default',
+      physical: false,
+      control: false,
+      password: 'saved-password',
+      auth: 'generated',
+      viewAuth: null,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    };
+    mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
+    writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
+    const entries = {
+      ios: { ...saved, platform: 'ios', token: TOKEN, state: 'live' },
+      'ios@tablet': { ...saved, platform: 'ios', slot: 'tablet', token: 'T'.repeat(43), state: 'live' },
+      android: { ...saved, platform: 'android', token: 'Z'.repeat(43), state: 'stopped' },
+    };
+    writeFileSync(workspaceShareLinksFile(workspace), JSON.stringify({ version: 1, links: entries }));
+    const started = vi
+      .spyOn(ShareHub.prototype, 'start')
+      .mockImplementation(async () => ({ id: 'w1', url: 'https://x.test/s/x/', expiresAt: saved.expiresAt }) as never);
+    const order: string[] = [];
+    vi.spyOn(ShareHub.prototype, 'stop').mockImplementation(async () => {
+      order.push(`stop saw ${JSON.stringify(savedStates())}`);
+      return [];
+    });
+    const savedStates = () =>
+      Object.fromEntries(
+        Object.entries(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links).map(
+          ([key, link]) => [key, (link as { state: string }).state],
+        ),
+      );
+    await routeServer();
+    const client = await desktop();
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(2));
+    expect(started).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspace,
+        platform: 'ios',
+        token: TOKEN,
+        password: 'saved-password',
+        control: false,
+        expiresAt: Date.parse(saved.expiresAt),
+      }),
+      { restore: true },
+    );
+    expect(started).toHaveBeenCalledWith(expect.objectContaining({ slot: 'tablet', token: 'T'.repeat(43) }), {
+      restore: true,
+    });
+
+    await client.request('share.stop', { workspace, slot: 'tablet' });
+    expect(savedStates()).toEqual({ ios: 'live', 'ios@tablet': 'stopped', android: 'stopped' });
+    await client.request('share.stop', { workspace });
+    expect(savedStates()).toEqual({ ios: 'stopped', 'ios@tablet': 'stopped', android: 'stopped' });
+    expect(order[0]).toBe('stop saw {"ios":"live","ios@tablet":"stopped","android":"stopped"}');
   });
 
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {

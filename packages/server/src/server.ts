@@ -56,6 +56,8 @@ import {
   type WorkspaceSummary,
   type WorktreeRow,
   SHARE_TOKEN,
+  readShareLinks,
+  shareLinkKey,
 } from '@stim-cli/core/state';
 import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
 import type { DesktopBootstrap } from './desktop-bootstrap.ts';
@@ -183,6 +185,8 @@ import {
   type StimStopOptions,
 } from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
+import { pauseShareLinkAsync, pauseShareLinksAsync } from 'stim/share-links';
+import { restoreSavedShares } from './share-restore.ts';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
 import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions } from './push.ts';
@@ -1262,6 +1266,16 @@ function leaseGrace(leaseFor: string): { leaseGraceMs?: number } {
   return { leaseGraceMs: Number(amount) * (unit === 's' ? 1000 : unit === 'm' ? 60_000 : 3_600_000) };
 }
 
+/** A share stopped on purpose must not come back when stim-server starts: marks its saved link stopped; why it could not. */
+async function markSavedStopped(mark: () => Promise<void>): Promise<string | null> {
+  try {
+    await mark();
+    return null;
+  } catch (cause) {
+    return cause instanceof Error ? cause.message : String(cause);
+  }
+}
+
 const SHARE_SLUG = new RegExp(SHARE_SLUG_PATTERN);
 
 /** Validates `share.start` params; returns why they are refused. */
@@ -1854,6 +1868,37 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     recordingChanged: () => recorder?.refresh(),
     ...(options.shareServer ? { idle: options.shareServer.idle } : {}),
   });
+  const restoreShares = () =>
+    restoreSavedShares({
+      start: async (params) => {
+        const parsed = parseShareStart(params);
+        if (typeof parsed === 'string') return { code: 'bad-request', message: parsed };
+        const resolved = registeredWorkspace(parsed.workspace);
+        if ('code' in resolved) return { code: 'bad-request', message: resolved.message };
+        const started = await shares.start({ ...parsed, workspace: resolved.dir }, { restore: true });
+        return 'code' in started ? started : { started: true, id: started.id };
+      },
+      wanted: ({ workspace, key, share }) => {
+        const saved = readShareLinks(workspace)[key];
+        return (
+          saved?.state === 'live' &&
+          saved.token === share.token &&
+          saved.slug === share.slug &&
+          saved.expiresAt === share.expiresAt
+        );
+      },
+      end: async ({ workspace }, shareId) => {
+        await shares.stopOne(workspace, shareId);
+      },
+      wait: (ms) =>
+        new Promise((resolve) => {
+          setTimeout(resolve, ms).unref();
+        }),
+      closed: () => closing,
+      log: (line) => console.error(`stim-server: ${line}`),
+    }).catch((cause: unknown) =>
+      console.error(`stim-server: could not restore the saved web shares: ${String(cause)}`),
+    );
   const ownStimBuild = stimBuildDigest(dirname(options.stimCli));
   const machineUpdates = new MachineUpdates({
     version: options.serverVersion,
@@ -1972,6 +2017,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let revocationPoll: NodeJS.Timeout | null = null;
   let hostedIdleSweep: NodeJS.Timeout | null = null;
   let retireOnce: Promise<void> | undefined;
+  let restoredShares: Promise<void> | undefined;
   const watchServerDir = () => {
     if (watcher) return;
     let created: FSWatcher;
@@ -2001,6 +2047,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       void hostedDevices.reclaimEndedHomes();
     }, options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS).unref();
     push.refresh();
+    if (!options.shareServer) restoredShares ??= restoreShares();
     retireOnce ??= Promise.resolve()
       .then(() => recoverAgentDrivers(options.env, deviceHostAreas()))
       .then(() => hostedDevices.resumeSessions())
@@ -4965,14 +5012,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           );
         if (params.id !== undefined && params.slot !== undefined)
           return error(id, 'bad-request', 'share.stop takes params.id or params.slot, not both.');
-        if (params.id === undefined)
-          return send(socket, {
+        const workspace = params.workspace;
+        const slot = typeof params.slot === 'string' ? params.slot : undefined;
+        const row = params.id === undefined ? undefined : shares.list().find((each) => each.id === params.id);
+        if (params.id !== undefined && (!row || row.workspace !== workspace))
+          return error(id, 'bad-request', `No share ${params.id} in this workspace.`);
+        const unsaved = await markSavedStopped(() =>
+          row ? pauseShareLinkAsync(workspace, shareLinkKey(row)) : pauseShareLinksAsync(workspace, slot),
+        );
+        const stopped = row ? [await shares.stopOne(workspace, row.id)] : await shares.stop(workspace, undefined, slot);
+        if (unsaved)
+          return error(
             id,
-            result: { stopped: await shares.stop(params.workspace, undefined, params.slot) },
-          });
-        const stopped = await shares.stopOne(params.workspace, params.id);
-        if (!stopped) return error(id, 'bad-request', `No share ${params.id} in this workspace.`);
-        return send(socket, { id, result: { stopped: [stopped] } });
+            'action-failed',
+            `The share stopped, but its saved link could not be marked stopped (${unsaved}), so a stim-server restart can start it again. Run stim share stop --forget.`,
+          );
+        return send(socket, { id, result: { stopped: stopped.filter((each) => each !== null) } });
       }
       const parsed = parseShareStart(params);
       if (typeof parsed === 'string') return error(id, 'bad-request', parsed);

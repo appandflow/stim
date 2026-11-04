@@ -144,7 +144,7 @@ export interface StatusListener {
   failed: (message: string) => void;
 }
 
-type Refusal = { code: 'bad-request' | 'action-failed'; message: string };
+export type Refusal = { code: 'bad-request' | 'action-failed'; message: string };
 
 const SLUG = new RegExp(SHARE_SLUG_PATTERN);
 const COOKIE = 'stim_share';
@@ -405,10 +405,14 @@ export class ShareHub {
     }
   }
 
-  async start(request: ShareRequest): Promise<StartedShare | Refusal> {
+  /**
+   * Starts a share. With `restore`, a share whose device cannot be found yet starts waiting for it instead of being
+   * refused, as a share saved before a stim-server restart does while its device comes back.
+   */
+  async start(request: ShareRequest, options: { restore?: boolean } = {}): Promise<StartedShare | Refusal> {
     this.starting++;
     try {
-      return await this.begin(request);
+      return await this.begin(request, options.restore === true);
     } finally {
       this.starting--;
       void this.closingRoute.then(() => this.checkIdle());
@@ -454,7 +458,7 @@ export class ShareHub {
     return request.token !== undefined && this.shares.has(digest(request.token).toString('hex'));
   }
 
-  private async begin(request: ShareRequest): Promise<StartedShare | Refusal> {
+  private async begin(request: ShareRequest, restore: boolean): Promise<StartedShare | Refusal> {
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
     if (request.control && request.physical && request.platform === 'ios') {
       return { code: 'bad-request', message: 'A physical iPhone is view only: share it without --control.' };
@@ -482,9 +486,10 @@ export class ShareHub {
     const status = await this.status();
     if ('code' in status) return status;
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
-    const bound = this.resolve(status, request, null);
-    if (typeof bound === 'string') return { code: 'action-failed', message: bound };
-    const source = bound.open(request);
+    const resolved = this.resolve(status, request, null);
+    if (typeof resolved === 'string' && !restore) return { code: 'action-failed', message: resolved };
+    const bound = typeof resolved === 'string' ? null : resolved;
+    const source = bound ? bound.open(request) : null;
     let base: string;
     try {
       base = await this.open();
@@ -492,6 +497,7 @@ export class ShareHub {
       return { code: 'action-failed', message: cause instanceof Error ? cause.message : String(cause) };
     }
     if (this.closed || this.base !== base) {
+      source?.close();
       void this.teardown();
       return {
         code: 'action-failed',
@@ -500,13 +506,13 @@ export class ShareHub {
     }
     const late = this.slugTaken(request.slug);
     if (late) {
-      source.close();
+      source?.close();
       void this.teardown();
       return late;
     }
     const { password: chosen, view, token: given, expiresAt: until, ...kept } = request;
     if (this.reusedLive(request)) {
-      source.close();
+      source?.close();
       void this.teardown();
       return { code: 'bad-request', message: 'That link is live now.' };
     }
@@ -526,10 +532,10 @@ export class ShareHub {
       viewDigest: view ? digest(view.password ?? viewShown ?? '') : null,
       viewAuth,
       expiresAt,
-      state: 'live',
-      bound: bound.key,
-      hosted: bound.hosted,
-      device: bound.device,
+      state: bound ? 'live' : 'waiting',
+      bound: bound?.key ?? null,
+      hosted: bound?.hosted ?? false,
+      device: bound?.device ?? null,
       source,
       resumeAt: 0,
       backoff: RESUME_MIN_MS,
@@ -561,6 +567,7 @@ export class ShareHub {
       item: (payload) => this.reconcile(share, payload),
       failed: () => {},
     });
+    if (!bound) this.arm(share);
     return {
       ...this.row(share),
       url: `${base}/s/${secret}/`,

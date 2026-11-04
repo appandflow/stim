@@ -44,8 +44,8 @@ generated.
 
 SHARE AGAIN AFTER A STOP
 
-stim share stop, stim stop and a stim-server restart end a share and its link
-stops working. stim share ios|android saves the link's 256-bit URL token and its
+stim share stop and stim stop end a share and its link stops working; a
+stim-server restart ends it only until the server starts again (see below). stim share ios|android saves the link's 256-bit URL token and its
 passwords, in clear, in share-links.json in the workspace's directory under
 $STIM_HOME/workspaces (mode 0600; written when a share starts; deleted with the
 workspace, by stim share stop --forget, and when stim share, starting, reusing or
@@ -69,9 +69,13 @@ stim share stop keeps the saved links and lists them (platform, slot, expiry;
 reusable in --json, never a secret): stop is a pause, not a revocation, until
 the expiry. stim share stop --forget also deletes them, with or without a
 running stim-server. Each saved link records whether its share should be
-running (live) or was stopped on purpose (stopped); only stim share and stim
-stop change it, so a stim-server restart leaves it live. A share started from
-Stim Desktop is not saved. Tell the
+running (live) or was stopped on purpose (stopped); stim share, stim stop and
+share.stop (also Stim Desktop's Stop) change it, so a stim-server restart or
+crash leaves it live. When a full stim-server starts (not the --share one) it
+starts every live, unexpired
+saved share again by itself, with the same link, passwords and expiry; one whose
+device is not there yet waits for it. A share started from Stim Desktop is not
+saved, so it does not come back. Tell the
 user that the saved file holds the token and passwords; when they want a link
 revoked for good, run stim share stop --forget.
 
@@ -163,7 +167,7 @@ WHAT IT NEEDS
   at once with STIM_SHARE_REFUSED and starts no server. Run stim share on the
   macOS or Linux host that runs the device.
 - A stim-server for this Stim home. The share lives inside it, and a server
-  restart ends every share. When none runs, stim share starts one in the
+  restart ends every share until the next one starts and restores the saved ones. When none runs, stim share starts one in the
   background (stim-server --share: loopback only, no Desktop bootstrap) from
   the stim-server package of this exact stim version installed next to stim,
   else a stim-server on PATH that reports this version. It says so on stderr
