@@ -63,6 +63,13 @@ worktree's path and makes `Manifest.lock` match `Podfile.lock`, so the first
 carried `node_modules` that do not match the worktree's lockfile leaves Pods as
 copied and `pod install` runs. Warm does not edit `Podfile.lock`.
 
+When `pod install` does run, the new `Podfile.lock` holds the checksum of a podspec
+that embeds the checkout path, so it differs per worktree. The build fingerprint
+counts that checksum as the checksum of the podspec with the path left out, as long
+as it equals the sha1 of the pod's file in `ios/Pods/Local Podspecs`. Worktrees of
+one commit that each ran `pod install` therefore share one cache key, and a change
+to the podspec itself, or to anything else in `Podfile.lock`, still changes it.
+
 Clones of `ios/Pods` share disk only while the worktree builds the configuration
 the source checkout last built. React Native swaps its prebuilt core, Hermes and
 dependency frameworks when `.last_build_configuration` differs from the

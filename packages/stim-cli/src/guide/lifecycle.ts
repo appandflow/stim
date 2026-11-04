@@ -2157,9 +2157,14 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
 
   \`.fingerprintignore\` at the project root (same syntax as .gitignore) is the
   answer. Put in it only what genuinely cannot change the native build: a
-  generated report, a local env file, a lockfile whose checksums embed absolute
-  machine paths (\`ios/Podfile.lock\` is the usual one -- pod checksums can bake
-  in a machine path, and \`pod install\` rewrites it on a plain re-install).
+  generated report, a local env file, a lockfile that embeds absolute machine
+  paths. Not \`ios/Podfile.lock\`: its checksum of a podspec that names the
+  checkout's path (the precompiled ExpoModulesCore) changes with the path, and
+  the fingerprint counts that checksum as the checksum of the podspec with the
+  path left out, so checkouts of one commit that each ran \`pod install\` get
+  one key. It does so only for a checksum that equals the sha1 of the pod's
+  file in ios/Pods/Local Podspecs, so any other change to the podspec, or to
+  the lock, still changes the key.
   Never ignore a real native input -- a Podfile, a gradle file, the app config
   -- to force a hit: that trades a slow build for a wrong one.
 
