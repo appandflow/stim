@@ -63,6 +63,23 @@ authorization or capabilities.
 device-host records share it; the server never learns a client's server key.
 The plain listing shows `from` and the first 12 characters of the key fingerprint.
 
+An entry of one of the three registry files that this version cannot read, such
+as a malformed one or one written in a shape only a newer Stim understands, is
+never dropped. Every registry write puts it back as the text it had, in its
+place, and it grants no access; the file's other top-level members are kept as
+their text too. `devices --json` lists each one in `unreadable`, which is `[]`
+when there are none: `{ "file": "devices.json", "index": 2, "id": "..." }` with
+the file's name, the entry's position in that file's `devices` list and, when
+the entry has a string `id`, that id cleaned like a name. Nothing else of the
+entry is shown. A file whose `version` is newer than 2 is listed as a whole,
+`{ "file": "devices.json", "version": 3 }`, its records are not read, and every
+write to it is refused so a downgrade never replaces it. A file of protocol 1
+(`version` 1) is still not read and is replaced by the next write. The plain
+listing prints a line for each. `devices rename`, `grant` and `revoke` with the
+id of an unreadable entry exit 1 and say it is left as it is; edit the file to
+change or remove it. A registry file that does not parse as a whole is still
+refused, and no write replaces it.
+
 `devices rename <id> <name>` renames the record with that id in whichever
 registry holds it, under the same lock and atomic write as every other registry
 change, and keeps its key and capabilities. The name is 1 to 64 characters of

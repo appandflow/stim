@@ -5333,6 +5333,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         records = spendSecret(accepted.lookup!, publicKey, name, from);
       } catch (error) {
         if (!(error instanceof RegistryUnavailable)) throw error;
+        console.error(`stim-server: could not record a new client: ${error.message}`);
         readApprovals();
         return refuse('home-unavailable');
       }

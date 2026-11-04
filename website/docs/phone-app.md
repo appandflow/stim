@@ -182,6 +182,15 @@ for any other app. Each pairing records the app and version it names when it
 connects, so `kind` and the `clientApp` and `clientVersion` fields appear after
 a pairing's next connection. They are labels only and never change what it may do.
 
+An entry in the server's registry files that this version of `stim-server` cannot
+read, such as a malformed one or one a newer Stim wrote, is never dropped: writes
+keep it as it was and it grants nothing. `stim-server devices --json` lists each
+one in `unreadable` as `{ "file", "index", "id" }` (`id` only when the entry has
+one). A registry file written by a newer Stim as a whole is listed as
+`{ "file", "version" }`, and `stim-server` refuses every write to it, including
+pairing a new device. `devices rename`, `grant` and `revoke` refuse the id of an
+unreadable entry; edit the file to change or remove it.
+
 **Forget** on the phone removes the saved Mac and its local status. To revoke
 the server's authorization, use the Mac-side action above.
 
