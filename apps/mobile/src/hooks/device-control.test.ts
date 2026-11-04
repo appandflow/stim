@@ -36,6 +36,7 @@ function openLink(connection: object, features: string[] = []) {
       capabilities: ['control'],
       features,
       deviceId: null,
+      deviceName: null,
     },
   });
 }
@@ -88,6 +89,7 @@ test('ignores simulator options returned by an ended connection with a reused se
     capabilities: ['control' as const],
     features: [],
     deviceId: null,
+    deviceName: null,
   };
   machines.setMacs(
     [{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z', serverKey: 'k' }],
@@ -131,6 +133,7 @@ test('starts native Control only when the server advertises native window input'
     capabilities: ['control' as const],
     features: ['macos-window'],
     deviceId: null,
+    deviceName: null,
   };
   machines.setMacs(
     [{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z', serverKey: 'k' }],
@@ -200,6 +203,7 @@ test.each(['platform', 'postures', 'reason'])(
         capabilities: ['control'],
         features: [],
         deviceId: null,
+        deviceName: null,
       },
     });
     const { result, unmount } = await renderHook(() => useDeviceControl('/app', 'ios', 'default'));

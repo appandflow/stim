@@ -51,7 +51,7 @@ export function Welcome({ dismiss }: { dismiss: () => void }) {
               style={styles.stepButton}
             />
           </WelcomeStep>
-          <WelcomeStep number={2} title={t`Stim Desktop on Your Mac, with Serve to Phones On`}>
+          <WelcomeStep number={2} title={t`Stim Desktop with Serve to Phones On`}>
             <Touch
               accessibilityRole="link"
               accessibilityLabel={t`stim.appandflow.com/desktop`}
@@ -64,7 +64,7 @@ export function Welcome({ dismiss }: { dismiss: () => void }) {
           <WelcomeStep number={3} title={t`Both Signed in to the Same Tailnet`} />
         </View>
         <View style={styles.actions}>
-          <Button title={t`Pair with Your Mac`} onPress={() => router.push('/pair')} />
+          <Button title={t`Pair with a Machine`} onPress={() => router.push('/pair')} />
           <Button title={t`Not Now`} variant="plain" onPress={dismiss} />
         </View>
       </ScrollView>

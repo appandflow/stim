@@ -617,7 +617,7 @@ it('does not resolve a shared link from previous workspace views after reconnect
     router.replace(`/mac/${MAC_ID}`);
     await jest.advanceTimersByTimeAsync(6000);
   });
-  expect(screen.getByText('Update stim-server on this Mac to load its live status.')).toBeTruthy();
+  expect(screen.getByText('Update stim-server on the machine to load its live status.')).toBeTruthy();
   expect(screen.queryByText(/Pair this machine again/)).toBeNull();
   expect(MockSocket.sent).not.toContain('status.subscribe');
 }, 60_000);

@@ -1,4 +1,5 @@
 import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { useRouter } from 'expo-router';
 import { Alert, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -8,13 +9,14 @@ import { Card } from '@/components/card';
 import { FlatList } from '@/components/lists';
 import { connectionColor, describeState } from '@/components/mac-chip';
 import { StatusDot } from '@/components/pill';
-import { ScopeChip } from '@/components/read-only';
+import { revokeCommand, ScopeChip } from '@/components/read-only';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useMacs } from '@/hooks/machines';
 import { useLargeText } from '@/hooks/large-text';
 import { forgetInbox } from '@/hooks/inbox';
 import { unregisterPush } from '@/hooks/notifications';
+import { machineRecord } from '@/lib/machine-record';
 import { forgetMac, type PairedMac } from '@/lib/macs';
 
 export function MacList() {
@@ -23,20 +25,27 @@ export function MacList() {
   const { reload, connections } = useMacs();
   const large = useLargeText();
 
-  const forget = (mac: PairedMac) => {
+  const remove = (mac: PairedMac) => {
     const { name } = mac;
-    Alert.alert(t`Forget ${name}?`, t`This phone stops connecting to it. Pair again from Stim Desktop to undo.`, [
-      { text: t`Cancel`, style: 'cancel' },
-      {
-        text: t`Forget`,
-        style: 'destructive',
-        onPress: () => {
-          unregisterPush(connections.find((c) => c.mac.id === mac.id)?.connection ?? null, mac.id);
-          forgetInbox(mac.id);
-          void forgetMac(mac.id).then(reload);
+    const link = connections.find((c) => c.mac.id === mac.id);
+    const deviceId = link?.state.kind === 'open' ? link.state.deviceId : null;
+    const revoke = revokeCommand(deviceId);
+    Alert.alert(
+      t`Remove ${name}?`,
+      t`This phone stops connecting to it. It still lists this phone until you revoke it there: on ${name}, run ${revoke}.`,
+      [
+        { text: t`Cancel`, style: 'cancel' },
+        {
+          text: t`Remove`,
+          style: 'destructive',
+          onPress: () => {
+            unregisterPush(link?.connection ?? null, mac.id);
+            forgetInbox(mac.id);
+            void forgetMac(mac.id).then(reload);
+          },
         },
-      },
-    ]);
+      ],
+    );
   };
 
   return (
@@ -47,6 +56,7 @@ export function MacList() {
       contentContainerStyle={styles.list}
       renderItem={({ item: { mac: item, state, missing } }) => {
         const { name } = item;
+        const { serverName, deviceName: record, deviceId: recordId } = machineRecord(state, name);
         return (
           <Card>
             <View style={large ? styles.rowStacked : styles.row}>
@@ -67,6 +77,22 @@ export function MacList() {
                   <Text variant="footnote" tone="secondary" numberOfLines={1}>
                     {describeState(state, missing)}
                   </Text>
+                  {serverName ? (
+                    <Text variant="footnote" tone="secondary" numberOfLines={large ? 3 : 1}>
+                      <Trans>Named {serverName} on the machine</Trans>
+                    </Text>
+                  ) : null}
+                  {record ? (
+                    <Text variant="footnote" tone="secondary" numberOfLines={large ? 4 : 2}>
+                      {recordId ? (
+                        <Trans>
+                          Listed there as {record}, id {recordId}
+                        </Trans>
+                      ) : (
+                        <Trans>Listed there as {record}</Trans>
+                      )}
+                    </Text>
+                  ) : null}
                   <Text variant="caption" tone="secondary" mono numberOfLines={large ? 3 : 1}>
                     {item.endpoint}
                   </Text>
@@ -77,15 +103,15 @@ export function MacList() {
                   title={t`Rename`}
                   variant="plain"
                   size="small"
-                  accessibilityLabel={t`Rename ${name}`}
+                  accessibilityLabel={t`Rename ${name} on this phone`}
                   onPress={() => router.push({ pathname: '/rename', params: { id: item.id } })}
                 />
                 <Button
-                  title={t`Forget`}
+                  title={t`Remove`}
                   variant="destructive"
                   size="small"
-                  accessibilityLabel={t`Forget ${name}`}
-                  onPress={() => forget(item)}
+                  accessibilityLabel={t`Remove ${name}`}
+                  onPress={() => remove(item)}
                 />
               </View>
             </View>

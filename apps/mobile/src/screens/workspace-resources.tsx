@@ -220,7 +220,7 @@ function LiveWorkspaceResources({ path }: { path: string }) {
       })}
       {free === null ? null : (
         <Text variant="footnote" tone="tertiary">
-          <Trans>The Mac volume that holds workspaces has {freeSpace} free.</Trans>
+          <Trans>The volume that holds workspaces has {freeSpace} free.</Trans>
         </Text>
       )}
     </SheetScreen>

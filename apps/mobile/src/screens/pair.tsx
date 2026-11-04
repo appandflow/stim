@@ -143,7 +143,7 @@ export function Pair() {
               label={t`Endpoint`}
               value={endpoint}
               onChangeText={setEndpoint}
-              placeholder="wss://my-mac.tail1234.ts.net:7443"
+              placeholder="wss://my-machine.tail1234.ts.net:7443"
               textContentType="none"
               autoComplete="off"
               importantForAutofill="no"
@@ -193,7 +193,7 @@ export function Pair() {
             <Text variant="title" weight="semibold">
               <Trans>Paired</Trans>
             </Text>
-            <Field label={t`Name this machine`} value={name} onChangeText={setName} placeholder={step.name} />
+            <Field label={t`Name on This Phone`} value={name} onChangeText={setName} placeholder={step.name} />
             <Button title={t`Save`} onPress={onSave} />
           </View>
         ) : null}
