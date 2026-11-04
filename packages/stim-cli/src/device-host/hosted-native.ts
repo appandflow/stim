@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { workspaceDir } from '../workspace/paths.ts';
 import { phaseLine } from '../command-output.ts';
 import { agentAccess, removeAgentAccess } from './hosted-agent.ts';
-import { closeAgentConnection } from './agent-connection.ts';
+import { closeAgentConnection, hostedAgentSessionName } from './agent-connection.ts';
 import { randomUUID } from 'node:crypto';
 import type { BuildHandoff } from '../offload/client.ts';
 import { pullHostedNativeLogs } from './hosted-logs.ts';
@@ -544,7 +544,8 @@ export async function stopHostedNative(
       failures.push(unreadableHostedNative(name, platform));
       continue;
     }
-    if (placement.agent.driver === 'agent-device') closeAgentConnection(placement.agent.remoteConfig);
+    if (placement.agent.driver === 'agent-device')
+      closeAgentConnection(placement.agent.remoteConfig, hostedAgentSessionName(root, platform, name));
     let host: HostConnection | undefined;
     const cancel = () => host?.connection.close();
     signal?.addEventListener('abort', cancel, { once: true });
