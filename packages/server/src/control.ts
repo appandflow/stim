@@ -1292,10 +1292,10 @@ export class ControlHub {
     }
   }
 
-  endById(owner: Controller, id: string): boolean {
+  endById(owner: Controller, id: string, message = 'The client ended the session.'): boolean {
     const session = this.sessions.get(id);
     if (!session || session.owner !== owner) return false;
-    void this.end(session, null, 'The client ended the session.');
+    void this.end(session, null, message);
     return true;
   }
 
