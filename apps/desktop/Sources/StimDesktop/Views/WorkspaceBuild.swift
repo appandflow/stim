@@ -194,10 +194,10 @@ struct WorkspaceActionsButton: View {
       presenting: removal
     ) { _ in
       Button("Run stim worktree remove", role: .destructive) {
-        actions.run("Remove \(env.names.title)", StimCommand(["worktree", "remove"], cwd: env.path))
+        actions.run("Remove \(env.names.title)", StimCommand(["worktree", "remove"], cwd: env.checkoutPath ?? env.path))
       }
     } message: { removal in
-      Text(worktreeRemovalMessage(path: env.path, branch: removal.branch))
+      Text(worktreeRemovalMessage(path: env.checkoutPath ?? env.path, branch: removal.branch))
     }
   }
 
@@ -254,10 +254,11 @@ struct WorktreeActions<Content: View>: View {
       titleVisibility: .visible, presenting: removal
     ) { _ in
       Button("Run stim worktree remove", role: .destructive) {
-        actions.run("Remove \(firstApp.names.title)", StimCommand(["worktree", "remove"], cwd: firstApp.path))
+        actions.run(
+          "Remove \(firstApp.names.title)", StimCommand(["worktree", "remove"], cwd: firstApp.checkoutPath ?? firstApp.path))
       }
     } message: { removal in
-      Text(worktreeRemovalMessage(path: firstApp.path, branch: removal.branch))
+      Text(worktreeRemovalMessage(path: firstApp.checkoutPath ?? firstApp.path, branch: removal.branch))
     }
     .confirmationDialog("Stop All Apps in This Worktree?", isPresented: $confirmingStop, titleVisibility: .visible) {
       Button("Run stim stop in each active app", role: .destructive) {
