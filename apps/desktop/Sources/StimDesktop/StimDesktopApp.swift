@@ -275,7 +275,7 @@ struct StimDesktopApp: App {
     self.metrics = metrics
     storage = StorageStore(status: store, environment: environment)
     planChecks = BuildPlanChecks { platform, workspace in
-      let connection = await ServerSession.shared.localActionConnection
+      let connection = await ServerSession.shared.statsConnection
       return try await readServerBuildPlan(
         platform: platform, workspace: workspace, stimHome: StimHome.path(environment: await environment.value),
         connection: connection)
@@ -300,7 +300,7 @@ struct StimDesktopApp: App {
     }
     let machineSettings = MachineSettingsStore(
       environment: environment, server: { ServerSession.shared.statsConnection },
-      actions: { ServerSession.shared.localActionConnection })
+      actions: { ServerSession.shared.statsConnection })
     self.machineSettings = machineSettings
     let buildMachines = BuildMachinesModel(environment: environment, settings: machineSettings, statsReader: statsReader)
     self.buildMachines = buildMachines

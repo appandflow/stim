@@ -244,6 +244,7 @@ import {
 } from '@stim-cli/transport-tailscale';
 import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DEFAULT_VIDEO_LIMITS, HOSTED_MAX_BITRATE, videoPacket, VideoGate, type AccessUnit } from './video.ts';
+import { openRtc } from './webrtc-sender.ts';
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
@@ -523,6 +524,7 @@ const MACOS_ONLY_FEATURES: readonly string[] = [
   'duo-frames',
   'native-xcode-build',
   'native-xcode-toolchain',
+  'hosted-webrtc',
 ];
 /**
  * Test switch: set to 1, a `physical` target may resolve to an emulator its workspace leases with `stim device
@@ -1862,6 +1864,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const shares = new ShareHub({
     frames,
     control,
+    webrtc: () => {
+      try {
+        return loadConfig()?.share?.webrtc === true;
+      } catch {
+        return false;
+      }
+    },
     presence: {
       subscribe: (key, listener) => localAgents.subscribe(key, listener),
       join: (key, who) => presence.join(key, who),
@@ -2093,6 +2102,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
    */
   function connection(socket: ServerSocket, peer: string | null, local: boolean, clientKey: string | null): void {
     const limitKey = peer ?? 'local';
+    const keyless = local && options.desktopBootstrap === undefined;
     const subscriptions = new Map<string, () => void | Promise<void | ProtocolError>>();
     const setupRuns = new Map<string, DesktopSetup>();
     const keyframes = new Map<string, () => void>();
@@ -2255,7 +2265,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-plan',
               'desktop-setup',
             ].includes(feature) ||
-              options.desktopBootstrap !== undefined) &&
+              keyless ||
+              desktopChallenge !== null) &&
+            (feature !== 'desktop-setup' || desktopChallenge !== null) &&
+            (feature !== 'desktop-local-authority' || keyless) &&
             (local ||
               ![
                 'desktop-plan',
@@ -3565,13 +3578,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeGc(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket)) {
-        return error(
-          id,
-          'forbidden',
-          'Garbage collection requires the connection of the Stim Desktop that started this server.',
-        );
-      }
       if (
         !isJsonObject(params) ||
         Object.keys(params).some((key) => !['cwd', 'cache', 'olderThan', 'worktrees', 'delete'].includes(key)) ||
@@ -3603,8 +3609,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeRemedy(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket))
-        return error(id, 'forbidden', 'Repairs require the connection of the Stim Desktop that started this server.');
       const tool = isJsonObject(params) && params.action === 'device-tool' ? deviceToolRequest(params.request) : null;
       if (
         !isJsonObject(params) ||
@@ -3666,12 +3670,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeMachineAccess(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket))
-        return error(
-          id,
-          'forbidden',
-          'Requesting machine access requires the connection of the Stim Desktop that started this server.',
-        );
       if (
         !isJsonObject(params) ||
         Object.keys(params).some((key) => key !== 'cwd' && key !== 'ticket') ||
@@ -3689,12 +3687,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeWorktreeWarm(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket))
-        return error(
-          id,
-          'forbidden',
-          'Warming worktrees requires the connection of the Stim Desktop that started this server.',
-        );
       if (
         !isJsonObject(params) ||
         Object.keys(params).some((key) => key !== 'cwd') ||
@@ -3711,12 +3703,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeWorktreeRemove(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket))
-        return error(
-          id,
-          'forbidden',
-          'Removing worktrees requires the connection of the Stim Desktop that started this server.',
-        );
       if (
         !isJsonObject(params) ||
         Object.keys(params).some((key) => !['cwd', 'target', 'force'].includes(key)) ||
@@ -4406,34 +4392,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         ].includes(method)
       )
         return null;
-      // A server Desktop started holds its private key and admits only the socket that proved it; a server Desktop
-      // adopted or one run on its own has no key and keeps serving these methods to this user's local socket.
-      if (!local || (options.desktopBootstrap !== undefined && !desktopSessions.has(socket))) {
+      if (!keyless && !desktopSessions.has(socket)) {
         return Promise.resolve(
           error(
             id,
             'forbidden',
-            method === 'route.setup'
-              ? 'Phone connection setup requires the connection of the Stim Desktop that started this server.'
-              : method === 'desktop.doctor.run'
-                ? 'Running project doctor requires the connection of the Stim Desktop that started this server.'
-                : method === 'desktop.settings.write'
-                  ? 'Changing settings requires the connection of the Stim Desktop that started this server.'
-                  : method === 'desktop.reload.subscribe'
-                    ? 'Reloading apps requires the connection of the Stim Desktop that started this server.'
-                    : method === 'desktop.build.subscribe'
-                      ? 'Building artifacts requires the connection of the Stim Desktop that started this server.'
-                      : method === 'desktop.run.subscribe'
-                        ? 'Running apps requires the connection of the Stim Desktop that started this server.'
-                        : method === 'desktop.start.subscribe'
-                          ? 'Starting dev servers requires the connection of the Stim Desktop that started this server.'
-                          : method === 'desktop.stop.subscribe'
-                            ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
-                            : method.startsWith('desktop.')
-                              ? 'Desktop operations require the connection of the Stim Desktop that started this server.'
-                              : method.startsWith('device-host.sessions')
-                                ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
-                                : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
+            local
+              ? 'This stim-server holds the private key of the Stim Desktop that started it, which this connection did not prove.'
+              : `${method} works only on this machine's local Unix socket.`,
           ),
         );
       }
@@ -4451,38 +4417,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return Promise.resolve();
       }
       if (method === 'desktop.settings.write') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Changing settings requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         writeDesktopSetting(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.reload.subscribe') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Reloading apps requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         subscribeReload(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.plan.cancel') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Cancelling a plan requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         if (!isJsonObject(params) || Object.keys(params).length !== 1 || !validPlanRequest(params.request)) {
           error(id, 'bad-request', 'Choose the request of this connection to cancel.');
           return Promise.resolve();
@@ -4498,14 +4440,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return Promise.resolve();
       }
       if (method === 'desktop.plan.get') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Planning builds requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         if (
           !isJsonObject(params) ||
           Object.keys(params).some(
@@ -4558,34 +4492,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return Promise.resolve();
       }
       if (method === 'desktop.build.subscribe') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Building artifacts requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         subscribeBuild(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.run.subscribe') {
-        if (!desktopSessions.has(socket)) {
-          error(id, 'forbidden', 'Running apps requires the connection of the Stim Desktop that started this server.');
-          return Promise.resolve();
-        }
         subscribeRun(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.start.subscribe') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Starting dev servers requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         subscribeStart(id, params, owner);
         return Promise.resolve();
       }
@@ -5014,6 +4928,39 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             () => socket.readyState === socket.OPEN && controllers.get(socket) === owner,
           );
           return 'code' in outcome ? error(id, outcome.code, outcome.message) : send(socket, { id, result: outcome });
+        } catch (cause) {
+          return error(id, 'action-failed', (cause as Error).message);
+        }
+      }
+      if (method === 'device-host.webrtc.offer') {
+        if (typeof params.session !== 'string' || typeof params.sdp !== 'string')
+          return error(id, 'bad-request', 'A hosted session and an SDP offer are required.');
+        if (subscriptions.size >= MAX_SUBSCRIPTIONS)
+          return error(id, 'limit-exceeded', `A connection can hold ${MAX_SUBSCRIPTIONS} subscriptions.`);
+        const hostedSession = params.session;
+        const subscription = `s${nextSubscription++}`;
+        try {
+          const view = hostedViews.target(session.id, hostedSession);
+          const rtc = await openRtc(
+            params.sdp,
+            {
+              subscribe: (video, failed) =>
+                hostedViews.subscribe(
+                  session.id,
+                  hostedSession,
+                  { frame: () => {}, video, delayed: () => {}, failed },
+                  { fps: FRAME_FPS.video, maxEdge: 1280 },
+                ),
+              keyframe: () => view.frames.keyframe(view.device),
+              congested: () => view.frames.congested(view.device),
+            },
+            (reason) => {
+              if (!subscriptions.delete(subscription)) return;
+              send(socket, { event: 'webrtc-closed', subscription, message: reason });
+            },
+          );
+          subscriptions.set(subscription, () => rtc.close());
+          return send(socket, { id, result: { subscription, sdp: rtc.answer } });
         } catch (cause) {
           return error(id, 'action-failed', (cause as Error).message);
         }

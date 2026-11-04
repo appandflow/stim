@@ -24,6 +24,7 @@ export const SHARE_ASSETS: Record<string, { body: string; type: string }> = {
   'people.js': { body: read('people.js'), type: 'text/javascript; charset=utf-8' },
   'reconnect.js': { body: read('reconnect.js'), type: 'text/javascript; charset=utf-8' },
   'viewer.js': { body: read('viewer.js'), type: 'text/javascript; charset=utf-8' },
+  'webrtc.js': { body: read('webrtc.js'), type: 'text/javascript; charset=utf-8' },
 };
 
 function escape(text: string): string {
@@ -55,6 +56,8 @@ export function viewerPage(options: {
   platform: string;
   buttons: readonly string[];
   rotate: boolean;
+  /** The share host lets viewers ask for WebRTC video (`share.webrtc`). */
+  webrtc: boolean;
 }): string {
   return fill(TEMPLATES.viewer, {
     title: options.title,
@@ -65,5 +68,6 @@ export function viewerPage(options: {
     platform: options.platform,
     buttons: options.buttons.join(' '),
     rotate: String(options.rotate),
+    webrtc: String(options.webrtc),
   });
 }

@@ -54,7 +54,7 @@ public struct ServerRemedyResult: Sendable {
   let client = try desktopActionServer(connection, stimHome: stimHome, action: "run this Desktop action from this Stim home")
   guard case .open(let hello) = client.state, hello.features?.contains(feature) == true else {
     throw ServerError(
-      code: "unsupported", message: "Update the bundled stim-server to run this Desktop action.")
+      code: "unsupported", message: "Update stim-server to run this Desktop action.")
   }
   let (events, continuation) = AsyncThrowingStream<ServerEvent, Error>.makeStream()
   var terminal: ServerEvent?

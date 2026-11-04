@@ -416,11 +416,12 @@ retired. See [hosted parking](./remote-machines.md#hosted-parking-and-restart)
 and [owned devices](/docs/owned-devices) for adoption cleanup.
 
 `pool.bootedGraceMinutes` is how many minutes `worktree remove` keeps a
-simulator that is booted booted as it parks it, so the next `stim ios` that
-adopts it skips the boot. Absent means 15; `0` shuts it down at park. Stim keeps
-it booted only while macOS memory pressure is normal and a device slot is free.
+simulator that is booted booted as it parks it, and `stop` keeps the
+workspace's own owned simulator booted, so the next `stim ios` skips the boot.
+Absent means 15; `0` shuts it down at park and at `stop`. Stim keeps it booted
+only while macOS memory pressure is normal and a device slot is free.
 `STIM_POOL_BOOTED_GRACE_MINUTES` overrides it, and when `STIM_HOME` is set it is
-`0` unless that variable is set. Emulators are always shut down at park. It needs the stim-daemon: with `daemon.mode` `off` or `report`, or on Windows, `worktree remove` shuts the simulator down at park.
+`0` unless that variable is set. Emulators are always shut down at park and at `stop`. It needs the stim-daemon: with `daemon.mode` `off` or `report`, or on Windows, `worktree remove` and `stop` shut the simulator down at once.
 
 `remote.buildPoolDisabled` and `remote.devicePoolDisabled` list members excluded
 from this requester's automatic build and simulator/emulator placement. Both default
@@ -839,6 +840,12 @@ stim settings set share.port 7790                           # loopback port the 
 ```
 
 See [Share a running app](./share.md#custom-domain) for the Caddyfile.
+
+`share.webrtc` is an experimental machine setting, off by default. Set it to
+`true` and a viewer that opens a share link with `?transport=webrtc` takes video
+over a WebRTC data channel from the machine that owns the device, and falls back
+to WebSocket when WebRTC fails. It needs the optional `node-datachannel` package
+on that machine.
 
 ## Device recordings
 

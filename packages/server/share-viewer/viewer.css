@@ -921,3 +921,32 @@ input.switch:checked::after {
     padding: 0 8px 12px;
   }
 }
+
+.rtc-stats {
+  position: fixed;
+  left: 8px;
+  bottom: 8px;
+  z-index: 50;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #e8ffe8;
+  font:
+    11px/1.35 ui-monospace,
+    Menlo,
+    monospace;
+}
+.rtc-stats pre {
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+  font: inherit;
+}
+.rtc-stats button {
+  margin-right: 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}

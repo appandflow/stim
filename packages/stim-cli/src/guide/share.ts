@@ -314,6 +314,16 @@ $connection_upgrade comes from the usual map block):
     root /var/www/stim-share;
   }
 
+WEBRTC VIDEO (EXPERIMENTAL)
+share.webrtc is a machine setting, false by default. Off, viewers get WebSocket
+video only: the page never starts WebRTC, the share refuses WebRTC offers and
+the choice is not remembered. On, a viewer that opens the link with
+?transport=webrtc (remembered in a cookie for a day) takes video over a WebRTC
+data channel from the machine that owns the device, so a hosted device's video
+does not cross this machine, and ?stats shows a stats panel. A missing
+node-datachannel package, an older worker without hosted-webrtc, or any WebRTC
+failure drops the viewer back to WebSocket. Input stays on the share socket.
+
 SECURITY MODEL
 
 - stim-server serves shares on its own listener, on a loopback port separate

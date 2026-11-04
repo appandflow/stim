@@ -1574,6 +1574,7 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: { subscription: { type: 'string' } },
           }),
+          request('device-host.webrtc.offer', session({ sdp: { type: 'string', maxLength: 65536 } }, ['sdp'])),
           request('device-host.presence.subscribe', session({})),
           request('device-host.unsubscribe', {
             type: 'object',
@@ -2816,6 +2817,16 @@ export function protocolJsonSchema(): JsonSchema {
                   },
                 },
               },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'message'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'webrtc-closed' },
+              subscription: { type: 'string' },
+              message: { type: 'string' },
             },
           },
           {

@@ -270,13 +270,18 @@ new checks.
 
 The fresh reviewer records the outcome with labels. When the review is clear, it
 adds `review: ai-approved` and marks the pull request ready with `gh pr ready`.
-When the diff contains a product decision that no maintainer has made, it adds
+When the diff contains a product decision the maintainer has not stated, it adds
 `review: needs-human` and removes any `review: human-approved`. A product
 decision is a new, removed or renamed command, flag or setting; a changed
 default; or a change to user-visible behavior beyond what the linked issue
 asked for. This is the "explicit product decision" that new commands and flags
-require. A decision recorded in the issue or in a maintainer comment counts as
-approved.
+require. Only a decision the maintainer stated counts as approved: an issue or
+comment that quotes the maintainer's words as a decision, in a line such as
+`Maintainer decision: "<words>", <date>`, or one the maintainer wrote directly.
+Every agent posts as the maintainer's account, so an agent's own proposal,
+design section or "Fix idea" never counts, whoever posted it. The reviewer looks
+for the quoted decision before treating a new command, flag, setting or default
+as approved.
 
 Other concerns do not add the label. The reviewer still names them in its
 review: a new or wider way for another machine to reach or act on this one (a
@@ -731,6 +736,15 @@ is free, and records `bootedUntil`; adoption of it still resets and verifies as
 above, without the boot. The stim-daemon shuts a booted parked simulator down
 through teardown at expiry, under memory pressure before any workspace's device,
 and before it reclaims a workspace's device for a waiting run.
+`stop` applies the same gates to the workspace's owned iOS simulator: it ends
+the app and the agent-device sessions, leaves the simulator booted and assigned
+to the workspace, and records a deferred shutdown in the workspace state with the
+expiry. A later `ios` run uses the booted simulator and forgets the record; a
+later `worktree remove` parks it booted. The stim-daemon shuts a deferred
+simulator down through teardown at expiry or under memory pressure, under the
+workspace's native-run lock, unless the workspace serves again. A stopped
+workspace holding one is outside the idle stage until the expiry. Android
+emulators are shut down by `stop`.
 
 `stim web` launches the installed Chrome only with a profile Stim created under
 `$STIM_HOME/workspaces/<id>/web/`, listed under `web` in the created-devices
@@ -809,7 +823,9 @@ All shutdown and deletion flows must use `src/devices/teardown.ts`, and so do pa
 which is the flow that gives a simulator up without deleting it, and the erase
 and wipe of an owned device's data. Re-resolve
 ownership before each destructive command. Contain per-device failures so batch cleanup
-can continue. `stop` shuts down devices; it never deletes them.
+can continue. `stop` shuts down devices and never deletes them; the owned iOS
+simulator is shut down at the expiry of `pool.bootedGraceMinutes` or under memory
+pressure when the gates in invariant 2 hold, and at once otherwise.
 
 ### 5. Redirect test state
 

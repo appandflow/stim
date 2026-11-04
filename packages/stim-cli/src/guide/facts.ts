@@ -120,7 +120,10 @@ graphql lookup gc uses, one call per repository, for a worktree whose lookup
 is over 5 minutes old or whose branch or HEAD moved. It runs git in the
 repository, never in the worktree. It caches each answer
 under $STIM_HOME/pull-requests, which one-shot status only reads, and never
-warns when gh is unavailable.
+warns when gh is unavailable. That cache is the one every pull request lookup
+shares: stim-server's finished-worktree notifications read it while it is under
+5 minutes old and ask GitHub only for the rest, and gc and \`worktree remove\`
+write their answers to it.
 
 status's remoteDevices lists each environment's recorded EAS Simulator
 session. The session is billable while it runs, and it makes the environment
@@ -676,7 +679,9 @@ ON FAILURE
   exits 130 with no payload.
 
   \`stop --json\` prints { root, ok, supervisor, collectors, metro, device,
-  port, metroTunnel, releasedLeases, macos? }. macos is { status: stopped | failed,
+  port, metroTunnel, releasedLeases, macos? }. device.ios is { status:
+  "kept-booted", label, until } when the owned simulator stays booted until
+  the ISO time \`until\` (guide lifecycle pool); ok stays true. macos is { status: stopped | failed,
   reason? } when a macOS app is recorded. When it cannot end the \`ios\` or
   \`android\` run holding the workspace, it prints the error contract with
   root and ok: false instead, plus device.remote when it ended a recorded EAS

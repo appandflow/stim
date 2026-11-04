@@ -852,8 +852,10 @@ not a whole number 0 or more is refused by name on \`worktree remove\` and
 
 \`pool.bootedGraceMinutes\` (or STIM_POOL_BOOTED_GRACE_MINUTES) is how many
 minutes \`worktree remove\` keeps a simulator that is booted booted as it
-parks it, while memory pressure is normal and a device slot is free, so the
-next adoption skips the boot. Absent means 15; \`0\` shuts it down at park.
+parks it, and \`stop\` keeps the workspace's own owned simulator booted, while
+memory pressure is normal and a device slot is free, so the next adoption or
+\`ios\` skips the boot. Absent means 15; \`0\` shuts it down at park and at
+\`stop\`.
 When \`STIM_HOME\` is set it is 0 unless the variable is set. See
 \`guide lifecycle pool\`.
 
@@ -1463,6 +1465,11 @@ reverse proxy setup:
                    https://demo.example.com
   share.port       the loopback port proxy mode binds (default 7790), so the
                    proxy can name it
+One more machine setting, experimental and off by default:
+  share.webrtc     true lets a share viewer that opens the link with
+                   ?transport=webrtc take video over a WebRTC data channel
+                   from the machine that owns the device, with WebSocket as
+                   the fallback. Needs the optional node-datachannel package
 
 DEVICE RECORDINGS CAN BE TURNED OFF
 stim-server records the screens of owned simulators, emulators and the

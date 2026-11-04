@@ -99,23 +99,25 @@ external CLI installation. An unavailable or older server shows a load error.
 
 Settings edits, the recording toggle, remote-machine setup and the setup banner's
 **Use Stim Desktop as the device viewer** action write through Desktop's own
-bundled server for the same Stim home. An older, external or adopted server
-reports an error until a compatible bundled server is available. Refusals show
+server for the same Stim home: the bundled server Desktop started, or one that
+serves the Stim home's local socket, such as the `stim-server service` LaunchAgent.
+A server older than Desktop, or one another Stim Desktop started, reports an error
+until a compatible server is available. Refusals show
 their message and suggested remedy; secret setting values stay masked.
 Cancelling a wait or losing the connection does not roll back a committed write.
 Desktop never automatically retries it.
 
-Run actions and the remote build test use that same-home bundled server with
-private Desktop authority and platform-run support. Named slots, hosted machines,
+Run actions and the remote build test use that same-home server with
+Desktop authority and platform-run support. Named slots, hosted machines,
 remote build selection and headed web keep their options. Activity keeps ordered
 progress and the result; the build test receives the same flat platform facts.
-An unavailable, older or adopted server reports an error without a CLI fallback.
+An unavailable or older server reports an error without a CLI fallback.
 Cancellation waits for server cleanup and preserves an unresolved claim's remedy.
 A disconnected run is never replayed automatically.
 
-Reload also requires that same-home bundled server, with private Desktop
-authority and reload support. Activity retains progress and the result; an
-older or adopted server shows an error without a CLI fallback. Cancellation or
+Reload also requires that same-home server, with Desktop authority and
+reload support. Activity retains progress and the result; an
+older server shows an error without a CLI fallback. Cancellation or
 disconnect stops pending work, and reconnect does not replay it. A reload
 already sent cannot be retracted. Verify the expected UI and logs: dispatch
 does not prove completion, and Metro broadcasts can reach other connected clients.
@@ -253,8 +255,10 @@ the server always matches the app; a Mac that serves without Desktop, such as a
 build worker, installs `@stim-cli/server` from npm instead. Replay, the diff viewer, archived logs, hosted views and recordings use it. If
 a stim-server already serves the same Stim home, for example the `stim-server
 service` LaunchAgent on a Mac that hosts for others, Desktop uses that one and never
-stops or reconfigures it. Cleanup, settings changes and app runs from Desktop work only on
-the server Desktop started, so with an adopted server each of them refuses and says why. A port that something holds without answering, such as a
+stops or reconfigures it. Cleanup, settings changes and app runs from Desktop work on that
+server too, with no approval step: Desktop reaches it through the Stim home's local socket, which only
+your user can open. A server older than Desktop, or one another Stim Desktop started, refuses and says why.
+A port that something holds without answering, such as a
 stim-server too busy to reply, is not replaced: Desktop starts no second server onto it.
 Desktop never takes over an adopted server's port either. If the adopted server stops answering, whether
 it restarted, updated or crashed, Desktop shows it as unavailable and waits for it, naming the

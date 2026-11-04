@@ -84,7 +84,8 @@ import {
 } from '../workspace/worktree.ts';
 import type { WorktreeEntry } from '../workspace/worktree.ts';
 import { disposeTrash, moveIgnoredTreesToTrash, restoreTrashedTrees } from '../workspace/worktree-trash.ts';
-import { endedPullRequest, pullRequestLookupAsync } from '../workspace/pull-request.ts';
+import { refreshPullRequests } from '../pull-request-state.ts';
+import { endedPullRequest } from '../workspace/pull-request.ts';
 import { discoverXcodeProject } from '../integrations/react-native-build.ts';
 
 interface WorktreeSettings {
@@ -1420,7 +1421,10 @@ async function removeOrRefuse(
     !inspection.dirtyLines.length
   ) {
     const head = await resolveFullRefAsync(path, 'HEAD', options);
-    const pr = head ? endedPullRequest(await pullRequestLookupAsync(opts.operation)(path, branch, head)) : null;
+    const [lookup] = head
+      ? await refreshPullRequests({ maxAgeMs: 0, operation: opts.operation })(path, [{ path, cwd: path, branch, head }])
+      : [];
+    const pr = endedPullRequest(lookup);
     if (head && pr?.state === 'merged') {
       mergedHead = head;
       inspection = await inspectRemoval(path, mergedHead, opts.operation);

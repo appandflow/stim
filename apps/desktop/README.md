@@ -74,7 +74,7 @@ Desktop waits for a startup cancellation acknowledgement before stopping the sam
 an unresolved cleanup refusal includes the exact claim recovery remedy.
 The 120-second deadline cancels startup and waits for owned cleanup; an unresolved
 claim refusal takes precedence over the timeout so its recovery remedy remains visible.
-Requests have a 1 MiB output limit. Older or adopted servers show
+Requests have a 1 MiB output limit. Older servers show
 an error, and reconnect does not replay a start. The supervisor continues running
 after a successful handoff to its workspace.
 
@@ -92,35 +92,35 @@ server. Named slots, hosted machines, remote build selection, uncached test buil
 and headed web retain their selectors. Activity keeps ordered progress, flat
 platform facts and typed refusals. Cancellation waits for server cleanup; a
 retained claim refusal keeps its recovery remedy. A lost connection never replays
-the run. Older, adopted or unavailable servers report an error without a CLI fallback.
+the run. Older or unavailable servers report an error without a CLI fallback.
 
-Reload actions also use the matching-home bundled server's private authority,
+Reload actions also use the matching-home server's Desktop authority,
 through `desktop.reload.subscribe` with `desktop-reload` support. Activity keeps
 ordered progress and the flat CLI JSON or typed refusal. Cancellation,
 unsubscribe and disconnect stop pending work; reconnect never replays the action.
 A dispatched reload cannot be retracted and does not prove completion. Metro
 broadcasts can reach other connected clients. The in-process operation has a
 60 second execution budget and 35 second cleanup budget; an unresolved cleanup
-keeps its server admission reserved. Older or adopted servers report an error
+keeps its server admission reserved. Older servers report an error
 without falling back to a CLI process.
 
-Cleanup actions use `desktop.gc.subscribe` with private Desktop authority,
+Cleanup actions use `desktop.gc.subscribe` with Desktop authority,
 the matching Stim home and `desktop-gc` support. Cache, worktree, age and idle
 selectors retain their existing behavior. Activity keeps ordered progress and
 the complete JSON report, including partial failures. Cancellation waits for
 server cleanup and preserves an unresolved claim's recovery remedy. The
 operation has a 60-second execution budget and 35-second cleanup budget;
-the server's request deadline can cancel it earlier. Older, adopted or
+the server's request deadline can cancel it earlier. Older or
 unavailable servers report an error without a CLI fallback. Reconnect never
 repeats the cleanup.
 
 Worktree removal, including tutorial restart and sample teardown, uses the
-same-home bundled server's private `desktop.worktree.remove.subscribe` action.
+same-home server's `desktop.worktree.remove.subscribe` action.
 It preserves the CLI's dirty-worktree refusal and explicit force choice. Source
 checkout cleanup succeeds without deleting the source; linked-worktree deletion
 and a later branch-cleanup failure remain separate results. Cancellation waits
-for owned cleanup and preserves unresolved-claim remedies. An unavailable,
-adopted or older server fails the action without a CLI fallback; reconnect never
+for owned cleanup and preserves unresolved-claim remedies. An unavailable
+or older server fails the action without a CLI fallback; reconnect never
 repeats removal. Tutorial restart leaves the clone in place if stop or removal
 fails.
 
@@ -678,8 +678,8 @@ section stops the plan, and nothing is checked while a build runs; the row
 shows the running build instead. **Check** runs the plan again, and the row
 shows when it was last checked.
 
-Preview reads require private Desktop authority and `desktop-plan` support. Unavailable,
-adopted, wrong-home or older servers report an error without a CLI fallback. Closing a
+Preview reads require Desktop authority and `desktop-plan` support. Unavailable,
+wrong-home or older servers report an error without a CLI fallback. Closing a
 check waits for its connection-scoped cancellation to drain without blocking other controls.
 A retained cleanup refusal keeps its code, message and remedy in Notifications even when a
 new check replaces the cancelled one or completion races cancellation. Desktop acknowledges
@@ -821,8 +821,9 @@ gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
   outputs `stim gc --delete` clears; a lock marks ones it keeps, with the
   reason. Scissors mark logs `stim gc --delete` trims to their newest 8 MiB; a
   lock marks logs over the cap it keeps. The lifecycle reads **Merged into
-  main** from `stim gc --json`, **PR #n open** from `gh pr list` in the
-  repository when the GitHub CLI is signed in, **Stale Nd** after 7 days without
+  main** from `stim gc --json`, **PR #n open** from the pull request
+  state in `stim gc --json`, which Stim reads through its shared pull request
+  cache, **Stale Nd** after 7 days without
   recorded use, **Active**, **Checkout** for a source checkout, or **Folder
   gone**. A row's menu reveals the worktree in Finder or runs `stim worktree
 remove` in it, with what that frees: its `node_modules`, build outputs and
@@ -1345,9 +1346,14 @@ adopted as not started by the app, whatever **Allow connections** says, so build
 device-host requests from other Macs reach the Allow / Deny dialog. If Desktop's own
 server fails and a LaunchAgent server comes up, the next retry (every 30 seconds or
 more) adopts it. Desktop's own actions, such as cleanup, settings changes and app runs,
-work only on the bundled server it started with its private key, so with an adopted
-server or a stim-server override each of them refuses with that reason, and
-**Settings > Advanced** and the Phones page say so under the server's version. A server with another Stim
+work on an adopted server too, with no approval step. Desktop reaches it through the Stim
+home's local socket (`server/local.sock`, mode 0600 in a directory only this user can enter), and a
+stim-server without a private key grants that socket's clients the same actions; a server reached only
+over TCP gets none (a network connection never receives them). Only the bundled server Desktop started demands its private key on that socket. A
+server older than Desktop, or one another Stim Desktop started, offers no actions: each of them
+refuses with that reason. Approving another machine's build or device-host request in Desktop still
+needs the bundled server's private key, so against an adopted server that sheet refuses and
+points to `stim-server setup` in Terminal. A server with another Stim
 home is not adopted: the sidebar footer
 shows the mismatch and Desktop keeps retrying. Before its environment is ready, Desktop
 adopts a ready server provisionally when the Stim home it runs with would adopt it, so the
@@ -1907,9 +1913,9 @@ value there overrides, an environment override when one is set, and a
 **Reset** that unsets the layer. A default `stim` picks per machine, such as
 `stim-desktop` for `iosSimulatorApp` while Stim Desktop is installed, shows the
 reason `stim` reports, for example `default (Stim Desktop installed)`. Edits use
-`desktop.settings.write` on the proved local connection of Desktop's bundled
-server, for the same canonical Stim home, with `desktop-settings-write` support.
-An unavailable, older, external or adopted server reports an error without a CLI
+`desktop.settings.write` on Desktop's authorized local connection,
+for the same canonical Stim home, with `desktop-settings-write` support.
+An unavailable or older server reports an error without a CLI
 fallback. A refusal's message and remedy show
 under the field. `android.keystorePassword` is never shown. Keys Stim does not
 read are listed read-only.

@@ -318,7 +318,7 @@ pressure ladder, trims oversized workspace logs
 (\`guide cleanup disk\`) and removes orphaned workspace directories, never a
 checkout. Device recordings can also go without either: stim-server prunes
 them, and turning recording.enabled off deletes them (\`guide cleanup disk\`). \`stim stop\` shuts a device
-DOWN and leaves it assigned, which is what makes returning to a branch cost a
+DOWN (an owned iOS simulator at the end of its booted grace period) and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
 
 Before shutting down, parking or deleting an owned device, Stim best-effort
@@ -653,7 +653,8 @@ SWEEPING FINISHED WORKTREES
   an unexpired device lease. When the simulator or emulator list cannot be
   read, the worktree counts as in use. A device left booted keeps the
   worktree until \`stim stop\` in it, or its idle stage, shuts the device
-  down. A worktree that holds the running stim or the realpath of
+  down. A simulator that \`stim stop\` left booted for its grace period
+  (\`guide lifecycle pool\`) does not keep it. A worktree that holds the running stim or the realpath of
   the \`stim\` on PATH is in use too, and \`stim worktree remove\` refuses it
   even with --force, as it refuses an installed stim-server service's checkout.
 
@@ -781,7 +782,7 @@ SWEEPING FINISHED WORKTREES
   deleted do not block removal. Closed, they do: a closed pull request whose
   remote branch is gone keeps the worktree as unpushed. An open pull request
   never makes a worktree finished. When gh is
-  not installed, not signed in, or fails, the JSON pullRequestUnknown field
+  not installed, not signed in, rate limited, or fails, the JSON pullRequestUnknown field
   and the report say why, and gc judges from git alone. A detached HEAD is
   not looked up. \`stim worktree remove\` makes the same check when
   local-only commits alone would refuse the removal, and accepts a merged

@@ -1091,6 +1091,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'The loopback port the share listener binds in proxy mode, so your reverse proxy can name it. It is not used in tailscale mode, which picks a free port',
   },
   {
+    key: 'share.webrtc',
+    type: { kind: 'boolean' },
+    scopes: MACHINE,
+    default: false,
+    description:
+      'Whether web shares from this machine offer viewers a WebRTC data channel for video. A viewer opts in with ?transport=webrtc and falls back to WebSocket when WebRTC fails; off, shares neither advertise nor accept it. Needs the optional node-datachannel package, and for a hosted device the worker must also support it. Experimental',
+  },
+  {
     key: 'server.lanAddresses',
     type: { kind: 'strings' },
     scopes: MACHINE,

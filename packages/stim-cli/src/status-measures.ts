@@ -23,9 +23,7 @@ import {
   type EnvironmentDisk,
   type EndedAgentSession,
   type EnvironmentState,
-  type PullRequestCacheEntry,
   type WorktreeFacts,
-  type WorktreePullRequest,
 } from '@stim-cli/core/state';
 import { agentKey, attributeAgentSessions, discoverAgentSessions, type AgentWorkspace } from './agent-sessions.ts';
 import { withDirLock } from './dir-lock.ts';
@@ -35,12 +33,11 @@ import { workspaceDir } from './workspace/paths.ts';
 import { gitCommonDirOnDisk, linkedWorktreesOnDisk } from './workspace/worktree.ts';
 import { writeCacheFile } from './cache-file.ts';
 import { refreshMeasure, trustedMeasure } from './disk-usage.ts';
-import { pullRequestLookups, type PullRequestFact, type PullRequestQuery } from './workspace/pull-request.ts';
+import { PULL_REQUEST_MAX_AGE_MS, refreshPullRequests, type PullRequestRequest } from './pull-request-state.ts';
 
 const LIVE_DISK_MAX_AGE_MS = 5 * 60_000;
 const IDLE_DISK_MAX_AGE_MS = 60 * 60_000;
 const DU_TIMEOUT_MS = 120_000;
-const PULL_REQUEST_MAX_AGE_MS = 5 * 60_000;
 const PULL_REQUEST_CHECK_MS = 60_000;
 const GIT_TIMEOUT_MS = 5000;
 const AGENT_DISCOVERY_MS = 15_000;
@@ -127,52 +124,6 @@ function environmentDisk(folders: ReturnType<typeof environmentFolders>): Enviro
     buildBytes: build?.bytes ?? null,
     measuredAt: measured.map((entry) => entry.measuredAt).toSorted()[0]!,
   };
-}
-
-function statusPullRequest(fact: PullRequestFact, checkedAt: string): WorktreePullRequest {
-  return {
-    number: fact.number,
-    url: fact.url,
-    title: fact.title ?? '',
-    state: fact.state === 'open' && fact.draft ? 'draft' : fact.state,
-    checks: fact.checks ?? null,
-    reviewDecision: fact.reviewDecision ?? null,
-    checkedAt,
-  };
-}
-
-/**
- * Writes a pull request lookup into the cache `status` and report-only `gc` read. A lookup made without detail is
- * marked `partial`, so `status` asks again for the title, checks and review decision; until then it keeps the title
- * cached for the same pull request, and the checks and review decision cached for the same HEAD.
- */
-export function recordPullRequestLookup(
-  { path, branch, head }: { path: string; branch: string; head: string },
-  fact: PullRequestFact | null,
-  checkedAt: string,
-): void {
-  let pullRequest = fact ? statusPullRequest(fact, checkedAt) : null;
-  const partial = pullRequest !== null && fact?.title === undefined;
-  const previous = partial ? readPullRequestCache(path) : null;
-  if (pullRequest && previous?.pullRequest?.number === pullRequest.number) {
-    const same = previous.head === head;
-    pullRequest = {
-      ...pullRequest,
-      title: previous.pullRequest.title,
-      checks: same ? previous.pullRequest.checks : null,
-      reviewDecision: same ? previous.pullRequest.reviewDecision : null,
-    };
-  }
-  const entry: PullRequestCacheEntry = {
-    path,
-    branch,
-    head,
-    checkedAt,
-    pullRequest,
-    ...(fact ? { containsHead: fact.containsHead, endedAt: fact.endedAt } : {}),
-    ...(partial ? { partial: true as const } : {}),
-  };
-  writeCacheFile(pullRequestCacheFile(path), entry);
 }
 
 function canonicalPath(path: string): string {
@@ -366,35 +317,20 @@ export function createStatusMeasurer({
   }
 
   async function checkPullRequests(worktrees: WorktreeFacts[]): Promise<void> {
-    const lookup = pullRequestLookups({ detail: true });
-    const byRepository = new Map<string, (PullRequestQuery & { path: string })[]>();
+    const refresh = refreshPullRequests({
+      maxAgeMs: PULL_REQUEST_MAX_AGE_MS,
+      detail: true,
+      now,
+      onRecord: updated,
+    });
+    const byRepository = new Map<string, PullRequestRequest[]>();
     for (const { path, branch, repository, git } of worktrees) {
       if (!branch || !repository || !git) continue;
       const head = await branchHead(repository, branch);
       if (!head) continue;
-      const cached = readPullRequestCache(path);
-      const fresh =
-        cached?.branch === branch &&
-        cached.head === head &&
-        !cached.partial &&
-        now() - Date.parse(cached.checkedAt) < PULL_REQUEST_MAX_AGE_MS;
-      if (!fresh) {
-        byRepository.set(repository, [
-          ...(byRepository.get(repository) ?? []),
-          { path, cwd: repository, branch, head },
-        ]);
-      }
+      byRepository.set(repository, [...(byRepository.get(repository) ?? []), { path, cwd: repository, branch, head }]);
     }
-    for (const [repository, queries] of byRepository) {
-      const results = await lookup(repository, queries);
-      const at = new Date(now()).toISOString();
-      results.forEach((result, i) => {
-        if (!('pullRequest' in result)) return;
-        const { path, branch, head } = queries[i]!;
-        recordPullRequestLookup({ path, branch, head }, result.pullRequest, at);
-      });
-      if (results.some((result) => 'pullRequest' in result)) updated();
-    }
+    for (const [repository, requests] of byRepository) await refresh(repository, requests);
   }
 
   async function discoverAgents(states: EnvironmentState[]): Promise<void> {
