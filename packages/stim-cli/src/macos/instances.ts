@@ -2,7 +2,12 @@ import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostedAppAttempt, type MacosProcess } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
-import { inspectProcessIdentity, processStartMicros, captureProcessToken } from '../process-identity.ts';
+import {
+  captureProcessIdentity,
+  captureProcessToken,
+  inspectProcessIdentity,
+  processStartMicros,
+} from '../process-identity.ts';
 import { macosDir } from './state.ts';
 import type { StimContext } from '@stim-cli/core';
 import { runOperationFile } from '../engine/operation-exec.ts';
@@ -144,11 +149,18 @@ export async function startedBy(owners: readonly MacosProcess[], operation?: Sti
   );
   const recorded: { row: ProcessRow; record: MacosProcess }[] = [];
   for (const row of listed) {
-    const processToken = captureProcessToken(row.pid);
-    const start = processStartMicros(row.pid);
-    if (processToken && start.status === 'running')
-      recorded.push({ row, record: { pid: row.pid, processToken, startedAtMicros: start.startedAtMicros } });
-    else if (start.status !== 'gone')
+    const identity = captureProcessIdentity(row.pid);
+    if (identity.ok) {
+      const start = processStartMicros(row.pid);
+      recorded.push({
+        row,
+        record: {
+          pid: row.pid,
+          processToken: identity.token,
+          startedAtMicros: start.status === 'running' ? start.startedAtMicros : 0,
+        },
+      });
+    } else if (!identity.reason.startsWith('NOT_FOUND'))
       operation?.output('stderr', `Not ending pid ${row.pid}: its identity cannot be captured.\n`);
   }
   const current = new Map((await listProcesses(operation)).map((row) => [row.pid, row]));
