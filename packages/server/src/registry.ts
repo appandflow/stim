@@ -209,7 +209,7 @@ function pairingName(name: string, fallback: string): string {
 
 function cleanClientText(text: string): string {
   return text
-    .replace(/(?![\u200d\s])[\p{Cc}\p{Cf}]/gu, '')
+    .replace(/(?![\u200d\s])[\p{Cc}\p{Cf}\p{Cs}]/gu, '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, MAX_CLIENT_NAME)

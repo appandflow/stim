@@ -100,6 +100,8 @@ describe('pairing tokens', () => {
     ],
     ['a long name ending in a split emoji', `${'x'.repeat(63)}\u{1F4F1}`, 'x'.repeat(63)],
     ['nothing printable', '\u0000\u2028', 'Phone'],
+    ['a lone surrogate inside', 'a\ud800b', 'ab'],
+    ['only a lone surrogate', '\udc00', 'Phone'],
   ])('pairs a client whose name has %s under a cleaned-up name', (_case, name, stored) => {
     pair(name);
     expect(readDevices().map((device) => device.name)).toEqual([stored]);
@@ -225,6 +227,9 @@ describe('the client app a hello names', () => {
     touchDevice(other.id, {});
     touchDevice(other.id, { name: 4 });
     expect(readDevices()[1]).toEqual(other);
+    touchDevice(other.id, { name: 'a\ud800b', version: '\udc00' });
+    expect(readDevices()[1]).toMatchObject({ clientApp: 'ab' });
+    expect(readDevices()[1]).not.toHaveProperty('clientVersion');
     const long = pair('Long');
     touchDevice(long.id, { name: 'x'.repeat(100), version: 'v'.repeat(100) });
     expect(readDevices()[2]).toMatchObject({ clientApp: 'x'.repeat(64), clientVersion: 'v'.repeat(64) });
