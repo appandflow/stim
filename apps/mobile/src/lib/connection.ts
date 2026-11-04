@@ -40,8 +40,10 @@ export type ConnectionState =
       capabilities: string[];
       /** What the server serves beyond the base protocol, such as `physical-android`. */
       features: string[];
-      /** This phone's id on the Mac, as `stim-server devices` lists it; null from a server that predates it. */
+      /** This phone's id on the machine, as `stim-server devices` lists it; null from a server that predates it. */
       deviceId: string | null;
+      /** The name that record carries on the machine, which `stim-server devices rename` changes; null from a server that predates it. */
+      deviceName: string | null;
     }
   | { kind: 'waiting'; retryInMs: number; reason: string }
   | { kind: 'refused'; code: string; reason: string }
@@ -140,26 +142,26 @@ function sessionRefusal(event: SessionClose): { code: string; reason: string } |
   if (!event.serverAnswered && event.code === 4400 && event.reason === 'unexpected binary frame') {
     return {
       code: 'server-outdated',
-      reason: t`Update stim-server on this Mac. It speaks an older protocol than this app.`,
+      reason: t`Update stim-server on the machine. It speaks an older protocol than this app.`,
     };
   }
   if (event.error === 'server-key-mismatch') {
     return {
       code: 'server-key-mismatch',
-      reason: t`This Mac's key does not match the pairing code or the key this phone paired with.`,
+      reason: t`The machine's key does not match the pairing code or the key this phone paired with.`,
     };
   }
   if (event.reason === 'unknown-secret') {
     return {
       code: 'unknown-secret',
-      reason: t`This pairing code expired or was already used. Show a new one on the Mac.`,
+      reason: t`This pairing code expired or was already used. Show a new one on the machine.`,
     };
   }
   if (event.reason === 'unauthorized') {
-    return { code: 'unauthorized', reason: t`This Mac no longer knows this phone.` };
+    return { code: 'unauthorized', reason: t`The machine no longer knows this phone.` };
   }
   if (event.reason === 'protocol-unsupported') {
-    return { code: 'protocol-unsupported', reason: t`This Mac speaks a newer protocol. Update the app.` };
+    return { code: 'protocol-unsupported', reason: t`The machine speaks a newer protocol. Update the app.` };
   }
   return null;
 }
@@ -308,6 +310,7 @@ export class StimConnection {
             capabilities: hello.capabilities,
             features: hello.features ?? [],
             deviceId: hello.device?.id ?? null,
+            deviceName: hello.device?.name ?? null,
           });
           for (const sub of this.subscriptions) if (!early.has(sub)) this.sendSubscribe(socket, sub);
         },
@@ -406,7 +409,7 @@ export class StimConnection {
           this.options.onState?.({
             kind: 'refused',
             code: 'server-outdated',
-            reason: t`Update stim-server on this Mac to load its live status.`,
+            reason: t`Update stim-server on the machine to load its live status.`,
           });
           return;
         }
@@ -452,7 +455,7 @@ export class StimConnection {
         pending.resolve(message.result);
       } else {
         reportFailure(responseFailure(pending.method, message));
-        pending.reject(new Error(t`The Mac sent an invalid RPC response.`));
+        pending.reject(new Error(t`The machine sent an invalid RPC response.`));
         this.invalidMessage();
       }
       return;
@@ -485,7 +488,7 @@ export class StimConnection {
   private invalidMessage(): void {
     this.lastInvalidAt = Date.now();
     const socket = this.socket;
-    const reason = t`The Mac sent an invalid RPC message. Reconnecting.`;
+    const reason = t`The machine sent an invalid RPC message. Reconnecting.`;
     this.detach(reason);
     socket?.close();
     if (!this.stopped) this.scheduleRetry(reason);
@@ -555,7 +558,7 @@ export function pair(
       try {
         parsed = JSON.parse(text);
       } catch {
-        finish(() => fail('invalid-response', new Error(t`The Mac sent an invalid pairing response.`)));
+        finish(() => fail('invalid-response', new Error(t`The machine sent an invalid pairing response.`)));
         return;
       }
       if (!isMessageObject(parsed) || parsed.id !== 1) return;
@@ -565,7 +568,7 @@ export function pair(
         }
         if ('error' in parsed || !isRpcResult('hello', parsed.result) || !serverKey) {
           reportFailure(responseFailure('hello', parsed));
-          return fail('invalid-response', new Error(t`The Mac sent an invalid pairing response.`));
+          return fail('invalid-response', new Error(t`The machine sent an invalid pairing response.`));
         }
         const result = parsed.result;
         resolve({

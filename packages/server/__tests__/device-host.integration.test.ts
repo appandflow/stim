@@ -1027,6 +1027,28 @@ describe('a hosted session across a server restart', () => {
     expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toHaveLength(0);
   });
 
+  test('working counts the sessions a close would stop, not the ones it leaves running', async () => {
+    hostEnv.STIM_MAX_DEVICES = '2';
+    const { session } = await installed();
+    expect(host.active()).toBe(1);
+    expect(host.working()).toBe(0);
+    const hanging = await reserve({ deviceType: 'install-hang', attempt: 'second', slot: 'other' });
+    await state(hanging.id, 'ready');
+    const app = appOffer(hanging.id);
+    host.appOffer('client', app.params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      ...app.params,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    host.appLaunch('client', app.params);
+    expect(host.active()).toBe(2);
+    expect(host.working()).toBe(1);
+    expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'ready');
+  });
+
   test('a session with an install in flight keeps the stop path on close', async () => {
     const session = await reserve({ deviceType: 'install-hang' });
     await state(session.id, 'ready');

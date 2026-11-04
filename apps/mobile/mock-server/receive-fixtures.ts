@@ -354,7 +354,7 @@ export const resultEnumCases: [Method, unknown, string, unknown][] = [
     'hello',
     {
       protocol: 1,
-      server: { name: 'Mac', version: '1', stim: '1' },
+      server: { name: 'studio', version: '1', stim: '1' },
       capabilities: ['read'],
       approval: { state: 'pending', expiresAt: receivedAt },
     },

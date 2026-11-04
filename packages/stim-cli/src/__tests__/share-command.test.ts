@@ -144,6 +144,24 @@ describe('stim share', () => {
     });
   });
 
+  it('lists each share with its state, and says when it waits for its device', async () => {
+    const deps = fake([
+      () => ({
+        result: {
+          shares: [
+            { ...ROW, state: 'live' },
+            { ...ROW, id: 'w2', slot: 'beta', state: 'waiting' },
+          ],
+        },
+      }),
+    ]);
+    const result = await runShare('list', {}, deps, '1.0.0');
+    expect(result).toMatchObject({ ok: true, output: { shares: [{ state: 'live' }, { state: 'waiting' }] } });
+    const lines = (result as { text: string }).text.split('\n');
+    expect(lines[0]).not.toContain('waiting');
+    expect(lines[1]).toContain('waiting for the device');
+  });
+
   it('never starts a server to list or stop shares', async () => {
     const deps = fake([unavailable, unavailable]);
     expect(await runShare('list', {}, deps, '1.0.0')).toMatchObject({ error: { code: 'STIM_SERVER_NOT_RUNNING' } });

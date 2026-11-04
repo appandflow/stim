@@ -2288,7 +2288,11 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['workspace'],
             additionalProperties: false,
-            properties: { workspace: { type: 'string', minLength: 1 }, id: { type: 'string', minLength: 1 } },
+            properties: {
+              workspace: { type: 'string', minLength: 1 },
+              id: { type: 'string', minLength: 1 },
+              slot: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
+            },
           }),
           optionalParams('share.list', { type: 'object', maxProperties: 0 }),
           request('presence.publish', {

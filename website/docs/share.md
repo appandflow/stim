@@ -16,7 +16,9 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 running on this workspace's Stim-owned simulator or emulator, or on the
 physical device it leases, in any browser. With `--control` they can also tap,
 type and press the hardware buttons. The link and its password stop working
-when the share expires, when you stop it, or when stim-server stops.
+when the share expires, when you stop it, or when stim-server stops. They keep
+working while you rebuild or relaunch the app: see
+[When the device goes away](#when-the-device-goes-away).
 
 <StimTabs
 code={`stim share ios                  # watch only, for 60 minutes
@@ -26,7 +28,7 @@ stim share ios --password '<value>'  # your own password, 8 to 128 characters
 stim share ios --no-password    # no login: the link alone opens it
 stim share ios --slug pokedex   # a readable link, /s/pokedex/
 stim share android --control --view-password  # a second, watch-only password
-stim share list                 # live shares
+stim share list                 # shares, live or waiting
 stim share stop                 # end this workspace's shares now`}
 />
 
@@ -160,13 +162,24 @@ on Android, the hardware arrow and Escape keys on iOS).
 
 With `--control` on an iOS simulator, an Android emulator or an Android phone,
 Command-V (Control-V on Windows and Linux) while the screen has focus pastes the
-text on your computer's clipboard into the focused field on the device. The
-options menu in the top bar has a "Sync clipboard" switch, on by default and
+text on your browser's clipboard into the focused field on the device. On an iOS
+simulator, printable ASCII, line breaks and tabs are typed into the field (about 35
+characters a second, with the field's own smart quotes and dashes), so no paste prompt
+appears; other text is pasted with Command-V, and the page says to tap the paste
+suggestion on the device. The options menu in the top bar has a "Sync clipboard" switch, on by default and
 remembered by your browser. While the page is focused it copies new text from
-the device to your computer's clipboard (a "Copy from device" chip appears when
+the device to your browser's clipboard (a "Copy from device" chip appears when
 the browser refuses), and in Chrome and Edge, after a one-time permission
-prompt, it sends text you copied on your computer to the device when you return
-to the page. In other browsers press Command-V on the device screen. The menu's
+prompt, it sends text you copied to the device when you return
+to the page. In other desktop browsers press Command-V on the device screen. On a
+phone or tablet (a touch-first browser) there is no automatic sync, because a
+browser lets a page read or write the clipboard only inside a tap, and the menu has
+two buttons instead. "Paste to device" sends your clipboard to the device: iOS Safari
+shows its own small Paste button to confirm the read, and Android Chrome asks for
+clipboard permission once. A denied or empty read shows a short note, and the text
+goes to the device the same way as Command-V. "Copy from device" fetches the device
+clipboard and writes it to your clipboard inside the same tap; when the browser still
+refuses, the text appears in a field to select and copy by hand. On desktop the menu's
 "Copy from device" button copies once. Sending your copied text to the device counts as input and starts the share's
 control session like a paste. Syncing from the device starts after
 someone has tapped, typed or pasted, and does not keep an idle share's control
@@ -206,6 +219,37 @@ through Funnel on the same Mac:
 A video viewer that joins while capture already runs sees its first frame in
 about 50 ms; when it starts capture, the first frame takes several seconds.
 
+## When the device goes away
+
+A share follows its workspace's device in its slot, not one particular run of
+the app. When that device goes away on its own (`stim ios` or `stim android`
+reinstalls the app on a hosted session and closes its capture, the simulator or
+emulator shuts down or is replaced, or its frame stream fails) the share does
+not end. It **waits**:
+
+- Viewers stay connected and signed in and see the last frame dimmed with
+  "Waiting for the device...", and the bar says so.
+- The link, the passwords, the signed-in browsers and the expiry stay as they
+  were. A waiting share still expires at its expiry; there is no second timer.
+- Control is released, and capture and the recording exemption stop. A new
+  viewer can sign in and open the page while it waits.
+- When the slot's device is back (a booted simulator or running emulator, or a
+  ready hosted session) the share **resumes** on the same page: frames return
+  with no reload and no new password, and control starts again on the next
+  tap. If the slot now runs another simulator or emulator, for example after
+  `--device` picked another model, the share resumes on that one. After a
+  failed stream the share tries again every few seconds, waiting longer after
+  each failure, up to 30 seconds.
+
+`stim share list` shows `waiting for the device` on such a share, and `--json`
+gives each share a `state` of `live` or `waiting`. A waiting share still counts
+as a share: it keeps the workspace out of the idle stage, the Funnel route and a
+`stim share`-started stim-server up.
+
+Only an explicit stop ends a share before its expiry: `stim share stop`,
+`stim stop` (the workspace, or one slot with `--slot <slot>`),
+`stim worktree remove`, **Stop** in Stim Desktop, or stim-server stopping.
+
 ## Requirements
 
 - **macOS or Linux.** `stim` reaches the stim-server through its local socket,
@@ -244,12 +288,14 @@ about 50 ms; when it starts capture, the first frame takes several seconds.
   existing connection to that Mac's device-host; the Mac sees only the view
   and control traffic this machine's own viewers would send, and needs no new
   approval. Video viewers and JPEG viewers each share one host stream; a host
-  that sends no H.264 gives video viewers JPEG at 10 frames per second. The session must be ready. The share ends when the session stops
-  or is replaced, and `stim share list` does not show the Mac.
+  that sends no H.264 gives video viewers JPEG at 10 frames per second. The session must be ready to start a share. When the session stops, is
+  replaced or has its capture closed for an app install, the share waits (see
+  [When the device goes away](#when-the-device-goes-away)) and resumes when a
+  ready session of that slot is back. `stim share list` does not show the Mac.
 
-## A live share keeps its workspace up
+## A live or waiting share keeps its workspace up
 
-While a share is live, the [idle stage](./dev-server-and-logs.md#idle-stop),
+While a share is live or waiting, the [idle stage](./dev-server-and-logs.md#idle-stop),
 the [pressure ladder](./build-caches.md#disk-pressure) and the
 [dormant stage](./owned-devices.md#cleanup-behavior) leave its workspace
 running, whether or not anyone is watching, and the `stim-daemon` never shuts
@@ -277,8 +323,9 @@ stim-server cannot list its shares, Stim keeps the workspace running.
 | `--slot <name>`       | Share the device of another [device slot](./commands.md#named-device-slots).                                                             |
 | `--json`              | Print one payload: `url`, `auth`, `viewAuth`, `slug`, `expiresAt`, `control`, target; `password` and `viewPassword` only when generated. |
 
-`stim share list` lists the live shares of this Stim home with their target,
-control, viewer count and expiry, never their link or password.
+`stim share list` lists the shares of this Stim home with their target,
+control, whether one waits for its device, viewer count and expiry, never their
+link or password.
 `stim share stop` ends every share of the current workspace. To end one share,
 use **Stop** on its row in Stim Desktop's Settings > Web Shares.
 
@@ -450,13 +497,14 @@ reload.
   costs only its listener and route. A share never records anything to disk.
 - **Control is the existing control path.** Input goes through the same
   control session and device lease Stim Desktop and the phone app use, limited
-  to taps, two-finger gestures, text, the arrow keys and Escape, pasting and syncing the clipboard with your computer, rotation and the hardware buttons of the shared device. A device an
+  to taps, two-finger gestures, text, the arrow keys and Escape, pasting and syncing the clipboard with your browser, rotation and the hardware buttons of the shared device. A device an
   agent or another client is driving answers busy; a share never takes it over.
 - **Ephemeral.** Shares live only in stim-server's memory. A share ends at its
-  expiry, on `stim share stop`, `stim stop` (without `--slot`),
-  `stim worktree remove`, when its device stops or changes (so `stim stop
---slot` ends a share of that slot), when the device's frames fail, and when
-  stim-server stops or restarts.
+  expiry, on `stim share stop`, `stim stop` (the workspace, or one slot with
+  `--slot`), `stim worktree remove`, Stop in Stim Desktop, and when stim-server
+  stops or restarts. A device that goes away does not end it: the share waits
+  and keeps its link, passwords and signed-in browsers, and nothing about it is
+  written to disk.
   Ending closes its viewers' connections. The last share removes the Funnel
   route first and only then closes the listener; the listener a background
   service keeps in proxy mode stays bound until the service stops.

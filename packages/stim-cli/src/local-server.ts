@@ -90,12 +90,17 @@ export function requestLocalServer<M extends LocalMethod>(
 }
 
 /**
- * Ends the web shares of `workspace` in this Stim home's stim-server. Best effort: a missing or silent server has no
- * share to end, and a share whose device stops ends on its own.
+ * Ends the web shares of `workspace`, or of its `slot` alone, in this Stim home's stim-server. A share waits for its
+ * device when the device goes away on its own, so stopping a workspace or slot ends its shares explicitly. Best effort:
+ * a missing or silent server has no share to end.
  */
-export async function endWorkspaceShares(workspace: string): Promise<void> {
+export async function endWorkspaceShares(workspace: string, slot?: string): Promise<void> {
   try {
-    await requestLocalServer('share.stop', { workspace }, { version: 'stim', timeoutMs: 3000 });
+    await requestLocalServer(
+      'share.stop',
+      { workspace, ...(slot === undefined ? {} : { slot }) },
+      { version: 'stim', timeoutMs: 3000 },
+    );
   } catch {}
 }
 

@@ -524,7 +524,12 @@ outside it moves to its own issue and pull request.
   `share.publicUrl`, and the frame socket accepts exactly that URL's origin,
   never Host or `X-Forwarded-*`. The CLI asks this Stim home's stim-server over its Unix socket
   (`share.start|stop|list`, refused on every network connection); a share
-  lives only in that server's memory and always expires. The server serves
+  lives only in that server's memory and always expires. A share outlives its
+  device: when the device goes away on its own (frames fail, the device or hosted
+  session changes or is not ready) the share waits, keeping its token, passwords,
+  viewer sessions and expiry, and resumes on the slot's device when it is back.
+  Only `share.stop` (which `stim stop`, `stim worktree remove` and Desktop's Stop
+  send), expiry and the server stopping end it. The server serves
   shares on a separate loopback listener, not the Noise protocol: per share
   the viewer page, the frames of its one device and, with control, input to
   that device through `ControlHub` (on a simulator, emulator or Android phone that includes

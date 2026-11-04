@@ -34,6 +34,7 @@ import {
   capabilitiesFor,
   createPairingToken,
   grantDevice,
+  isDesktopClient,
   readBuildClients,
   readDeviceHostClients,
   readDevices,
@@ -50,7 +51,7 @@ import { readDesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { loadTransport } from '@stim-cli/transport';
 import { localTransport, resolveLanAddresses } from '@stim-cli/transport-local';
-import { readLanAddresses, watchLanAddresses } from '../src/lan.ts';
+import { readLanAddresses, watchServerSettings } from '../src/lan.ts';
 import {
   findTailscale,
   serveCommand,
@@ -82,7 +83,7 @@ const USAGE = `Usage:
                                     install that stim-server release from npm, or the .tgz
                                     packages in <dir>, beside the current one, switch the
                                     service to it, and switch back if it does not answer
-                                    --no-wait interrupts active builds and hosted sessions at restart
+                                    --no-wait also restarts with builds and hosted installs still running, which interrupts them
   stim-server service rollback [--label <name>]
                                     switch the service back to the server it ran before
   stim-server service uninstall [--label <name>]
@@ -179,7 +180,7 @@ async function serve(
     fail('@stim-cli/transport-tailscale did not create a Tailscale transport');
   const transport = loaded.transport;
   const { state: tailscale } = transport.snapshot();
-  const lanSetting = watchLanAddresses();
+  const lanSetting = watchServerSettings();
   await Promise.race([lanSetting.ready, new Promise((done) => setTimeout(done, 1000).unref())]);
   const lan = localTransport({ entries: lanSetting.current });
   const stim = bundledStim();
@@ -220,6 +221,7 @@ async function serve(
       env,
       currentEnv,
       transports: [transport, lan],
+      keepAwake: { setting: lanSetting.keepAwake, onChange: lanSetting.onKeepAwakeChange },
       service: {
         label: serviceManagerOrNull()?.runningLabel(process.env) ?? null,
         node: process.execPath,
@@ -369,7 +371,7 @@ const ACCESS: Record<Capability, string> = {
 };
 
 function listed(device: PairedDevice, registry: keyof typeof KINDS) {
-  const { id, name, from, publicKey, pairedAt, lastSeenAt, capabilities } = device;
+  const { id, name, from, publicKey, pairedAt, lastSeenAt, capabilities, clientApp, clientVersion } = device;
   return {
     id,
     name,
@@ -378,7 +380,9 @@ function listed(device: PairedDevice, registry: keyof typeof KINDS) {
     pairedAt,
     lastSeenAt,
     capabilities,
-    kind: KINDS[registry],
+    ...(clientApp ? { clientApp } : {}),
+    ...(clientVersion ? { clientVersion } : {}),
+    kind: registry === 'device' && isDesktopClient(device) ? 'desktop' : KINDS[registry],
     access: capabilities.map((capability) => ACCESS[capability]),
     owner: registry === 'device' ? 'this-machine' : 'theirs-running-here',
   };

@@ -1,7 +1,9 @@
 import {
   classifyTransport,
   diagnoseUnreachable,
+  localMachineName,
   parsePeerStartup,
+  tailscaleDiagnosis,
   readTailscale,
   type Transport,
 } from '../offload/diagnosis.ts';
@@ -61,7 +63,7 @@ describe('diagnoseUnreachable', () => {
     expect(new Set(outcomes.map((each) => each.remedy)).size).toBeGreaterThanOrEqual(3);
   });
 
-  it('tells a silent route behind a pingable Mac from a Mac that does not answer at all', () => {
+  it('tells a silent route behind a pingable machine from a machine that does not answer at all', () => {
     const silent = { kind: 'silent' } as const;
     expect(diagnose(silent, { pinged: true })).toMatchObject({ layer: 'server', code: 'server-no-answer' });
     expect(diagnose(silent, { pinged: true, peer: { ...peer, online: false } })).toMatchObject({
@@ -71,6 +73,27 @@ describe('diagnoseUnreachable', () => {
     expect(diagnose(silent, { pinged: false, peer: { ...peer, online: false } })).toMatchObject({
       code: 'peer-offline',
     });
+  });
+});
+
+describe('naming the machine that made the diagnosis', () => {
+  it('names the host and the peer, since a phone reads it far from either', () => {
+    const texts = [
+      ...Object.values(tailscaleDiagnosis('tailscale-stopped', 'studio')).filter((v) => typeof v === 'string'),
+      diagnose({ kind: 'tls', message: 'expired' }, { host: 'studio' }).message,
+      diagnose({ kind: 'silent' }, { host: 'studio' }).remedy,
+      diagnose({ kind: 'silent' }, { host: 'studio' }).title,
+    ].join('\n');
+    expect(texts).toContain('studio');
+    expect(texts).not.toMatch(/\bMac\b|this machine|\bhere\b/);
+  });
+});
+
+describe('localMachineName', () => {
+  it('prefers the Tailscale host name, as peers see it, and never returns nothing', () => {
+    expect(localMachineName({ Self: { HostName: ' studio\u200d ' } })).toBe('studio');
+    expect(localMachineName({ Self: { HostName: '' } })).toBe(localMachineName());
+    expect(localMachineName()).not.toBe('');
   });
 });
 

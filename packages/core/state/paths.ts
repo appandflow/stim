@@ -291,6 +291,11 @@ export function daemonClaimRoot(): string {
   return join(daemonDir(), 'claim');
 }
 
+/** The ownership claim a starting daemon holds while it takes over from a running daemon of another build. */
+export function daemonHandoverClaimRoot(): string {
+  return join(daemonDir(), 'handover');
+}
+
 export function daemonSocket(): string {
   return localSocket(join(daemonDir(), 'daemon.sock'));
 }

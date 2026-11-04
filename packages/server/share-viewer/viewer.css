@@ -313,6 +313,28 @@ body[data-control='true'] #screen {
 .note:empty {
   display: none;
 }
+.away {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0 12%;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 500;
+  text-align: center;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+body[data-away='true'] .away {
+  display: flex;
+}
+body[data-away='true'] #screen {
+  filter: brightness(0.4);
+  cursor: default;
+}
 
 .toolbar {
   flex: none;
@@ -603,7 +625,9 @@ button.primary.small {
 .options[hidden],
 .options-panel[hidden],
 .chip[hidden],
-.options-help[hidden] {
+.options-help[hidden],
+.options-panel .link[hidden],
+.copy-fallback[hidden] {
   display: none;
 }
 .options-panel {
@@ -667,6 +691,29 @@ input.switch:checked::after {
   display: block;
   margin-top: 10px;
   font-size: 12px;
+}
+.copy-fallback {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  resize: none;
+}
+@media (pointer: coarse) {
+  .options-panel .link {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    margin-top: 0;
+    font-size: 14px;
+  }
 }
 .chip {
   position: absolute;

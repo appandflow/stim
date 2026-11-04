@@ -20,11 +20,11 @@ asks for it.
   stim share ios --slug pokedex       # link /s/pokedex/ instead of a random token
   stim share android --control --view-password   # a second, watch-only password, generated
   stim share android --control --view-password '<value>'   # or one you choose
-  stim share list                     # live shares: target, control, viewers, expiry
+  stim share list                     # shares: target, control, state, viewers, expiry
   stim share stop                     # ends this workspace's shares now
 
 It prints the URL and, by default, a generated password once. Neither is
-stored anywhere; run stim share again for a new link. --json prints one
+stored anywhere; a lost password means a new share and a new link. --json prints one
 payload with url, auth (generated, set or none), expiresAt, control and the
 target; password is in it only when it was generated. A password you set is
 never printed back. A value passed on the command line can land in your shell
@@ -38,6 +38,29 @@ with STIM_BAD_ARG without --control, with --no-password, and when it equals
 is not read as its value. The output then lists both passwords, and --json adds
 viewAuth (generated, set or null) and viewPassword, present only when it was
 generated.
+
+A SHARE WAITS FOR ITS DEVICE
+
+A share follows the workspace's device in its slot, so running stim ios or
+stim android again, or rebuilding, does not end it. When the device goes away
+on its own (the frame stream fails, as it does when an app install closes a
+hosted session's capture; the simulator or emulator shuts down or is replaced;
+the hosted session stops or is replaced) the share waits: viewers stay
+connected and signed in, see the dimmed last frame and "Waiting for the
+device...", and the link, passwords, sessions and expiry stay. Control is
+released. When the slot's device is back (booted, running, or a ready hosted
+session) the share resumes on the same page with no reload and no new
+password; control starts again on the next tap. If the slot now runs another
+simulator or emulator, the share resumes on that one. After a failed stream it
+retries every few seconds, up to 30 seconds apart. share list shows
+"waiting for the device" and --json rows have state (live or waiting). A
+waiting share still expires at its expiry, still keeps its workspace up and its
+stim-server running.
+
+Only an explicit stop ends a share early: stim share stop, stim stop (the
+workspace, or one slot with --slot), stim worktree remove, Stop in Stim
+Desktop, or stim-server stopping. Tell the user a share survives a rebuild;
+never run stim share stop to "restart" one.
 
 TAB TITLES
 
@@ -124,13 +147,13 @@ WHAT IT NEEDS
   connection, one host stream for the H.264 viewers and one for the JPEG
   viewers, none while nobody watches. The
   host needs no new approval. A session that is not ready refuses the share;
-  the share ends when the session stops or is replaced, or the host stream or
-  its connection fails; control the host refuses reaches the viewer as
-  "Control is not available right now".
+  once started, a session that stops, is replaced or loses its capture makes
+  the share wait and resume (A SHARE WAITS FOR ITS DEVICE); control the host
+  refuses reaches the viewer as "Control is not available right now".
 
-A LIVE SHARE KEEPS ITS WORKSPACE UP
+A LIVE OR WAITING SHARE KEEPS ITS WORKSPACE UP
 
-A share that has not ended or expired keeps its workspace out of the idle
+A share that has not ended or expired, waiting ones included, keeps its workspace out of the idle
 stage, the pressure ladder and the dormant stage, whether or not anyone
 watches; with no stim-daemon, the dev server's supervisor keeps it up too.
 The daemon never shuts its device down for a run waiting for a device slot;
@@ -285,13 +308,19 @@ SECURITY MODEL
   Android phone only. A device an agent or another client drives answers
   busy instead of being taken over.
 - Clipboard, with --control on an iOS simulator, Android emulator or Android phone: Command-V or Control-V while
-  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field. The
+  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field; an iOS simulator types printable ASCII, line breaks and tabs, and pastes other text with Command-V, where iOS can ask first. The
   top bar's options menu has a Sync clipboard switch, on by default for control viewers and remembered in the
   browser: while the page is focused and visible it polls the device clipboard every two seconds (slower after
   failures) and writes new text to the browser clipboard, with a Copy from device chip when the browser refuses
   the write, and where the browser allows reading its clipboard (Chromium, after one permission prompt) it sends
   the browser's new text to the device when the page regains focus. The menu's Copy from device button copies
-  once. Sending the browser's new text to the device is an input: it starts the control session like a paste, and on an
+  once. On a touch-first browser (a phone or tablet) there is no automatic sync, because a browser lets a page read
+  or write the clipboard only inside a tap: the switch is replaced by a Paste to device button, which reads the browser
+  clipboard inside the tap (iOS Safari shows its own Paste button to confirm, Android Chrome asks for clipboard
+  permission once) and sends it as the same paste Command-V sends, with a short note when the read is denied or empty,
+  and Copy from device fetches the device text and writes it with a ClipboardItem that holds a promise, which keeps the
+  tap's permission to write; when the browser still refuses, the text shows in a field to select. Command-V still works
+  on a tablet with a keyboard. Sending the browser's new text to the device is an input: it starts the control session like a paste, and on an
   Android phone takes its lease. The polling never starts the control session and never keeps it alive: it reads only while a session runs
   (after a viewer's first tap, key or paste) and does not count as input for the 5 minute idle end. Text a control
   viewer sends reaches the device clipboard and then every other control viewer's browser with sync on. A share without --control, a web page and a macOS app never read or set the device clipboard, and the text is never
@@ -301,10 +330,9 @@ SECURITY MODEL
   fingers on a phone or tablet, Option-drag with a mouse for a pinch (the second finger mirrors
   the first through the screen center) and Shift-Option-drag to move both fingers together. A
   circle marks each finger while Option is held.
-- A share ends at its expiry, on stim share stop, stim stop (without --slot),
-  stim worktree remove, when its device stops or changes (stim stop --slot
-  ends a share of that slot this way), when the device's frames fail, and when
-  stim-server stops. Ending
+- A share ends at its expiry, on stim share stop, stim stop (the workspace, or
+  one slot with --slot), stim worktree remove, Stop in Stim Desktop, and when
+  stim-server stops. A device that goes away only makes it wait. Ending
   closes its viewers' sockets. The last one removes the Funnel route first and
   only then closes the listener, so the route never points at a free port (the
   listener the background service keeps in proxy mode stays bound until the

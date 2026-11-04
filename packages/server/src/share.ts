@@ -27,6 +27,12 @@ import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from '.
 
 type SharePlatform = 'ios' | 'android';
 
+/** `waiting` while the share's device is away: viewers stay signed in, and frames resume with the device. */
+type ShareState = 'live' | 'waiting';
+
+/** What a share is of, without the password a request may carry. */
+export type ShareTarget = Omit<ShareRequest, 'password'>;
+
 export interface ShareRequest {
   workspace: string;
   platform: SharePlatform;
@@ -57,6 +63,7 @@ export interface ShareRow {
   control: boolean;
   expiresAt: string;
   viewers: number;
+  state: ShareState;
   auth: ShareAuth;
   viewAuth: ViewAuth;
   slug?: string;
@@ -117,7 +124,7 @@ export interface ShareDeps {
     removeStranded: () => Promise<void>;
   };
   /** Frames and input for a device a host Mac runs for this machine; without it such a share is refused. */
-  hosted?: (host: HostedTarget, request: ShareRequest) => ShareSource;
+  hosted?: (host: HostedTarget, request: ShareTarget) => ShareSource;
   /** The display name of an app on a simulator, for the page titles; defaults to reading its Info.plist. */
   appName?: (udid: string, bundleId: string) => Promise<string | null>;
   lookup?: LeaseLookup;
@@ -153,12 +160,18 @@ const IDLE_SOCKET_MS = 2 * PING_MS + 10_000;
 const MAX_CONNECTIONS = 64;
 const CLOSE_GRACE_MS = 2000;
 const STRANDED_RETRY_MS = 30_000;
+/** How soon a waiting share looks for its device again, and the most it waits between tries after a failed stream. */
+const RESUME_MIN_MS = 2000;
+const RESUME_MAX_MS = 30_000;
 /** What public viewers are told; the reasons, which can name workspaces and clients, go to the server log only. */
 const VIEWER_TEXT = {
   ended: 'This share has ended.',
+  waiting: 'Waiting for the device...',
   controlRefused: 'Control is not available right now. Try again in a moment.',
   inputRefused: 'That input was not accepted.',
   clipboardRefused: 'The device did not take or return its clipboard.',
+  pasteBusy: 'The device is still typing the previous paste.',
+  pasteSuggestion: 'If nothing appears, tap the paste suggestion on the device.',
   controlEnded: 'Control ended.',
 };
 const CSP =
@@ -183,7 +196,7 @@ export const BUTTONS: Record<SharePlatform, readonly string[]> = {
 };
 
 /** Whether the latest status shows the share's device driven, by an agent, a lock or another control session. */
-function drivenNow(payload: StatusPayload | null, request: ShareRequest): boolean {
+function drivenNow(payload: StatusPayload | null, request: ShareTarget): boolean {
   const environment = payload?.environments?.find((candidate) => candidate.path === request.workspace);
   const slot = request.slot ?? 'default';
   const devices = slot === 'default' ? environment : environment?.slots?.find((candidate) => candidate.slot === slot);
@@ -266,23 +279,48 @@ interface Viewer {
   renamedAt: number;
   login: Login | null;
   socket: WebSocket;
+  /** Whether the page asked for H.264 access units. */
+  video: boolean;
   inputs: { tokens: number; at: number };
   characters: { tokens: number; at: number };
-  stop: () => void;
+  /** Stops what feeds the viewer from its source, which a waiting share has none of; null while it is fed by none. */
+  detach: (() => void) | null;
+  /** Gates the viewer's video while it is fed by a source. */
+  gate: VideoGate | null;
+  stopPresence: (() => void) | null;
+}
+
+/** What a share's status shows it is of: a local device or a hosted session, as the key that tells them apart. */
+interface Bound {
+  key: string;
+  hosted: boolean;
+  /** The local device behind `open`; null for a hosted session. */
+  device: Device | null;
+  open: (request: ShareTarget) => ShareSource;
 }
 
 interface Share {
   id: string;
   key: string;
-  request: Omit<ShareRequest, 'password'>;
+  request: ShareTarget;
   auth: ShareAuth;
   passwordDigest: Buffer | null;
   viewDigest: Buffer | null;
   viewAuth: ViewAuth;
   expiresAt: number;
+  state: ShareState;
+  /** Key of the device or hosted session the share is fed by; null while it waits. */
+  bound: string | null;
+  /** Whether the share was last fed by a hosted session, which a waiting share keeps for its page. */
+  hosted: boolean;
+  /** The local device the share is fed by; null for a hosted session and while the share waits. */
   device: Device | null;
-  host: HostedTarget | null;
-  source: ShareSource;
+  /** The source of the device now fed from; null while the share waits. */
+  source: ShareSource | null;
+  /** Not before this time (epoch ms) does a share that lost its stream look for its device again. */
+  resumeAt: number;
+  backoff: number;
+  retry: NodeJS.Timeout | null;
   sessions: Map<string, Login>;
   failures: number[];
   /** When each recent new view session was admitted. */
@@ -304,7 +342,8 @@ interface Share {
 
 /**
  * Public web shares of one workspace device each, served on one loopback listener behind one Funnel route. A share
- * exists only in memory: its URL token, password digest and sessions die with it and with the server.
+ * exists only in memory: its URL token, password digest and sessions die with it and with the server. While its device
+ * is away it waits, keeping all of that, and feeds its viewers again when the slot's device is back.
  */
 export class ShareHub {
   private readonly deps: ShareDeps;
@@ -423,23 +462,9 @@ export class ShareHub {
     const status = await this.status();
     if ('code' in status) return status;
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
-    const host = this.deps.hosted ? hostedOf(status, request) : null;
-    let device: Device | null = null;
-    let source: ShareSource;
-    if (host && this.deps.hosted) {
-      if (!host.ready) {
-        return {
-          code: 'action-failed',
-          message: `The hosted session on ${host.machine} is not ready yet. Wait for stim ${request.platform} --remote to finish, then share again.`,
-        };
-      }
-      source = this.deps.hosted(host, request);
-    } else {
-      const owned = ownedDevice(status, request, null, this.deps.lookup);
-      if (typeof owned === 'string') return { code: 'action-failed', message: owned };
-      device = owned;
-      source = this.localSource(owned, request);
-    }
+    const bound = this.resolve(status, request, null);
+    if (typeof bound === 'string') return { code: 'action-failed', message: bound };
+    const source = bound.open(request);
     let base: string;
     try {
       base = await this.open();
@@ -476,9 +501,14 @@ export class ShareHub {
       viewDigest: view ? digest(view.password ?? viewShown ?? '') : null,
       viewAuth,
       expiresAt,
-      device,
-      host,
+      state: 'live',
+      bound: bound.key,
+      hosted: bound.hosted,
+      device: bound.device,
       source,
+      resumeAt: 0,
+      backoff: RESUME_MIN_MS,
+      retry: null,
       sessions: new Map(),
       failures: [],
       viewLogins: [],
@@ -500,23 +530,9 @@ export class ShareHub {
     };
     share.timer.unref?.();
     this.shares.set(share.key, share);
-    const attached = device ? deviceKey(device) : null;
     void this.readApp(share);
     share.unwatch = this.deps.subscribeStatus({
-      item: (payload) => {
-        share.latest = payload;
-        this.followTitle(share, payload);
-        if (host) {
-          const now = hostedOf(payload, request);
-          if (now?.machine !== host.machine || now.session !== host.session) {
-            queueMicrotask(() => void this.end(share, 'The hosted session ended.'));
-          }
-          return;
-        }
-        const resolved = ownedDevice(payload, request, attached, this.deps.lookup);
-        if (typeof resolved === 'string') queueMicrotask(() => void this.end(share, resolved));
-        else if (deviceKey(resolved) !== attached) queueMicrotask(() => void this.end(share, 'The device changed.'));
-      },
+      item: (payload) => this.reconcile(share, payload),
       failed: () => {},
     });
     return {
@@ -537,6 +553,29 @@ export class ShareHub {
       code: 'action-failed',
       message: `The slug ${slug} is in use by live share ${holder.id} of ${holder.request.workspace}. Stop that share or choose another slug.`,
     };
+  }
+
+  /**
+   * What the slot's device is in `payload`: a ready hosted session, else the workspace's owned or leased local device;
+   * otherwise why there is none. `attached` is the key of the local device a live share is fed by.
+   */
+  private resolve(payload: StatusPayload, request: ShareTarget, attached: string | null): Bound | string {
+    const host = this.deps.hosted ? hostedOf(payload, request) : null;
+    if (host && this.deps.hosted) {
+      if (!host.ready) {
+        return `The hosted session on ${host.machine} is not ready yet. Wait for stim ${request.platform} --remote to finish, then share again.`;
+      }
+      const hosted = this.deps.hosted;
+      return {
+        key: `host:${host.machine}/${host.session}`,
+        hosted: true,
+        device: null,
+        open: (target) => hosted(host, target),
+      };
+    }
+    const owned = ownedDevice(payload, request, attached, this.deps.lookup);
+    if (typeof owned === 'string') return owned;
+    return { key: deviceKey(owned), hosted: false, device: owned, open: (target) => this.localSource(owned, target) };
   }
 
   private titleOf(share: Share): string {
@@ -573,7 +612,7 @@ export class ShareHub {
     if (changed) this.broadcastTitle(share);
   }
 
-  private localSource(device: Device, request: ShareRequest): ShareSource {
+  private localSource(device: Device, request: ShareTarget): ShareSource {
     const { frames, control, presence } = this.deps;
     const key = presenceKey(request.workspace, request.platform, request.slot ?? 'default', request.physical === true);
     return {
@@ -611,9 +650,12 @@ export class ShareHub {
     return [...this.shares.values()].map((share) => this.row(share));
   }
 
-  async stop(workspace: string | null, message = 'The share was stopped.'): Promise<ShareRow[]> {
+  /** Ends the shares of `workspace`, or of its `slot` alone, or every share for a null workspace. */
+  async stop(workspace: string | null, message = 'The share was stopped.', slot?: string): Promise<ShareRow[]> {
     const stopping = [...this.shares.values()].filter(
-      (share) => workspace === null || share.request.workspace === workspace,
+      (share) =>
+        (workspace === null || share.request.workspace === workspace) &&
+        (slot === undefined || (share.request.slot ?? 'default') === slot),
     );
     const rows = stopping.map((share) => this.row(share));
     await Promise.all(stopping.map((share) => this.end(share, message)));
@@ -649,6 +691,7 @@ export class ShareHub {
       control: share.request.control,
       expiresAt: new Date(share.expiresAt).toISOString(),
       viewers: share.viewers.size,
+      state: share.state,
       auth: share.auth,
       viewAuth: share.viewAuth,
       ...(share.request.slug !== undefined ? { slug: share.request.slug } : {}),
@@ -766,12 +809,13 @@ export class ShareHub {
     if (share.ended) return;
     share.ended = true;
     clearTimeout(share.timer);
+    if (share.retry) clearTimeout(share.retry);
     share.unwatch();
     this.shares.delete(share.key);
     console.error(`stim-server: web share ${share.id} ended: ${message}`);
     for (const viewer of share.viewers) {
-      viewer.stop();
-      share.source.presence?.leave(viewer.who.id);
+      viewer.detach?.();
+      share.source?.presence?.leave(viewer.who.id);
       const { socket } = viewer;
       if (socket.readyState !== socket.OPEN) {
         socket.terminate();
@@ -782,10 +826,91 @@ export class ShareHub {
       setTimeout(() => socket.terminate(), CLOSE_GRACE_MS).unref?.();
     }
     share.viewers.clear();
-    share.source.endFor(share.owner, message);
-    share.source.close();
+    share.source?.endFor(share.owner, message);
+    share.source?.close();
     this.releaseRecording(share);
     await this.teardown();
+  }
+
+  /**
+   * Re-resolves the share's device from the latest status: a live share whose device went away waits, one whose slot
+   * now runs another device moves to it, and a waiting share whose device is back resumes.
+   */
+  private reconcile(share: Share, payload: StatusPayload): void {
+    share.latest = payload;
+    if (share.ended) return;
+    this.followTitle(share, payload);
+    const bound = this.resolve(payload, share.request, share.state === 'live' ? share.bound : null);
+    if (typeof bound === 'string') return this.suspend(share, bound);
+    if (share.state === 'waiting') {
+      if (Date.now() >= share.resumeAt) this.resume(share, bound);
+      return;
+    }
+    if (bound.key === share.bound) return;
+    this.suspend(share, 'The device changed.');
+    this.resume(share, bound);
+  }
+
+  /**
+   * The share's device is away: releases control, closes the old source and stops feeding the viewers, which stay
+   * connected and signed in. The link, passwords, sessions and expiry are kept.
+   */
+  private suspend(share: Share, reason: string): void {
+    if (share.ended || share.state === 'waiting') return;
+    const { source } = share;
+    share.state = 'waiting';
+    console.error(`stim-server: web share ${share.id} is waiting for its device: ${reason}`);
+    for (const viewer of share.viewers) {
+      viewer.detach?.();
+      source?.presence?.leave(viewer.who.id);
+      if (viewer.socket.readyState === viewer.socket.OPEN) {
+        viewer.socket.send(JSON.stringify({ type: 'waiting', message: VIEWER_TEXT.waiting }));
+      }
+    }
+    share.source = null;
+    share.bound = null;
+    share.device = null;
+    share.controlSession = null;
+    share.controlStarting = null;
+    share.controlRetryAt = 0;
+    source?.endFor(share.owner, reason);
+    source?.close();
+    this.releaseRecording(share);
+    this.arm(share);
+  }
+
+  private resume(share: Share, bound: Bound): void {
+    if (share.ended) return;
+    if (share.retry) clearTimeout(share.retry);
+    share.retry = null;
+    share.state = 'live';
+    share.source = bound.open(share.request);
+    share.bound = bound.key;
+    share.hosted = bound.hosted;
+    share.device = bound.device;
+    void this.readApp(share);
+    console.error(`stim-server: web share ${share.id} resumed on ${bound.key}`);
+    for (const viewer of share.viewers) {
+      if (viewer.socket.readyState === viewer.socket.OPEN) viewer.socket.send('{"type":"resumed"}');
+      this.attach(share, viewer);
+      this.present(share, viewer);
+    }
+  }
+
+  /**
+   * Looks for the device again while the share waits, because a stream that failed leaves status as it was and no new
+   * status item comes to resume it.
+   */
+  private arm(share: Share): void {
+    if (share.retry) clearTimeout(share.retry);
+    const delay = Math.max(share.resumeAt - Date.now(), RESUME_MIN_MS);
+    share.retry = setTimeout(() => {
+      share.retry = null;
+      if (share.ended || share.state !== 'waiting') return;
+      if (share.latest) this.reconcile(share, share.latest);
+      if (share.state === 'waiting') this.arm(share);
+    }, delay);
+    share.retry.unref?.();
   }
 
   /**
@@ -835,7 +960,7 @@ export class ShareHub {
    * already drives is left alone: the share's control is refused there, and that driver stays recorded.
    */
   private holdRecording(share: Share): void {
-    if (share.request.physical || share.host || share.recordKey) return;
+    if (share.request.physical || share.hosted || share.recordKey) return;
     const { workspace, platform, slot } = share.request;
     const key = targetKey({ workspace, platform, slot });
     if (!this.controlled.has(key) && drivenNow(share.latest, share.request)) return;
@@ -928,7 +1053,7 @@ export class ShareHub {
       if (admitted) {
         const { platform, control, physical } = share.request;
         const access = this.accessOf(share, admitted.login);
-        const rotate = !physical && !(share.host && platform === 'android');
+        const rotate = !physical && !(share.hosted && platform === 'android');
         return this.respond(
           response,
           200,
@@ -1045,6 +1170,73 @@ export class ShareHub {
       socket.close(1000, 'share ended');
       return;
     }
+    const viewer: Viewer = {
+      who: { id: `${share.id}-v${this.nextViewer++}`, kind: 'viewer', name: '', color: 0 },
+      chosen: login?.name ?? null,
+      renamedAt: -Infinity,
+      login,
+      socket,
+      video,
+      inputs: { tokens: this.limits.inputPerSecond, at: Date.now() },
+      characters: { tokens: this.limits.textCharsPerSecond, at: Date.now() },
+      detach: null,
+      gate: null,
+      stopPresence: null,
+    };
+    this.attach(share, viewer);
+    const json = (message: Record<string, unknown>) => {
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
+    };
+    json({ type: 'hello', expiresAt: new Date(share.expiresAt).toISOString(), title: this.titleOf(share) });
+    if (share.state === 'waiting') json({ type: 'waiting', message: VIEWER_TEXT.waiting });
+    this.identify(share, viewer);
+    share.viewers.add(viewer);
+    this.introduce(share, viewer);
+    this.present(share, viewer);
+    let alive = true;
+    socket.on('pong', () => {
+      alive = true;
+    });
+    const ping = setInterval(() => {
+      if (!alive) return socket.terminate();
+      alive = false;
+      socket.ping();
+    }, PING_MS);
+    ping.unref?.();
+    socket.on('message', (data, binary) => {
+      if (binary) return;
+      const text = data.toString();
+      if (text === KEYFRAME_REQUEST) {
+        if (!video || !take(viewer.inputs, 1, this.limits.inputPerSecond, this.limits.inputPerSecond)) return;
+        viewer.gate?.reset();
+        share.source?.keyframe();
+        return;
+      }
+      void this.message(share, viewer, text);
+    });
+    socket.on('close', () => {
+      clearInterval(ping);
+      viewer.detach?.();
+      share.viewers.delete(viewer);
+      if (share.controlSession) share.source?.release?.(share.owner, share.controlSession, viewer.who);
+      share.source?.presence?.leave(viewer.who.id);
+      if (share.viewers.size === 0 && share.controlSession) {
+        share.source?.endFor(share.owner, 'The last viewer left.');
+        share.controlSession = null;
+        this.releaseRecording(share);
+      }
+    });
+    socket.on('error', () => socket.terminate());
+  }
+
+  /**
+   * Feeds the viewer from the share's source: its frames or video, and a keyframe for video. A share that waits has no
+   * source, so the viewer is fed by none until {@link resume} attaches it.
+   */
+  private attach(share: Share, viewer: Viewer): void {
+    const { source } = share;
+    if (!source || viewer.detach) return;
+    const { socket } = viewer;
     const delivery = new LatestFrames<Frame>(
       VIEW_HINT.fps,
       () => socket.bufferedAmount,
@@ -1062,17 +1254,21 @@ export class ShareHub {
     const drain = () => {
       draining = null;
       if (stopped) return;
-      if (socket.bufferedAmount <= DEFAULT_VIDEO_LIMITS.congestedBytes) return share.source.keyframe();
-      share.source.congested();
+      if (socket.bufferedAmount <= DEFAULT_VIDEO_LIMITS.congestedBytes) return source.keyframe();
+      source.congested();
       draining = setTimeout(drain, FRAME_RETRY_MS);
     };
-    const unsubscribe = share.source.subscribe(
+    const unsubscribe = source.subscribe(
       {
-        frame: (frame) => delivery.push(frame),
-        ...(video
+        frame: (frame) => {
+          share.backoff = RESUME_MIN_MS;
+          delivery.push(frame);
+        },
+        ...(viewer.video
           ? {
               video: (unit: AccessUnit) => {
                 if (socket.readyState !== socket.OPEN) return;
+                share.backoff = RESUME_MIN_MS;
                 const verdict = gate.admit(unit, socket.bufferedAmount);
                 if (verdict === 'send')
                   socket.send(videoPacket(VIDEO_SUBSCRIPTION, sequence++, unit), { binary: true });
@@ -1082,80 +1278,51 @@ export class ShareHub {
           : {}),
         delayed: (delayed) => json({ type: 'delayed', delayed }),
         artwork: (artwork) => json({ type: 'artwork', artwork: artwork && viewerArtwork(artwork) }),
-        failed: (message) => queueMicrotask(() => void this.end(share, message)),
+        failed: (message) =>
+          queueMicrotask(() => {
+            if (share.source !== source) return;
+            share.resumeAt = Date.now() + share.backoff;
+            share.backoff = Math.min(share.backoff * 2, RESUME_MAX_MS);
+            this.suspend(share, message);
+          }),
       },
-      video ? VIDEO_HINT : VIEW_HINT,
+      viewer.video ? VIDEO_HINT : VIEW_HINT,
     );
-    if (video) share.source.keyframe();
-    json({ type: 'hello', expiresAt: new Date(share.expiresAt).toISOString(), title: this.titleOf(share) });
-    let stopPresence: (() => void) | null = null;
-    const viewer: Viewer = {
-      who: { id: `${share.id}-v${this.nextViewer++}`, kind: 'viewer', name: '', color: 0 },
-      chosen: login?.name ?? null,
-      renamedAt: -Infinity,
-      login,
-      socket,
-      inputs: { tokens: this.limits.inputPerSecond, at: Date.now() },
-      characters: { tokens: this.limits.textCharsPerSecond, at: Date.now() },
-      stop: () => {
-        if (stopped) return;
-        stopped = true;
-        if (draining) clearTimeout(draining);
-        delivery.stop();
-        unsubscribe();
-        stopPresence?.();
-      },
+    if (viewer.video) source.keyframe();
+    viewer.gate = gate;
+    viewer.detach = () => {
+      if (stopped) return;
+      stopped = true;
+      if (draining) clearTimeout(draining);
+      delivery.stop();
+      unsubscribe();
+      viewer.stopPresence?.();
+      viewer.stopPresence = null;
+      viewer.detach = null;
+      viewer.gate = null;
     };
-    this.identify(share, viewer);
-    share.viewers.add(viewer);
-    this.introduce(share, viewer);
-    stopPresence =
-      share.source.presence?.subscribe((participants) => {
-        const others = participants.filter(
-          (participant) =>
-            participant.id !== viewer.who.id &&
-            (participant.kind !== 'viewer' || participant.id.startsWith(`${share.id}-`)),
-        );
-        const sent =
-          socket.bufferedAmount > PRESENCE_BACKLOG_BYTES
-            ? others.filter((participant) => participant.touch?.phase !== 'move')
-            : others;
-        if (sent.length) json({ type: 'presence', participants: sent });
-      }) ?? null;
-    let alive = true;
-    socket.on('pong', () => {
-      alive = true;
-    });
-    const ping = setInterval(() => {
-      if (!alive) return socket.terminate();
-      alive = false;
-      socket.ping();
-    }, PING_MS);
-    ping.unref?.();
-    socket.on('message', (data, binary) => {
-      if (binary) return;
-      const text = data.toString();
-      if (text === KEYFRAME_REQUEST) {
-        if (!video || !take(viewer.inputs, 1, this.limits.inputPerSecond, this.limits.inputPerSecond)) return;
-        gate.reset();
-        share.source.keyframe();
-        return;
-      }
-      void this.message(share, viewer, text);
-    });
-    socket.on('close', () => {
-      clearInterval(ping);
-      viewer.stop();
-      share.viewers.delete(viewer);
-      if (share.controlSession) share.source.release?.(share.owner, share.controlSession, viewer.who);
-      share.source.presence?.leave(viewer.who.id);
-      if (share.viewers.size === 0 && share.controlSession) {
-        share.source.endFor(share.owner, 'The last viewer left.');
-        share.controlSession = null;
-        this.releaseRecording(share);
+  }
+
+  /** Puts the viewer on the source's roster, and shows it who else touches the device. */
+  private present(share: Share, viewer: Viewer): void {
+    const { source } = share;
+    const { socket } = viewer;
+    if (!source?.presence || viewer.stopPresence) return;
+    source.presence.join(viewer.who);
+    viewer.stopPresence = source.presence.subscribe((participants) => {
+      const others = participants.filter(
+        (participant) =>
+          participant.id !== viewer.who.id &&
+          (participant.kind !== 'viewer' || participant.id.startsWith(`${share.id}-`)),
+      );
+      const sent =
+        socket.bufferedAmount > PRESENCE_BACKLOG_BYTES
+          ? others.filter((participant) => participant.touch?.phase !== 'move')
+          : others;
+      if (sent.length && socket.readyState === socket.OPEN) {
+        socket.send(JSON.stringify({ type: 'presence', participants: sent }));
       }
     });
-    socket.on('error', () => socket.terminate());
   }
 
   /** Gives the viewer its name, color and place on the roster among the viewers now connected. */
@@ -1177,7 +1344,7 @@ export class ShareHub {
     if (viewer.socket.readyState === viewer.socket.OPEN) {
       viewer.socket.send(JSON.stringify({ type: 'you', id, name, color, access: this.accessOf(share, viewer.login) }));
     }
-    share.source.presence?.join(viewer.who);
+    if (viewer.stopPresence) share.source?.presence?.join(viewer.who);
   }
 
   private async message(share: Share, viewer: Viewer, raw: string): Promise<void> {
@@ -1237,10 +1404,11 @@ export class ShareHub {
         viewer.socket.send(JSON.stringify({ type: 'clipboard', id: fields.id, error: VIEWER_TEXT.clipboardRefused }));
       }
     };
+    const { source } = share;
     const polling = method === 'input.clipboard.get' && fields.poll === true;
     const session = polling ? share.controlSession : await this.controlSession(share, viewer);
-    if (!session || share.ended || !share.viewers.has(viewer)) return failRead();
-    const parsed = parseInput(method, { ...params, session }, (name) => share.source.targetOf(share.owner, name));
+    if (!source || !session || share.ended || share.source !== source || !share.viewers.has(viewer)) return failRead();
+    const parsed = parseInput(method, { ...params, session }, (name) => source.targetOf(share.owner, name));
     if ('code' in parsed) return failRead();
     const command: InputCommand = parsed.value.command;
     if (
@@ -1249,7 +1417,7 @@ export class ShareHub {
     ) {
       return;
     }
-    const refused = await share.source.input(share.owner, session, method, { ...params }, command, viewer.who);
+    const refused = await source.input(share.owner, session, method, { ...params }, command, viewer.who);
     const open = viewer.socket.readyState === viewer.socket.OPEN;
     if (refused && 'code' in refused) {
       if ('busy' in refused && typeof refused.busy === 'string') {
@@ -1261,9 +1429,21 @@ export class ShareHub {
       if (method === 'input.clipboard.get') {
         viewer.socket.send(JSON.stringify({ type: 'clipboard', id: fields.id, error: VIEWER_TEXT.clipboardRefused }));
       } else {
-        const notice = clipboard ? VIEWER_TEXT.clipboardRefused : VIEWER_TEXT.inputRefused;
+        const notice = !clipboard
+          ? VIEWER_TEXT.inputRefused
+          : refused.code === 'device-busy'
+            ? VIEWER_TEXT.pasteBusy
+            : VIEWER_TEXT.clipboardRefused;
         viewer.socket.send(JSON.stringify({ type: 'control', message: notice }));
       }
+    } else if (
+      open &&
+      method === 'input.clipboard.set' &&
+      fields.paste === true &&
+      share.request.platform === 'ios' &&
+      !(isJsonObject(refused) && refused.typed === true)
+    ) {
+      viewer.socket.send(JSON.stringify({ type: 'control', message: VIEWER_TEXT.pasteSuggestion }));
     } else if (method === 'input.clipboard.get' && open) {
       const text = isJsonObject(refused) ? refused.text : undefined;
       viewer.socket.send(
@@ -1273,19 +1453,25 @@ export class ShareHub {
   }
 
   private controlSession(share: Share, viewer: Viewer): Promise<string | null> {
+    const { source } = share;
+    if (!source) return Promise.resolve(null);
     if (share.controlSession) return Promise.resolve(share.controlSession);
     if (share.controlStarting) return share.controlStarting;
     if (Date.now() < share.controlRetryAt) return Promise.resolve(null);
     const { workspace, platform, slot, physical } = share.request;
     this.holdRecording(share);
-    share.controlStarting = share.source
+    const attempt: Promise<string | null> = source
       .begin(
         share.owner,
         { workspace, platform, ...(slot ? { slot } : {}), ...(physical ? { physical } : {}) },
         workspace,
-        () => !share.ended && share.viewers.size > 0,
+        () => !share.ended && share.source === source && share.viewers.size > 0,
       )
       .then((outcome) => {
+        if (share.ended || share.source !== source) {
+          if (!('code' in outcome)) source.endFor(share.owner, 'The share ended.');
+          return null;
+        }
         if ('code' in outcome) {
           share.controlRetryAt = Date.now() + 5000;
           this.releaseRecording(share, outcome.code !== 'device-busy');
@@ -1295,8 +1481,8 @@ export class ShareHub {
           }
           return null;
         }
-        if (share.ended || share.viewers.size === 0) {
-          share.source.endFor(share.owner, 'The share ended.');
+        if (share.ended || share.source !== source || share.viewers.size === 0) {
+          source.endFor(share.owner, 'The share ended.');
           this.releaseRecording(share);
           return null;
         }
@@ -1304,9 +1490,10 @@ export class ShareHub {
         return outcome.session;
       })
       .finally(() => {
-        share.controlStarting = null;
+        if (share.controlStarting === attempt) share.controlStarting = null;
       });
-    return share.controlStarting;
+    share.controlStarting = attempt;
+    return attempt;
   }
 
   private controlEvent(share: Share, message: ServerMessage): void {

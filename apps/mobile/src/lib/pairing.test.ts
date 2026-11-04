@@ -43,7 +43,7 @@ describe('parsePairingCode', () => {
   it('tells an old stim-server apart from a newer payload', () => {
     expect(parsePairingCode(code({ v: 1 }))).toEqual({
       ok: false,
-      error: 'This pairing code is from an older stim-server. Update stim-server on this Mac.',
+      error: 'This pairing code is from an older stim-server. Update stim-server on the machine that showed it.',
     });
     expect(parsePairingCode(code({ v: 3 }))).toEqual({
       ok: false,

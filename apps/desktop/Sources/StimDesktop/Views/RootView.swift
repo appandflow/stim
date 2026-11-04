@@ -1091,15 +1091,17 @@ struct RootView: View {
         replayUnavailableReason: discoverReplayUnavailableReason,
         perform: performDiscoverAction)
     case .builds:
-      BuildsView(history: builds)
+      BuildsView(
+        history: builds, status: store,
+        openWorkspace: { navigate($0.owner.isLocal ? .environment($0.path) : .pairedWorkspace($0), .click("builds page")) })
     case .overview:
       OverviewView(
         store: store, metrics: metrics,
         selection: attributed(.click("overview page")),
         openLogs: openErrors,
-        openDevice: { path, deviceID in
+        openDevice: { key, deviceID in
           focusedDeviceID = deviceID
-          navigate(.environment(path), .click("overview page"))
+          navigate(key.owner.isLocal ? .environment(key.path) : .pairedWorkspace(key), .click("overview page"))
         },
         openIdleProject: { project in
           showingAllWorktrees = project
@@ -1111,9 +1113,9 @@ struct RootView: View {
         scope: projectFilter.map { ProjectPage.scope(of: $0, showingAll: showingAllWorktrees) } ?? .active,
         setScope: { showingAllWorktrees = $0 == .all ? projectFilter : nil },
         selection: attributed(.click("wall page")), openLogs: openErrors,
-        openDevice: { path, deviceID in
+        openDevice: { key, deviceID in
           focusedDeviceID = deviceID
-          navigate(.environment(path), .click("wall page"))
+          navigate(key.owner.isLocal ? .environment(key.path) : .pairedWorkspace(key), .click("wall page"))
         })
     }
   }

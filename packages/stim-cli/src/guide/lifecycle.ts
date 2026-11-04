@@ -6,7 +6,14 @@ agent-device record start [path] --remote-config <file> records the ${noun};
 record stop downloads the video to path, or ./recording-<time>.mp4, on this
 machine. The host writes it only in a private directory for the session in its
 temporary directory and deletes the files after the download, on stim stop or session teardown and
-when its daemon restarts. One recording runs per session; a second start, a host output
+when its daemon restarts.${
+  noun === 'simulator'
+    ? `
+The host stops the recorder before it parks or deletes the simulator, and a
+stim-server that restarts stops a recorder its previous run left.`
+    : ''
+}
+One recording runs per session; a second start, a host output
 path, record inside batch and a record stop from another agent-device session
 are refused. The host stops a recording after 10 minutes; a record stop within
 the next 15 minutes downloads it. A finished recording over 512 MiB is deleted
@@ -824,12 +831,15 @@ independent and selects a compatible build worker for a cache miss.
 The host's own owned devices count toward concurrency.maxDevices and its per-platform cap
 (concurrency.maxIosDevices, concurrency.maxAndroidDevices; macOS apps use concurrency.maxMacosApps).
 
-Each record in stim-server devices --json carries kind (phone for a pairing
-from stim-server pair, which Stim Desktop on another machine also uses,
-build-client or device-host-client), access (view, control, build or
-run-devices), owner (this-machine for a phone, theirs-running-here for a
-build or device-host client) and keyFingerprint, the client key one machine's
-build and device-host records share. A person on the host renames a record
+Each record in stim-server devices --json carries kind (phone or desktop for
+a pairing from stim-server pair, build-client or device-host-client), access
+(view, control, build or run-devices), owner (this-machine for a phone or
+desktop, theirs-running-here for a build or device-host client) and
+keyFingerprint, the client key one machine's build and device-host records
+share. clientApp and clientVersion are the app and version the client named in
+its last hello, shown once it has connected; a pairing is desktop when
+clientApp is Stim Desktop or Stim Dev and phone otherwise. They are display
+only and never change access. A person on the host renames a record
 with stim-server devices rename <id> <name>; the client sees the name on its
 next connection, and its access does not change.
 
@@ -2241,10 +2251,12 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   $STIM_HOME/build-waits, boots in $STIM_HOME/device-waits. A waiter takes a
   freed slot only when every run ahead of it has one, and the stim-daemon
   wakes the oldest waiter as soon as a build or boot finishes; without a
-  daemon each waiter polls (1s for builds, 2s for boots). Runs behind the
-  head of the boot queue reuse the last device listing while it is under 10s
-  old instead of listing again, and a boot starts only on a listing taken
-  under the admission lock. Every 10s a waiting
+  daemon each waiter polls (1s for builds, 2s for boots). A waiter keeps its
+  position when the daemon hands over to one from an installed upgrade: the
+  order lives in those directories, and it reconnects on its next poll. Runs
+  behind the head of the boot queue reuse the last device listing while it
+  is under 10s old instead of listing again, and a boot starts only on a
+  listing taken under the admission lock. Every 10s a waiting
   run prints its queue position and what it waits for:
 
     build       waiting for a build slot: queue position 2 of 3, all 1 in use, 40s elapsed -- stim guide lifecycle concurrency

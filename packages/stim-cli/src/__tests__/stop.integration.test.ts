@@ -29,6 +29,7 @@ import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { recordPhoneReverse } from '../devices/phone-reverses.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { tryAcquireClaim } from '../ownership-claim.ts';
+import { serveShareList } from './_share-list-server.ts';
 
 test('a live legacy supervisor is retained without signalling or releasing its port', async () => {
   const { calls, opts } = seams({
@@ -1809,6 +1810,26 @@ test('stop --slot default never ends the workspace remote session', async () => 
   const result = await runStop({ ...opts, slot: 'default' });
   expect(remoteTeardownCalled).toBe(false);
   expect(result.outcomes.device.remote).toBeUndefined();
+});
+
+test('stop ends the web shares of the workspace, and stop --slot those of that slot only', async () => {
+  const asked: { method: string; params: unknown }[] = [];
+  const server = await serveShareList(
+    () => ({ shares: [] }),
+    (method, params) => asked.push({ method, params }),
+  );
+  try {
+    const { opts } = seams({ root: tmpRoot, project: { metroPort: 8083, platforms: {} }, collectors: {} });
+    await runStop(opts);
+    await runStop({ ...opts, slot: 'tablet' });
+    await runStop({ ...opts, slot: 'web' });
+  } finally {
+    await server.close();
+  }
+  expect(asked).toEqual([
+    { method: 'share.stop', params: { workspace: tmpRoot } },
+    { method: 'share.stop', params: { workspace: tmpRoot, slot: 'tablet' } },
+  ]);
 });
 
 test('stop --slot closes only the slot emulator sessions claimed in this workspace, or from its repository root after shutdown', async () => {

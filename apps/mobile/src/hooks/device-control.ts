@@ -42,8 +42,11 @@ export interface DeviceControl {
   /** Rejects with the server's reason; a Duo fold takes a few seconds to settle. */
   posture: (posture: DevicePosture) => Promise<void>;
   simulator: (command: SimulatorCommand) => Promise<void>;
-  /** Sets the device clipboard, and with `paste` pastes it into the focused field. Rejects with the server's reason. */
-  clipboardSet: (text: string, paste: boolean) => Promise<void>;
+  /**
+   * Sets the device clipboard, and with `paste` pastes it into the focused field; `typed` is set when an iOS simulator
+   * typed the text instead. Rejects with the server's reason.
+   */
+  clipboardSet: (text: string, paste: boolean) => Promise<{ typed?: true }>;
   /** Reads the device clipboard. Rejects with the server's reason. */
   clipboardGet: () => Promise<string>;
 }
@@ -206,7 +209,7 @@ export function useDeviceControl(
   const clipboardSet = useCallback(
     async (value: string, paste: boolean) => {
       if (!connection || !session) throw new Error(t`The control session ended.`);
-      await connection.request('input.clipboard.set', { session, text: value, ...(paste ? { paste } : {}) });
+      return connection.request('input.clipboard.set', { session, text: value, ...(paste ? { paste } : {}) });
     },
     [connection, session],
   );

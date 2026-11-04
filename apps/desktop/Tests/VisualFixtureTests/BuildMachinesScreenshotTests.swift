@@ -74,7 +74,7 @@
               "message":"Tailscale and the serve route on studio work, but nothing listens behind the route: stim-server is not running there (HTTP 502).",
               "remedy":"On studio, run `stim-server service status`; `stim-server service install --serve` starts it and keeps it running."}},
            {"machine":"air","state":"unreachable","dnsName":"air.tail1234.ts.net","deviceId":"c9d0e1f2",
-            "diagnosis":{"layer":"peer","code":"peer-offline","title":"Mac is offline",
+            "diagnosis":{"layer":"peer","code":"peer-offline","title":"Machine is offline",
               "message":"air is offline on Tailscale (last seen 3 h ago).",
               "remedy":"Wake air or check that it is powered on, connected to a network and signed in to Tailscale, then run `stim doctor` again."}}]
           """#.utf8))

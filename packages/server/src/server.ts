@@ -18,6 +18,7 @@ import {
   archiveDir,
   serverLocalSocket,
   deviceHostArea,
+  deviceHostAreas,
   readArchive,
   readArchiveState,
   readBuildHistory,
@@ -60,7 +61,12 @@ import type { DesktopBootstrap } from './desktop-bootstrap.ts';
 import { actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
 import { parsePlatformRun } from './platform-run.ts';
 import { parsePlatformBuild } from './platform-build.ts';
-import { agentActionReaders, configuredAgentDriver, stoppingAgentDriver } from './agent-drivers.ts';
+import {
+  agentActionReaders,
+  configuredAgentDriver,
+  recoverAgentDrivers,
+  stoppingAgentDriver,
+} from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
 import { HOSTED_IDLE_SWEEP_MS } from './hosted-idle.ts';
@@ -231,6 +237,7 @@ import { HostedShareSource } from './share-hosted.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
 import { parsePresencePublish, PresenceHub, presenceKey } from './presence.ts';
 import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
+import { createKeepAwake, type KeepAwakeOptions, type KeepAwakeStatus } from './keep-awake.ts';
 import { runsAsService } from './service.ts';
 import { ShareRoute, tailscaleFunnel } from './share-route.ts';
 
@@ -274,6 +281,11 @@ export interface ServerOptions {
    * such as one forwarded by `tailscale serve` to a loopback port, so only this machine's own connections are served.
    */
   loopbackOnly?: boolean;
+  /**
+   * Holds a macOS power assertion that prevents idle system sleep on AC power while `setting` is true and the server
+   * listens on an address its transports added to `hosts`. Without it the server holds none.
+   */
+  keepAwake?: KeepAwakeOptions;
   /** Whether this machine can host simulators and apps for other machines; only a Mac can. Defaults to running on macOS. */
   hostsDevices?: boolean;
   port: number;
@@ -388,8 +400,12 @@ interface ServerHealth {
   stimBuild: string | null;
   protocol: number;
   stimHome: string;
-  /** The work a restart would cut off: offloaded builds and hosted sessions running now. */
-  busy: { builds: number; hostedSessions: number };
+  /**
+   * The work a restart would cut off: offloaded builds and hosted sessions running now. `hostedWork` counts the hosted
+   * sessions a restart would stop, because a native step is in flight or they cannot be resumed; the others are left
+   * running for the next server, which `resumes` says this one does.
+   */
+  busy: { builds: number; hostedSessions: number; hostedWork: number; resumes: true };
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
   nativeViewerOpened: boolean;
@@ -397,6 +413,7 @@ interface ServerHealth {
   loopbackOnly?: true;
   /** The local network addresses the server listens on now, from `server.lanAddresses`; absent when there are none. */
   lan?: { addresses: string[]; port: number };
+  keepAwake: KeepAwakeStatus;
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -1953,8 +1970,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS,
     ).unref();
     push.refresh();
-    retireOnce ??= hostedDevices
-      .resumeSessions()
+    retireOnce ??= Promise.resolve()
+      .then(() => recoverAgentDrivers(options.env, deviceHostAreas()))
+      .then(() => hostedDevices.resumeSessions())
       .then(() => hostedDevices.reconcileStopped())
       .catch((error: unknown) => {
         process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
@@ -2086,7 +2104,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         );
       }
       device = chosen;
-      if (!local) touchDevice(device.id);
+      if (!local) touchDevice(device.id, params.client);
       if (access === 'device-host' && !local) {
         hostedDevices.clientSeen(device.id);
         let heardAt = Date.now();
@@ -4901,11 +4919,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           !isJsonObject(params) ||
           typeof params.workspace !== 'string' ||
           (params.id !== undefined && (typeof params.id !== 'string' || params.id === '')) ||
-          Object.keys(params).some((key) => key !== 'workspace' && key !== 'id')
+          (params.slot !== undefined && (typeof params.slot !== 'string' || !SLOT_NAME.test(params.slot))) ||
+          Object.keys(params).some((key) => key !== 'workspace' && key !== 'id' && key !== 'slot')
         )
-          return error(id, 'bad-request', 'share.stop needs params.workspace and takes an optional params.id.');
+          return error(
+            id,
+            'bad-request',
+            'share.stop needs params.workspace and takes an optional params.id or params.slot.',
+          );
+        if (params.id !== undefined && params.slot !== undefined)
+          return error(id, 'bad-request', 'share.stop takes params.id or params.slot, not both.');
         if (params.id === undefined)
-          return send(socket, { id, result: { stopped: await shares.stop(params.workspace) } });
+          return send(socket, {
+            id,
+            result: { stopped: await shares.stop(params.workspace, undefined, params.slot) },
+          });
         const stopped = await shares.stopOne(params.workspace, params.id);
         if (!stopped) return error(id, 'bad-request', `No share ${params.id} in this workspace.`);
         return send(socket, { id, result: { stopped: [stopped] } });
@@ -5336,12 +5364,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ...health,
       startup,
       ...(options.host ? { host: await hostHealth() } : {}),
-      busy: { builds: builds.running(), hostedSessions: hostedDevices.active() },
+      busy: {
+        builds: builds.running(),
+        hostedSessions: hostedDevices.active(),
+        hostedWork: hostedDevices.working(),
+        resumes: true,
+      },
       tailscale: healthTailscale(state),
       route,
       nativeViewerOpened,
       ...(options.loopbackOnly ? { loopbackOnly: true as const } : {}),
       ...lanHealth(),
+      keepAwake: keepAwake.status(),
     };
     response
       .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
@@ -5349,6 +5383,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   const servers = new Map<string, { server: Server; sockets: Set<Socket> }>();
   const addresses: RunningServer['addresses'] = [];
+  const keepAwake = createKeepAwake({
+    setting: () => false,
+    ...options.keepAwake,
+    loopbackOnly: options.loopbackOnly === true,
+    remoteListening: () => [...servers.keys()].some((host) => !options.hosts.includes(host)),
+  });
   const close = async () => {
     const failures: unknown[] = [];
     const settle = async (work: Promise<unknown>) => {
@@ -5359,6 +5399,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
     };
     closing = true;
+    keepAwake.close();
     desktopReports.close();
     if (startupRetry) clearTimeout(startupRetry);
     if (setupPruneTimer) clearInterval(setupPruneTimer);
@@ -5598,6 +5639,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       retry = setTimeout(() => queueReconcile(), options.listenRetryMs ?? LISTEN_RETRY_MS);
       retry.unref();
     }
+    keepAwake.sync();
   };
   let retry: NodeJS.Timeout | null = null;
   let reconciling = Promise.resolve();
@@ -5608,6 +5650,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   queueReconcile();
   await reconciling;
+  keepAwake.sync();
   const stopWatching = binding.flatMap((transport) => (transport.watch ? [transport.watch(queueReconcile)] : []));
   let settle!: (state: StartupState) => void;
   const ready = new Promise<StartupState>((resolve) => {

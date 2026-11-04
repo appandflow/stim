@@ -25,6 +25,7 @@ import { withDirLock } from '../dir-lock.ts';
 import { readHostPermissions } from '../offload/access-ticket.ts';
 import {
   diagnoseLocalUnreachable,
+  localMachineName,
   diagnosisFinding,
   notOnTailnetDiagnosis,
   unconfirmedKeyFinding,
@@ -154,7 +155,12 @@ function notOnTailnet(
   stored: DeviceHostMachineCredential | undefined,
   current: unknown,
 ) {
-  const diagnosis = notOnTailnetDiagnosis(machine, ambiguous, stored ? wrongTailnet(stored, current) : null);
+  const diagnosis = notOnTailnetDiagnosis(
+    machine,
+    ambiguous,
+    stored ? wrongTailnet(stored, current) : null,
+    localMachineName(current),
+  );
   return {
     diagnosis,
     report: {
@@ -264,6 +270,7 @@ export async function inspectDeviceHostMachines(
       );
     }
     const self = isJsonObject(status) && isJsonObject(status.Self) ? status.Self : {};
+    const localName = localMachineName(status);
     const raw = typeof self.HostName === 'string' && self.HostName ? self.HostName : hostname();
     const deviceName =
       raw
@@ -419,7 +426,7 @@ export async function inspectDeviceHostMachines(
         continue;
       }
       if (outcome.state === 'outdated') {
-        const outdated = outdatedServer(machine, version, outcome.command);
+        const outdated = outdatedServer(machine, version, outcome.command, localName);
         inspected.machines.push({
           ...known,
           state: 'outdated',
@@ -436,7 +443,7 @@ export async function inspectDeviceHostMachines(
       }
       if (outcome.state === 'unconfirmed') {
         inspected.machines.push({ ...known, state: 'key-unconfirmed', fingerprint: outcome.fingerprint });
-        inspected.findings.push(unconfirmedKeyFinding('device-host-machine', machine, outcome.fingerprint));
+        inspected.findings.push(unconfirmedKeyFinding('device-host-machine', machine, outcome.fingerprint, localName));
         continue;
       }
       if (outcome.state === 'unreachable') {
@@ -453,8 +460,8 @@ export async function inspectDeviceHostMachines(
             ? await io.startup?.(target)
             : null;
         const diagnosis = peer
-          ? await diagnoseOutcome(io, { ...failure, peer })
-          : diagnoseLocalUnreachable({ ...failure, startup });
+          ? await diagnoseOutcome(io, { ...failure, peer, host: localName })
+          : diagnoseLocalUnreachable({ ...failure, startup, host: localName });
         inspected.machines.push({ ...known, state: 'unreachable', diagnosis });
         inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;

@@ -72,7 +72,10 @@ export function parsePairingCode(text: string): PairingResult {
   if (!value || typeof value !== 'object') return { ok: false, error: t`This QR code is not a Stim pairing code.` };
   const { v, name, endpoint, pairingToken, fingerprint } = value as Record<string, unknown>;
   if (v === 1)
-    return { ok: false, error: t`This pairing code is from an older stim-server. Update stim-server on this Mac.` };
+    return {
+      ok: false,
+      error: t`This pairing code is from an older stim-server. Update stim-server on the machine that showed it.`,
+    };
   if (v !== 2) return { ok: false, error: t`This pairing code needs a newer version of the app.` };
   if (typeof endpoint !== 'string' || typeof pairingToken !== 'string' || typeof fingerprint !== 'string') {
     return { ok: false, error: t`This QR code is not a Stim pairing code.` };

@@ -716,7 +716,7 @@ registry signature of every dependency they bring from npm, and does not look up
 Stim's own packages on the registry, so an unpublished version installs. Either way
 the new server is installed beside the running one and must start before the
 switch. The update waits up to 30 minutes for offloaded builds and hosted
-sessions to finish, restarts the job, and switches back to the previous server
+native steps to finish (a server that resumes its hosted sessions leaves the others running), restarts the job, and switches back to the previous server
 when the new job exits or does not answer within 90 seconds. It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
 serve route.
@@ -1024,7 +1024,16 @@ classifies the pressure level, moves workspaces with no activity for
 `idle.minutes` into the [idle stage](./dev-server-and-logs.md#idle-stop) and
 those idle for `idle.dormantDays` into the dormant stage, runs the pressure
 ladder above normal, and runs automatic maintenance. It also wakes the oldest
-run waiting for a build slot as soon as one is released. `report` logs what
+run waiting for a build slot as soon as one is released. When one of those
+commands runs from an installed Stim (a global install or a `node_modules`
+dependency) with a newer version than the running daemon, for example after
+an upgrade, or the daemon runs a development build, that daemon keeps serving
+the command and one new daemon from the installed build takes over once the
+current tick finishes. The same or an older version never replaces it, so
+alternating a global `stim` with `npx stim` or a project's copy does not
+restart the daemon. A development build (a checkout's `dist`, `npm link` or
+`pnpm link --global`) never replaces a daemon. Runs waiting for a build slot or
+a boot keep their queue positions across the handover. `report` logs what
 each pass would do and acts on nothing. `off` runs no daemon and no pass: each
 dev server supervisor stops its own dev server and devices after
 `idle.minutes`, and nothing times a device with no dev server. It is `off` in

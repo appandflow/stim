@@ -27,14 +27,18 @@ export function shareRow(workspace: string, expiresAt: string, overrides: Partia
  * This Stim home's stim-server on its local Unix socket, as Stim Desktop's or `stim share`'s would run: it accepts
  * `hello` and answers each `share.list` with what `answer` returns then. Close it before the home is deleted.
  */
-export async function serveShareList(answer: () => ShareListAnswer): Promise<{ close: () => Promise<void> }> {
+export async function serveShareList(
+  answer: () => ShareListAnswer,
+  seen: (method: string, params: unknown) => void = () => {},
+): Promise<{ close: () => Promise<void> }> {
   const path = serverLocalSocket();
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const http = createServer();
   const wss = new WebSocketServer({ server: http });
   wss.on('connection', (socket) =>
     socket.on('message', (data) => {
-      const { id, method } = JSON.parse(String(data));
+      const { id, method, params } = JSON.parse(String(data));
+      if (method !== 'hello') seen(method, params);
       if (method === 'hello') return socket.send(JSON.stringify({ id, result: { server: { port: 1 } } }));
       const reply = method === 'share.list' ? answer() : { error: { code: 'unknown-method', message: method } };
       socket.send(JSON.stringify({ id, ...('error' in reply ? { error: reply.error } : { result: reply }) }));
