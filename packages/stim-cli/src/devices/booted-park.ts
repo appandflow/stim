@@ -1,11 +1,9 @@
 import type { StimContext } from '@stim-cli/core';
-import type { HostedLocalPlatformCounts } from '@stim-cli/core/state';
+import { getBootedGraceMinutes, type HostedLocalPlatformCounts } from '@stim-cli/core/state';
 import { countLiveOwnedDevicesByPlatformAsync } from '../engine/device-capacity.ts';
 import { readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
-import { machineNumber } from '../machine-number.ts';
-import { admissionLimits, getPlatformDeviceLimits, loadConfig } from '../workspace/config.ts';
+import { admissionLimits, getPlatformDeviceLimits } from '../workspace/config.ts';
 
-const GRACE_SETTING = 'pool.bootedGraceMinutes';
 const MINUTE_MS = 60_000;
 
 export interface BootedParkFacts {
@@ -36,21 +34,18 @@ export function bootedParkDeadline(
 /** {@link bootedParkDeadline} from this machine's settings, memory and booted devices. */
 export async function readBootedParkDeadline(
   platform: 'ios' | 'android',
-  operation: StimContext | undefined,
+  operation?: StimContext,
 ): Promise<string | null> {
-  if (!operation) return null;
-  const { env } = operation;
-  const { value: graceMinutes } = machineNumber(GRACE_SETTING, loadConfig(), env);
+  const { max: graceMinutes } = getBootedGraceMinutes();
   if (!graceMinutes) return null;
-  const memory = await readHostMemoryPressureAsync(undefined, undefined, operation.signal, operation);
+  const memory = await readHostMemoryPressureAsync(undefined, undefined, operation?.signal, operation);
   if (memory !== 'normal') return null;
-  const counts = await countLiveOwnedDevicesByPlatformAsync({});
   return bootedParkDeadline(platform, {
     graceMinutes,
     memory,
-    counts,
-    maxDevices: admissionLimits({ env }).maxDevices,
-    platformMax: getPlatformDeviceLimits({ env })[platform],
+    counts: await countLiveOwnedDevicesByPlatformAsync({}),
+    maxDevices: admissionLimits().maxDevices,
+    platformMax: getPlatformDeviceLimits()[platform],
     now: Date.now(),
   });
 }
