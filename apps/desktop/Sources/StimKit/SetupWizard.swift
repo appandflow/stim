@@ -232,7 +232,7 @@ public func setupStepLine(_ step: SetupJournal.Step, clientName: String, os: Tai
     } else {
       text =
         running
-        ? "waiting for approval in \(os == .windows ? "PowerShell" : os == .linux ? "Terminal" : "Terminal or Stim Desktop")"
+        ? "waiting for approval\(os == .windows ? " in PowerShell" : os == .linux ? " in Terminal" : "")"
         : "approval missing"
     }
   case "approve.build", "approve.device-host":

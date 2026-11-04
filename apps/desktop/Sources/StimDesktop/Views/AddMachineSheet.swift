@@ -360,7 +360,7 @@ struct AddMachineSheet: View {
         if wizard.phase != .cancelled {
           Text(
             model.os == .macOS
-              ? "Run this on \(name), then approve each request there (y) in Terminal. With Stim Desktop on \(name), you can instead paste it there in Settings > Connections > Using this machine > Add > Machine to Build or Run Simulators Here, and choose Allow."
+              ? "Run this on \(name), then approve each request there (y) in Terminal. When Stim Desktop on \(name) runs its own stim-server rather than a stim-server service, you can instead paste it there in Settings > Connections > Using this machine > Add > Machine to Build or Run Simulators Here, and choose Allow."
               : "Run this on \(name), then approve each request there (y) in \(shell)."
           )
           .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)

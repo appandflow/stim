@@ -107,8 +107,23 @@ public struct SetupApprovalResult: Decodable, Equatable, Sendable {
   }
 }
 
-public enum SetupAnswer: String, Sendable {
-  case approve, refuse, skip
+/// The person's answer to the grant or permission setup asks about, named so it cannot land on the next one.
+public enum SetupAnswer: Equatable, Sendable {
+  case approve(SetupCapability)
+  case refuse(SetupCapability)
+  /// Skips the permission named by the running `permissions.<permission>` journal step.
+  case skip(permission: String)
+
+  public func params(journal: String) -> [String: JSONValue] {
+    switch self {
+    case .approve(let capability):
+      return ["journal": .string(journal), "answer": .string("approve"), "capability": .string(capability.rawValue)]
+    case .refuse(let capability):
+      return ["journal": .string(journal), "answer": .string("refuse"), "capability": .string(capability.rawValue)]
+    case .skip(let permission):
+      return ["journal": .string(journal), "answer": .string("skip"), "permission": .string(permission)]
+    }
+  }
 }
 
 /// Runs `stim-server setup` for `request` in this machine's own server, which asks each grant through `onProgress`
@@ -119,8 +134,15 @@ public enum SetupAnswer: String, Sendable {
   onProgress: @escaping @MainActor (SetupJournal, SetupCapability?) -> Void
 ) async throws -> SetupApprovalResult {
   try Task.checkCancellation()
-  guard let client, client.hasDesktopAuthority, case .open(let hello) = client.state else {
+  guard let client, case .open(let hello) = client.state else {
     throw ServerError(code: "not-connected", message: "Stim Desktop's stim-server is not ready. Try again.")
+  }
+  guard client.hasDesktopAuthority else {
+    throw ServerError(
+      code: "forbidden",
+      message:
+        "Stim Desktop uses a stim-server it did not start here, such as a stim-server service, so it cannot approve requests. Run the setup command in Terminal on this machine instead."
+    )
   }
   guard hello.features?.contains("desktop-setup") == true else {
     throw ServerError(code: "unsupported", message: "Update Stim Desktop to approve other machines here.")

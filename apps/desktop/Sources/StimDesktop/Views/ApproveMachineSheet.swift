@@ -96,18 +96,18 @@ struct ApproveMachineSheet: View {
         .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
         HStack {
           Spacer()
-          Button("Don't Allow") { model.answer(.refuse) }.buttonStyle(.stim()).disabled(model.answering)
-          Button("Allow") { model.answer(.approve) }.buttonStyle(.stim(.primary)).disabled(model.answering)
+          Button("Don't Allow") { model.answer(.refuse(capability)) }.buttonStyle(.stim()).disabled(model.answering)
+          Button("Allow") { model.answer(.approve(capability)) }.buttonStyle(.stim(.primary)).disabled(model.answering)
         }
       }
-    } else if model.waitsForPermission {
+    } else if let permission = model.waitingPermission {
       Banner(tone: .warning, icon: "lock.shield") {
         Text("Allow Stim Desktop in System Settings > Privacy & Security").font(.stim(.body, weight: .semibold))
         Text("Hosted simulators need screen recording to be seen and accessibility to be controlled.")
           .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
         HStack {
           Spacer()
-          Button("Skip") { model.answer(.skip) }.buttonStyle(.stim()).disabled(model.answering)
+          Button("Skip") { model.answer(.skip(permission: permission)) }.buttonStyle(.stim()).disabled(model.answering)
         }
       }
     } else if model.waitsForMachine {

@@ -36,8 +36,9 @@ final class ApproveMachineModel {
     }
   }
 
-  var waitsForPermission: Bool {
-    journal?.steps.contains { $0.state == .running && $0.id.hasPrefix("permissions.") } == true
+  var waitingPermission: String? {
+    journal?.steps.first { $0.state == .running && $0.id.hasPrefix("permissions.") }
+      .map { String($0.id.dropFirst("permissions.".count)) }
   }
 
   var waitsForMachine: Bool { journal?.waitsForConnection == true && asking == nil }
@@ -71,8 +72,7 @@ final class ApproveMachineModel {
       defer { answering = false }
       do {
         guard let client = client() else { throw ServerError(code: "not-connected", message: "Not connected.") }
-        _ = try await client.request("desktop.setup.answer", ["journal": .string(journal), "answer": .string(answer.rawValue)])
-        if answer != .skip { asking = nil }
+        _ = try await client.request("desktop.setup.answer", answer.params(journal: journal))
       } catch {
         self.error = error.localizedDescription
       }
