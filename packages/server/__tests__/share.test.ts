@@ -1254,6 +1254,7 @@ describe('a web share', () => {
         platform,
         buttons: BUTTONS[platform],
         rotate: true,
+        webrtc: false,
       });
       for (const button of BUTTONS[platform]) expect(page).toContain(`data-button="${button}"`);
       for (const direction of ['left', 'right']) expect(page).toContain(`data-rotate="${direction}"`);
@@ -1881,6 +1882,7 @@ describe('a web share', () => {
     });
 
     it('answers a WebRTC offer from the source and leaves the video off the share socket', async () => {
+      f = fixture({}, { webrtc: () => true });
       f.status(hostedPayload() as never);
       const share = await started(f);
       const url = local(share, f.hub.port ?? 0);
@@ -1901,7 +1903,35 @@ describe('a web share', () => {
       await vi.waitFor(() => expect(record.peersClosed).toBe(1));
     });
 
+    it('keeps the video on the share socket and refuses offers while share.webrtc is off', async () => {
+      f.status(hostedPayload() as never);
+      const share = await started(f);
+      const url = local(share, f.hub.port ?? 0);
+      const cookie = await login(url, share.password!);
+      const viewer = await http(`${url}?transport=webrtc`, { cookie });
+      expect(viewer.body).toContain('data-webrtc="false"');
+      expect(viewer.headers['set-cookie']).toBeUndefined();
+      const record = f.hostedSources[0]!;
+      const { socket, messages } = await connect(url, { origin: origin(url), cookie }, '?codec=h264&transport=webrtc');
+      expect(record.subscribed.at(-1)!.video).toBeDefined();
+      socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp' }));
+      await vi.waitFor(() => expect(messages.some((m) => m.type === 'webrtc-failed')).toBe(true));
+      expect(record.offers).toEqual([]);
+      socket.close();
+    });
+
+    it('tells the page WebRTC is on, and remembers the choice, when share.webrtc is on', async () => {
+      f = fixture({}, { webrtc: () => true });
+      f.status(hostedPayload() as never);
+      const share = await started(f);
+      const url = local(share, f.hub.port ?? 0);
+      const viewer = await http(`${url}?transport=webrtc`, { cookie: await login(url, share.password!) });
+      expect(viewer.body).toContain('data-webrtc="true"');
+      expect(String(viewer.headers['set-cookie'])).toContain('stim_transport=webrtc');
+    });
+
     it('refuses a WebRTC offer from a viewer that is not signed in', async () => {
+      f = fixture({}, { webrtc: () => true });
       f.status(hostedPayload() as never);
       const share = await started(f);
       const url = local(share, f.hub.port ?? 0);

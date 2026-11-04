@@ -37,12 +37,14 @@
     "@stim-cli/transport": "workspace:*",
     "@stim-cli/transport-local": "workspace:*",
     "@stim-cli/transport-tailscale": "workspace:*",
-    "node-datachannel": "0.33.6",
     "stim": "workspace:*",
     "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1"
+  },
+  "optionalDependencies": {
+    "node-datachannel": "0.33.6"
   },
   "engines": {
     "node": ">=22.12.0"

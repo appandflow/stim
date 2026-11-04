@@ -128,6 +128,8 @@ export interface ShareDeps {
     /** Retries removing the route `stranded` reports. */
     removeStranded: () => Promise<void>;
   };
+  /** Whether `share.webrtc` is on; without it viewers get WebSocket video only and WebRTC offers are refused. */
+  webrtc?: () => boolean;
   /** Frames and input for a device a host Mac runs for this machine; without it such a share is refused. */
   hosted?: (host: HostedTarget, request: ShareTarget) => ShareSource;
   /** The display name of an app on a simulator, for the page titles; defaults to reading its Info.plist. */
@@ -1119,7 +1121,8 @@ export class ShareHub {
     if (rest === '' && request.method === 'GET') {
       const [path = '', query = ''] = (request.url ?? '').split('?');
       const transport = new URLSearchParams(query).get('transport');
-      const remember = transport === 'webrtc' || transport === 'ws' ? transport : null;
+      const remember =
+        this.deps.webrtc?.() === true && (transport === 'webrtc' || transport === 'ws') ? transport : null;
       const extra = remember
         ? { 'set-cookie': `stim_transport=${remember}; Secure; SameSite=Strict; Path=${path}; Max-Age=86400` }
         : {};
@@ -1140,6 +1143,7 @@ export class ShareHub {
             platform,
             buttons: BUTTONS[platform],
             rotate,
+            webrtc: this.deps.webrtc?.() === true,
           }),
           extra,
         );
@@ -1236,7 +1240,7 @@ export class ShareHub {
     const admitted = this.admit(share, request);
     if (!admitted) return refuse(401, 'Unauthorized');
     const query = new URL(request.url ?? '', 'http://share.invalid').searchParams;
-    const rtc = query.get('codec') === 'h264' && query.get('transport') === 'webrtc';
+    const rtc = this.deps.webrtc?.() === true && query.get('codec') === 'h264' && query.get('transport') === 'webrtc';
     const video = query.get('codec') === 'h264' && !rtc;
     const id = query.get('id');
     const pageId = id !== null && PAGE_ID.test(id) ? id : null;

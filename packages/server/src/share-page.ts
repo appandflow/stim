@@ -56,6 +56,8 @@ export function viewerPage(options: {
   platform: string;
   buttons: readonly string[];
   rotate: boolean;
+  /** The share host lets viewers ask for WebRTC video (`share.webrtc`). */
+  webrtc: boolean;
 }): string {
   return fill(TEMPLATES.viewer, {
     title: options.title,
@@ -66,5 +68,6 @@ export function viewerPage(options: {
     platform: options.platform,
     buttons: options.buttons.join(' '),
     rotate: String(options.rotate),
+    webrtc: String(options.webrtc),
   });
 }

@@ -42,14 +42,19 @@ export interface RtcSession {
 let loading: Promise<NodeDataChannel> | null = null;
 
 function load(): Promise<NodeDataChannel> {
-  loading ??= import('node-datachannel').then((module) => {
-    const loaded = (module as unknown as { default?: NodeDataChannel }).default ?? module;
-    (loaded as NodeDataChannel).setSctpSettings({
-      sendBufferSize: SEND_BUFFER_BYTES,
-      ...(process.env.STIM_WEBRTC_SCTP ? JSON.parse(process.env.STIM_WEBRTC_SCTP) : {}),
-    });
-    return loaded as NodeDataChannel;
-  });
+  loading ??= import('node-datachannel').then(
+    (module) => {
+      const loaded = (module as unknown as { default?: NodeDataChannel }).default ?? module;
+      (loaded as NodeDataChannel).setSctpSettings({
+        sendBufferSize: SEND_BUFFER_BYTES,
+        ...(process.env.STIM_WEBRTC_SCTP ? JSON.parse(process.env.STIM_WEBRTC_SCTP) : {}),
+      });
+      return loaded as NodeDataChannel;
+    },
+    (cause: unknown) => {
+      throw new Error(`WebRTC is unavailable here: node-datachannel could not be loaded (${String(cause)}).`);
+    },
+  );
   return loading;
 }
 

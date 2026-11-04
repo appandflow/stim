@@ -8,8 +8,9 @@
   const query = new URLSearchParams(location.search);
   const cookieMatch = /(?:^|; )stim_transport=(webrtc|ws)/.exec(document.cookie);
   const preferred = query.get('transport') || (cookieMatch && cookieMatch[1]) || 'ws';
-  const wanted = preferred === 'webrtc' && typeof RTCPeerConnection === 'function';
-  const visible = wanted || query.has('stats') || preferred === 'webrtc';
+  const offered = document.body.dataset.webrtc === 'true';
+  const wanted = offered && preferred === 'webrtc' && typeof RTCPeerConnection === 'function';
+  const visible = wanted || query.has('stats');
   const basePath = location.pathname.replace(/[^/]*$/, '');
   const STUN = 'stun:stun.l.google.com:19302';
   const GATHER_MS = 2500;

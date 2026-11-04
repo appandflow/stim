@@ -1463,6 +1463,11 @@ reverse proxy setup:
                    https://demo.example.com
   share.port       the loopback port proxy mode binds (default 7790), so the
                    proxy can name it
+One more machine setting, experimental and off by default:
+  share.webrtc     true lets a share viewer that opens the link with
+                   ?transport=webrtc take video over a WebRTC data channel
+                   from the machine that owns the device, with WebSocket as
+                   the fallback. Needs the optional node-datachannel package
 
 DEVICE RECORDINGS CAN BE TURNED OFF
 stim-server records the screens of owned simulators, emulators and the

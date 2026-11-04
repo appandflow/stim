@@ -1864,6 +1864,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const shares = new ShareHub({
     frames,
     control,
+    webrtc: () => {
+      try {
+        return loadConfig()?.share?.webrtc === true;
+      } catch {
+        return false;
+      }
+    },
     presence: {
       subscribe: (key, listener) => localAgents.subscribe(key, listener),
       join: (key, who) => presence.join(key, who),

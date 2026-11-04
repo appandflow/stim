@@ -480,9 +480,6 @@ importers:
       '@stim-cli/transport-tailscale':
         specifier: workspace:*
         version: link:../transport-tailscale
-      node-datachannel:
-        specifier: 0.33.6
-        version: 0.33.6
       stim:
         specifier: workspace:*
         version: link:../stim-cli
@@ -493,6 +490,10 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
+    optionalDependencies:
+      node-datachannel:
+        specifier: 0.33.6
+        version: 0.33.6
 
   packages/stim-cli:
     dependencies:
@@ -18053,6 +18054,10 @@ snapshots:
     dependencies:
       '@types/react': 19.2.18
 
+  '@types/react-dom@19.2.7(@types/react@19.3.0)':
+    dependencies:
+      '@types/react': 19.3.0
+
   '@types/react-reconciler@0.33.0(@types/react@19.3.0)':
     dependencies:
       '@types/react': 19.3.0
@@ -23112,6 +23117,7 @@ snapshots:
       '@node-datachannel/linux-x64-musl': 0.33.6
       '@node-datachannel/win32-arm64-msvc': 0.33.6
       '@node-datachannel/win32-x64-msvc': 0.33.6
+    optional: true
 
   node-emoji@2.2.0:
     dependencies:
