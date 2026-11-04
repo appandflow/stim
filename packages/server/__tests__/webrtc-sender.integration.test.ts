@@ -32,9 +32,9 @@ async function viewer() {
 }
 
 it('sends access units over the viewer data channel and takes keyframe requests and clock pings on its control channel', async () => {
-  const keyframes = vi.fn();
+  const keyframes = vi.fn<() => void>();
   let video: (unit: AccessUnit) => void = () => {};
-  const stopped = vi.fn();
+  const stopped = vi.fn<() => void>();
   const browser = await viewer();
   const session = await openRtc(
     browser.offer,
@@ -70,7 +70,7 @@ it('sends access units over the viewer data channel and takes keyframe requests 
 }, 20_000);
 
 it('reports the peer closed once when the viewer goes away', async () => {
-  const closed = vi.fn();
+  const closed = vi.fn<(reason: string) => void>();
   const browser = await viewer();
   const session = await openRtc(
     browser.offer,
