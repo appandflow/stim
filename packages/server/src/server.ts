@@ -60,6 +60,7 @@ import {
 import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
 import type { DesktopBootstrap } from './desktop-bootstrap.ts';
 import { actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
+import { cachedPeerNode } from './peer-node.ts';
 import { parsePlatformRun } from './platform-run.ts';
 import { parsePlatformBuild } from './platform-build.ts';
 import {
@@ -1420,13 +1421,14 @@ function isLink(path: string): boolean {
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const { transports, tailscale } = serverTransports(options);
   /** The tailnet node a transport reports for a peer, or null when none identifies it. */
-  async function peerNode(request: IncomingMessage, address: string): Promise<string | null> {
+  const peerNode = cachedPeerNode(async (request: IncomingMessage, address: string): Promise<string | null> => {
     for (const transport of transports) {
       const identity = await transport.identify?.({ address, request }).catch(() => null);
       if (identity) return identity.id;
     }
+    console.error(`stim-server: no transport identified the peer ${address}.`);
     return null;
-  }
+  });
   /**
    * The tailnet node each device-host client's latest authenticated connection came from. Its agent grant's bearer
    * token goes to a host name the client resolves, so the agent route also requires this node: a node that took the
@@ -5354,7 +5356,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (host) {
       const node = peer ? await peerNode(request, peer) : null;
       if (node) agentNodes.set(host.id, node);
-      else agentNodes.delete(host.id);
+      else if (!peer) agentNodes.delete(host.id);
       if (ws.readyState !== ws.OPEN) return;
     }
     connection(accepted.socket, peer, false, publicKey);
