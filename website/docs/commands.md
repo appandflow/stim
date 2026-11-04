@@ -1070,6 +1070,14 @@ Stim adds what agent-device needs to reach the device:
 - `--remote-config` for a [hosted iOS](./owned-devices.md#run-ios-on-another-mac)
   or [hosted Android](./remote-machines.md) session.
 - `--session stim-<slot>-<platform>` unless you pass `--session`.
+- For a hosted session whose host no longer holds the agent-device session (its
+  stim-server restarted, so agent-device answers `SESSION_NOT_FOUND`), a
+  single-action command (`snapshot`, `press`, `tap`, `scroll`, `type` and the like)
+  opens the app the workspace last launched on the same session and runs once more.
+  The output of that command is held until it ends, and only the last run's output
+  is printed. The command acts on that app's screen as it is after the reopen, so take a
+  fresh snapshot when a coordinate gesture matters. Multi-step commands such as `batch`
+  are not retried.
 - `AGENT_DEVICE_STATE_DIR`, the workspace's
   [agent-device state directory](./dev-server-and-logs.md#agent-device-actions),
   except for a hosted session, which keeps agent-device's own.
