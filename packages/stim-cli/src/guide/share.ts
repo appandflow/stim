@@ -317,12 +317,18 @@ $connection_upgrade comes from the usual map block):
 WEBRTC VIDEO (EXPERIMENTAL)
 share.webrtc is a machine setting, false by default. Off, viewers get WebSocket
 video only: the page never starts WebRTC, the share refuses WebRTC offers and
-the choice is not remembered. On, a viewer that opens the link with
-?transport=webrtc (remembered in a cookie for a day) takes video over a WebRTC
-data channel from the machine that owns the device, so a hosted device's video
-does not cross this machine, and ?stats shows a stats panel. A missing
-node-datachannel package, an older worker without hosted-webrtc-private, or any WebRTC
-failure drops the viewer back to WebSocket. Input stays on the share socket.
+the choice is not remembered. On, every viewer starts on WebSocket video. A
+browser with WebRTC then opens a data channel to the machine that owns the
+device in the background, so a hosted device's video does not cross this
+machine, and takes its video from the channel only once the channel has
+delivered a keyframe it can decode. A channel that fails, or loses more than a
+few packets in a few seconds, hands the video back to the WebSocket without a
+reload; the page tries again after 30 s, then 60 s, doubling to 10 minutes, and
+gives up after three attempts that never connected. A missing node-datachannel
+package or an older worker without hosted-webrtc-private leaves the viewer on
+WebSocket. ?transport=ws keeps one page on WebSocket and ?transport=webrtc
+forces the data channel with no loss fallback; both are remembered in a cookie
+for a day, and ?stats shows a stats panel. Input stays on the share socket.
 
 The machine that sends the video offers only host candidates on private,
 link-local and Tailscale (100.64.0.0/10) addresses, does no STUN, and ignores a
