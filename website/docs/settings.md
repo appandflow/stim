@@ -273,7 +273,7 @@ With `androidEmulatorApp` resolved to `"stim-desktop"` on macOS, Stim launches i
 `-no-window -gpu host`; see [Machine settings](#machine-settings).
 Every owned emulator starts its gRPC endpoint on the console port plus 3000
 with token authentication (`-grpc <port> -grpc-use-token`); Stim Desktop reads
-emulator frames from it and sends input through it while **Take over** is on.
+emulator frames from it and sends input through it while **Control** is on.
 Run `stim guide settings` for the complete key and value list.
 
 ## Machine settings

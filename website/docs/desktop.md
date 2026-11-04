@@ -285,8 +285,9 @@ it over the tailnet stays opt-in: **Allow connections** in **Settings > Connecti
   progress and failures in Activity. Archives, Not Set Up worktrees and paired
   row masks keep their existing Desktop-local behavior. A missing-folder row stays local until its
   folder returns; Unhide requires restoring that folder when the row is already shared-hidden.
-- **Watch and take over a device.** Open a device to see its screen large,
-  take it over with your mouse and keyboard, and read what the agent did
+- **Watch and control a device.** Open a device to see its screen large,
+  control it with your mouse and keyboard alongside agents and other people,
+  and read what the agent did
   and when. Hardware, rotation and posture controls sit in groups below the
   screen, wrapping when space is tight. An already-running app stays visible
   during rebuilds; take **Control** to keep using it while the next build compiles.
@@ -763,8 +764,8 @@ stim ios`}
 
 1. The workspace appears in the sidebar as soon as it warms. Its simulator
    shows in the app instead of a separate Simulator window.
-2. Click a device to open its viewer. **Take over** lets you use it; Escape
-   gives it back.
+2. Click a device to open its viewer. **Control** lets you use it, alongside
+   an agent or anyone else controlling it; Escape stops.
 3. To use the phone app, open **Stim > Settings > Connections > Using this machine**
    and choose **Add... > Pair a Phone…**. The wizard checks Tailscale, allows connections, sets up a private
    tailnet route, shows a code and waits for the phone. Setup keeps existing

@@ -756,11 +756,13 @@ did not apply.
 
 When status reports the device driven by something else, such as
 agent-device, a `stim device lock`, or another phone, a small chip with a
-cursor icon next to the model names it. **Control** takes over immediately on that explicit tap; the machine records the takeover in its
-action log. The chip stays while you have control, because that driver can
-still send input to the device. When the server refuses
-Control because of a driver that status did not show yet, a banner gives its reason
-with **Take Over**, which also starts control immediately when tapped.
+cursor icon next to the model names it. **Control** starts at once on a server
+with `shared-control`: the phone, Stim Desktop, web share viewers and agents
+all send input to the device together, and nobody is refused or taken over.
+The chip stays while you have control, because that driver still sends input
+too. An older server refuses Control while someone else drives the device; the
+banner gives its reason with **Take Over**, which takes the device from them
+and starts control immediately when tapped.
 
 ## Actions
 
@@ -836,8 +838,8 @@ AppDelegate.swift:71`), or with the same error code, such as an app that
 - **Machine in trouble**: disk below Stim's floor, critical memory pressure,
   or a machine that went offline or refuses the pairing. It opens the machine
   sheet.
-- **Someone takes over your device**: another phone took over a device you
-  control, or an agent started driving it. It opens the device viewer.
+- **Someone else drives your device**: an agent started driving a device you
+  control, or, on a server without `shared-control`, another phone took it over. It opens the device viewer.
 - **Needs you**: something only a person can fix, such as a port held by
   another app, a supervisor or browser Stim cannot verify, a signing or
   provisioning failure, an expired device lease or a billable EAS session left

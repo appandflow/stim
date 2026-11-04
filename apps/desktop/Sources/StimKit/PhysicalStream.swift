@@ -161,8 +161,9 @@ import Foundation
     }
   }
 
-  /// Starts driving the device, taking it over from an agent that drives it. The server refuses a workspace that
-  /// no longer owns the target session or holds the physical device's lease.
+  /// Starts controlling the device, alongside any other client or agent. `takeOver` lets a server without
+  /// `shared-control` take the device from them. The server refuses a workspace that no longer owns the target
+  /// session or holds the physical device's lease.
   public func begin() {
     guard let server else { return }
     switch control {
@@ -258,7 +259,7 @@ import Foundation
 
   private func controlRequest(_ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
     guard let server, case .on(let session) = control else {
-      throw ServerError(code: "not-connected", message: "Take over the device to use its clipboard.")
+      throw ServerError(code: "not-connected", message: "Control the device to use its clipboard.")
     }
     var params = params
     params["session"] = .string(session)

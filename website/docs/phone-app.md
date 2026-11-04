@@ -153,7 +153,8 @@ hours suppress delivery; problems that still hold afterward can notify then,
 while work events during quiet hours are dropped.
 
 Categories cover work starting or finishing, an agent that looks stuck,
-repeated build failures, machine problems, device takeovers and problems that
+repeated build failures, machine problems, someone else driving a device you
+control and problems that
 need a person. A single failed build or new log error stays in **Needs
 attention** rather than notifying by itself.
 
