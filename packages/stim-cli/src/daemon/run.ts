@@ -345,7 +345,7 @@ export async function runDaemon({
         log,
         memoryWarningSince: lastSnapshot?.pressure?.memoryWarningSince ?? null,
       });
-      const { config, now, measured, workspaces, pressure, actions } = passes;
+      const { config, now, measured, workspaces, pressure, actions, operation } = passes;
       scheduleDependencyMeasures();
       const reclaimStarted = performance.now();
       const reclaimed = await reclaimForBootWaiters({
@@ -353,6 +353,7 @@ export async function runDaemon({
         sims: measured.sims,
         act: mode === 'on',
         log,
+        operation,
       });
       phases = { ...passes.phases, reclaimMs: Math.round(performance.now() - reclaimStarted) };
       if (reclaimed) {
