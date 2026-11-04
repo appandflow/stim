@@ -99,7 +99,7 @@ public enum PairedServerWording {
       return PairedServerNotice(
         tone: .warning, title: "That is this Mac's own server",
         detail:
-          "Stim Desktop already shows it, so the pairing was removed. Revoke the record it left in this Mac's Paired Devices, or with this command on this Mac.",
+          "Stim Desktop already shows it, so the pairing was removed. Revoke the record it left in Settings > Connections > Using this machine, or with this command on this machine.",
         command: error.message)
     case "key-unusable":
       return PairedServerNotice(

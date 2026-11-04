@@ -25,7 +25,6 @@ final class FeatureFlagStore: ObservableObject {
   func isEnabled(_ flag: FeatureFlag) -> Bool { enabled.contains(flag) }
 
   var phoneApp: Bool { isEnabled(.phoneApp) }
-  var pairedMachines: Bool { isEnabled(.pairedMachines) }
 
   func set(_ flag: FeatureFlag, enabled value: Bool) {
     FeatureFlags.set(flag, enabled: value, defaults: defaults)

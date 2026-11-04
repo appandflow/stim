@@ -62,7 +62,7 @@ public struct PhonePairing: Sendable {
       switch self {
       case .app: return "Get the App"
       case .tailscale: return "Tailscale"
-      case .serve: return "Turn On Serving"
+      case .serve: return "Allow Connections"
       case .pair: return "Pair"
       case .done: return "Done"
       }

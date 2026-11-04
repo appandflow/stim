@@ -210,7 +210,6 @@ struct StimDesktopApp: App {
   private let statsReader: StatsReader
   private let serverStatus: AnyCancellable
   private let pairedStatus: AnyCancellable
-  private let pairedMachinesFlag: AnyCancellable
   private let metrics: MetricsStore
   private let storage: StorageStore
   private let planChecks: BuildPlanChecks
@@ -262,10 +261,7 @@ struct StimDesktopApp: App {
         }
       }
     }
-    pairedMachinesFlag = FeatureFlagStore.shared.$enabled.map { $0.contains(.pairedMachines) }.removeDuplicates()
-      .sink { enabled in
-        DispatchQueue.main.async { MainActor.assumeIsolated { PairedServerSessions.shared.setEnabled(enabled) } }
-      }
+    DispatchQueue.main.async { MainActor.assumeIsolated { PairedServerSessions.shared.start() } }
     notifier = Notifier(store: store)
     let actions = ActionCenter(environment: environment) { ServerSession.shared.statsConnection }
     self.actions = actions

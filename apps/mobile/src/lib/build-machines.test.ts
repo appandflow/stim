@@ -1,6 +1,8 @@
 import { buildPlacements, machineReadiness, placementReason, placementTitle } from '@/lib/build-machines';
 import type { BuildMachineReport } from '@/protocol/types';
 
+import stateVectors from '../../../desktop/Tests/StimKitTests/Fixtures/remote-machine-state-vectors.json';
+
 const approved = (patch: Partial<BuildMachineReport> = {}): BuildMachineReport => ({
   machine: 'janics-mac-mini:7869',
   state: 'approved',
@@ -88,6 +90,14 @@ describe('machineReadiness', () => {
     ['invalid', 'Not a tailnet name', 'error', null],
   ])('shows state %s as %s', (state, title, tone, remedy) => {
     expect(machineReadiness({ machine: 'mini', state })).toEqual({ id: 'mini', name: 'mini', title, tone, remedy });
+  });
+
+  it('names every state with the title and tone Stim Desktop shows', () => {
+    for (const { state, title, tone } of stateVectors)
+      expect(machineReadiness({ machine: 'mini', state })).toMatchObject({
+        title,
+        tone: tone === 'neutral' ? 'tertiary' : tone,
+      });
   });
 
   it('shows the title and remedy of the diagnosis a report carries, with the tone of its state', () => {

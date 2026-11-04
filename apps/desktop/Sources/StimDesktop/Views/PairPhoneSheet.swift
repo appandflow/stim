@@ -149,7 +149,7 @@ struct PairPhoneSheet: View {
   private var serveContent: some View {
     Group {
       PhoneServeArt()
-      Text("Turning On Serving").font(.stim(.title))
+      Text("Allowing Connections").font(.stim(.title))
       checkRow(wizard.serverCheck) {
         switch wizard.server {
         case .running: Text("Stim server is running")
@@ -275,7 +275,7 @@ struct PairPhoneSheet: View {
         if case .running = wizard.server {
           warning("The server is running, but the phone connection is not verified. Go Back to check it.")
         } else {
-          warning("Serving stopped. Go Back to turn it on again.")
+          warning("Connections were turned off. Go Back to allow them again.")
         }
       }
     }
@@ -315,11 +315,11 @@ struct PairPhoneSheet: View {
           Label("Drives simulators and emulators, and runs Reload and Stop", systemImage: "checkmark.circle.fill")
             .foregroundStyle(Palette.success)
         } else {
-          Text("View only. You can allow control in Settings > Paired Devices.").foregroundStyle(Palette.secondary)
+          Text("View only. You can allow control in Settings > Connections.").foregroundStyle(Palette.secondary)
         }
-        Text("Manage it in Settings > Paired Devices.").foregroundStyle(Palette.secondary)
+        Text("Manage it in Settings > Connections.").foregroundStyle(Palette.secondary)
         if let openPhones {
-          Button("Open Paired Devices") {
+          Button("Open Connections") {
             openPhones()
             dismiss()
           }.buttonStyle(.stim())

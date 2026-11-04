@@ -19,18 +19,6 @@
       return AdvancedSettingsView(server: ServerController.shared, settings: settings, stimHome: NSHomeDirectory() + "/.stim")
     }
 
-    @MainActor private func macsUsingThisMac() -> some View {
-      let mini = PairedDevice(
-        id: "a1b2c3d4", name: "studio", from: "studio", keyFingerprint: "fixture-key", pairedAt: Date(), lastSeenAt: nil,
-        capabilities: ["build"])
-      return Form {
-        ThisMacAccessSections(
-          clients: [mini], sessions: [], stopping: [], revoke: { _ in }, stop: { _ in })
-      }
-      .formStyle(.grouped)
-      .scrollContentBackground(.hidden)
-    }
-
     @MainActor func testSettingsScreenshots() throws {
       guard let directory = ProcessInfo.processInfo.environment["STIM_SETTINGS_SHOTS"] else {
         throw XCTSkip("Set STIM_SETTINGS_SHOTS to render the settings fixtures.")
@@ -39,7 +27,9 @@
       BrandAssets.registerFonts()
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
       let fixtures: [(String, AnyView)] = [
-        ("advanced", AnyView(advanced())), ("remote-macs-using-this-mac", AnyView(macsUsingThisMac())),
+        ("advanced", AnyView(advanced())),
+        ("connections-incoming", AnyView(ConnectionsPlayground(segment: .incoming, now: Date()))),
+        ("connections-outgoing", AnyView(ConnectionsPlayground(segment: .outgoing, now: Date()))),
       ]
       for (name, view) in fixtures {
         for dark in [false, true] {

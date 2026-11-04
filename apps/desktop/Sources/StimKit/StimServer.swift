@@ -112,17 +112,20 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   public var pairedAt: Date
   public var lastSeenAt: Date?
   public var capabilities: [String]
+  /// `phone` for a pairing from `stim-server pair`, `desktop` for Stim Desktop on another machine, `build-client` or
+  /// `device-host-client`; absent from an older stim-server.
+  public var kind: String?
 
   /// Whether the device may run actions and drive devices, not only read.
   public var canControl: Bool { capabilities.contains("control") }
 
-  /// A Mac that may build here, rather than a phone or app that reads.
+  /// A machine that may build here, rather than a phone or app that reads.
   public var isBuildClient: Bool { capabilities.contains("build") }
 
-  /// A Mac that may run hosted devices here.
+  /// A machine that may run hosted devices here.
   public var isDeviceHostClient: Bool { capabilities.contains("device-host") }
 
-  /// A paired phone or app that reads and may control, as the Paired Devices list shows it.
+  /// A pairing from `stim-server pair` that reads and may control: a phone, or Stim Desktop on another machine.
   public var isPhone: Bool { !isBuildClient && !isDeviceHostClient }
 }
 
@@ -254,6 +257,10 @@ public struct StimServerCLI: Sendable {
 
   public func revoke(_ id: String) async throws {
     _ = try await run(["devices", "revoke", id])
+  }
+
+  public func rename(_ id: String, to name: String) async throws {
+    _ = try await run(["devices", "rename", id, name])
   }
 
   /// Starts the server on `port`; it runs until terminated.

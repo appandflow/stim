@@ -218,11 +218,7 @@ final class ServerController: ObservableObject {
     if case .failed = state { start() } else { refresh() }
   }
 
-  private var wantsLoopbackOnly: Bool {
-    !PhoneApp.listensOnTailnet(
-      phoneApp: FeatureFlags.isEnabled(.phoneApp),
-      servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones))
-  }
+  private var wantsLoopbackOnly: Bool { !UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) }
 
   func configure(environment: Task<[String: String], Never>, settingsEnvironment: [String: String]) {
     self.environment = environment
@@ -409,7 +405,7 @@ final class ServerController: ObservableObject {
     }
   }
 
-  /// Restarts the server Desktop started when the phone setting changes which addresses it should listen on. A
+  /// Restarts the server Desktop started when Allow connections changes which addresses it should listen on. A
   /// server Desktop did not start is never touched. A failed start is tried again, since the other mode may work.
   private func applyServingMode() {
     guard startedLoopbackOnly != wantsLoopbackOnly else { return }
@@ -450,7 +446,7 @@ final class ServerController: ObservableObject {
 
   func pairPhone(control: Bool) async throws -> PairingCode {
     guard UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) else {
-      throw ServerError(code: "not-connected", message: "Turn on Serve to phones to pair a phone.")
+      throw ServerError(code: "not-connected", message: "Turn on Allow connections to pair a phone.")
     }
     let cli = await cli()
     guard isRunning, case .ready(let before) = await StimServerCLI.health(port: port) else {
@@ -582,6 +578,22 @@ final class ServerController: ObservableObject {
         reloadDevices()
       case .failure(let error): changeError = error.localizedDescription
       }
+    }
+  }
+
+  /// Renames every record of one connection, so each shows the same name.
+  func rename(_ devices: [PairedDevice], to name: String) {
+    Task {
+      let cli = await cli()
+      changeError = nil
+      for device in devices {
+        if case .failure(let error) = await Result.awaiting({ try await cli.rename(device.id, to: name) }) {
+          changeError = error.localizedDescription
+          break
+        }
+      }
+      devicesEpoch += 1
+      reloadDevices()
     }
   }
 

@@ -5,15 +5,12 @@ import Foundation
 public enum FeatureFlag: String, CaseIterable, Identifiable, Sendable {
   /// The phone app: pairing, serving to phones, and every mention of it.
   case phoneApp
-  /// Pairing with other machines' stim-servers and the Paired Machines settings tab.
-  case pairedMachines
 
   public var id: String { rawValue }
 
   public var title: String {
     switch self {
     case .phoneApp: return "Phone app"
-    case .pairedMachines: return "Paired machines"
     }
   }
 
@@ -21,17 +18,14 @@ public enum FeatureFlag: String, CaseIterable, Identifiable, Sendable {
     switch self {
     case .phoneApp:
       return
-        "Shows everything about the Stim phone app: the Paired Devices page with Serve to phones and pairing, the setup guide and tutorial steps, tips and suggestions that mention phones. Turning it off hides them; Desktop's stim-server then listens on loopback only."
-    case .pairedMachines:
-      return
-        "Shows the Paired Machines settings tab, where this Mac pairs with another machine's stim-server, such as a Linux bot's. Turning it off hides the tab; pairings stay in the Keychain."
+        "Shows everything about the Stim phone app: paired phones and Pair a Phone in Settings > Connections, the setup guide and tutorial steps, tips and suggestions that mention phones. Turning it off hides them; Allow connections and pairings stay as they are."
     }
   }
 
   /// The value on a Mac that has not been seeded and has no override.
   public var defaultValue: Bool {
     switch self {
-    case .phoneApp, .pairedMachines: return false
+    case .phoneApp: return false
     }
   }
 

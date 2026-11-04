@@ -104,10 +104,3 @@ private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
   for text in offCopy() { #expect(!text.lowercased().contains("phone"), "\(text)") }
   #expect(PhoneApp.Copy.screenPermissionUse(phoneApp: true).contains("phone"))
 }
-
-@Test func theServerListensBeyondLoopbackOnlyWhenThePhoneAppServesPhones() {
-  #expect(PhoneApp.listensOnTailnet(phoneApp: true, servesPhones: true))
-  #expect(!PhoneApp.listensOnTailnet(phoneApp: true, servesPhones: false))
-  #expect(!PhoneApp.listensOnTailnet(phoneApp: false, servesPhones: true))
-  #expect(!PhoneApp.listensOnTailnet(phoneApp: false, servesPhones: false))
-}

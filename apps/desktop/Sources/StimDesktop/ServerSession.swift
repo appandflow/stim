@@ -195,22 +195,15 @@ import StimKit
   private var offlineSince: [String: Date] = [:]
   private var knownLocalServerID: String?
 
-  func setEnabled(_ enabled: Bool) {
-    if enabled, servers == nil {
-      let servers = PairedServers.shared
-      self.servers = servers
-      servers.onChange = { [weak self, weak servers] in
-        guard let self, let servers, self.servers === servers else { return }
-        self.sync(servers, localServerID: self.lastLocalServerID())
-      }
-      servers.start()
-    } else if !enabled, let servers {
-      self.servers = nil
-      servers.onChange = nil
-      servers.stop()
-      sessions = [:]
-      entries = []
+  func start() {
+    guard servers == nil else { return }
+    let servers = PairedServers.shared
+    self.servers = servers
+    servers.onChange = { [weak self, weak servers] in
+      guard let self, let servers, self.servers === servers else { return }
+      self.sync(servers, localServerID: self.lastLocalServerID())
     }
+    servers.start()
   }
 
   func localServerChanged() {

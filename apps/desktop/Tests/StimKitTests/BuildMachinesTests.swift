@@ -188,7 +188,7 @@ import Testing
     #expect(machines[2].readiness.reasons == "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here")
     #expect(
       machines.map(\.detail) == [
-        "Builds can run there.", "Builds stay on this Mac for now.", "Update the remote machine.",
+        "Builds can run there.", "Builds stay on this machine for now.", "Update the remote machine.",
       ])
     let older = try JSONDecoder().decode(
       BuildMachineStatus.self,
@@ -221,12 +221,38 @@ import Testing
       #"""
       {"machine":"mini","state":"outdated","diagnosis":{"layer":"compat","code":"server-outdated","title":"Server is outdated","message":"Older protocol.","remedy":"Update it."}}
       """#)
-    #expect(outdated.state == .unknown)
+    #expect(outdated.state == .outdated)
     #expect(outdated.listStatus == MachineListStatus(title: "Server is outdated", tone: .warning))
 
     let older = try status(#"{"machine":"mini","state":"unreachable"}"#)
     #expect(older.listStatus.title == "Unreachable")
     #expect(older.detail == "stim-server did not answer on its tailscale serve route.")
+  }
+
+  @Test func namesEveryRemoteMachineStateAsThePhoneAppDoes() throws {
+    struct Vector: Decodable {
+      var state: String
+      var title: String
+      var tone: String
+    }
+    let url = try #require(
+      Bundle.module.url(forResource: "remote-machine-state-vectors", withExtension: "json", subdirectory: "Fixtures"))
+    let tones: [Tone: String] = [.success: "success", .warning: "warning", .error: "error", .neutral: "neutral"]
+    for vector in try JSONDecoder().decode([Vector].self, from: Data(contentsOf: url)) {
+      let status = try JSONDecoder().decode(
+        BuildMachineStatus.self, from: Data(#"{"machine":"mini","state":"\#(vector.state)"}"#.utf8))
+      #expect(status.listStatus.title == vector.title, "\(vector.state)")
+      #expect(tones[status.listStatus.tone] == vector.tone, "\(vector.state)")
+      #expect(!status.detail.isEmpty && !status.detail.contains("Mac"), "\(vector.state)")
+    }
+    let unconfirmed = BuildMachineStatus(machine: "mini", state: .keyUnconfirmed)
+    #expect(unconfirmed.detail.contains("stim remote list") && unconfirmed.detail.contains("on mini"))
+    #expect(BuildMachineStatus(machine: "mini", state: .outdated).detail.contains("stim-server service update"))
+    for (state, title) in [("credentials-unavailable", "Credentials unreadable"), ("busy", "Check in progress")] {
+      let host = try JSONDecoder().decode(
+        BuildMachineStatus.self, from: Data(#"{"machine":"mini","state":"\#(state)"}"#.utf8))
+      #expect(host.listStatus.title == title)
+    }
   }
 
   @Test func marksATailnetMachineInRemoteMachinesWithItsDoctorStateNotTheTailscaleFlag() throws {
