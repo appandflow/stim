@@ -5117,7 +5117,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (method === 'share.list') {
         if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length))
           return error(id, 'bad-request', 'share.list takes no parameters.');
-        return send(socket, { id, result: { shares: shares.list() } });
+        return send(socket, { id, result: { shares: shares.list(), starting: shares.startsInFlight } });
       }
       if (method === 'share.stop') {
         if (

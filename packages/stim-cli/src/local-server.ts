@@ -250,20 +250,28 @@ export async function startShareServer(
   };
 }
 
+/** The stim-server `stim share` started: asked to stop (`exited` once it has), or left running for `starting` share starts. */
+export type ShareServerStop = { pid: number; exited: boolean } | { pid: number; starting: number };
+
 /**
- * Stops the stim-server `stim share` started for this Stim home, when it holds no share. A server started any other
- * way (Stim Desktop, the LaunchAgent, by hand) holds no such claim and is never stopped. Returns its pid and whether it exited,
- * after waiting up to 15 seconds, so a share started next does not meet a server that is stopping.
+ * Stops the stim-server `stim share` started for this Stim home, when it holds no share and answers no share start.
+ * A server started any other way (Stim Desktop, the LaunchAgent, by hand) holds no such claim and is never stopped. A
+ * server with a start in flight keeps running and exits by itself if that start leaves no share. Returns its pid and
+ * whether it exited, after waiting up to 15 seconds, so a share started next does not meet a server that is stopping.
+ * A server before `share-starting` reports no starts, so one in flight there is not seen.
  */
-export async function stopIdleShareServer(version: string): Promise<{ pid: number; exited: boolean } | null> {
+export async function stopIdleShareServer(version: string): Promise<ShareServerStop | null> {
   const holder = readClaimSet(shareServerPaths().claim).live[0];
   if (!holder) return null;
+  let starting = 0;
   try {
     const answer = await requestLocalServer('share.list', {}, { version, timeoutMs: 5000 });
     if (answer.serverPort !== holder.details.port || !('result' in answer) || answer.result.shares.length) return null;
+    starting = answer.result.starting ?? 0;
   } catch {
     return null;
   }
+  if (starting > 0) return { pid: holder.owner.pid, starting };
   process.kill(holder.owner.pid, 'SIGTERM');
   const deadline = Date.now() + SERVER_EXIT_WAIT_MS;
   while (pidExists(holder.owner.pid) && Date.now() < deadline) {

@@ -2326,7 +2326,11 @@ live now.`) and a time already past.
   `stim stop` and `stim worktree remove` end shares this way, because a device
   that goes away only makes a share wait.
 - `share.list` returns `shares`, the same rows without `url`, `password` or
-  `viewPassword`.
+  `viewPassword`, and `starting` (the `share-starting` feature): how many
+  `share.start` requests the server has not answered yet, which have no row.
+  A start waits up to 30 seconds for its workspace's native-run claim, so
+  `stim share stop` leaves a server with one running. A server without the
+  feature sends no `starting`, which means none.
 
 `stim-server --share [--port <n>]` is the server `stim share` starts when none
 answers on the local socket: loopback only, without a Desktop bootstrap. It

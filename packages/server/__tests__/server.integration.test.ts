@@ -1061,7 +1061,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       result: { remote: null, unreachable: expect.stringContaining('has not approved this machine'), upload: null },
     });
     expect(await local.request('route.setup')).toMatchObject({ result: { state: 'routed' } });
-    expect(await local.request('share.list')).toEqual(expect.objectContaining({ result: { shares: [] } }));
+    expect(await local.request('share.list')).toEqual(expect.objectContaining({ result: { shares: [], starting: 0 } }));
     expect(await local.request('share.stop', { workspace: root })).toEqual(
       expect.objectContaining({ result: { stopped: [] } }),
     );
@@ -1489,6 +1489,7 @@ describe('pairing', () => {
           'hosted-presence',
           'share-slug',
           'share-reuse',
+          'share-starting',
         ],
         actions: [],
         device: { name: 'Test phone' },

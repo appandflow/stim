@@ -2003,6 +2003,20 @@ describe("a web share starting while the workspace's devices may be shut down", 
     expect(held.events).toEqual([`hold ${WORKSPACE}`, 'release']);
   });
 
+  it('counts every start as in flight until it answers', async () => {
+    const held = claim();
+    const f = fixture({}, { holdWorkspace: held.holdWorkspace });
+    expect(f.hub.startsInFlight).toBe(0);
+    const starting = f.hub.start(shareRequest());
+    expect(f.hub.startsInFlight).toBe(1);
+    const second = f.hub.start(shareRequest({ platform: 'android' }));
+    expect(f.hub.startsInFlight).toBe(2);
+    held.refuse('`stim ios` holds the native-run claim');
+    held.open();
+    await Promise.all([starting, second]);
+    expect(f.hub.startsInFlight).toBe(0);
+  });
+
   it('is refused with the claim holder named, and registers nothing, when the claim cannot be taken', async () => {
     const held = claim();
     held.refuse('`stim ios` holds the native-run claim');

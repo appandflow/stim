@@ -9,6 +9,7 @@ import {
   resolveShareServer,
   startShareServer,
   stopIdleShareServer,
+  type ShareServerStop,
   type LocalServerAnswer,
   type ShareMethod,
   type ShareServerStart,
@@ -55,7 +56,7 @@ export interface ShareDeps {
   /** Starts a stim-server for this Stim home when none runs; null when no version-matched server is installed. */
   startServer: () => Promise<ShareServerStart | null>;
   /** Stops the stim-server `stim share` started, once it holds no share; returns its pid when it stopped one. */
-  stopServer: () => Promise<{ pid: number; exited: boolean } | null>;
+  stopServer: () => Promise<ShareServerStop | null>;
   /** Writes a line to stderr. */
   note: (line: string) => void;
   /** The host platform: stim-server serves its local socket everywhere but win32. */
@@ -339,7 +340,11 @@ async function stopShares(root: string, opts: ShareOptions, deps: ShareDeps, ver
     output: {
       stopped,
       ...(opts.forget ? { forgot } : { reusable }),
-      ...(server !== null ? { stoppedServer: server.pid, ...(server.exited ? {} : { stillStopping: true }) } : {}),
+      ...(server === null
+        ? {}
+        : 'starting' in server
+          ? { keptServer: server.pid, startingShares: server.starting }
+          : { stoppedServer: server.pid, ...(server.exited ? {} : { stillStopping: true }) }),
     },
     text: [
       stopped.length
@@ -356,13 +361,17 @@ async function stopShares(root: string, opts: ShareOptions, deps: ShareDeps, ver
       ...(!opts.forget && reusable.length
         ? ['To make the saved links unusable now, run: stim share stop --forget']
         : []),
-      ...(server !== null
-        ? [
-            server.exited
-              ? `Stopped the stim-server stim share started (pid ${server.pid}).`
-              : `Asked the stim-server stim share started (pid ${server.pid}) to stop; it has not exited yet, so wait a moment before sharing again.`,
-          ]
-        : []),
+      ...(server === null
+        ? []
+        : 'starting' in server
+          ? [
+              `Left the stim-server stim share started (pid ${server.pid}) running: ${server.starting === 1 ? 'a share start is' : `${server.starting} share starts are`} still in progress. It exits by itself if ${server.starting === 1 ? 'that start leaves' : 'those starts leave'} no share.`,
+            ]
+          : [
+              server.exited
+                ? `Stopped the stim-server stim share started (pid ${server.pid}).`
+                : `Asked the stim-server stim share started (pid ${server.pid}) to stop; it has not exited yet, so wait a moment before sharing again.`,
+            ]),
     ].join('\n'),
   };
 }
