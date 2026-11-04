@@ -602,7 +602,7 @@ leased until <time>" for each one.`,
                   (deviceHosts carries it too); the codes are
                   tailscale-stopped, tailscale-logged-out, tailscale-unavailable
                   (this machine's Tailscale), peer-not-found, peer-ambiguous,
-                  peer-wrong-tailnet (no peer is named so, and this Mac is
+                  peer-wrong-tailnet (no peer is named so, and this machine is
                   signed in to another tailnet than the one it was on when it
                   asked the machine for access; both are named; tailnet is
                   { name, suffix?, id? }),

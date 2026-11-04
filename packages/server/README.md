@@ -85,7 +85,11 @@ HTTP 503 with the same body. While Tailscale runs, it also carries `route`, read
 setup command would use. When the server runs under Stim Host, it also carries
 `host`: `{ name, screenRecording, accessibility }`, the grants macOS gives that
 app (checked at most every 5 seconds), or `null` when the check fails. Stim
-Desktop uses it to find a running server and show its route. A request through `tailscale serve` or on a Tailscale address
+Desktop uses it to find a running server and show its route. `keepAwake` is
+`{ "setting", "held", "pid"?, "reason"? }`: whether `server.keepAwake` is on, whether the
+server holds the sleep assertion (`pid` is the `caffeinate` process that owns it), and when
+it does not, `reason` is `off`, `unsupported`, `loopback-only`, `not-listening` or `failed`
+(see [Keep this machine awake](#keep-this-machine-awake)). A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
 carries, gets only `{ "version" }`, which Stim
 Desktop's Connections settings use to find stim-server on the other machines of the
@@ -711,6 +715,36 @@ stim settings set server.devicesPaused false
 
 Both settings default to `false`. Pausing does not make the machine idle: let
 existing work finish or stop the relevant sessions before timing benchmarks.
+
+## Keep this machine awake
+
+A machine that sleeps stops answering paired phones, machines that build or host
+simulators on it, and share links. On the worker machine, turn on the machine setting:
+
+```bash
+stim settings set server.keepAwake true
+```
+
+It defaults to `false`. While it is true on macOS, the server runs
+`caffeinate -s -w <server pid>`, which holds a `PreventSystemSleep` assertion: the Mac does
+not go to sleep on its own while it runs on AC power. On battery the assertion does not stop
+sleep, and the display may still sleep. `-w` ends the assertion when the server process ends,
+however it ends.
+
+The server holds the assertion only while it accepts connections from other machines: its
+tailnet or `server.lanAddresses` listener is up and it did not start with `--loopback-only`
+(or `--share`). It releases the assertion when the setting turns false, when the last such
+listener goes away (for example Tailscale stops), and when it closes, and takes it again when
+they return. It reads the setting every few seconds without a restart. On Linux and
+Windows the setting has no effect: `/health` reports `reason: "unsupported"`, the server logs
+one line saying so, and `service status` prints `keep awake: not held, only macOS supports it`.
+If `caffeinate` cannot start or stops on its own, `/health` reports `reason: "failed"` and the
+server does not start it again by itself. Restart the server to retry. Turning `server.keepAwake`
+off and on also retries, but the server reads the setting every 5 seconds and acts only on a
+change it sees, so wait more than 5 seconds between the two and confirm with
+`stim-server service status`.
+`pmset -g assertions` lists the held assertion under the `caffeinate` pid that `/health`
+and `service status` report, with the server's pid as the process it was created for.
 
 ## Build access
 
@@ -1657,7 +1691,7 @@ stim-server service install --serve \
 
 `status` prints whether launchd loaded the job, its state, pid, run count and
 last exit code (a server that exits at start, for example on a port in use,
-restarts every 30 seconds), the `/health` answer, the serve route and whether
+restarts every 30 seconds), the `/health` answer, the keep-awake state, the serve route and whether
 `install` created it, the host app and its permission grants, the log path, and the digest of the bundled Stim's build
 next to the `stim` on PATH. Offload needs the same digest on the client, so a
 mismatch there is not an offload match either. `--json` prints the same fields

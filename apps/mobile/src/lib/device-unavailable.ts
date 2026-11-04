@@ -21,7 +21,7 @@ export function deviceUnavailable({
   device?: DeviceRef;
 }): string {
   if (!device?.running && !hasFootage) {
-    if (hasStatus && !workspaceListed && !hasArchive) return t`This workspace is no longer on this Mac.`;
+    if (hasStatus && !workspaceListed && !hasArchive) return t`This workspace is no longer on the machine.`;
     if (recordingDisabled) return t`Recording was off for this workspace.`;
     if (range && range.spans.length === 0) return t`No recording for this device.`;
   }

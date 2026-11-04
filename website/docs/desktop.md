@@ -388,14 +388,16 @@ it over the tailnet stays opt-in: **Allow connections** in **Settings > Connecti
   **Builds** shows recent build placements and explains when history is unavailable.
   Overview includes the latest three placements when available. Remote machine
   choices show their reported readiness; only the selected choice uses the accent color.
-  The toolbar's **Load** figure is the 5-minute load average per core, amber at or over
-  `server.maxLoadPerCore` and red while new local work waits; CPU reads 100% from about
-  one load per core, and Load keeps counting past that. While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
+  The toolbar's **CPU** figure shows the share of processor time in use and, after a dot,
+  the 5-minute load average per core, such as `83% · 2.7/core`. It takes the worse color
+  of the two: load is amber at or over `server.maxLoadPerCore` and red while new local work
+  waits. CPU tops out at 100%; load keeps counting past one per core. A Mac that reports no
+  load shows CPU alone. While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
   `concurrency.maxAndroidDevices` or `concurrency.maxBuilds` is set, **This Mac** shows **Devices**, **iOS simulators**, **Android emulators** and **Builds** meters, such as
   `6 / 6`. A full device meter lists the devices holding the slots with their slot and idle
   time, each with **Stop**, which runs `stim stop --slot` in that workspace; builds are listed
   by workspace, or as offloaded for a client. A device no workspace records has no **Stop**.
-  Click the toolbar's CPU, load, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
+  Click the toolbar's CPU, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
   in each popover opens the Machines page. CPU covers active workspace processes,
   while memory covers the whole Mac.
   CPU and memory popovers graph recent whole-machine usage. Each disk volume
@@ -818,6 +820,15 @@ remote machine reads "on MACHINE", and one a paired machine placed reads "theirs
 offline, Desktop keeps showing its last status with "Offline since" and the
 time. Hiding a paired machine's workspace lasts until Desktop quits.
 
+**Active Workspaces** and the **Overview** list the machine's active workspaces next to this Mac's,
+each card marked with the machine's name and **View Only** or **View and Control**, and
+**Overview** counts each machine's active workspaces, running builds and devices. **Builds**
+shows **Running now** with the builds in progress on every machine and their phases. A card
+opens the same workspace page as the sidebar, and its device screen is live, view only.
+The **This Mac** and **All Machines** switch limits these screens to this Mac. A machine that is offline,
+or whose pairing was revoked, drops out of these lists, and a note names it, rather than
+showing its last status.
+
 Select an iOS or Android device on that page, including a hosted one, to open its
 screen in the viewer. Desktop streams it through the paired machine's server,
 which relays hosted devices from the Mac that runs them, so this Mac needs no
@@ -939,7 +950,7 @@ least one local or configured, approved remote member. Explicit placement is unc
 See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for CLI controls.
 
 **Settings > Connections > This machine uses** lists your remote machines with a status
-(**Approved**, **Waiting for approval**, **Key not confirmed**, **Server is outdated**, the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading),
+(**Approved**, **Waiting for approval**, **Key not confirmed**, **Server is outdated**, the layer that stopped an unreachable machine (such as **Server not ready** or **Machine is offline**), **Needs update** or the reason it is not offloading),
 a line with its running builds and free disk, its access (**Build**, **Run devices**, and **View** or **Control** when this machine also paired with it), up and down buttons, **Details** and
 **Remove...**. The status shows only a state that stops this Mac using the machine; notes, such as an
 Android SDK package Gradle downloads on the first build, never change it. With two or more machines each row shows its place in the list. The order is the placement priority: builds, simulators, emulators and macOS apps go to the first machine that has room and a load under its own limit, and to the next only when it has none. The buttons write the new order to `remote.machines`. Right-clicking a row shows the same actions. A machine's page also lists the ten newest builds that ran there, each opening to its phases and failure like the **Builds** page. It updates itself; there is no Refresh button. With none, it

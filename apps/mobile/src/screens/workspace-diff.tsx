@@ -29,7 +29,7 @@ function patchNote(patch: WorkspacePatch): string {
   if (patch.kind === 'unavailable') return patch.text;
   if (patch.kind !== 'text') return t`Unknown`;
   if (patch.section === 'untracked') return t`Empty new file.`;
-  return t`No diff remains in this section. Refresh the file list if the file changed on the Mac.`;
+  return t`No diff remains in this section. Refresh the file list if the file changed on the machine.`;
 }
 
 export function WorkspaceDiff({ path, file, group }: { path: string; file?: string; group: 'changed' | 'untracked' }) {
@@ -86,9 +86,9 @@ export function WorkspaceDiff({ path, file, group }: { path: string; file?: stri
   const title = file ?? (group === 'untracked' ? t`New Files` : t`Changed Files`);
   const note =
     state.kind !== 'open'
-      ? t`Connect to the Mac to view changes.`
+      ? t`Connect to the machine to view changes.`
       : !supported
-        ? t`Update Stim on the Mac to view workspace diffs.`
+        ? t`Update Stim on the machine to view workspace diffs.`
         : (request.error?.message ?? (!request.data ? t`Loading changes...` : null));
   return (
     <View style={styles.root}>
@@ -110,7 +110,7 @@ export function WorkspaceDiff({ path, file, group }: { path: string; file?: stri
             files.data?.truncated ? (
               <Text tone="secondary" style={styles.note}>
                 <Trans>
-                  Showing up to 200 files within the preview size limit. More changes are available on the Mac.
+                  Showing up to 200 files within the preview size limit. More changes are available on the machine.
                 </Trans>
               </Text>
             ) : undefined

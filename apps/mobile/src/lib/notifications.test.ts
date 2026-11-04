@@ -24,6 +24,7 @@ const OPEN: ConnectionState = {
   capabilities: [],
   features: [],
   deviceId: null,
+  deviceName: null,
 };
 const payload = fixture.payload as StatusPayload;
 const DEFAULTS: NotificationPrefs = { ...DEFAULT_PREFS, enabled: true };

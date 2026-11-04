@@ -2251,10 +2251,12 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   $STIM_HOME/build-waits, boots in $STIM_HOME/device-waits. A waiter takes a
   freed slot only when every run ahead of it has one, and the stim-daemon
   wakes the oldest waiter as soon as a build or boot finishes; without a
-  daemon each waiter polls (1s for builds, 2s for boots). Runs behind the
-  head of the boot queue reuse the last device listing while it is under 10s
-  old instead of listing again, and a boot starts only on a listing taken
-  under the admission lock. Every 10s a waiting
+  daemon each waiter polls (1s for builds, 2s for boots). A waiter keeps its
+  position when the daemon hands over to one from an installed upgrade: the
+  order lives in those directories, and it reconnects on its next poll. Runs
+  behind the head of the boot queue reuse the last device listing while it
+  is under 10s old instead of listing again, and a boot starts only on a
+  listing taken under the admission lock. Every 10s a waiting
   run prints its queue position and what it waits for:
 
     build       waiting for a build slot: queue position 2 of 3, all 1 in use, 40s elapsed -- stim guide lifecycle concurrency

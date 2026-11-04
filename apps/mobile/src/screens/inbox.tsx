@@ -146,8 +146,8 @@ export function Inbox() {
             title={category || macId ? t`Nothing Matches the Filters` : t`No Notifications`}
             message={
               inbox.supported
-                ? t`What your Macs notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days.`
-                : t`Update stim-server on your Macs to keep a history of their notifications.`
+                ? t`What your machines notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days.`
+                : t`Update stim-server on your machines to keep a history of their notifications.`
             }
           />
         }

@@ -18,10 +18,12 @@ public enum ResourceSummaryEntry: Equatable, Sendable {
 }
 
 public enum ResourceSummary {
+  /// Load is read together with CPU, so it has its own entry only while CPU has none.
   public static func entries(cpu: Bool, load: Bool = false, memory: Bool, disk: Bool) -> [ResourceSummaryEntry] {
-    let kinds: [ResourceKind] = [cpu ? .cpu : nil, load ? .load : nil, memory ? .memory : nil, disk ? .disk : nil].compactMap {
-      $0
-    }
+    let kinds: [ResourceKind] = [cpu ? .cpu : nil, load && !cpu ? .load : nil, memory ? .memory : nil, disk ? .disk : nil]
+      .compactMap {
+        $0
+      }
     return kinds.enumerated().flatMap { index, kind -> [ResourceSummaryEntry] in
       index == 0 ? [.item(kind)] : [.divider, .item(kind)]
     }

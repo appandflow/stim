@@ -319,7 +319,15 @@ builds there). A paired server's page shows its reported capacity and its `Forei
 &lt;machine&gt;". The two types never share a list: `PlacedWork.list` keeps `owner == .local`, `ForeignWork.list` one
 paired owner. This machine's page lists **Hosting for other machines**, the `device-host.sessions` rows labelled
 with the client's name, apart from its workspaces. A hosted session two servers report counts once, under the first. A pairing whose server says it is this machine's own gets no section.
-With the flag off, or with no pairing, nothing connects and the sidebar and Machines page are unchanged.
+Active Workspaces, the Overview and Builds list paired machines' workspaces too. `PairedMachine.list` keeps a pairing's
+workspaces only while its connection is open and its status feed delivers, so an unreachable, refused or revoked pairing
+adds none, and a note names it. `WallCard.merged` puts this Mac's cards first, then one card per active workspace of each
+available machine, with the machine's name and **View Only** or **View and Control** on the card; a card opens that workspace's
+page, and its device streams through `PhysicalDeviceScreen` as the page's tile does, view only, with the tile's
+offscreen pause and Standard quality. The Overview adds a **Machines** row (`MachineTally`) counting each machine's active workspaces,
+running builds and running devices, and Builds adds **Running now** (`RunningBuild`) with each build's phases from `plannedPhases`.
+A **This Mac** / **All Machines** control (`machineScope` preference, default all) appears on each screen while a machine is available.
+With the flag off, or with no pairing, nothing connects and the sidebar, Machines page and these screens are unchanged.
 
 ## Hiding a workspace
 
@@ -1580,7 +1588,7 @@ approval** (someone on that machine approves it by running the setup command
 there; the row says when the request lapses, such as "Waiting for approval
 until 21:05", in local time),
 the title of the layer doctor's `diagnosis` names when the machine cannot be used
-(**Tailscale is off**, **Mac is offline**, **No serve route**, **Server not running**,
+(**Tailscale is off**, **Machine is offline**, **No serve route**, **Server not running**,
 **Server not ready** and so on; **Unreachable** when an older `stim` reports none), with its
 message and remedy as the detail line,
 **Needs update** (it runs an incompatible Stim build; **Updating** while an update runs),

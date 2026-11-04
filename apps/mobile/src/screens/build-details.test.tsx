@@ -165,7 +165,7 @@ it('renders all five real archived runs with durations, failure codes and build 
   for (const duration of ['0:13', '0:29', '1:06', '0:09', '2:09']) expect(screen.getByText(duration)).toBeTruthy();
   expect(screen.getAllByText('Failed (STIM_BUILD_FAILED)')).toHaveLength(2);
   expect(screen.getAllByText('Built on janics-mac-mini')).toHaveLength(2);
-  expect(screen.getAllByText(/on this Mac/)).toHaveLength(3);
+  expect(screen.getAllByText(/on the machine/)).toHaveLength(3);
   expect(screen.queryByText('Next Build')).toBeNull();
   expect(screen.queryByText('Check Again')).toBeNull();
 });

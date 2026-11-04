@@ -25,7 +25,7 @@ import { loadRecording, replayKeyframe, replayRange, VideoFeed } from './replay.
 const { values } = parseArgs({
   options: {
     port: { type: 'string', default: '7787' },
-    name: { type: 'string', default: 'Mock Mac' },
+    name: { type: 'string', default: 'studio' },
     read: { type: 'boolean', default: false },
     workspaces: { type: 'string' },
     'free-gb': { type: 'string', default: '212' },
@@ -422,7 +422,7 @@ function serve(socket, device) {
     },
     'workspace.subscribe'(params) {
       if (!fixtures.status.environments.some((env) => env.path === params.workspace))
-        return { error: ['unknown-workspace', `${params.workspace} is not a Stim workspace on this Mac.`] };
+        return { error: ['unknown-workspace', `${params.workspace} is not a Stim workspace on this machine.`] };
       return stream((views, seq) => ({
         event: 'workspace',
         seq,
@@ -618,7 +618,7 @@ function serve(socket, device) {
         (params.action === 'reload' && ['ios', 'android', 'web'].includes(params.platform));
       if (!platformOk) return { error: ['bad-request', 'platform must be ios, android or web, and only for reload.'] };
       const env = fixtures.status.environments.find((candidate) => candidate.path === params.workspace);
-      if (!env) return { error: ['unknown-workspace', `${params.workspace} is not a Stim workspace on this Mac.`] };
+      if (!env) return { error: ['unknown-workspace', `${params.workspace} is not a Stim workspace on this machine.`] };
       if (params.action === 'reload' && params.platform === undefined && runsBothPlatforms(env)) {
         return {
           error: [
@@ -699,14 +699,14 @@ function serve(socket, device) {
         if (typeof params.archive !== 'string' || !params.archive || params.workspace !== undefined)
           return fail(id, 'bad-request', 'Send an archive id.');
         if (!fixtures.status.archived.some((archive) => archive.id === params.archive))
-          return fail(id, 'unknown-workspace', `Archive ${params.archive} is not a Stim archive on this Mac.`);
+          return fail(id, 'unknown-workspace', `Archive ${params.archive} is not a Stim archive on this machine.`);
       }
       if (['logs.query', 'logs.subscribe', 'replay.range', 'replay.keyframe', 'frames.subscribe'].includes(method)) {
         if (legacyArchives && !params.workspace) return fail(id, 'bad-request', 'workspace is required.');
         if (Boolean(params.workspace) === Boolean(params.archive))
           return fail(id, 'bad-request', 'Send exactly one workspace or archive.');
         if (params.archive && !fixtures.status.archived.some((archive) => archive.id === params.archive))
-          return fail(id, 'unknown-workspace', `Archive ${params.archive} is not a Stim archive on this Mac.`);
+          return fail(id, 'unknown-workspace', `Archive ${params.archive} is not a Stim archive on this machine.`);
       }
       outcome = handler(params, id);
     } catch (error) {

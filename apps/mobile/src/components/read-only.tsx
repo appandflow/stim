@@ -14,9 +14,9 @@ export function grantCommand(deviceId: string | null): string {
   return `stim-server devices grant ${deviceId ?? '<id>'} --control`;
 }
 
-/** How to let this phone control devices, for a pairing the Mac made read-only. */
+/** How to let this phone control devices, for a pairing the machine made read-only. */
 export function allowControlSteps(macName: string | undefined, deviceId: string | null): string {
-  const where = macName ?? t`the Mac`;
+  const where = macName ?? t`the machine`;
   const lookup = deviceId ? '' : t` (\`stim-server devices\` lists this phone's id)`;
   const command = grantCommand(deviceId);
   return t`On ${where}, open Stim Desktop, Settings \u2192 Phones, and turn on Allow control for this phone. Or run \`${command}\`${lookup}. Then reconnect.`;

@@ -110,6 +110,7 @@ export interface StimConfig {
     buildsPaused?: unknown;
     devicesPaused?: unknown;
     acceptClientBuilds?: unknown;
+    keepAwake?: unknown;
     lanAddresses?: unknown;
     maxLoadPerCore?: unknown;
     maxOffloadedBuilds?: unknown;
