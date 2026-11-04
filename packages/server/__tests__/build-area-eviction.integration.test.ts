@@ -16,7 +16,7 @@ import fs, {
 import fsPromises from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32 } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
 import { BuildArtifactCache } from 'stim/build-artifact-cache';
@@ -340,8 +340,11 @@ test(
 test('retains an area whose Gradle daemon log names a live process the process list does not show', async () => {
   area('a', 'newest', 0);
   const path = area('a', 'subject', 30);
-  mkdirSync(join(path, 'cache', 'gradle', 'daemon', '8.14'), { recursive: true });
-  writeFileSync(join(path, 'cache', 'gradle', 'daemon', '8.14', `daemon-${process.pid}.out.log`), '');
+  vi.stubEnv('SystemDrive', home);
+  const gradleHome =
+    process.platform === 'win32' ? windowsShortDir(win32.join(path, 'cache', 'gradle')) : join(path, 'cache', 'gradle');
+  mkdirSync(join(gradleHome, 'daemon', '8.14'), { recursive: true });
+  writeFileSync(join(gradleHome, 'daemon', '8.14', `daemon-${process.pid}.out.log`), '');
   await start().evictAreas();
   expect(existsSync(path)).toBe(true);
   expect(logs.join('\n')).toMatch(/may still use/);
