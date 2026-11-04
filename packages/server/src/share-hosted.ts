@@ -42,7 +42,7 @@ export interface ShareSource {
   /** A video listener is behind; called until its socket drains, it lowers the bitrate. */
   congested: () => void;
   /**
-   * Prototype: answers a viewer's WebRTC offer with a peer on the machine that owns the device, which sends the video
+   * Answers a viewer's WebRTC offer with a peer on the machine that owns the device, which sends the video
    * straight to the viewer. `closed` runs once when the peer ends on its own; rejects when the source cannot offer one.
    */
   webrtc?: (offer: string, closed: (reason: string) => void) => Promise<{ answer: string; close: () => void }>;

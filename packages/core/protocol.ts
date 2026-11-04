@@ -58,7 +58,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-congestion` is `device-host.frames.congested`, which lowers the bitrate of a hosted video subscription
  * whose client is behind.
  * `hosted-webrtc` is `device-host.webrtc.offer`, which answers a viewer's WebRTC offer with a data-channel peer on the host that
- * sends a hosted session's video straight to the viewer. A prototype.
+ * sends a hosted session's video straight to the viewer. Experimental, behind `share.webrtc`.
  * `macos-window-select` is `input.window`, which pins the view to a macOS app window named by `macos-windows`,
  * bringing it to the front, or with null resumes following the front window.
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.

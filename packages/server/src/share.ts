@@ -1480,7 +1480,7 @@ export class ShareHub {
     await this.input(share, viewer, message);
   }
 
-  /** Prototype: answers the viewer's WebRTC offer with a peer on the machine that owns the device. */
+  /** Answers the viewer's WebRTC offer with a peer on the machine that owns the device. */
   private async offer(share: Share, viewer: Viewer, sdp: unknown): Promise<void> {
     const failed = (message: string) => {
       if (viewer.socket.readyState === viewer.socket.OPEN) {

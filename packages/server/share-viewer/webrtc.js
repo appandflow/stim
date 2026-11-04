@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Prototype: carries the share's H.264 access units over a WebRTC data channel and shows transport stats. The page
+ * Carries the share's H.264 access units over a WebRTC data channel and shows transport stats. The page
  * asks for it with ?transport=webrtc (remembered in a cookie) and ?stats shows the panel on either transport.
  */
 (function () {

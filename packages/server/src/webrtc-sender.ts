@@ -3,7 +3,7 @@ import { FRAME_RETRY_MS } from './frame-delivery.ts';
 import { videoPacket, VideoGate, type AccessUnit } from './video.ts';
 
 /**
- * Prototype: sends a device's H.264 access units to one browser over a WebRTC data channel the browser opened
+ * Sends a device's H.264 access units to one browser over a WebRTC data channel the browser opened
  * (unordered, no retransmits), so the media goes from the machine that owns the device to the viewer by whichever ICE
  * path works. Signaling is one SDP offer and one answer on the viewer's authenticated share WebSocket.
  */
