@@ -642,6 +642,10 @@ const COPY_TIMEOUT_MS = 15000;
 
 function setOptionsOpen(open, restoreFocus) {
   optionsPanel.hidden = !open;
+  if (!open) {
+    copyFallback.hidden = true;
+    copyFallback.value = '';
+  }
   optionsButton.setAttribute('aria-expanded', String(open));
   if (open) setPeopleOpen(false, false);
   else if (restoreFocus) optionsButton.focus();
@@ -706,6 +710,7 @@ else {
     const touch = touchFirst.matches;
     syncTitle.textContent = touch ? 'Clipboard' : 'Sync clipboard';
     syncSwitch.hidden = touch;
+    syncSwitch.disabled = touch;
     syncHelp.textContent = touch
       ? 'Copy text between this phone or tablet and the device. Your browser only lets a page use the clipboard when you tap, so there is no automatic sync.'
       : 'Copy text between this browser and the device while this page is focused.';
@@ -848,6 +853,7 @@ else {
     setOptionsOpen(false, false);
     if (request && request.message) {
       if (send(request.message)) sync.sent(request.message.text);
+      else showNote('Not connected to the device.');
     } else showNote(request ? request.note : 'Your clipboard has no text.');
   });
   copyDevice.addEventListener('click', async () => {
