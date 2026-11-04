@@ -145,31 +145,35 @@ function funnelFindings(setup: ServerSetup): Finding[] {
   const ports = stimPorts(setup);
   const sharesOverFunnel = shareMode(setup) === 'tailscale';
   const open = (network.shares ?? []).filter((share) => share.auth === 'none');
-  return funnels.flatMap((funnel): Finding[] => {
-    const off = `Run \`tailscale funnel --https=${funnel.port} off\`, then check \`tailscale serve status\`.`;
-    if (ports.has(funnel.target)) {
-      return [
-        {
-          code: 'server-funnel',
-          level: 'cost',
-          title: 'PUBLIC: a Tailscale Funnel route exposes stim-server to the internet',
-          detail: `https port ${funnel.port} is a Funnel port and proxies to stim-server on port ${funnel.target}, so anyone on the internet can reach it. stim-server serves only tailnet routes; stim-server service install refuses this.`,
-          fix: off,
-        },
-      ];
-    }
-    if (!sharesOverFunnel || funnel.mount !== '/' || open.length === 0) return [];
-    const names = open.map((share) => `${share.id} (${share.workspace})`).join(', ');
-    return [
-      {
-        code: 'server-funnel',
-        level: 'cost',
-        title: 'PUBLIC: a Tailscale Funnel route is open while a share has no password',
-        detail: `https port ${funnel.port} is public and proxies to 127.0.0.1:${funnel.target}, and ${open.length === 1 ? 'this share has' : 'these shares have'} no password, so its URL token is the only secret: ${names}.`,
-        fix: 'End the share with `stim share stop` in its workspace (`stim share list` names them) and start it again with a password. Stim removes the Funnel route when the last share ends.',
-      },
-    ];
-  });
+  const exposed = funnels.flatMap((funnel): Finding[] =>
+    ports.has(funnel.target)
+      ? [
+          {
+            code: 'server-funnel',
+            level: 'cost',
+            title: 'PUBLIC: a Tailscale Funnel route exposes stim-server to the internet',
+            detail: `https port ${funnel.port} is a Funnel port and proxies to stim-server on port ${funnel.target}, so anyone on the internet can reach it. stim-server serves only tailnet routes; stim-server service install refuses this.`,
+            fix: `Run \`tailscale funnel --https=${funnel.port} off\`, then check \`tailscale serve status\`.`,
+          },
+        ]
+      : [],
+  );
+  const candidates = funnels.filter(
+    (funnel) => !ports.has(funnel.target) && funnel.mount === '/' && sharesOverFunnel && open.length > 0,
+  );
+  if (candidates.length === 0) return exposed;
+  const names = open.map((share) => `${share.id} (${share.workspace})`).join(', ');
+  const routes = [...new Set(candidates.map((funnel) => `https port ${funnel.port} (to 127.0.0.1:${funnel.target})`))];
+  return [
+    ...exposed,
+    {
+      code: 'server-funnel',
+      level: 'cost',
+      title: 'PUBLIC: a Tailscale Funnel route is open while a share has no password',
+      detail: `${open.length === 1 ? 'This share has' : 'These shares have'} no password, so its URL token is the only secret: ${names}. Shares are served through a Funnel route and ${routes.join(', ')} ${routes.length === 1 ? 'is' : 'are'} public; share rows carry no listener port, so doctor cannot tell which route is the share's.`,
+      fix: 'End the share with `stim share stop` in its workspace (`stim share list` names them) and start it again with a password. Stim removes its Funnel route when the last share ends.',
+    },
+  ];
 }
 
 function shareFindings(setup: ServerSetup): Finding[] {

@@ -61,7 +61,7 @@ import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { readServerSetup } from '../diagnostics/server-setup-probe.ts';
 import { isServerFinding, serverSetupFindings } from '../diagnostics/server-setup.ts';
 import { serverNetworkFindings } from '../diagnostics/server-network.ts';
-import { serviceToolchainEnv, serviceToolchainFindings } from '../diagnostics/server-toolchain.ts';
+import { serviceToolchainEntries, serviceToolchainFindings } from '../diagnostics/server-toolchain.ts';
 import { configuredMachines, inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
 import { memoryCulpritFindings, readMemoryCulpritsAsync } from '../memory-culprits.ts';
@@ -683,7 +683,7 @@ async function assembleDoctorReport(
   if (toolchain && setup?.services.length) {
     toolchain.services = setup.services.map(({ label, installed }) => ({
       label,
-      entries: discoverToolchain(serviceToolchainEnv(installed, homedir()), undefined, { runningNode: false }).entries,
+      entries: serviceToolchainEntries(installed, homedir()),
     }));
   }
   const maintenance = maintenanceStatus(env);

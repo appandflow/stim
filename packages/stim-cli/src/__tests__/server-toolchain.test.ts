@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { serviceToolchainEnv, serviceToolchainFindings, servicePaths } from '../diagnostics/server-toolchain.ts';
+import type { ToolchainProbe } from '@stim-cli/core/toolchain';
+import { serviceToolchainEntries, serviceToolchainFindings, servicePaths } from '../diagnostics/server-toolchain.ts';
 import { service, setup } from './_server-setup.ts';
 
 const pinned = service({
@@ -15,13 +16,15 @@ const pinned = service({
 
 describe('service toolchain', () => {
   it('lists the paths a start depends on and the path variables a service pins', () => {
-    expect(servicePaths(pinned.installed)).toEqual([
-      '/Users/me/Applications/Stim Host.app/Contents/MacOS/stim-host',
-      '/opt/homebrew/Cellar/node/24.1.0/bin/node',
-      '/Users/me/Library/Application Support/Stim/services/dev.stim.server/versions/1.41.0/stim-server.mjs',
-      '/opt/homebrew/opt/cocoapods/bin',
-      '/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home',
-    ]);
+    expect(new Set(servicePaths(pinned.installed))).toEqual(
+      new Set([
+        '/Users/me/Applications/Stim Host.app/Contents/MacOS/stim-host',
+        '/opt/homebrew/Cellar/node/24.1.0/bin/node',
+        '/Users/me/Library/Application Support/Stim/services/dev.stim.server/versions/1.41.0/stim-server.mjs',
+        '/opt/homebrew/opt/cocoapods/bin',
+        '/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home',
+      ]),
+    );
   });
 
   it('says a service cannot start when its node, after a Homebrew upgrade, is gone', () => {
@@ -44,12 +47,23 @@ describe('service toolchain', () => {
     expect(serviceToolchainFindings(setup({ services: [pinned], missingPaths: [] }))).toEqual([]);
   });
 
-  it("builds the environment the service's own settings give discovery: prepended directories, then launchd's PATH", () => {
-    expect(serviceToolchainEnv(pinned.installed, '/Users/me')).toEqual({
-      HOME: '/Users/me',
-      PATH: '/opt/homebrew/opt/cocoapods/bin:/usr/bin:/bin:/usr/sbin:/sbin',
-      JAVA_HOME: '/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home',
-      FOO: '/not/a/path',
+  it("lists each tool the way the server's own discovery finds it, with the service's node and --env pinned", () => {
+    const probe: ToolchainProbe = {
+      home: '/Users/me',
+      execPath: '/doctor/node',
+      isDir: (path) => path === '/opt/homebrew/Cellar/node/24.1.0/bin',
+      isFile: (path) => path === '/opt/homebrew/Cellar/node/24.1.0/bin/node',
+      read: () => null,
+      list: () => [],
+      link: () => null,
+    };
+    const entries = serviceToolchainEntries(pinned.installed, '/Users/me', probe);
+    const byName = Object.fromEntries(entries.map((entry) => [entry.name, entry]));
+    expect(byName.JAVA_HOME).toMatchObject({
+      value: '/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home',
+      source: 'environment',
     });
+    expect(byName.node?.value).toBe('/opt/homebrew/Cellar/node/24.1.0/bin/node');
+    expect(byName.ANDROID_HOME?.source).not.toBe('environment');
   });
 });

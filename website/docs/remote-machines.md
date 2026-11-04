@@ -1333,8 +1333,8 @@ or update a server. It looks at the installed service (the LaunchAgent on macOS,
 the systemd user unit on Linux), every running `stim-server` process, each
 server's `/health` on `127.0.0.1` and the Stim home's local socket. A machine
 with no service, server or socket costs it only a process listing. The doctor
-toolchain section also shows, for each service, where its recorded
-environment finds each tool. A build machine pinned in `build-machines.json`
+toolchain section also shows, for each service, where it finds each
+tool the way the server does at start, with the service's own node and `--env` entries. A build machine pinned in `build-machines.json`
 whose tailnet node changed is reported as `node-changed` under the existing
 build machine finding.
 

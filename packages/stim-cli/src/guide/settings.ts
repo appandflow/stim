@@ -1477,9 +1477,9 @@ list, a \`note\` finding only the doctor report:
                          advice to set 16384, never changed by doctor
   server-service-paths   cost/note: the service file names a launcher, node, server script or
                          directory that no longer exists
-The doctor toolchain section also lists, for each installed service, where its recorded
-environment (--path-prepend directories in front of launchd's default PATH, plus --env)
-finds each tool before the login shell adds more. The tailscale checks read \`tailscale
+The doctor toolchain section also lists, for each installed service, where it finds each
+tool the way the server does at start: tool discovery over launchd's default PATH with the
+service's own node, then the service's --env entries. The tailscale checks read \`tailscale
 status --json\` and \`tailscale serve status --json\` (3 seconds each) only when a service,
 server process or socket exists. A build machine pinned in build-machines.json whose
 tailnet node changed is the existing build-machine finding with state node-changed.

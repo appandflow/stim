@@ -81,23 +81,16 @@ export interface ServerSetup {
   servers: ServerReading[];
   local: LocalServerReading | null;
   clients: { build: number; deviceHost: number };
-  /** Tailscale, share settings and kernel settings; read only when a server, service or socket exists. */
   network: NetworkReading;
-  /** Paths a service file records (its node, server script, `--path-prepend` directories and path variables) that do not exist. */
   missingPaths: string[];
 }
 
 export interface NetworkReading {
-  /** This machine's name as its peers see it. */
   host: string;
-  /** `tailscale status --json` whatever its backend state; null when no tailscale command answered. */
   tailscaleStatus: unknown;
-  /** `tailscale serve status --json`; null when Tailscale is not running or the config could not be read. */
   serve: unknown;
   share: { exposure: 'auto' | 'tailscale' | 'proxy'; publicUrl: string | null };
-  /** The web shares this Stim home's server lists; null when none is reachable or none was read. */
   shares: Array<{ id: string; workspace: string; auth: 'generated' | 'set' | 'none' }> | null;
-  /** Linux `net.ipv4.tcp_notsent_lowat`; null elsewhere or when unreadable. */
   notsentLowat: number | null;
 }
 
