@@ -189,8 +189,8 @@ function askForKeyframe() {
   send({ type: 'keyframe' });
 }
 
-/** Decoded frames waiting for a refresh. ?queue=2 keeps two and draws the oldest; otherwise the newest wins. */
-const QUEUE_LIMIT = new URLSearchParams(location.search).get('queue') === '2' ? 2 : 1;
+/** Decoded frames waiting for a refresh: two, drawing the oldest. ?queue=1 keeps only the newest. */
+const QUEUE_LIMIT = new URLSearchParams(location.search).get('queue') === '1' ? 1 : 2;
 const undrawn = [];
 let drawScheduled = 0;
 
