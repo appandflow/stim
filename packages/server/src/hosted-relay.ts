@@ -30,7 +30,7 @@ import { DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, videoSubscription, Vide
 
 const TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 20_000;
-const KEYFRAME_RETRY_MS = 1000;
+const KEYFRAME_RETRY_MS = 400;
 export const CONGESTION_NOTICE_MS = 250;
 type Placement = { machine: string; session: string };
 type RelayTarget = { platform: 'ios' | 'android' | 'macos'; slot: string };

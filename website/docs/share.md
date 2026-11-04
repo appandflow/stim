@@ -203,10 +203,11 @@ A browser that can decode H.264 with WebCodecs (Chrome and Edge, Safari 16.4
 and later on macOS and iOS, Firefox 130 and later on desktop) gets the screen
 as H.264 video at up to 60 frames per second, 1280 pixels on the long edge, at
 3 to 8 Mbit/s: the bitrate drops while a viewer falls behind and climbs back
-once it catches up. Other browsers, and a browser whose decoder fails on the
-stream, get JPEG at 10 frames per second. A viewer that falls behind skips to
-the next keyframe instead of building up delay, and a viewer that joins gets a
-keyframe right away. Add `#jpeg` to the link to force JPEG.
+once it catches up. A hosted session's share climbs to 4.5 Mbit/s at most.
+Other browsers, and a browser whose decoder fails on the stream, get JPEG at 10
+frames per second. A viewer that falls behind skips to the next keyframe
+instead of building up delay, and a viewer that joins gets a keyframe right
+away. Add `#jpeg` to the link to force JPEG.
 
 Measured on a local iOS simulator share of a full-screen animation, in Chrome
 through Funnel on the same Mac:

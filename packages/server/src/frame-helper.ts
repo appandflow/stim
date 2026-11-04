@@ -25,10 +25,11 @@ import { serverDir } from './registry.ts';
 import { terminate } from './stim-command.ts';
 import { Bitrate, DEFAULT_VIDEO_LIMITS, type AccessUnit } from './video.ts';
 
-/** How a subscriber wants its frames: at most `fps` a second, scaled to fit `maxEdge` pixels. */
+/** How a subscriber wants its frames: at most `fps` a second, scaled to fit `maxEdge` pixels and `maxBitrate` bits a second. */
 export interface FrameHint {
   fps: number;
   maxEdge: number;
+  maxBitrate?: number;
 }
 
 export const DEFAULT_FRAME_HINT: FrameHint = { fps: FRAME_FPS.default, maxEdge: FRAME_EDGE.default };
@@ -50,7 +51,7 @@ const NOTICE_MESSAGE = 2;
 const VIDEO_MESSAGE = 3;
 const RECORD_MESSAGE = 4;
 const VIDEO_HEADER_BYTES = 14;
-const KEYFRAME_INTERVAL_MS = 250;
+const KEYFRAME_INTERVAL_MS = 100;
 const CLIPBOARD_TIMEOUT_MS = 10_000;
 
 function parseMacosWindow(value: unknown): MacosWindow | null {
@@ -430,6 +431,7 @@ export class HelperSource {
     }
     const jpegFps = raw.flatMap(({ listener, hint }) => (listener.video ? [] : [hint.fps]));
     const recording = viewers.length < watching.length;
+    this.bitrate.limit(Math.min(DEFAULT_VIDEO_LIMITS.maxBitrate, ...hints.map((hint) => hint.maxBitrate ?? Infinity)));
     const config = JSON.stringify({
       fps: Math.max(0, ...hints.map((hint) => hint.fps)),
       maxEdge: Math.max(FRAME_EDGE.min, ...hints.map((hint) => hint.maxEdge)),
