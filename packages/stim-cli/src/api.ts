@@ -19,6 +19,8 @@ import { repoRootAsync } from './workspace/worktree.ts';
 import { recordWorkspaceUseAsync } from './workspace/workspace-state.ts';
 import { restoreLightenedDependencies } from './workspace/lightened.ts';
 import { readDoctorReport, repairDoctorReport } from './commands/doctor.ts';
+import { readRemoteList } from './commands/remote.ts';
+import { doctorIo } from './offload/tailnet.ts';
 import {
   parseLocationRequest,
   parsePermissionRequest,
@@ -117,6 +119,7 @@ export type {
   StimSettingWriteOptions,
   StimSettingWriteResult,
   StimStats,
+  StimRemoteMachines,
   StimStopOptions,
   StimStopResult,
   StimReloadOptions,
@@ -253,6 +256,8 @@ export function createStim(options: StimOptions): StimClient {
         return result;
       });
     },
+    remoteMachines: ({ signal }: StimReadOptions = {}) =>
+      report(signal, (context) => readRemoteList(version, doctorIo(context), undefined, context)),
     repairDoctor: async ({ signal, platform, beforeRepair }: StimDoctorRepairOptions = {}) => {
       if (platform !== undefined && platform !== 'ios' && platform !== 'android')
         throw new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios or android.' });

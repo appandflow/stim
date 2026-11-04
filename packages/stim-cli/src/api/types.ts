@@ -15,6 +15,7 @@ import type { StopResult } from '../commands/stop.ts';
 import type { WebFacts } from '../commands/web.ts';
 import type { AndroidFacts, IosFacts } from '../engine/build-facts.ts';
 import type { DoctorReport } from '../commands/doctor.ts';
+import type { RemoteListing } from '../commands/remote.ts';
 import type { GcPayload, GcReadOptions } from '../commands/gc.ts';
 import type { ReloadFacts, ReloadPlatform } from '../commands/reload.ts';
 import type { StartFacts } from '../supervisor/start-facts.ts';
@@ -227,6 +228,8 @@ export interface StimSettingWriteOptions extends StimReadOptions {
 
 export type StimStats = StatsReport;
 
+export type StimRemoteMachines = RemoteListing;
+
 export interface StimClient {
   readonly projectRoot: string;
   /** Starts or reuses the app's dev server; resources remain workspace-owned until stop is called. */
@@ -235,6 +238,8 @@ export interface StimClient {
   identity(options?: StimReadOptions): Promise<string>;
   /** Reads findings with a 60 second execution and 35 second cleanup budget. Never repairs; records a completed check only with `record: true`. */
   doctor(options?: StimDoctorOptions): Promise<StimDoctorReport>;
+  /** Contacts each machine in remote.machines and reports it as `stim remote list --json` prints it. Works from any directory; asks nothing new. */
+  remoteMachines(options?: StimReadOptions): Promise<StimRemoteMachines>;
   /** Applies the repairs offered by doctor --fix, then returns the report and any repair refusal. */
   repairDoctor(options?: StimDoctorRepairOptions): Promise<{ report: StimDoctorReport; exitCode: 0 | 1 }>;
   /** Releases only this project's device leases, optionally filtered by platform and slot. */

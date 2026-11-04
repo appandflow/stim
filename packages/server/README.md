@@ -300,6 +300,11 @@ or `"platform": "android"` to doctor targets. Omitting it checks all selected pl
 Reports for each cwd and selector have separate cache entries and subscriptions.
 Clients requiring a filtered report check this feature before requesting one.
 
+The local-only `desktop-report-remote` feature adds `{ "report": "remote" }`,
+whose value is the `{ "machines": [...], "findings": [...] }` that
+`stim remote list --json` prints. It contacts each machine in `remote.machines`
+and asks nothing new.
+
 `desktop.reports.subscribe` takes the same target and returns a subscription id.
 It pushes `desktop-report` events with that `subscription`, `target`, and a
 `snapshot` containing `pending`, `value`, optional `error`, and `measuredAt` after
