@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Command } from 'commander';
@@ -511,6 +511,24 @@ describe('stim share', () => {
       expect(deps.sent[1]?.params).toMatchObject({ slug: 'pokedex', password: 'generated-pw-1', expiresAt: FUTURE });
       expect(deps.sent[1]?.params).not.toHaveProperty('token');
     });
+
+    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+      'still sends share.stop when the saved links cannot be marked stopped',
+      async () => {
+        const deps = fake([started(), () => ({ result: { stopped: [ROW] } })]);
+        await runShare('android', {}, deps, '1.0.0');
+        const dir = dirname(workspaceShareLinksFile('/work/app'));
+        chmodSync(dir, 0o500);
+        try {
+          const stopped = await runShare('stop', {}, deps, '1.0.0');
+          expect(deps.sent.map((sent) => sent.method)).toEqual(['share.start', 'share.stop']);
+          expect(stopped).toMatchObject({ ok: true, output: { stopped: [ROW] } });
+          expect(deps.notes.join('\n')).toContain('could not mark the saved links stopped');
+        } finally {
+          chmodSync(dir, 0o700);
+        }
+      },
+    );
 
     it('keeps a saved share live while it runs, stopped after a stop, and live again when reused', async () => {
       const deps = fake([started(), () => ({ result: { stopped: [ROW] } }), started()]);

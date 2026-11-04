@@ -15,8 +15,13 @@ function writeLinks(root: string, links: Record<string, SavedShare>): void {
   }
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.tmp-${process.pid}`;
-  writeFileSync(tmp, `${JSON.stringify({ version: 1, links }, null, 2)}\n`, { mode: 0o600 });
-  renameSync(tmp, file);
+  try {
+    writeFileSync(tmp, `${JSON.stringify({ version: 1, links }, null, 2)}\n`, { mode: 0o600 });
+    renameSync(tmp, file);
+  } catch (cause) {
+    rmSync(tmp, { force: true });
+    throw cause;
+  }
 }
 
 /** Saves a started share under `key`, replacing that target's earlier one and dropping every expired link. */

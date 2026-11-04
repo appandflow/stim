@@ -306,16 +306,26 @@ async function reuseShare(
 
 /** Ends this workspace's shares, keeps its saved links reusable, or with `--forget` deletes them. */
 async function stopShares(root: string, opts: ShareOptions, deps: ShareDeps, version: string): Promise<ShareResult> {
-  if (!opts.forget) pauseShareLinks(root);
+  const saving = (action: () => void, what: string) => {
+    try {
+      action();
+    } catch (cause) {
+      deps.note(`Warning: could not ${what}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  };
+  if (!opts.forget) saving(() => pauseShareLinks(root), 'mark the saved links stopped');
   let answer = await ask(deps, 'share.stop', { workspace: root }, version);
   if ('code' in answer && opts.forget && answer.code === 'STIM_SERVER_NOT_RUNNING') {
     answer = { result: { stopped: [] } };
   }
   if ('code' in answer) return { ok: false, error: answer };
   const { stopped } = answer.result;
-  const forgot = opts.forget ? forgetShareLinks(root) : 0;
+  let forgot = 0;
+  if (opts.forget) saving(() => (forgot = forgetShareLinks(root)), 'delete the saved links');
   const server = await deps.stopServer();
-  const reusable = Object.entries(reusableShareLinks(root)).map(([, link]) => ({
+  let saved: ReturnType<typeof reusableShareLinks> = {};
+  saving(() => (saved = reusableShareLinks(root)), 'read the saved links');
+  const reusable = Object.values(saved).map((link) => ({
     platform: link.platform,
     slot: link.slot,
     physical: link.physical,
