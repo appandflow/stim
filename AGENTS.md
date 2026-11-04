@@ -269,14 +269,14 @@ When the diff contains one of these and no maintainer has approved it, it adds
 - a change to how secrets, tokens or signing keys are stored, passed or
   exposed.
 
-Refactors, hardening, stricter validation and bug fixes inside the security
-areas do not qualify unless they widen what is exposed or expose a secret. The
-reviewer still names other concerns in its review, such as deleting or killing
-something Stim does not own, a new ownership rule, a release or publishing
-workflow that holds secrets, or a breaking change to on-disk state or a
-published contract; the Required invariants govern them, and they do not add the
-label. When it is unclear, leave the label off and name the concern in the
-review; that alone does not block `review: ai-approved`.
+Refactors, hardening, stricter validation and bug fixes inside the second and
+third areas do not qualify unless they widen what is exposed or expose a
+secret. The reviewer still names other concerns in its review, such as deleting
+or killing something Stim does not own, a new ownership rule, a release or
+publishing workflow that holds secrets, or a breaking change to on-disk state or
+a published contract; the Required invariants and `RELEASE.md` govern them, and
+they do not add the label. When it is unclear, leave the label off and name the
+concern in the review; that alone does not block `review: ai-approved`.
 
 With that label, the reviewer posts a comment that starts with `Human review:`
 and lists each unapproved `path:lines`, linked at the reviewed commit, with one
