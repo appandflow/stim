@@ -383,7 +383,13 @@ outside it moves to its own issue and pull request.
   Running setup is the worker-side approval: a person on the
   worker approves the key holding one ticket, once per capability, until one
   expiry, with a per-grant Y/n confirmation (Enter approves) in
-  a terminal (`--yes` otherwise). An SSH-driven run is not offered. Setup
+  a terminal (`--yes` otherwise). Stim Desktop on the worker is the other
+  approver: the person pastes the setup command there, and the server Desktop
+  started runs the same setup in process (`desktop.setup.subscribe`), asking
+  each grant through `desktop.setup.answer` instead of the terminal. Only the
+  connection that proved Desktop's private bootstrap key may call either, so
+  no other machine, paired client, SSH session or other local client can
+  approve. An SSH-driven run is not offered. Setup
   never enables Funnel or changes TCC. There is no pairing code for build, and
   `stim-server devices grant` never grants it.
   It never comes with `read` or `control`. Build clients live in
@@ -464,7 +470,8 @@ outside it moves to its own issue and pull request.
   A person on the worker approves it by running `stim-server setup` there with
   the requesting machine's setup ticket: the key holding one ticket, once per
   capability, until one expiry, with a per-grant Y/n confirmation (Enter approves) in a terminal (`--yes`
-  otherwise). An SSH-driven run is not offered. Setup never changes TCC or
+  otherwise), or in Stim Desktop on the worker under the same rules, as Build
+  access describes. An SSH-driven run is not offered. Setup never changes TCC or
   enables Funnel; the person approves normal macOS permission prompts.
   The server owns its opaque journal under `server/device-host-sessions/` and
   app receipts under `device-host/sessions/<id>/apps/`; core owns the readers. A hosted native worker
