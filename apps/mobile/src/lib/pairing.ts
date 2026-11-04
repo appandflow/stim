@@ -54,7 +54,9 @@ export function isExpectedHost(host: string): boolean {
 function checkEndpoint(endpoint: string): string | null {
   const match = ENDPOINT.exec(endpoint);
   if (!match) return t`The endpoint is not a ws:// or wss:// URL.`;
-  const [, scheme, host] = match;
+  const [, scheme, host, port] = match;
+  if (port && (Number(port.slice(1)) < 1 || Number(port.slice(1)) > 65535))
+    return t`The endpoint port must be between 1 and 65535.`;
   if (scheme.toLowerCase() === 'wss') return null;
   if (isPrivateAddress(host.toLowerCase())) return null;
   return t`The endpoint must start with wss://, or use ws:// with a private IP address.`;

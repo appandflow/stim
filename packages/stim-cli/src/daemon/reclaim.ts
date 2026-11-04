@@ -1,10 +1,11 @@
+import type { StimContext } from '@stim-cli/core';
 import { DEVICE_RECLAIM_REASON, type DaemonLadderAction } from '@stim-cli/core/state';
 import { workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceDeviceLastUseAt } from '../devices/activity.ts';
 import { idleShutdownDueMs, shutDownIdleDevices, writeIdleShutdownEvent } from '../devices/idle-shutdown.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
-import { countLiveOwnedDevicesByPlatform } from '../engine/device-capacity.ts';
+import { countLiveOwnedDevicesByPlatformAsync } from '../engine/device-capacity.ts';
 import { liveWaiters } from '../engine/wait-queue.ts';
 import { liveShareKeepReason, readWebShares, shareKeepReason } from '../local-server.ts';
 import { admissionLimits, getPlatformDeviceLimits } from '../workspace/config.ts';
@@ -33,6 +34,7 @@ export async function reclaimForBootWaiters({
   sims,
   act,
   log,
+  operation,
   now = Date.now(),
 }: {
   devices: readonly OwnedDeviceActivity[];
@@ -40,6 +42,8 @@ export async function reclaimForBootWaiters({
   sims: IosSimRecord[] | null;
   act: boolean;
   log: IdlePassInput['log'];
+  /** The daemon tick's context: the locked re-check reads processes and simulators without blocking its event loop. */
+  operation: StimContext;
   now?: number;
 }): Promise<DaemonLadderAction | null> {
   let waiters;
@@ -49,7 +53,7 @@ export async function reclaimForBootWaiters({
     return null;
   }
   if (!waiters.length || sims === null) return null;
-  const counts = countLiveOwnedDevicesByPlatform({ sims });
+  const counts = await countLiveOwnedDevicesByPlatformAsync({ sims });
   if ('unknown' in counts) return null;
   const { maxDevices } = admissionLimits();
   const platformCaps = getPlatformDeviceLimits();
@@ -122,9 +126,9 @@ export async function reclaimForBootWaiters({
         RECLAIM_IDLE_MS,
         (event) => writeIdleShutdownEvent(device.project, event),
         Date.now(),
-        { only: device, reason: DEVICE_RECLAIM_REASON },
+        { only: device, reason: DEVICE_RECLAIM_REASON, operation },
       ),
-    { purpose: 'device queue reclaim', supervisor: false, managedLocks: false },
+    { purpose: 'device queue reclaim', supervisor: false, managedLocks: false, operation },
   );
   const done = run.ran && typeof run.value === 'number' && run.value > 0;
   const detail = done

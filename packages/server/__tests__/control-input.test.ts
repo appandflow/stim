@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { adbInputArgs, parseInput, type SessionTarget } from '../src/control.ts';
+import { adbInputArgs, parseInput, pasteTypingChunks, type SessionTarget } from '../src/control.ts';
 import { MAX_CLIPBOARD_BYTES } from '../src/protocol.ts';
 
 const target = (platform: SessionTarget['platform']): SessionTarget => ({ platform, postures: [] });
@@ -133,4 +133,17 @@ it('refuses the clipboard on a web page, a native macOS app and a physical iPhon
     expect(clipboardGet(platform, {}, extra)).toHaveProperty('code', 'bad-request');
   }
   expect(clipboardSet('android', { text: 'a' }, { physical: true })).toHaveProperty('value');
+});
+
+it('splits a typeable paste into input.text pieces and turns CRLF into one Return', () => {
+  expect(pasteTypingChunks('hello')).toEqual(['hello']);
+  expect(pasteTypingChunks('x'.repeat(256))).toEqual(['x'.repeat(256)]);
+  expect(pasteTypingChunks('x'.repeat(257))).toEqual(['x'.repeat(256), 'x']);
+  expect(pasteTypingChunks(`a\tb\r\nc\n${'y'.repeat(600)}`)?.join('')).toBe(`a\tb\nc\n${'y'.repeat(600)}`);
+});
+
+it('leaves a paste to Command-V when the HID keyboard cannot type it', () => {
+  for (const text of ['', 'h\u00e9llo', 'smile \u{1f600}', 'bell\u0007', 'back\bspace', 'lone\rreturn']) {
+    expect(pasteTypingChunks(text)).toBeNull();
+  }
 });

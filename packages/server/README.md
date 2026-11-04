@@ -67,7 +67,8 @@ printable text on one line, trimmed. The client gets the new name in `hello`'s
 `GET http://127.0.0.1:7787/health` answers requests from this machine with the
 server's name, versions, `stimBuild` (the digest of the bundled Stim's build),
 protocol, `stimHome`, `startup`, `busy`
-(the offloaded `builds` and `hostedSessions` running now) and the current
+(the offloaded `builds` and `hostedSessions` running now, `hostedWork`, the sessions a restart
+would stop, and `resumes`, true when the rest are left running for the next server) and the current
 Tailscale state. It answers HTTP 200 once `startup.state` is `ready`; while the
 state is `pending` or `degraded` (see the LaunchAgent notes below) it answers
 HTTP 503 with the same body. While Tailscale runs, it also carries `route`, read from
@@ -852,7 +853,9 @@ named driver that fails to load leaves the app with `{ "driver": "none" }` and
 a generic notice; the reason, which can name paths on the hosting Mac, goes to
 stim-server's stderr. `stim-server` reference-counts the driver's daemon on running
 hosted macOS apps: it starts with the first, stops after the last, on
-revocation and on server shutdown, and restarts if it exits while apps run. The
+revocation and on server shutdown, and restarts if it exits while apps run. A
+hosted iOS or Android session the server leaves running at shutdown keeps its
+agent-device session directories; the next server starts its daemon again. The
 daemon is held under an ownership claim at `server/agent-device.claims` whose
 child is the daemon, and its state lives in `server/agent-device`.
 
@@ -950,7 +953,20 @@ private ledger ownership.
 The worker persists the journal under `$STIM_HOME/server/device-host-sessions/`
 and chooses an isolated worker home under `$STIM_HOME/device-host/sessions/`.
 An uncertain create, child exit, journal or deletion outcome retains the slot
-as `unknown`. Explicit stop can reconcile a complete record after a server
+as `unknown`. Closing the server leaves a ready iOS or Android session ready, its
+device booted, and releases its claims; the next server resumes it at start. For each
+ready record of an approved client it takes the exclusive session claim, which a live
+child of the previous server (an install, log or input worker) keeps held, and
+runs the worker mode `resume` in the session's private home. `resume` only reads: the
+ledger lists the one device, `hosted-device.json` matches, and the simulator is
+`Booted` under its recorded name (Android: the emulator answers as the recorded AVD
+with the recorded ABI). A verified session gets its installed attempt back, its Metro
+bridge listening on the recorded port, and agent control again; an `installing`
+attempt becomes `unknown`. An unverified device takes the normal stop path. A session
+with work in flight at close, a revoked or unapproved one, and macOS apps take the
+stop path at close and are not resumed. The agent grant's token comes from the server
+key (HKDF over `identity.key` and the session id), so it is the same after a restart
+and is written nowhere. Explicit stop can reconcile a complete record after a server
 restart; a live or unverifiable owner is refused. Missing ownership records
 need operator investigation, never a replacement inferred from a simulator name.
 Revoking this client's approval stops its sessions without granting access to
@@ -1494,9 +1510,14 @@ stim-server service rollback [--label <name>]
 stim-server service uninstall [--label <name>]
 ```
 
-Updates wait for offloaded builds and hosted sessions to finish by default.
-Use `--no-wait` to restart with work still active: shutdown interrupts those
-builds and sessions. Service shutdown, health checks and rollback still apply.
+Updates wait for offloaded builds and for the hosted sessions a restart would stop
+(a reservation being prepared, an app install or app transfer, a stop in progress, a
+session that is not ready, a macOS app, or a client that lost approval), by default; a server that resumes its hosted sessions reports `busy.hostedWork` and
+`busy.resumes` in `/health`, and its other ready iOS and Android sessions keep running
+through the restart and are resumed by the new server. An older server, which stops
+every session at shutdown, is still waited for entirely. Use `--no-wait` to restart
+with that work still active: shutdown interrupts those builds and native steps
+(a client retries an interrupted build on the machine; see offloaded builds). Service shutdown, health checks and rollback still apply.
 `stim-server setup --no-wait` uses the same policy when it updates a managed
 service; if setup requires a separate service update, its remedy includes the flag.
 
@@ -1637,8 +1658,9 @@ never run. Each install goes to
 named by its version, Stim build and server code, plus the package files for
 `--from`, and must start with the job's
 `node` before the switch. `update` then waits up to 30 minutes for `/health` to
-report no offloaded build and no hosted session (a server older than `busy` in
-`/health` restarts without waiting), rewrites only the server script in the
+report no offloaded build and no hosted session with a native step in flight
+(`busy.hostedWork`; a server older than `busy.resumes` waits for every hosted
+session, and one older than `busy` in `/health` restarts without waiting), rewrites only the server script in the
 plist (recording the previous one), restarts the job and waits up to 90 seconds
 for `/health` to answer with the new version and Stim build. When it does not,
 `update` puts the previous plist back and restarts it. Interrupt signals wait
@@ -2099,14 +2121,19 @@ workspace device with three methods that only the local Unix socket may call
   `passwordless: true` (no login; the URL token alone admits a viewer); with
   neither, the server generates a password. `view` (the `share-view-password`
   feature) is `{ password? }` and adds a second, view-only password, the given
-  one or a generated one; `password` stays the control password. It returns
+  one or a generated one; `password` stays the control password. `slug` (the
+  `share-slug` feature) is 3 to 32 lowercase letters, digits and hyphens,
+  starting and ending with a letter or digit, other than `assets`; the link is
+  `/s/<slug>/` instead of a random token, and the row carries `slug`. It
+  returns
   `auth` (`generated`, `set` or `none`), `viewAuth` (`generated`, `set` or
   `null`), and `password` and `viewPassword` only when it generated them, in
-  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, viewAuth, url, password, viewPassword }`.
+  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, viewAuth, slug, url, password, viewPassword }`.
   It refuses a device the workspace does not own or lease, a hosted device,
-  `control` on a physical iPhone, `password` with `passwordless`, and `view`
+  `control` on a physical iPhone, `password` with `passwordless`, `view`
   without `control`, with `passwordless`, or with the same password as
-  `password`.
+  `password`, and `slug` with `passwordless`, a malformed or reserved slug, or
+  a slug a live share holds.
 - `share.stop` takes `workspace` and ends its shares, returning `stopped`. With
   `id` (the `share-stop-id` feature) it ends only that share of the workspace,
   and refuses an `id` the workspace does not have with `bad-request`. A server
@@ -2186,7 +2213,8 @@ presence `touch` carries the second finger as `second`.
 With `control` on an iOS simulator, an Android emulator or an Android phone, a
 `clipboard-set` message (`text`, optional `paste`) and a `clipboard-get` message
 (`id`) from a viewer go through `input.clipboard.set` and `input.clipboard.get`,
-each costing ten inputs. The viewer sends `clipboard-set` with `paste: true` on
+each costing ten inputs. After a `paste: true` on an iOS simulator that was not typed, the
+viewer is told to tap the paste suggestion on the device. The viewer sends `clipboard-set` with `paste: true` on
 Command-V or Control-V while the screen has focus, from the browser's `paste`
 event. With its options menu's Sync clipboard switch on (the default) and the
 page focused, it sends `clipboard-get` with `poll: true` every 2 seconds, backing
@@ -2996,10 +3024,15 @@ sends reaches any other device.
   keys. When hello advertises `device-clipboard`, `input.clipboard.set` takes
   `text`, any Unicode text of at most 8192 UTF-8 bytes (a request is one
   message of at most 64 KiB, and JSON escapes a control character in up to six
-  bytes), and an optional `paste` that then pastes it into the focused field.
+  bytes), and an optional `paste` that then pastes it into the focused field. On an
+  iOS simulator, `paste` text of printable ASCII, line breaks and tabs (CRLF is one Return) is
+  typed instead, as `input.text` pieces of at most 256 characters fed at about 32 characters a
+  second, and the call answers `{ "typed": true }` once the first piece is sent; a second typed
+  paste is refused `device-busy` until the first has been typed. Other text is pasted with
+  Command-V, and the answer is `{}`.
   `input.clipboard.get` answers `{ "text" }`, refusing a clipboard over 65536
   bytes. An iOS simulator's clipboard is `simctl pbcopy` and `pbpaste` and its
-  paste is Command-V through the HID connection; an Android emulator's is the
+  paste is the typed text above, or Command-V through the HID connection; an Android emulator's is the
   gRPC `setClipboard` and `getClipboard`, pasted with `KEYCODE_PASTE` over
   `adb`; an Android phone's is scrcpy's `SET_CLIPBOARD` (with its paste flag)
   and `GET_CLIPBOARD`. A web page, a native macOS window and a physical iPhone

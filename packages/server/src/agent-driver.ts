@@ -6,7 +6,7 @@ import {
   type HostedAgentDevice,
   type HostedAgentDriver,
 } from '@stim-cli/agent-driver';
-import type { HostedAgentGrant } from '@stim-cli/core/state';
+import type { HostedAgentGrant, HostedAgentIssuedGrant } from '@stim-cli/core/state';
 
 type Resolved = HostedAgentDriver | null | Promise<HostedAgentDriver | null>;
 
@@ -38,6 +38,11 @@ export interface HostedAgentHostOptions {
   approved: (client: string, from: AgentPeer) => boolean;
   /** Called after a session's app stopped and its grant was withdrawn, so the host can end what still carries it. */
   withdrawn?: (session: string) => void;
+  /**
+   * The bearer token of `session`'s grant, in place of the one the driver issued. A host that derives it from a secret
+   * it already keeps lets the grant outlive a restart without writing the token anywhere.
+   */
+  tokenFor?: (session: string) => string;
   strictStop?: boolean;
   restartDelayMs?: number;
   maxRestarts?: number;
@@ -57,6 +62,7 @@ const none = (notice?: string): AgentAccess => ({ grant: { driver: 'none' }, ...
  * a driver restart drops the leases they name, so a restart issues new grants that the client reads
  * again through `app.attach`. A native device session's grant names no lease and keeps its token across a restart:
  * its client's remote config is written once, at launch, and agent-device's daemon exits after five idle minutes.
+ * With `tokenFor` the token is also the same after a server restart.
  */
 export class HostedAgentHost {
   private readonly options: HostedAgentHostOptions;
@@ -139,13 +145,17 @@ export class HostedAgentHost {
         driver.onExit(() => void this.lost(driver));
       }
       try {
-        const grant = await driver.issue(app);
-        return this.remember(app, { grant });
+        return this.remember(app, { grant: await this.issued(driver, app) });
       } catch (error) {
         if (this.live().length === 0) await this.stopDriver();
         return this.remember(app, none(this.reason(error)));
       }
     });
+  }
+
+  private async issued(driver: HostedAgentDriver, app: HostedAgentApp): Promise<HostedAgentIssuedGrant> {
+    const grant = await driver.issue(app);
+    return this.options.tokenFor ? { ...grant, token: this.options.tokenFor(app.session) } : grant;
   }
 
   private remember(app: HostedAgentApp, access: AgentAccess): AgentAccess {
@@ -244,7 +254,7 @@ export class HostedAgentHost {
       if (this.closed) return;
       for (const app of apps) {
         try {
-          const grant = await driver.issue(app);
+          const grant = await this.issued(driver, app);
           const token = this.options.strictStop ? tokens.get(app.session) : undefined;
           this.remember(app, { grant: token && 'token' in grant ? { ...grant, token } : grant });
         } catch (error) {
@@ -319,17 +329,23 @@ export class HostedAgentHost {
     return verdict;
   }
 
-  close(): Promise<void> {
+  /**
+   * Stops every driver. A session in `keep` keeps its lease directories on disk, so a server that resumes the
+   * session can issue the same grant again; every other session is revoked.
+   */
+  close({ keep }: { keep?: ReadonlySet<string> } = {}): Promise<void> {
     this.closed = true;
     return this.serialize(async () => {
       const children = [...this.devices.entries()];
-      const results = await Promise.allSettled(children.map(([, child]) => child.close()));
+      const results = await Promise.allSettled(
+        children.map(([session, child]) => child.close({ keep: keep?.has(session) ? new Set([session]) : undefined })),
+      );
       const failures: unknown[] = [];
       for (const [index, result] of results.entries()) {
         if (result.status === 'fulfilled') this.devices.delete(children[index]![0]);
         else failures.push(result.reason);
       }
-      const sessions = [...this.entries.keys()];
+      const sessions = [...this.entries.keys()].filter((session) => !keep?.has(session));
       for (const session of sessions) await this.drop(session, false);
       try {
         await this.stopDriver();

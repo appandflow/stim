@@ -148,8 +148,10 @@ actions use typed local-server operations for the selected workspace. The comman
   or per run with `stim ios --remote auto` / `stim ios --remote <machine>`.
   Desktop passes no remote flag for a new run. Recorded hosted sessions stay
   fixed to their machine until `stim stop`. When a device is not on this Mac,
-  its tile, workspace page, viewer toolbar and sidebar row show the machine's name
-  with a computer icon (VoiceOver: "Running on &lt;machine&gt;"),
+  its tile, workspace page and viewer toolbar show the machine's name
+  with a computer icon (VoiceOver: "Running on &lt;machine&gt;"), and a sidebar row
+  shows "on &lt;machine&gt;" (VoiceOver: "Yours, running on &lt;machine&gt;"), or
+  "theirs, on &lt;machine&gt;" in a paired machine's section, where the work belongs to that machine,
   with the placement reason as hover text. Local devices show no placement label. The
   same views label EAS Simulator sessions **EAS**. The
   menus offer the platforms `stim status` reports in `platforms`, plus any
@@ -293,11 +295,11 @@ and shows `stim-server devices revoke <id>`; it does not revoke on the machine. 
 right now is tried again, not reported as revoked.
 
 `PairedServerSessions` wraps each of those clients in a `ServerSession` (owner `.paired(<pairing id>)`), so a pairing
-has one connection, and `StatusStore.usePairedServers` follows each one's status in memory. Below this Mac's
-projects, the sidebar gets a section per paired server: its name, connection dot, a **View Only** pill (**View and
+has one connection, and `StatusStore.usePairedServers` follows each one's status in memory. Below this machine's
+projects, the sidebar gets a section per paired server, titled "&lt;name&gt; (viewing)" (`PairedServerWording.sectionTitle`): its name, connection dot, a **View Only** pill (**View and
 Control** for a `--control` pairing), and its
-workspaces with the same grouping, status filter and row layout as this Mac's: the status sits beside the name when the whole name fits and on its own line below it otherwise. Hidden, expanded and collapsed state for those
-rows is kept in memory only, keyed by the owner and path, and this Mac's hidden paths never apply to them. A paired
+workspaces with the same grouping, status filter and row layout as this machine's: the status sits beside the name when the whole name fits and on its own line below it otherwise. Hidden, expanded and collapsed state for those
+rows is kept in memory only, keyed by the owner and path, and this machine's hidden paths never apply to them. A paired
 row opens a page: the status, the path as text, the agent and device lines with the machine each runs on
 ("Running on janics-mac-mini-2"), the build and where it compiles, and "Viewing floco · read-only" or "Controlled by
 floco". An iOS or Android device row, own or hosted, and a hosted macOS app open `DeviceViewer` with the pairing's
@@ -310,9 +312,13 @@ server's `action` method by `ServerSession.runPairedAction`. A read-only pairing
 command Desktop builds from the `hello` device id; a `forbidden` answer reconnects to pick up the new access. The
 page has no logs, files or settings. The sidebar row's context menu offers the same **Reload App** and **Stop** actions,
 with the same access checks and a confirmation naming the owning server before Stop, alongside **Hide**.
-**Machines** lists each paired server after the
-build machines, with its reported capacity, its hosted devices and its offloaded builds. A hosted session two
-servers report shows once, under the first. A pairing whose server says it is this Mac's own gets no section.
+**Machines** groups its machine buttons with `MachineChoices.groups`: **Your machines** holds this machine and
+the remote machines, **Viewing** the paired servers, and the labels show only while a pairing exists. A remote
+machine's page lists **Your work on &lt;machine&gt;** (`PlacedWork`: this machine's hosted devices and offloaded
+builds there). A paired server's page shows its reported capacity and its `ForeignWork`, worded "&lt;name&gt; runs it on
+&lt;machine&gt;". The two types never share a list: `PlacedWork.list` keeps `owner == .local`, `ForeignWork.list` one
+paired owner. This machine's page lists **Hosting for other machines**, the `device-host.sessions` rows labelled
+with the client's name, apart from its workspaces. A hosted session two servers report counts once, under the first. A pairing whose server says it is this machine's own gets no section.
 With the flag off, or with no pairing, nothing connects and the sidebar and Machines page are unchanged.
 
 ## Hiding a workspace
@@ -537,10 +543,13 @@ read of a session only records the device's text. Mac items with concealed or tr
 marks (`org.nspasteboard.ConcealedType`, `org.nspasteboard.TransientType` and older password
 manager types), files or images, and empty or over-256 KB text are not sent to the device. Device text
 is written to the Mac marked transient, since its sensitivity is unknown. The popover also has
-**Paste Mac Clipboard**, which presses Command-V on an iOS simulator (iOS asks
-"Allow Paste" for text from another source) and **Copy Device Clipboard**.
-After a paste on an iOS simulator, a notice says to tap the paste suggestion on the device
-if nothing appears. Apps on the device, and agents driving it, can read the text sent to it.
+**Paste Mac Clipboard** and **Copy Device Clipboard**. On an iOS simulator, Paste
+types printable ASCII, line breaks and tabs into the focused field as key presses (about 35
+characters a second, so a long paste takes a while), so iOS shows no paste prompt and a
+simulator slimmed by SimSlim takes it too; the field's own typing rules still apply, such as
+smart quotes and dashes. Text with any other character (accents, emoji) is pasted with
+Command-V, where iOS asks "Allow Paste" for text from another source, and a notice says to tap
+the paste suggestion on the device if nothing appears. Apps on the device, and agents driving it, can read the text sent to it.
 
 A device Desktop shows through stim-server (a hosted iOS or Android session, a device of a paired
 machine, a leased Android phone) has the same section once **Control** is on, and a disabled one that names the server to update when its hello lacks the feature. Sync is on by default, so the current Mac text is sent to the device's machine as soon as Control starts. Sync, **Paste Mac
@@ -550,8 +559,9 @@ is disabled and names the server to update. The device takes at most 8 KiB of UT
 Mac: a larger Mac item is not synced and shows a notice, and **Paste Mac Clipboard** refuses it with
 its size. Each call costs 10 inputs of the connection's budget. Text crosses the network, so a hosted
 device on another Mac receives it over the tailnet. Failures show their server message in a notice
-(sync) or an alert (the buttons). The paste hint above applies to iOS devices reached through the
-server too. A leased iPhone, macOS apps, web pages, remote EAS previews and replay never sync.
+(sync) or an alert (the buttons). Pasting into an iOS simulator reached through the
+server types the text the same way (the server does it), and the paste hint applies only when it
+could not. A leased iPhone, macOS apps, web pages, remote EAS previews and replay never sync.
 
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,
@@ -2119,7 +2129,7 @@ In a normal debug session, **Window > SwiftUI Playground** opens the same fixtur
 that session's main window keeps its normal live services. The standalone entry is the
 backend-free option. Release builds exclude the playground and its fixture seams, and refuse `--playground`.
 
-Choose live or archived Workspaces, the Sidebar (this Mac's and a paired machine's projects at three sidebar widths), Notifications, Builds, Simulator controls, Settings or Design tokens. Each screen offers
+Choose live or archived Workspaces, the Sidebar (this machine's and a paired machine's projects at three sidebar widths, with the "on mini" and "theirs, on mini-2" placement badges), Machine ownership (the Machines page's chip groups, your work placed on a remote machine and the work other machines run here), Notifications, Builds, Simulator controls, Settings or Design tokens. Each screen offers
 its applicable named scenarios: ready, loading, empty, error, long text and large data.
 Notifications includes 200 entries; Builds includes the retained maximum of 10 runs per platform. Local inboxes and fixed
 simulator forms omit loading/error or large-list scenarios that their production views do not have.
