@@ -907,6 +907,8 @@ for (;;) { fs.closeSync(fs.openSync(${JSON.stringify(config)}, 'w')); fs.writeFi
 });
 
 describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   async function routeServer(config: unknown = {}, env: Record<string, string> = {}) {
     const status = join(root, 'serve.json');
     const commandLog = join(root, 'serve-calls.ndjson');
