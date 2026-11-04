@@ -91,6 +91,10 @@ struct RootView: View {
   @State private var pendingSharedLink: PendingSharedWorkspaceLink?
   @Environment(\.openWindow) private var openWindow
   @Environment(\.openSettings) private var openSettings
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.accessibilityReduceMotion) private var reduceAppearanceMotion
+  @State private var appearanceHovered = false
+  @AppStorage(AppPreferences.Key.appearance) private var appearance = Appearance.auto
   @AppStorage("settingsTab") private var settingsTab = "app"
 
   private let environment: Task<[String: String], Never>
@@ -150,7 +154,45 @@ struct RootView: View {
       }
     } detail: {
       HStack(spacing: 0) {
-        detail.frame(maxWidth: .infinity, maxHeight: .infinity)
+        detail
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .overlay(alignment: .bottomTrailing) {
+            let isDark = colorScheme == .dark
+            let title = isDark ? "Switch to light mode" : "Switch to dark mode"
+            let button = Button {
+              let next: Appearance = isDark ? .light : .dark
+              appearance = next
+              Theme.apply(next)
+            } label: {
+              ZStack {
+                Image(systemName: isDark ? "sun.max" : "moon")
+                  .id(isDark)
+                  .font(.system(size: 17))
+                  .foregroundStyle(Palette.text)
+                  .transition(reduceAppearanceMotion ? .opacity : .scale(scale: 0.75).combined(with: .opacity))
+              }
+              .scaleEffect(appearanceHovered && !reduceAppearanceMotion ? 1.08 : 1)
+              .animation(.easeOut(duration: 0.12), value: appearanceHovered)
+              .animation(.easeInOut(duration: 0.18), value: isDark)
+              .frame(width: 32, height: 36)
+              .contentShape(Rectangle())
+            }
+            .buttonStyle(.hoverRow(radius: Radius.round))
+            .onHover { appearanceHovered = $0 }
+            .accessibilityLabel(title)
+            .help(title)
+            .padding(.horizontal, Space.xs)
+            .frame(height: ToolbarMetrics.glassHeight)
+
+            Group {
+              if #available(macOS 26.0, *) {
+                button.glassEffect(.regular, in: Capsule())
+              } else {
+                button.background(.regularMaterial, in: Capsule())
+              }
+            }
+            .padding(Space.lg)
+          }
         if tutorialDocked, let snapshot = tutorial.snapshot {
           TutorialDockHost(transitioning: tutorialWindowTransitioning) {
             HStack(spacing: 0) {
