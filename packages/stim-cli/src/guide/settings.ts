@@ -1190,17 +1190,21 @@ Device, --remote, Android CAS compiler builds, builds with the build cache off, 
 and refuse on a cache miss, with a remedy to rerun with --remote-build local or
 auto. An iOS simulator Release or other non-Debug build can: the remote machine
 bundles the JS of the synced checkout into the app.
-An Android release variant can too. A remote machine gets no signing key or
-password from this one: an Android offload leaves out every keystore other than
-debug.keystore, and keystore.properties. A release build type signed with
-debug.keystore, as the React Native and Expo templates are, is signed there. Any
-other signing config builds as an unsigned APK, which this machine zipaligns and
-signs with android.keystore, or android/app/debug.keystore when that is unset; it
-needs the Android SDK build-tools and refuses without them. Gradle scripts that
-read a missing key or password while configuring fail there. A release offload
-refuses before uploading anything when the android.keystore file has another name
-inside the repository, or a .properties or credentials.json file sets a store or
-key password. Any of these falls back to a local build unless a machine was named.
+An Android release variant can too. An Android offload leaves out keystores
+(*.keystore, *.jks, *.p12, *.pfx) other than debug.keystore, and keystore.properties.
+A release build type signed with debug.keystore, as the React Native and Expo
+templates are, is signed there. Any other signing config builds as an unsigned APK,
+which this machine zipaligns and signs with android.keystore, or
+android/app/debug.keystore when that is unset; it needs the Android SDK build-tools
+and refuses without them. Gradle scripts that read a missing key or password while
+configuring fail there. A release offload refuses before uploading anything when the
+android.keystore or android.keystorePassword file has another name inside the
+repository, or a .properties, .env, credentials.json or Gradle file sets a store or
+key password. Stim recognizes signing material only by those names and contents: a
+key or password anywhere else is still sent, so keep them out of the repository. The
+remote machine's stim-server must have this release's Android release support, and
+it always rebundles the JS of the synced checkout.
+Any of these falls back to a local build unless a machine was named.
 An APK built on a remote machine has no asset list, so its JS cannot be swapped: a
 later run with the same fingerprint builds again there.
 Invalid values, unlisted names and unpaired names refuse

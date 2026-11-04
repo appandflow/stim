@@ -91,6 +91,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `build-compat` accepts `compat` on `build.start`, and in place of `stimBuild` in React Native and SwiftPM artifact
  * queries.
  * `build-reuse-artifact` accepts `reuseArtifact` with `podsOnWorker` on `build.start`.
+ * `build-android-release` builds an Android release variant with no signing key and a rebundled JS, and returns an
+ * unsigned APK for a client to sign.
  * `build-jdk` accepts `jdk` on `build.start`, the JDK major an Android build runs on; the machine finds an installed JDK of that
  * major when its default differs.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
@@ -170,6 +172,7 @@ export const FEATURES = [
   'server-update',
   'build-compat',
   'build-jdk',
+  'build-android-release',
   'build-reuse-artifact',
   'desktop-reports',
   'desktop-machine-history',

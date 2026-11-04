@@ -1353,7 +1353,7 @@ async function compileAndroid(
           buildCache: options.gradleBuildCache,
           pch: options.pch,
           compilerCacheDisabled: options.compilerCache === 'none',
-          stripSigning: isReleaseVariant(options.variant),
+          workerRelease: isReleaseVariant(options.variant),
           ccache: options.compilerCache === 'ccache' ? resolveCcache({ root, layout, onNote }) : null,
           onHeartbeat: onNote,
           onNote,

@@ -7818,6 +7818,18 @@ describe('strict remote machine selection', () => {
     expect(store).not.toHaveBeenCalled();
   });
 
+  test('a machine without Android release support gets a remedy to update it', async () => {
+    configureMini();
+    const { offload } = offloadedRelease();
+    offload.mockResolvedValue({
+      ok: false,
+      machine: 'mini',
+      reason: 'its stim-server cannot build an Android release variant',
+    });
+    const result = await harness({ buildMachine: 'mini', variant: 'release', build: vi.fn<() => never>() }).run();
+    expect(result.error?.remedy).toContain('stim-server service update');
+  });
+
   test('a password file in the sync gets a remedy about that file, not about signing here', async () => {
     configureMini();
     const reason = 'signing.properties holds an Android signing key or its password, and it stays here';

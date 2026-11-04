@@ -55,10 +55,11 @@ import {
 import { nativeGradleTransfer, type GradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
+import { isReleaseVariant } from '../commands/android/support.ts';
 import { isReleaseConfiguration } from '../commands/ios/support.ts';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
 import { isSigningKeystore } from './signing-files.ts';
-import { namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
+import { ANDROID_RELEASE_UNSUPPORTED, namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import {
   buildsOnlyOnWorker,
@@ -1321,6 +1322,17 @@ async function resumeJob(
 }
 
 /** Mirrors the checkout on the machine: the manifest in pages, then every blob it lacks. */
+function unsupportedBuild(connection: BuildConnection, request: BuildRequest): string | null {
+  const native = request.platform !== 'macos' ? request.native : undefined;
+  if (native)
+    return connection.supports(NATIVE_BUILD_FEATURE[native.provider]) ? null : unsupportedNative(native.provider);
+  return request.platform === 'android' &&
+    isReleaseVariant(request.android.variant) &&
+    !connection.supports('build-android-release')
+    ? ANDROID_RELEASE_UNSUPPORTED
+    : null;
+}
+
 function omittedFromSync(platform: BuildRequest['platform']): ((path: string) => boolean) | undefined {
   return platform === 'android' ? isSigningKeystore : undefined;
 }
@@ -1756,10 +1768,10 @@ export async function offloadBuild(
         if (moveOn(reason)) continue;
         return fail(reason);
       }
-      if (native && !choice.connection.supports(NATIVE_BUILD_FEATURE[native.provider])) {
-        const reason = unsupportedNative(native.provider);
-        if (moveOn(reason)) continue;
-        return fail(reason);
+      const unsupported = unsupportedBuild(choice.connection, request);
+      if (unsupported) {
+        if (moveOn(unsupported)) continue;
+        return fail(unsupported);
       }
       cached = await peerArtifact(choice, request, expectedFingerprint);
       if (cached) {

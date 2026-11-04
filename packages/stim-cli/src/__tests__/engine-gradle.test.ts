@@ -214,20 +214,36 @@ describe('buildAndroid', () => {
     );
   });
 
-  test('stripSigning adds the worker signing script after the optimizations script', async () => {
+  test.each([
+    { workerRelease: true, finds: true },
+    { workerRelease: false, finds: false },
+  ])('an unsigned release APK with workerRelease $workerRelease is found: $finds', async ({ workerRelease, finds }) => {
     makeAndroidProject();
-    const calls: string[][] = [];
-    await buildAndroid(
-      { root },
+    const dir = join(apkOutputsDir(defaultAndroidLayout(root)), 'release');
+    const unsigned = join(dir, 'app-release-unsigned.apk');
+    let args: string[] = [];
+    const result = await buildAndroid(
+      { root, variant: 'release' },
       {
-        stripSigning: true,
-        spawnFn: (_cmd, args) => {
-          calls.push(args);
-          return fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() });
+        workerRelease,
+        spawnFn: (_cmd, spawned) => {
+          args = spawned;
+          return fakeChild({
+            lines: ['BUILD SUCCESSFUL in 1s'],
+            onExit: () => {
+              mkdirSync(dir, { recursive: true });
+              writeFileSync(unsigned, 'apk');
+              writeFileSync(
+                join(dir, 'output-metadata.json'),
+                JSON.stringify({ elements: [{ outputFile: 'app-release-unsigned.apk' }] }),
+              );
+            },
+          });
         },
       },
     );
-    expect(calls[0]?.slice(-2)).toEqual(['--init-script', expect.stringContaining('android-worker-signing.gradle')]);
+    expect(result.ok ? result.apkPath : null).toBe(finds ? unsigned : null);
+    expect(args.some((arg) => arg.endsWith('android-worker-release.gradle'))).toBe(workerRelease);
   });
 
   test('the build_start record shows --no-build-cache when the cache is off', async () => {

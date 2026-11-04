@@ -23,7 +23,7 @@ import { explainBuildMiss, fingerprintErrorMissReason } from '../cache/miss-reas
 import { formatDuration, shortHash } from '../command-output.ts';
 import { androidMetroRuntime, androidProcessRuntime } from '../commands/android/launch.ts';
 import { existsSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { join, relative, resolve as resolvePath, sep } from 'node:path';
 import { androidHome } from '../devices/android.ts';
 import { androidSdkRefusal } from '../engine/gradle.ts';
 import {
@@ -475,7 +475,11 @@ function reactNativeAndroidArtifact(
       ...(release
         ? {
             syncRefusal: async (repoRoot: string, paths: readonly string[]) => {
-              const found = await firstSigningFile(repoRoot, paths, resolveKeystore(root, settings, layout).path);
+              const keystore = resolveKeystore(root, settings, layout);
+              const found = await firstSigningFile(repoRoot, paths, [
+                keystore.path,
+                ...(keystore.pass.startsWith('file:') ? [resolvePath(root, keystore.pass.slice('file:'.length))] : []),
+              ]);
               return found
                 ? `${found} ${HOLDS_SIGNING_FILE}, and a release build never sends those to another machine`
                 : null;

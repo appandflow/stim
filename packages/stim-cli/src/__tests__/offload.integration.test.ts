@@ -606,6 +606,42 @@ describe('strict client routing', () => {
     expect(synced).toEqual(['android/app/debug.keystore']);
   });
 
+  it.each([
+    { variant: 'release', features: [], synced: false },
+    { variant: 'release', features: ['build-android-release'], synced: true },
+    { variant: null, features: [], synced: true },
+  ])('a $variant build with features $features syncs: $synced', async ({ variant, features, synced }) => {
+    const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method) => {
+      if (method === 'build.offer') return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) };
+      if (method === 'build.sync') return { result: { missing: [] } };
+      return { error: { code: 'busy', message: 'stop here' } };
+    });
+    const connection = Object.assign(Object.create(BuildConnection.prototype), {
+      features,
+      request,
+      close: vi.fn<() => void>(),
+      onProgress: () => {},
+    }) as BuildConnection;
+    vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
+    const choice = await choose();
+    assert(typeof choice !== 'string');
+    await offloadBuild({
+      choice,
+      expectedFingerprint: 'fingerprint',
+      request: {
+        platform: 'android',
+        isExpo: false,
+        android: { variant, abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'ccache' },
+      },
+      stagingDir: join(root, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(request.mock.calls.some(([method]) => method === 'build.sync')).toBe(synced);
+  });
+
   it('a sync refusal stops the build before any file list or byte reaches the worker', async () => {
     const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method) => {
       if (method === 'build.offer') return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) };

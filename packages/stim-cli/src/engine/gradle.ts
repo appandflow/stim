@@ -132,6 +132,11 @@ function apkInDir(dir: string): string | null {
   return listed ? join(dir, listed) : null;
 }
 
+function unsignedApkInDir(dir: string): string | null {
+  const found = safeList(dir).filter((name) => name.endsWith('-unsigned.apk'));
+  return found.length === 1 ? join(dir, found[0]!) : null;
+}
+
 function listApkSubdirs(base: string, prefix: string[] = [], depth = 0): string[][] {
   if (depth > 3) return [];
   const dirs: string[][] = [];
@@ -179,7 +184,12 @@ export interface LocateApkResult {
   androidPackage?: string;
 }
 
-export function locateApk(project: ApkLayout, transcript = '', variant: string | null = null): LocateApkResult {
+export function locateApk(
+  project: ApkLayout,
+  transcript = '',
+  variant: string | null = null,
+  { unsigned = false }: { unsigned?: boolean } = {},
+): LocateApkResult {
   const fromTranscript = parseApkFromTranscript(transcript);
   if (fromTranscript) {
     const abs = isAbsolute(fromTranscript) ? fromTranscript : join(project.directory, fromTranscript);
@@ -188,7 +198,7 @@ export function locateApk(project: ApkLayout, transcript = '', variant: string |
 
   if (variant) {
     const dir = findVariantApkDir(project.outputsDir, variant);
-    const apk = dir ? apkInDir(dir) : null;
+    const apk = dir ? (apkInDir(dir) ?? (unsigned ? unsignedApkInDir(dir) : null)) : null;
     return { apkPath: apk };
   }
 
@@ -428,7 +438,7 @@ async function buildGradleWithEnv(
     cas = null,
     pch = 'auto',
     compilerCacheDisabled = false,
-    stripSigning = false,
+    workerRelease = false,
     heartbeatMs = HEARTBEAT_INTERVAL_MS,
     estimateMs = null,
     onHeartbeat = (line: string) => console.error(line),
@@ -442,8 +452,8 @@ async function buildGradleWithEnv(
     cas?: AndroidCasSetup | null;
     pch?: 'auto' | 'on' | 'off';
     compilerCacheDisabled?: boolean;
-    /** Builds every signing config other than a `debug.keystore` as unsigned, for a machine that holds no key. */
-    stripSigning?: boolean;
+    /** For a machine that holds no key: builds any signing but a `debug.keystore` as unsigned, and always rebundles JS. */
+    workerRelease?: boolean;
     heartbeatMs?: number;
     estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
@@ -474,7 +484,7 @@ async function buildGradleWithEnv(
   }
   const nativeScript = shimScript('android-optimizations.gradle');
   args.push('--init-script', nativeScript);
-  if (stripSigning) args.push('--init-script', shimScript('android-worker-signing.gradle'));
+  if (workerRelease) args.push('--init-script', shimScript('android-worker-release.gradle'));
   const nativeBackend = cas
     ? cas.id
     : ccache
@@ -599,7 +609,7 @@ async function buildGradleWithEnv(
     };
   }
 
-  const located = locate ? await locate() : locateApk(project, transcript, variant);
+  const located = locate ? await locate() : locateApk(project, transcript, variant, { unsigned: workerRelease });
   if ('code' in located)
     return {
       ok: false,
