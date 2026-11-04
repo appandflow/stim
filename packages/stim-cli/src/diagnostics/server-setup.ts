@@ -11,6 +11,12 @@ export const SERVER_FINDING_CODES = [
   'server-home',
   'server-leftover',
   'server-keep-awake',
+  'server-tailscale',
+  'server-tailscale-route',
+  'server-funnel',
+  'server-share-proxy',
+  'server-tcp-lowat',
+  'server-service-paths',
 ] as const;
 
 /** Whether `finding` reports this machine's stim-server setup rather than the checkout. */
@@ -47,6 +53,8 @@ export interface ServerHealthReading {
   stimHome: string;
   startup?: { state: string };
   keepAwake?: { setting: boolean; held: boolean; reason?: string };
+  /** Whether the server serves this machine only. */
+  loopbackOnly?: boolean;
 }
 
 /** One installed service: its file, the job its manager runs, and the answer on its port. */
@@ -82,6 +90,25 @@ export interface ServerSetup {
   local: LocalServerReading | null;
   /** How many clients this machine's stim-server approved for builds and for hosted devices. */
   clients: { build: number; deviceHost: number };
+  /** Tailscale, share settings and kernel settings; read only when a server, service or socket exists. */
+  network: NetworkReading;
+  /** Paths a service file records (its node, server script, `--path-prepend` directories and path variables) that do not exist. */
+  missingPaths: string[];
+}
+
+export interface NetworkReading {
+  /** This machine's name as its peers see it. */
+  host: string;
+  /** `tailscale status --json` whatever its backend state; null when no tailscale command answered. */
+  tailscaleStatus: unknown;
+  /** `tailscale serve status --json`; null when Tailscale is not running or the config could not be read. */
+  serve: unknown;
+  /** `share.exposure` and `share.publicUrl` as settings resolve them. */
+  share: { exposure: 'auto' | 'tailscale' | 'proxy'; publicUrl: string | null };
+  /** The web shares this Stim home's server lists; null when none is reachable or none was read. */
+  shares: Array<{ id: string; workspace: string; auth: 'generated' | 'set' | 'none' }> | null;
+  /** Linux `net.ipv4.tcp_notsent_lowat`; null elsewhere or when unreadable. */
+  notsentLowat: number | null;
 }
 
 /** The signed launcher a macOS service runs the server under: its command line repeats the server's, but the node child is the server. */
@@ -153,7 +180,7 @@ export function classifyServers(
   });
 }
 
-const describe = (server: ServerReading): string => {
+export const describeServer = (server: ServerReading): string => {
   const who =
     server.kind === 'service'
       ? `the ${server.label ?? 'stim-server'} service`
@@ -165,7 +192,7 @@ const describe = (server: ServerReading): string => {
   return `pid ${server.pid}, ${who}, port ${server.port}`;
 };
 
-const labelFlag = (label: string): string => (label === 'dev.stim.server' ? '' : ` --label ${label}`);
+export const labelFlag = (label: string): string => (label === 'dev.stim.server' ? '' : ` --label ${label}`);
 
 /** `a` and `b` name one Stim home: equal after trailing slashes are dropped. Callers pass resolved paths. */
 const sameHome = (a: string, b: string): boolean => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
@@ -193,7 +220,7 @@ function versionFindings(setup: ServerSetup): Finding[] {
         code: 'server-version',
         level: 'note',
         title: `A stim-server runs stim ${server.health.stim}, but this machine's stim is ${setup.version}`,
-        detail: `${describe(server)}. Remote builds need both machines on one build compatibility version, and a server of another version can refuse requests that a newer stim sends.`,
+        detail: `${describeServer(server)}. Remote builds need both machines on one build compatibility version, and a server of another version can refuse requests that a newer stim sends.`,
         fix: older
           ? updateRemedy(server, setup.version)
           : `Update the \`stim\` on PATH to ${server.health.stim} with \`npm install --global stim@${server.health.stim}\`.`,
@@ -214,7 +241,7 @@ function homeFindings(setup: ServerSetup): Finding[] {
         code: 'server-home',
         level: 'note',
         title: "A stim-server serves another Stim home than this stim's",
-        detail: `${describe(server)} serves ${server.health.stimHome}; this stim uses ${setup.stimHome}. Commands here and the server read different state, so Desktop and paired devices do not see this checkout's workspaces. A scratch STIM_HOME produces the same difference on purpose.`,
+        detail: `${describeServer(server)} serves ${server.health.stimHome}; this stim uses ${setup.stimHome}. Commands here and the server read different state, so Desktop and paired devices do not see this checkout's workspaces. A scratch STIM_HOME produces the same difference on purpose.`,
         fix,
       },
     ];
@@ -313,8 +340,8 @@ function multipleFindings(setup: ServerSetup): Finding[] {
         code: 'server-multiple',
         level: 'cost',
         title: `${members.length} stim-servers serve ${home}`,
-        detail: `${members.map(describe).join('; ')}. Only one of them holds the Stim home's local socket, so Desktop and the CLI reach one while paired devices may reach another, and each keeps its own pairings in memory.${owner ? ` The server on port ${owner.port} holds the socket.` : ''}`,
-        fix: `Keep ${describe(keep)}. ${steps.join(' ')}`,
+        detail: `${members.map(describeServer).join('; ')}. Only one of them holds the Stim home's local socket, so Desktop and the CLI reach one while paired devices may reach another, and each keeps its own pairings in memory.${owner ? ` The server on port ${owner.port} holds the socket.` : ''}`,
+        fix: `Keep ${describeServer(keep)}. ${steps.join(' ')}`,
       },
     ];
   });
@@ -328,7 +355,9 @@ function leftoverFindings(setup: ServerSetup): Finding[] {
   );
   const loose = setup.servers.filter((server) => server.kind === 'manual' && !grouped.has(server));
   if (loose.length === 0) return [];
-  const rows = loose.map((server) => `${describe(server)}${homeOf(server) ? `, Stim home ${homeOf(server)}` : ''}`);
+  const rows = loose.map(
+    (server) => `${describeServer(server)}${homeOf(server) ? `, Stim home ${homeOf(server)}` : ''}`,
+  );
   return [
     {
       code: 'server-leftover',
@@ -381,7 +410,7 @@ function desktopAuthorityFindings(setup: ServerSetup): Finding[] {
       code: 'server-desktop-authority',
       level: 'cost',
       title: "The stim-server on this Stim home's socket is too old for Desktop actions",
-      detail: `${describe(owner)} runs ${local.version} and does not advertise ${DESKTOP_AUTHORITY_FEATURE}, so Stim Desktop reads from it but refuses to run actions through it (start, stop, reload, setup fixes).`,
+      detail: `${describeServer(owner)} runs ${local.version} and does not advertise ${DESKTOP_AUTHORITY_FEATURE}, so Stim Desktop reads from it but refuses to run actions through it (start, stop, reload, setup fixes).`,
       fix:
         owner.kind === 'service' && target
           ? `Run \`stim-server service update${labelFlag(owner.label ?? '')} --release ${target}\`.`

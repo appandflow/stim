@@ -9,12 +9,14 @@ import {
   parseSystemctlShow,
   parseUnit,
   readServerClientCounts,
+  tailscaleEnv,
   SHOW_PROPERTIES,
   serverLocalSocket,
   type InstalledService,
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
-import { readLocalHello } from '../local-server.ts';
+import { readLocalHello, readWebShares } from '../local-server.ts';
+import { localMachineName } from '../offload/diagnosis.ts';
 import {
   classifyServers,
   parseProcessRows,
@@ -22,12 +24,17 @@ import {
   type InstalledServerService,
   type ServerHealthReading,
   type ServerReading,
+  type NetworkReading,
   type ServerSetup,
 } from './server-setup.ts';
+import { servicePaths } from './server-toolchain.ts';
 
 const PROBE_TIMEOUT_MS = 5000;
 const HEALTH_TIMEOUT_MS = 1500;
 const HELLO_TIMEOUT_MS = 1500;
+const TAILSCALE_TIMEOUT_MS = 3000;
+const MAC_APP_TAILSCALE = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
+const LOWAT_FILE = '/proc/sys/net/ipv4/tcp_notsent_lowat';
 
 const isServerService = (installed: InstalledService | null): installed is InstalledService =>
   installed !== null && (installed.script ?? '').includes('stim-server');
@@ -119,6 +126,7 @@ async function readHealth(port: number): Promise<ServerHealthReading | null> {
       ...(isJsonObject(body.startup) && typeof body.startup.state === 'string'
         ? { startup: { state: body.startup.state } }
         : {}),
+      ...(body.loopbackOnly === true ? { loopbackOnly: true } : {}),
       ...(keep && typeof keep.setting === 'boolean' && typeof keep.held === 'boolean'
         ? {
             keepAwake: {
@@ -134,12 +142,54 @@ async function readHealth(port: number): Promise<ServerHealthReading | null> {
   }
 }
 
+async function tailscaleJson(args: string[]): Promise<unknown> {
+  const env = Object.fromEntries(
+    Object.entries(tailscaleEnv(process.env)).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+  for (const binary of ['tailscale', MAC_APP_TAILSCALE]) {
+    const output = await getExecutor().runFileQuietAsync(binary, args, { timeoutMs: TAILSCALE_TIMEOUT_MS, env });
+    if (output === null) continue;
+    try {
+      return output.trim() === '' ? {} : JSON.parse(output);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+async function readNetwork(share: NetworkReading['share'], socket: boolean): Promise<NetworkReading> {
+  const status = await tailscaleJson(['status', '--json']);
+  const running = isJsonObject(status) && status.BackendState === 'Running';
+  const [serve, shares] = await Promise.all([
+    running ? tailscaleJson(['serve', 'status', '--json']) : null,
+    socket ? readWebShares() : null,
+  ]);
+  let lowat: number | null = null;
+  if (process.platform === 'linux') {
+    try {
+      lowat = Number(readFileSync(LOWAT_FILE, 'utf8').trim());
+    } catch {}
+  }
+  return {
+    host: localMachineName(status),
+    tailscaleStatus: status,
+    serve: isJsonObject(serve) ? serve : null,
+    share,
+    shares: Array.isArray(shares) ? shares.map(({ id, workspace, auth }) => ({ id, workspace, auth })) : null,
+    notsentLowat: Number.isFinite(lowat) ? lowat : null,
+  };
+}
+
 /**
  * Reads this machine's stim-server setup: installed services, running servers with their `/health`, and the server
  * on this Stim home's local socket. Null when there is no sign of a server, so a machine without one pays only for
  * the process list. Only macOS and Linux have services doctor reads.
  */
-export async function readServerSetup(version: string): Promise<ServerSetup | null> {
+export async function readServerSetup(
+  version: string,
+  share: NetworkReading['share'] = { exposure: 'auto', publicUrl: null },
+): Promise<ServerSetup | null> {
   const platform = process.platform;
   if (platform !== 'darwin' && platform !== 'linux') return null;
   const ps = await getExecutor().runFileQuietAsync('ps', ['-axo', 'pid=,ppid=,command='], {
@@ -151,13 +201,14 @@ export async function readServerSetup(version: string): Promise<ServerSetup | nu
   const socket = existsSync(serverLocalSocket());
   if (processes.length === 0 && services.length === 0 && !socket) return null;
   const classified = classifyServers(processes, rows, services);
-  const [servers, local] = await Promise.all([
+  const [servers, local, network] = await Promise.all([
     Promise.all(
       classified.map(async (server): Promise<ServerReading> =>
         Object.assign(server, { health: await readHealth(server.port) }),
       ),
     ),
     socket ? readLocalHello(version, HELLO_TIMEOUT_MS) : null,
+    readNetwork(share, socket),
   ]);
   return {
     platform,
@@ -167,5 +218,9 @@ export async function readServerSetup(version: string): Promise<ServerSetup | nu
     servers,
     local,
     clients: readServerClientCounts(),
+    network,
+    missingPaths: [...new Set(services.flatMap((service) => servicePaths(service.installed)))].filter(
+      (path) => !existsSync(path),
+    ),
   };
 }

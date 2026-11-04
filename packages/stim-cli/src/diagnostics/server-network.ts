@@ -1,0 +1,198 @@
+import { isJsonObject } from '@stim-cli/core/state';
+import { readTailscale, tailscaleDiagnosis } from '../offload/diagnosis.ts';
+import type { Finding } from './doctor.ts';
+import { describeServer, type ServerSetup } from './server-setup.ts';
+
+const SERVE_PORT = 7443;
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '0.0.0.0', '[::]']);
+/** `net.ipv4.tcp_notsent_lowat` reads this, the unsigned maximum, while the kernel has no limit set. */
+const LOWAT_UNLIMITED = 4_294_967_295;
+const RECOMMENDED_LOWAT = 16_384;
+
+/** A `tailscale serve` handler that proxies to a loopback port: `port` is its HTTPS port. */
+export interface ServeProxy {
+  port: number;
+  target: number;
+  funnel: boolean;
+}
+
+const portOf = (hostPort: string): number => Number(hostPort.slice(hostPort.lastIndexOf(':') + 1));
+
+/**
+ * The loopback proxies of `tailscale serve status --json`, an ipn.ServeConfig: `Web` maps `<host>:<port>` to
+ * `{ Handlers: { <mount>: { Proxy } } }` and `AllowFunnel` maps `<host>:<port>` to true; `Foreground` holds the same
+ * shape per foreground session.
+ */
+export function parseServeProxies(serve: unknown): ServeProxy[] {
+  if (!isJsonObject(serve)) return [];
+  const configs = [serve, ...(isJsonObject(serve.Foreground) ? Object.values(serve.Foreground) : [])].filter(
+    isJsonObject,
+  );
+  return configs.flatMap((config) => {
+    const funnels = isJsonObject(config.AllowFunnel) ? config.AllowFunnel : {};
+    return Object.entries(isJsonObject(config.Web) ? config.Web : {}).flatMap(([hostPort, web]) => {
+      const handlers = isJsonObject(web) && isJsonObject(web.Handlers) ? web.Handlers : {};
+      return Object.values(handlers).flatMap((handler): ServeProxy[] => {
+        const proxy = isJsonObject(handler) && typeof handler.Proxy === 'string' ? handler.Proxy : null;
+        if (proxy === null || !URL.canParse(proxy.includes('://') ? proxy : `http://${proxy}`)) return [];
+        const url = new URL(proxy.includes('://') ? proxy : `http://${proxy}`);
+        if (!LOOPBACK.has(url.hostname) && !LOOPBACK.has(`[${url.hostname}]`)) return [];
+        const target = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+        return [{ port: portOf(hostPort), target, funnel: funnels[hostPort] === true }];
+      });
+    });
+  });
+}
+
+/** The first HTTPS port from the one setup uses that no handler or listener in `serve` already takes. */
+function freeServePort(serve: unknown): number {
+  const used = new Set<number>();
+  if (isJsonObject(serve)) {
+    for (const config of [serve, ...(isJsonObject(serve.Foreground) ? Object.values(serve.Foreground) : [])]) {
+      if (!isJsonObject(config)) continue;
+      for (const port of Object.keys(isJsonObject(config.TCP) ? config.TCP : {})) used.add(Number(port));
+      for (const field of ['Web', 'AllowFunnel']) {
+        for (const hostPort of Object.keys(isJsonObject(config[field]) ? config[field] : {}))
+          used.add(portOf(hostPort));
+      }
+    }
+  }
+  let port = SERVE_PORT;
+  while (used.has(port)) port += 1;
+  return port;
+}
+
+const serveCommand = (port: number, target: number): string =>
+  `tailscale serve --bg --https=${port} http://127.0.0.1:${target}`;
+
+/** Whether the status shows a node that is signed in and running, as share exposure `auto` decides on. */
+function loggedIn(status: unknown): boolean {
+  if (!isJsonObject(status) || status.BackendState !== 'Running') return false;
+  const self = isJsonObject(status.Self) ? status.Self : null;
+  return typeof self?.DNSName === 'string' && self.DNSName.replace(/\.$/, '') !== '';
+}
+
+function tailscaleFindings(setup: ServerSetup): Finding[] {
+  const { network } = setup;
+  const usesTailnet =
+    setup.services.some((service) => service.installed.serve) || setup.clients.build + setup.clients.deviceHost > 0;
+  const reading = readTailscale(network.tailscaleStatus);
+  if (!usesTailnet) return [];
+  if (!reading.running) {
+    const diagnosis = tailscaleDiagnosis(reading.code, network.host);
+    return [
+      {
+        code: 'server-tailscale',
+        level: 'cost',
+        title: 'Tailscale is not running, so no other machine or phone can reach this stim-server',
+        detail: `${diagnosis.message} This machine has a stim-server service with a tailnet route or approved build or device-host clients.`,
+        fix: diagnosis.remedy,
+      },
+    ];
+  }
+  if (network.serve === null) return [];
+  const proxies = parseServeProxies(network.serve);
+  const ports = new Set([
+    ...setup.servers.filter((server) => server.kind !== 'share').map((server) => server.port),
+    ...setup.services.flatMap((service) => (service.installed.port === null ? [] : [service.installed.port])),
+  ]);
+  return setup.servers.flatMap((server): Finding[] => {
+    if (server.kind === 'share' || server.health === null || server.health.loopbackOnly) return [];
+    if (proxies.some((proxy) => proxy.target === server.port && !proxy.funnel)) return [];
+    const service = server.kind === 'service' ? setup.services.find((each) => each.label === server.label) : undefined;
+    const recorded = service?.installed.serve?.port;
+    const elsewhere = proxies.find(
+      (proxy) => proxy.port === recorded && proxy.target !== server.port && !ports.has(proxy.target),
+    );
+    if (recorded !== undefined && elsewhere) {
+      return [
+        {
+          code: 'server-tailscale-route',
+          level: 'cost',
+          title: `The tailscale serve route on https port ${recorded} points at port ${elsewhere.target}, not at stim-server`,
+          detail: `${describeServer(server)} listens on port ${server.port}, but the route that \`stim-server service install --serve\` recorded for it proxies to 127.0.0.1:${elsewhere.target}, so phones and other machines reach nothing or another program.`,
+          fix: `Run \`${serveCommand(recorded, server.port)}\` to point the route at the server.`,
+        },
+      ];
+    }
+    const port = recorded ?? freeServePort(network.serve);
+    return [
+      {
+        code: 'server-tailscale-route',
+        level: recorded === undefined ? 'note' : 'cost',
+        title: 'No tailscale serve route reaches this stim-server',
+        detail: `${describeServer(server)} has no tailnet-only https route, so phones and other machines on the tailnet cannot connect over Tailscale.${recorded === undefined ? '' : ` The service was installed with a route on https port ${recorded}, and it is gone.`}`,
+        fix: `Run \`${serveCommand(port, server.port)}\`.`,
+      },
+    ];
+  });
+}
+
+function funnelFindings(setup: ServerSetup): Finding[] {
+  const { network } = setup;
+  const funnels = parseServeProxies(network.serve).filter((proxy) => proxy.funnel);
+  if (funnels.length === 0) return [];
+  const ports = new Set([
+    ...setup.servers.filter((server) => server.kind !== 'share').map((server) => server.port),
+    ...setup.services.flatMap((service) => (service.installed.port === null ? [] : [service.installed.port])),
+  ]);
+  const open = (network.shares ?? []).filter((share) => share.auth === 'none');
+  return funnels.flatMap((funnel): Finding[] => {
+    const off = `Run \`tailscale funnel --https=${funnel.port} off\`, then check \`tailscale serve status\`.`;
+    if (ports.has(funnel.target)) {
+      return [
+        {
+          code: 'server-funnel',
+          level: 'cost',
+          title: 'PUBLIC: a Tailscale Funnel route exposes stim-server to the internet',
+          detail: `https port ${funnel.port} is a Funnel port and proxies to stim-server on port ${funnel.target}, so anyone on the internet can reach it. stim-server serves only tailnet routes; stim-server service install refuses this.`,
+          fix: off,
+        },
+      ];
+    }
+    if (open.length === 0) return [];
+    const names = open.map((share) => `${share.id} (${share.workspace})`).join(', ');
+    return [
+      {
+        code: 'server-funnel',
+        level: 'cost',
+        title: 'PUBLIC: a Tailscale Funnel route is open while a share has no password',
+        detail: `https port ${funnel.port} is public and proxies to 127.0.0.1:${funnel.target}, and ${open.length === 1 ? 'this share has' : 'these shares have'} no password, so its URL token is the only secret: ${names}.`,
+        fix: `End the share with \`stim share stop\` in its workspace (\`stim share list\` names them) and start it again with a password. To close the route itself, run \`tailscale funnel --https=${funnel.port} off\`.`,
+      },
+    ];
+  });
+}
+
+function shareFindings(setup: ServerSetup): Finding[] {
+  const { network, servers } = setup;
+  const { exposure, publicUrl } = network.share;
+  const mode = exposure === 'auto' ? (loggedIn(network.tailscaleStatus) ? 'tailscale' : 'proxy') : exposure;
+  const sharing = servers.some((server) => server.kind === 'share') || (network.shares ?? []).length > 0;
+  const findings: Finding[] = [];
+  if (mode === 'proxy' && publicUrl === null && (exposure === 'proxy' || sharing)) {
+    findings.push({
+      code: 'server-share-proxy',
+      level: 'note',
+      title: 'Shares run in proxy mode with no share.publicUrl',
+      detail: `${exposure === 'proxy' ? '`share.exposure` is proxy' : 'Tailscale is not signed in, so `share.exposure` auto chose proxy mode'}, which binds the share listener to 127.0.0.1 for your reverse proxy. Without \`share.publicUrl\` the links it prints are loopback addresses that work only on this machine.`,
+      fix: 'Set the https address your reverse proxy serves: `stim settings set share.publicUrl https://demo.example.com`. Or sign in to Tailscale and set `share.exposure` to tailscale to share through Funnel.',
+    });
+  }
+  const shareHost = sharing || (mode === 'proxy' && publicUrl !== null);
+  if (shareHost && network.notsentLowat !== null && network.notsentLowat >= LOWAT_UNLIMITED) {
+    findings.push({
+      code: 'server-tcp-lowat',
+      level: 'note',
+      title: 'This share host leaves net.ipv4.tcp_notsent_lowat unlimited',
+      detail: `The kernel buffers an unlimited amount of unsent data per socket, so a slow viewer's video frames queue up and the share lags. Doctor changes no kernel setting; this is advice.`,
+      fix: `Run \`sudo sysctl -w net.ipv4.tcp_notsent_lowat=${RECOMMENDED_LOWAT}\`, and keep it after a reboot with \`net.ipv4.tcp_notsent_lowat = ${RECOMMENDED_LOWAT}\` in a file under /etc/sysctl.d/.`,
+    });
+  }
+  return findings;
+}
+
+/** The tailnet, Funnel, share exposure and share-host kernel findings about this machine's stim-server setup. */
+export function serverNetworkFindings(setup: ServerSetup): Finding[] {
+  return [...tailscaleFindings(setup), ...funnelFindings(setup), ...shareFindings(setup)];
+}

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { health, reading, service, setup } from './_server-setup.ts';
 import {
   classifyServers,
+  type InstalledServerService,
+  type ServerSetup,
   parseProcessRows,
   parseServerProcesses,
   serverSetupFindings,
-  type InstalledServerService,
-  type ServerReading,
-  type ServerSetup,
 } from '../diagnostics/server-setup.ts';
 
 const PS = `
@@ -33,35 +33,6 @@ describe('parseServerProcesses', () => {
   });
 });
 
-const service = (over: Partial<InstalledServerService> = {}): InstalledServerService => ({
-  manager: 'launchd',
-  label: 'dev.stim.server',
-  installed: {
-    label: 'dev.stim.server',
-    host: null,
-    node: '/usr/local/bin/node',
-    script: '/Users/me/stim-server.mjs',
-    port: 7788,
-    env: [],
-    pathPrepend: [],
-    stimHome: '/Users/me/.stim',
-    logPath: '/Users/me/Library/Logs/Stim/dev.stim.server.log',
-    managed: true,
-    serve: null,
-    previousScript: null,
-    programArguments: [],
-  },
-  job: { state: 'running', pid: 40100, runs: 1, lastExitCode: null },
-  ...over,
-});
-
-const health = (over: Record<string, unknown> = {}) => ({
-  version: '1.41.0',
-  stim: '1.41.0',
-  stimHome: '/Users/me/.stim',
-  ...over,
-});
-
 describe('classifyServers', () => {
   it('names the starter: the service job, the bundled Desktop server, `stim share`, or a person', () => {
     const rows = parseProcessRows(PS);
@@ -77,30 +48,6 @@ describe('classifyServers', () => {
       { pid: 50300, kind: 'share', label: undefined },
     ]);
   });
-});
-
-const reading = (over: Partial<ServerReading>): ServerReading => ({
-  pid: 100,
-  ppid: 1,
-  command: '',
-  script: '',
-  port: 7788,
-  share: false,
-  kind: 'service',
-  label: 'dev.stim.server',
-  health: health(),
-  ...over,
-});
-
-const setup = (over: Partial<ServerSetup> = {}): ServerSetup => ({
-  platform: 'darwin',
-  stimHome: '/Users/me/.stim',
-  version: '1.41.0',
-  services: [service()],
-  servers: [reading({})],
-  local: null,
-  clients: { build: 0, deviceHost: 0 },
-  ...over,
 });
 
 const codes = (value: ServerSetup) => serverSetupFindings(value).map((finding) => finding.code);

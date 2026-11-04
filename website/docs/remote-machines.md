@@ -1332,7 +1332,11 @@ is wrong with the command to fix it. It changes nothing: it does not stop, start
 or update a server. It looks at the installed service (the LaunchAgent on macOS,
 the systemd user unit on Linux), every running `stim-server` process, each
 server's `/health` on `127.0.0.1` and the Stim home's local socket. A machine
-with no service, server or socket costs it only a process listing.
+with no service, server or socket costs it only a process listing. The doctor
+toolchain section also shows, for each service, where its recorded
+environment finds each tool. A build machine pinned in `build-machines.json`
+whose tailnet node changed is reported as `node-changed` under the existing
+build machine finding.
 
 | Finding                    | What it means and the fix                                                                                                                                                                                                        |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1343,6 +1347,12 @@ with no service, server or socket costs it only a process listing.
 | `server-home`              | A server serves another Stim home than this `stim`. A scratch `STIM_HOME` does this on purpose.                                                                                                                                  |
 | `server-leftover`          | A server started by hand is running that no service or Desktop owns. Doctor lists its pid, home and port.                                                                                                                        |
 | `server-keep-awake`        | This Mac serves approved build or device-host machines with `server.keepAwake` off, so it can sleep under them.                                                                                                                  |
+| `server-tailscale`         | Tailscale is off or signed out while a service has a tailnet route or approved machines depend on it. Doctor gives the step to turn it on.                                                                                       |
+| `server-tailscale-route`   | No `tailscale serve` route reaches the server, or the route `service install --serve` recorded points at another port. Doctor prints the exact `tailscale serve --bg --https=<port> http://127.0.0.1:<port>` command.            |
+| `server-funnel`            | A public Tailscale Funnel route reaches stim-server, or one is open while a share has no password. Close it with `tailscale funnel --https=<port> off`.                                                                          |
+| `server-share-proxy`       | Shares run in proxy mode with `share.publicUrl` unset, so their links work only on this machine. Set it with `stim settings set share.publicUrl https://demo.example.com`.                                                       |
+| `server-tcp-lowat`         | On a Linux share host `net.ipv4.tcp_notsent_lowat` is unlimited. Doctor recommends 16384 and changes nothing.                                                                                                                    |
+| `server-service-paths`     | The service file names a launcher, node, server script or directory that no longer exists, usually after a Homebrew or nvm upgrade. Run `stim-server service install` again.                                                     |
 
 ## Ask your agent
 

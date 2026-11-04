@@ -1465,6 +1465,24 @@ list, a \`note\` finding only the doctor report:
   server-leftover        note: servers started by hand, with pid, home and port
   server-keep-awake      note: this Mac serves approved build or device-host clients
                          with server.keepAwake off
+  server-tailscale       cost: Tailscale is off or signed out while a service has a tailnet
+                         route or approved clients depend on the tailnet
+  server-tailscale-route cost/note: no tailscale serve route reaches the server, or the
+                         route install recorded points at another port; it prints the
+                         exact tailscale serve --bg --https=<port> command
+  server-funnel          cost: a public Tailscale Funnel route reaches stim-server, or one is
+                         open while a share has no password (tailscale funnel --https=<port> off)
+  server-share-proxy     note: share.exposure resolves to proxy with share.publicUrl unset
+  server-tcp-lowat       note: on a Linux share host net.ipv4.tcp_notsent_lowat is unlimited;
+                         advice to set 16384, never changed by doctor
+  server-service-paths   cost/note: the service file names a launcher, node, server script or
+                         directory that no longer exists
+The doctor toolchain section also lists, for each installed service, where its recorded
+environment (--path-prepend directories in front of launchd's default PATH, plus --env)
+finds each tool before the login shell adds more. The tailscale checks read \`tailscale
+status --json\` and \`tailscale serve status --json\` (3 seconds each) only when a service,
+server process or socket exists. A build machine pinned in build-machines.json whose
+tailnet node changed is the existing build-machine finding with state node-changed.
 
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
 \`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes
