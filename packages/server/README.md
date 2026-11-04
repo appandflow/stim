@@ -2203,6 +2203,16 @@ workspace device with three methods that only the local Unix socket may call
   token's digest like a generated one and keeps no more than before. It refuses
   a malformed token, a token a live or waiting share already uses (`That link is
 live now.`) and a time already past.
+  When a stim-server that is not the CLI's `--share` server becomes ready, it
+  reads the saved links of its Stim home (`readLiveShareLinks`) and starts each
+  live, unexpired one through this same method with the saved token or slug,
+  passwords and `expiresAt`, so a share outlives a restart. Its device may not be
+  there yet (a hosted session resumes, Tailscale is not up): such a share starts
+  `waiting`, and a start the server cannot finish is tried again after 5, 10, 20,
+  40 and 60 seconds. `share.stop` marks the saved links it stops as stopped (all
+  of the workspace's, those of one `slot`, or the one of a stopped `id`) so they
+  do not come back. A share started by a client that saved nothing, such as
+  Stim Desktop's, does not come back.
   `state` (the `share-waiting` feature) is `live` while the device streams and
   `waiting` while it is away; a server without the feature sends none, which
   means `live`.

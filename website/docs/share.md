@@ -229,8 +229,9 @@ about 50 ms; when it starts capture, the first frame takes several seconds.
 
 `stim share stop` ends a share: its link stops working at once. Stim saves the
 link and the passwords of every share that `stim share ios|android` starts, so
-a share you stopped, or that stim-server's restart ended, can come back with the
-same link and the same passwords until it expires:
+a share you stopped can come back with the same link and the same passwords
+until it expires (a share that stim-server's restart ended comes back by itself,
+see below):
 
 <StimTabs
 code={`stim share android --control --expires 120   # first start
@@ -268,8 +269,12 @@ starts and removed with the workspace (`stim worktree remove`), by `--forget`, a
 when `stim share` starts a share, reuses one or stops and finds them expired. They hold the link's 256-bit token
 and the passwords in clear, so anyone who can read your Stim home can start the
 share again until it expires. Each saved link also records whether its share is
-running or was stopped on purpose; a stim-server restart does not change that.
-A share started from Stim Desktop is not saved.
+running or was stopped on purpose. A stim-server restart or crash does not change
+that: when a stim-server starts, it starts every saved share that is still running and
+has not expired again, with the same link, passwords and expiry, without `--reuse`; one
+whose device is not there yet waits for it like any waiting share. Stopping a share,
+including with Stim Desktop's Stop, marks it stopped so it does not come back.
+A share started from Stim Desktop is not saved, so it does not come back.
 
 ## When the device goes away
 
@@ -561,8 +566,8 @@ reload.
   waiting share is saved beyond that.
 - **Ephemeral.** Shares live only in stim-server's memory. A share ends at its
   expiry, on `stim share stop`, `stim stop` (the workspace, or one slot with
-  `--slot`), `stim worktree remove`, Stop in Stim Desktop, and when stim-server
-  stops or restarts. A device that goes away does not end it: the share waits
+  `--slot`), `stim worktree remove`, Stop in Stim Desktop, and while stim-server
+  is stopped; the next stim-server starts the saved, unexpired ones again. A device that goes away does not end it: the share waits
   and keeps its link, passwords and signed-in browsers, and nothing about it is
   written to disk.
   Ending closes its viewers' connections. The last share removes the Funnel

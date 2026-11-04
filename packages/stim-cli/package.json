@@ -50,6 +50,11 @@
       "module-sync": "./dist/pull-requests.mjs",
       "default": "./dist/pull-requests.mjs"
     },
+    "./share-links": {
+      "types": "./dist/share-links.d.mts",
+      "module-sync": "./dist/share-links.mjs",
+      "default": "./dist/share-links.mjs"
+    },
     "./build-artifact-cache": {
       "types": "./dist/build-artifact-cache.d.mts",
       "module-sync": "./dist/build-artifact-cache.mjs",

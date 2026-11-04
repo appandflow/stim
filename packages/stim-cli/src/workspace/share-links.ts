@@ -49,18 +49,27 @@ export function forgetShareLinks(root: string): number {
   });
 }
 
-/** Marks the workspace's saved shares, or those of one `slot`, as stopped on purpose so nothing restarts them on its own. */
-export function pauseShareLinks(root: string, slot?: string): void {
+function pauseWhere(root: string, matches: (key: string, link: SavedShare) => boolean): void {
   if (!existsSync(workspaceShareLinksFile(root))) return;
   withWorkspaceStateLock(root, () => {
     const links = readShareLinks(root);
     let changed = false;
-    for (const link of Object.values(links)) {
-      if (link.state === 'live' && (slot === undefined || link.slot === slot)) {
+    for (const [key, link] of Object.entries(links)) {
+      if (link.state === 'live' && matches(key, link)) {
         link.state = 'stopped';
         changed = true;
       }
     }
     if (changed) writeLinks(root, links);
   });
+}
+
+/** Marks the workspace's saved shares, or those of one `slot`, as stopped on purpose so nothing restarts them on its own. */
+export function pauseShareLinks(root: string, slot?: string): void {
+  pauseWhere(root, (_key, link) => slot === undefined || link.slot === slot);
+}
+
+/** Marks the saved share filed under `key` (see {@link shareLinkKey}) as stopped on purpose. */
+export function pauseShareLink(root: string, key: string): void {
+  pauseWhere(root, (entry) => entry === key);
 }

@@ -1647,6 +1647,18 @@ describe('a web share', () => {
       expect(f.routeOpens).toHaveLength(opens);
     });
 
+    it('starts a restored share waiting when its device is not there, and feeds the same link once it is', async () => {
+      f.status(payload('Shutdown'));
+      expect(await f.hub.start(shareRequest({ token: TOKEN }))).toMatchObject({ code: 'action-failed' });
+      const restored = await f.hub.start(shareRequest({ token: TOKEN }), { restore: true });
+      if ('code' in restored) throw new Error(restored.message);
+      expect(restored.url).toContain(TOKEN);
+      expect(stateOf(f)).toBe('waiting');
+      f.status(payload('Booted'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('live'));
+      expect(f.hub.list()).toHaveLength(1);
+    });
+
     it('does not keep the token it was given: it appears in no row', async () => {
       await started(f, shareRequest({ token: TOKEN }));
       expect(JSON.stringify(f.hub.list())).not.toContain(TOKEN);
