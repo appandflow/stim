@@ -1,6 +1,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { connect, type AddressInfo } from 'node:net';
 import {
@@ -15,6 +16,7 @@ import {
   clearClaimChild,
   ClaimRefusedError,
   markClaimChildPending,
+  clearFreeClaimSet,
   processGroupAlive,
   releaseClaim,
   setClaimChild,
@@ -27,6 +29,7 @@ import {
   createDebugLog,
   type DebugLog,
   deviceHostArea,
+  deviceHostAreasRoot,
   HOSTED_PARKED_CANDIDATES,
   deviceHostRoot,
   getConcurrencyLimits,
@@ -34,6 +37,7 @@ import {
   getPlatformDeviceLimits,
   hostedIdleStopHours,
   isJsonObject,
+  parseHostedMacosDevice,
   parseHostedPlatformDevice,
   hostedDeviceId,
   hostedMemoryRefusal,
@@ -125,7 +129,11 @@ export interface DeviceHostOptions {
   /** Takes the native app a build on this machine retained under `handoff`, when `client` may have it, or says why not. */
   builtBundle?: (client: string, handoff: string, sha256: string) => { bundle: string; release: () => void } | string;
   limits?: Partial<DeviceHostLimits>;
+  /** How long a stopped session's home stays after it stopped, so its client can copy the final logs. Defaults to an hour. */
+  homeGraceMs?: number;
 }
+
+const HOSTED_HOME_GRACE_MS = 3_600_000;
 
 type HostedViewTarget = { home: string; claim: ClaimHandle } & (
   | { platform: 'ios'; session: HostedDeviceSession & { device: HostedIosDevice } }
@@ -246,6 +254,9 @@ export class DeviceHost {
   private clientsSeen = new Set<string>();
   private readonly idleKept = new Map<string, string>();
   private reconciling?: Promise<void>;
+  private reclaiming?: Promise<void>;
+  private reclaimOrphans = false;
+  private readonly homeNotes = new Map<string, string>();
   private draining: string | null = null;
   private readonly limits: DeviceHostLimits;
   private readonly debug: DebugLog;
@@ -281,18 +292,21 @@ export class DeviceHost {
     this.transaction((records) => {
       const record = records.find((each) => each.id === id);
       if (!record) throw new Error('Hosted session journal no longer contains this reservation.');
+      const before = record.state;
       update(record);
+      if (record.state !== 'stopped') delete record.stoppedAt;
+      else if (before !== 'stopped') record.stoppedAt = new Date().toISOString();
     });
   }
 
-  private acquire(record: HostedDeviceSession): OwnedSession {
+  private acquire(record: Pick<HostedDeviceSession, 'id'> & { client?: string }): OwnedSession {
     const existing = this.owned.get(record.id);
     if (existing) return existing;
     const attempt = tryAcquireClaim({
       root: join(deviceHostRoot(), `${record.id}.claims`),
       mode: 'exclusive',
       label: 'hosted device session',
-      details: { session: record.id, client: record.client },
+      details: { session: record.id, ...(record.client === undefined ? {} : { client: record.client }) },
     });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (!attempt.acquired)
@@ -536,6 +550,7 @@ export class DeviceHost {
             'systemImage',
             'deviceProfile',
             'parked',
+            'stoppedAt',
             'notice',
             'appAttempt',
             'agent',
@@ -659,6 +674,7 @@ export class DeviceHost {
   private observed(record: HostedDeviceSession): HostedDeviceSession {
     const observed = { ...record };
     delete observed.parked;
+    delete observed.stoppedAt;
     if (this.resuming.has(record.id))
       return { ...observed, state: 'unknown', notice: 'This server is resuming the session; attach again shortly.' };
     if (record.state !== 'stopped' && !this.owned.has(record.id))
@@ -1927,9 +1943,98 @@ export class DeviceHost {
 
   reconcileStopped(): Promise<void> {
     if (this.closed) return Promise.resolve();
-    return (this.reconciling ??= this.retireStopped().finally(() => {
-      this.reconciling = undefined;
+    return (this.reconciling ??= this.retireStopped()
+      .then(() => this.reclaimEndedHomes(true))
+      .finally(() => {
+        this.reconciling = undefined;
+      }));
+  }
+
+  /**
+   * Removes the home of every session that stopped at least `homeGraceMs` ago, and with `orphans` the home of every
+   * id the journal does not list. A session the journal lists as stopped without `stoppedAt` is stamped now, so it
+   * is removed one grace period later. The journal keeps the stopped entries.
+   */
+  reclaimEndedHomes(orphans = false): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    this.reclaimOrphans ||= orphans;
+    return (this.reclaiming ??= this.reclaimHomes().finally(() => {
+      this.reclaiming = undefined;
     }));
+  }
+
+  private async reclaimHomes(): Promise<void> {
+    try {
+      const now = Date.now();
+      if (readHostedSessions().some((record) => record.state === 'stopped' && !record.stoppedAt))
+        this.transaction((records) => {
+          for (const record of records)
+            if (record.state === 'stopped' && !record.stoppedAt) record.stoppedAt = new Date(now).toISOString();
+        });
+      const records = readHostedSessions();
+      for (const record of records) {
+        if (this.closed) return;
+        if (
+          record.state === 'stopped' &&
+          !record.parked &&
+          this.homeExpired(record, now) &&
+          existsSync(deviceHostArea(record.id))
+        )
+          await this.reclaimHome(record.id);
+      }
+      if (this.reclaimOrphans) {
+        this.reclaimOrphans = false;
+        const listed = new Set(records.map((record) => record.id));
+        for (const id of readdirSync(deviceHostAreasRoot())) {
+          if (this.closed) return;
+          if (/^[a-f0-9-]{36}$/.test(id) && !listed.has(id)) await this.reclaimHome(id);
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
+      this.noteHome('sweep', `Hosted session homes were not reclaimed: ${oneLine(error)}`);
+      return;
+    }
+    this.noteHome('sweep', null);
+  }
+
+  private noteHome(key: string, note: string | null): void {
+    if (note === null) this.homeNotes.delete(key);
+    else if (this.homeNotes.get(key) !== note) {
+      this.homeNotes.set(key, note);
+      process.stderr.write(`${note}\n`);
+    }
+  }
+
+  private homeExpired(record: HostedDeviceSession, now: number): boolean {
+    return now - Date.parse(record.stoppedAt ?? '') >= (this.options.homeGraceMs ?? HOSTED_HOME_GRACE_MS);
+  }
+
+  private async reclaimHome(id: string): Promise<void> {
+    if (this.owned.has(id)) return;
+    let owned: OwnedSession;
+    try {
+      owned = this.acquire({ id });
+    } catch {
+      return;
+    }
+    try {
+      const record = readHostedSessions().find((each) => each.id === id);
+      if (record && (record.state !== 'stopped' || record.parked || !this.homeExpired(record, Date.now()))) return;
+      const area = deviceHostArea(id);
+      if (!ownsNoDevice(join(area, 'home'), record?.platform)) return;
+      for (const entry of readdirSync(area)) {
+        if (!entry.endsWith('.claims')) continue;
+        const cleared = clearFreeClaimSet({ root: join(area, entry), label: 'hosted agent driver' });
+        if (cleared.status !== 'cleared') return;
+      }
+      await rm(area, { recursive: true, force: true });
+      this.noteHome(id, null);
+    } catch (error) {
+      this.noteHome(id, `Hosted session ${id} home kept: ${oneLine(error)}`);
+    } finally {
+      this.release(id, owned);
+    }
   }
 
   private async evictParked(): Promise<void> {
@@ -2059,6 +2164,7 @@ export class DeviceHost {
     await Promise.all([...this.owned.values()].map((owned) => owned.stopping ?? owned.run?.done));
     await Promise.all([...this.probes.keys()].map((probe) => probe.done));
     await this.reconciling?.catch(() => {});
+    await this.reclaiming?.catch(() => {});
   }
 
   private async detach(record: HostedDeviceSession): Promise<boolean> {
@@ -2414,6 +2520,14 @@ export class DeviceHost {
     }
     return { done, cancel };
   }
+}
+
+function ownsNoDevice(home: string, platform: HostedDeviceSession['platform'] | undefined): boolean {
+  const ledger = readHostedDeviceLedger(home);
+  if (ledger) return !ledger.ios.length && !ledger.android.length && !ledger.web.length;
+  if (platform === 'macos') return true;
+  if (!existsSync(join(home, 'hosted-device.json'))) return true;
+  return platform === undefined && parseHostedMacosDevice(readJsonObject(join(home, 'hosted-device.json'))) !== null;
 }
 
 function oneLine(error: unknown): string {

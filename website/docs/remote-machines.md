@@ -51,6 +51,8 @@ A worker that sleeps stops answering the machines that build or host simulators 
 
 <StimTabs code={`stim settings set server.keepAwake true`} />
 
+In Stim Desktop on the worker, the same switch is **Keep this machine awake** in **Settings > Connections > Using this machine**.
+
 The setting defaults to `false`. While it is true on a Mac, stim-server prevents idle system sleep (the same as `caffeinate -s`), so the Mac stays reachable while plugged in; on battery it can still sleep, and the display may still sleep. stim-server holds this only while it accepts connections from other machines: its Tailscale or `server.lanAddresses` listener is up and it is not a `--loopback-only` server. It lets go when the setting turns off, when those listeners go away, and when the server stops, and it reads the setting without a restart.
 
 `stim-server service status` prints a `keep awake:` line, and the local `/health` answer carries `keepAwake`, saying whether the assertion is held. If `caffeinate` cannot start or stops, the status reads `failed` and stim-server does not retry by itself: restart stim-server. Turning the setting off and on also retries, but stim-server polls the setting every 5 seconds, so wait more than 5 seconds between the two and confirm with `stim-server service status`. On Linux and Windows workers the setting has no effect and the status line says so.
@@ -178,7 +180,7 @@ Android also accepts these backends. The [macOS prototype](./macos.md) takes the
 
 ## Automatic machine pools
 
-In **Settings > Remote Machines**, **Builds enabled** and **Simulators enabled**
+In **Settings > Connections > This machine uses**, **Builds enabled** and **Simulators enabled**
 control this machine and each configured remote independently; a remote that Tailscale reports
 as Linux or Windows shows only **Builds enabled**. All members start enabled.
 Turning a switch off keeps pairing and active builds or sessions intact. It only
@@ -368,7 +370,7 @@ with the placement reason as hover text. Local devices show no placement label.
 
 Stim Desktop shows the machine's name and the phone app an **on &lt;machine&gt;** label; both view and control
 hosted Android through the client machine's local stim-server relay. Turn on
-**Serve to phones** in Desktop and pair the phone with the client machine. Named
+**Allow connections** in Desktop and pair the phone with the client machine. Named
 slots stream independently. Touch, text and hardware buttons reach the exact
 hosted emulator through the host's compiled `stim-frames` helper and scrcpy jar;
 its temporary jar and adb forward are removed when capture stops. Desktop
@@ -551,11 +553,11 @@ remote machines on this Mac's Stim version** never installs on such a worker.
 
 ## Use the Desktop wizard
 
-Open **Stim > Settings > Remote Machines** on your main machine. It lists your
-remote machines, each with a status (**Approved**, **Waiting for approval**,
-the layer that stopped an unreachable machine (such as **Server not ready** or **Machine is offline**), **Needs update** or the reason it is not offloading, with the reason and a fix under it), what it does and **Remove...**. Readiness covers every platform of the app: a Linux machine that matches for Android shows as approved even though it cannot build iOS, and a Mac without an Android SDK shows that reason for an app with Android. Choose **Add Remote Machine...** to start the wizard,
+Open **Stim > Settings > Connections > This machine uses** on your main machine. It lists your
+remote machines, each with a status (**Approved**, **Waiting for approval**, **Key not confirmed**, **Server is outdated**,
+the layer that stopped an unreachable machine (such as **Server not ready** or **Machine is offline**), **Needs update** or the reason it is not offloading, with the reason and a fix under it), its access (**Build**, **Run devices**) and **Remove...**. A machine this one also paired with to view or control its work shares its row when both pinned the same stim-server key. Readiness covers every platform of the app: a Linux machine that matches for Android shows as approved even though it cannot build iOS, and a Mac without an Android SDK shows that reason for an app with Android. Choose **Add... > Build or Run Simulators There...** to start the wizard,
 which finds the Macs, Linux and Windows machines on your tailnet itself. **Remove** takes the machine out of
-`remote.machines` and shows the optional commands to run on that machine: `stim-server devices revoke <id>` for each
+`remote.machines` and shows the commands to run on that machine, since removing it here never revokes this machine there: `stim-server devices revoke <id>` for each
 request and `stim-server service uninstall`.
 
 The wizard has five steps. It refreshes in the background every few seconds,
@@ -573,11 +575,11 @@ so there is no Check again button:
    appears by itself when that machine joins. When every listed machine is
    offline, a line under the list tells you to turn on Tailscale on it.
    A machine you already added is marked **Added** and shows the same status as
-   the Remote Machines list (**Approved**, **Unreachable**, a Tailscale or
+   the Connections list (**Approved**, **Unreachable**, a Tailscale or
    stim-server problem and what to do about it) instead of Tailscale's
    online flag. Choosing it does not start setup again; it says the machine is
    already added and offers to close the wizard so you can use its row in
-   Remote Machines.
+   Connections.
    `stim-server setup` on the worker Mac gives the same three answers when it
    cannot read Tailscale: install it from `https://tailscale.com/download/mac`,
    turn the app on from its menu bar icon, or run `tailscale up`.
@@ -609,7 +611,7 @@ so there is no Check again button:
    tools when **Builds** is chosen. A problem that stops the chosen
    capability is shown in red and never disables **Next**; the machine stays added,
    builds that cannot run there stay on this machine, and the machine's page in
-   Settings > Remote Machines lists every problem and note by platform. Red problems are an incompatible Stim build
+   Settings > Connections lists every problem and note by platform. Red problems are an incompatible Stim build
    or no Xcode for Builds, and no iOS simulator runtime for Hosted simulators. **Install This Mac's Build**
    fixes an incompatible Stim build. A Linux or Windows machine shows only the Stim build and
    Android rows, and a missing Android SDK or any JDK difference is red
@@ -1139,8 +1141,8 @@ until the next wizard reuses it or its removal succeeds.
 
 **Cancel** removes only entries the wizard added, restores the mode only if
 it changed it, and runs doctor to forget removed pairings. Worker grants
-remain until revoked there. After finishing, use **Settings > Remote Machines >
-Remove** on the main machine, or run `stim remote remove <machine>`, which also
+remain until revoked there. After finishing, use **Settings > Connections > This
+machine uses > Remove** on the main machine, or run `stim remote remove <machine>`, which also
 forgets this machine's credentials for it.
 
 On the worker, run the summary's `stim-server devices revoke <id>` for each

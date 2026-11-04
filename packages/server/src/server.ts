@@ -55,10 +55,12 @@ import {
   type StatusViews,
   type WorkspaceSummary,
   type WorktreeRow,
+  SHARE_TOKEN,
 } from '@stim-cli/core/state';
 import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
 import type { DesktopBootstrap } from './desktop-bootstrap.ts';
 import { actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
+import { cachedPeerNode } from './peer-node.ts';
 import { parsePlatformRun } from './platform-run.ts';
 import { parsePlatformBuild } from './platform-build.ts';
 import {
@@ -1265,8 +1267,21 @@ const SHARE_SLUG = new RegExp(SHARE_SLUG_PATTERN);
 /** Validates `share.start` params; returns why they are refused. */
 function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { workspace: string }) | string {
   if (!isJsonObject(params)) return 'params must be an object.';
-  const { workspace, platform, slot, physical, control, expiresMinutes, password, passwordless, view, slug, ...rest } =
-    params;
+  const {
+    workspace,
+    platform,
+    slot,
+    physical,
+    control,
+    expiresMinutes,
+    expiresAt,
+    token,
+    password,
+    passwordless,
+    view,
+    slug,
+    ...rest
+  } = params;
   if (Object.keys(rest).length) return `share.start does not take ${Object.keys(rest).join(', ')}.`;
   if (typeof workspace !== 'string') return 'params.workspace must be a workspace path.';
   if (platform !== 'ios' && platform !== 'android') return 'params.platform must be ios or android.';
@@ -1297,7 +1312,19 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     if (RESERVED_SHARE_SLUGS.includes(slug)) return `params.slug cannot be ${slug}: the share pages use that path.`;
     if (passwordless) return 'A share with a slug needs a password: anyone can guess a slug.';
   }
-  const minutes = expiresMinutes ?? SHARE_EXPIRY.default;
+  if (token !== undefined && slug !== undefined) return 'A share takes a slug or a token, not both.';
+  if (token !== undefined && (typeof token !== 'string' || !SHARE_TOKEN.test(token)))
+    return 'params.token must be a 43-character URL token.';
+  if (expiresAt !== undefined && expiresMinutes !== undefined)
+    return 'A share takes expiresMinutes or expiresAt, not both.';
+  let until: number | undefined;
+  if (expiresAt !== undefined) {
+    until = typeof expiresAt === 'string' ? Date.parse(expiresAt) : NaN;
+    if (!Number.isFinite(until) || until <= Date.now() || until > Date.now() + SHARE_EXPIRY.max * 60_000)
+      return `params.expiresAt must be a time within the next ${SHARE_EXPIRY.max} minutes.`;
+  }
+  const minutes =
+    until === undefined ? (expiresMinutes ?? SHARE_EXPIRY.default) : Math.ceil((until - Date.now()) / 60_000);
   if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > SHARE_EXPIRY.max)
     return `params.expiresMinutes must be a whole number of minutes from 1 to ${SHARE_EXPIRY.max}.`;
   return {
@@ -1307,6 +1334,8 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     ...(physical ? { physical } : {}),
     control: control === true,
     expiresMinutes: minutes,
+    ...(until === undefined ? {} : { expiresAt: until }),
+    ...(token === undefined ? {} : { token }),
     ...(typeof password === 'string' ? { password } : {}),
     ...(passwordless ? { passwordless } : {}),
     ...(view ? { view: typeof view.password === 'string' ? { password: view.password } : {} } : {}),
@@ -1392,13 +1421,14 @@ function isLink(path: string): boolean {
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const { transports, tailscale } = serverTransports(options);
   /** The tailnet node a transport reports for a peer, or null when none identifies it. */
-  async function peerNode(request: IncomingMessage, address: string): Promise<string | null> {
+  const peerNode = cachedPeerNode(async (request: IncomingMessage, address: string): Promise<string | null> => {
     for (const transport of transports) {
       const identity = await transport.identify?.({ address, request }).catch(() => null);
       if (identity) return identity.id;
     }
+    console.error(`stim-server: no transport identified the peer ${address}.`);
     return null;
-  }
+  });
   /**
    * The tailnet node each device-host client's latest authenticated connection came from. Its agent grant's bearer
    * token goes to a host name the client resolves, so the agent route also requires this node: a node that took the
@@ -1545,7 +1575,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const retainedLifecycles = new Set<() => void>();
   const planQueues = new Map<string, Promise<void>>();
   const readDetailsReport = (
-    method: 'stats' | 'gc' | 'doctor' | 'gc-history' | 'builds',
+    method: 'stats' | 'gc' | 'doctor' | 'gc-history' | 'builds' | 'remote',
     cwd = homedir(),
     platform?: 'ios' | 'android',
     signal?: AbortSignal,
@@ -1572,6 +1602,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             }),
           };
         if (method === 'doctor') return await stim.doctor({ signal: abort.signal, platform });
+        if (method === 'remote') return await stim.remoteMachines({ signal: abort.signal });
         return method === 'gc'
           ? await stim.gc({ signal: abort.signal, measureBuildState: false })
           : await stim.stats({ signal: abort.signal });
@@ -1965,10 +1996,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     watchServerDir();
     // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
     revocationPoll ??= setInterval(checkRevocations, 1000).unref();
-    hostedIdleSweep ??= setInterval(
-      () => hostedDevices.sweepIdle(),
-      options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS,
-    ).unref();
+    hostedIdleSweep ??= setInterval(() => {
+      hostedDevices.sweepIdle();
+      void hostedDevices.reclaimEndedHomes();
+    }, options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS).unref();
     push.refresh();
     retireOnce ??= Promise.resolve()
       .then(() => recoverAgentDrivers(options.env, deviceHostAreas()))
@@ -2165,6 +2196,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-reports',
                 'desktop-machine-history',
                 'desktop-report-platform',
+                'desktop-report-remote',
                 'desktop-report-invalidate-target',
                 'desktop-settings',
                 'desktop-settings-schema',
@@ -4554,7 +4586,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (
         !isJsonObject(params) ||
-        !['doctor', 'gc', 'gc-history', 'builds'].includes(String(params.report)) ||
+        !['doctor', 'gc', 'gc-history', 'builds', 'remote'].includes(String(params.report)) ||
         Object.keys(params).some(
           (key) => key !== 'report' && (params.report !== 'doctor' || (key !== 'cwd' && key !== 'platform')),
         ) ||
@@ -4567,10 +4599,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(
           id,
           'bad-request',
-          'Choose report gc, gc-history or builds, or report doctor with an absolute cwd and optional ios/android platform.',
+          'Choose report gc, gc-history, builds or remote, or report doctor with an absolute cwd and optional ios/android platform.',
         );
       const target: DesktopReportTarget =
-        params.report === 'gc' || params.report === 'gc-history' || params.report === 'builds'
+        params.report === 'gc' ||
+        params.report === 'gc-history' ||
+        params.report === 'builds' ||
+        params.report === 'remote'
           ? { report: params.report }
           : {
               report: 'doctor',
@@ -5205,6 +5240,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
 
   function upgrade(request: IncomingMessage, socket: Socket, head: Buffer): void {
+    // Node's http server drops its own socket error listener once it emits 'upgrade'; without one, a peer that resets
+    // the connection after a refusal would raise an uncaught ECONNRESET.
+    socket.on('error', () => socket.destroy());
     if (startup.state !== 'ready') {
       socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
@@ -5300,6 +5338,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         records = spendSecret(accepted.lookup!, publicKey, name, from);
       } catch (error) {
         if (!(error instanceof RegistryUnavailable)) throw error;
+        console.error(`stim-server: could not record a new client: ${error.message}`);
         readApprovals();
         return refuse('home-unavailable');
       }
@@ -5317,13 +5356,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (host) {
       const node = peer ? await peerNode(request, peer) : null;
       if (node) agentNodes.set(host.id, node);
-      else agentNodes.delete(host.id);
+      else if (!peer) agentNodes.delete(host.id);
       if (ws.readyState !== ws.OPEN) return;
     }
     connection(accepted.socket, peer, false, publicKey);
   }
 
   function upgradeLocal(request: IncomingMessage, socket: Socket, head: Buffer): void {
+    // Node's http server drops its own socket error listener once it emits 'upgrade'; without one, a peer that resets
+    // the connection after a refusal would raise an uncaught ECONNRESET.
+    socket.on('error', () => socket.destroy());
     if (startup.state !== 'ready') {
       socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;

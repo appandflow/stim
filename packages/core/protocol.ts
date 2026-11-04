@@ -89,6 +89,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
  * `desktop-machine-history` adds machine-wide build and cleanup history to those reports.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
+ * `desktop-report-remote` serves `{ "report": "remote" }`, the remote machines as `stim remote list --json` prints them.
  * `desktop-report-invalidate-target` accepts a report target in `desktop.reports.invalidate`, which then invalidates only it.
  * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
  * `desktop-settings-schema` supplies this server's registry-derived settings schema to local Desktop clients.
@@ -101,6 +102,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
  * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
+ * `share-reuse` is `share.start`'s `token` and `expiresAt`, which start a share under a URL token a stopped share had.
  * `share-waiting` is the rows' `state` (a share waits for its device instead of ending) and `share.stop`'s `slot`.
  * `share-slug` is `share.start`'s `slug` parameter and the rows' `slug`.
  * `hosted-presence` is `device-host.presence.subscribe`: the `presence` events of a hosted session, which carry what the
@@ -155,6 +157,7 @@ export const FEATURES = [
   'desktop-reports',
   'desktop-machine-history',
   'desktop-report-platform',
+  'desktop-report-remote',
   'desktop-report-invalidate-target',
   'desktop-settings',
   'desktop-settings-schema',
@@ -180,6 +183,7 @@ export const FEATURES = [
   'share-waiting',
   'hosted-presence',
   'share-slug',
+  'share-reuse',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -531,7 +535,7 @@ export interface DesktopPlanRefusal {
 
 export type DesktopReportTarget =
   | { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' }
-  | { report: 'gc' | 'gc-history' | 'builds' };
+  | { report: 'gc' | 'gc-history' | 'builds' | 'remote' };
 
 export interface DesktopReportSnapshot {
   pending: boolean;
@@ -1752,6 +1756,10 @@ export interface WebShareStartParams {
   physical?: boolean;
   control?: boolean;
   expiresMinutes?: number;
+  /** The URL token to register instead of a generated one, as `stim share --reuse` restarts a stopped share. */
+  token?: string;
+  /** The share's exact expiry (an ISO time within the next 480 minutes) instead of `expiresMinutes`. */
+  expiresAt?: string;
   /** 8 to 128 characters; never sent back. Without it, and without `passwordless`, the server generates one. */
   password?: string;
   passwordless?: boolean;

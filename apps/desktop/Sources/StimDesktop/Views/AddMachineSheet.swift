@@ -214,9 +214,9 @@ struct AddMachineSheet: View {
       .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
       if let existing = model.existingPeer {
         VStack(alignment: .leading, spacing: Space.sm) {
-          Text("\(existing.mac.hostName) is already added. Its state and settings are in Remote Machines.")
+          Text("\(existing.mac.hostName) is already added. Its state and settings are in Settings > Connections.")
             .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
-          Button("Show in Remote Machines") { dismiss() }.buttonStyle(.stim(.secondary, .regular))
+          Button("Show in Connections") { dismiss() }.buttonStyle(.stim(.secondary, .regular))
         }
       }
       if model.macList == .empty {
@@ -281,7 +281,7 @@ struct AddMachineSheet: View {
     .accessibilityLabel(
       "\(peer.mac.hostName), already added\(added.status.map { ", \($0.title)" } ?? "")\(added.detail.map { ". \($0)" } ?? "")"
     )
-    .accessibilityHint("Shows that it is set up in Remote Machines")
+    .accessibilityHint("Shows that it is set up in Connections")
   }
 
   private func peerName(_ peer: Tailnet.Peer) -> some View {

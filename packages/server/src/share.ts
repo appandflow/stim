@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { isJsonObject, type StatusPayload } from '@stim-cli/core/state';
+import { isJsonObject, SHARE_TOKEN, type StatusPayload } from '@stim-cli/core/state';
 import type { ControlHub, Controller, InputCommand } from './control.ts';
 import { CLIPBOARD_INPUT_COST, parseInput } from './control.ts';
 import { MAX_CLIENT_MESSAGE_BYTES } from '@stim-cli/core/noise-session';
@@ -40,6 +40,10 @@ export interface ShareRequest {
   physical?: boolean;
   control: boolean;
   expiresMinutes: number;
+  /** Starts the share under this URL token, which a share the same person stopped had; without it one is generated. */
+  token?: string;
+  /** The exact expiry, in epoch milliseconds, of a share that starts again; without it, `expiresMinutes` from now. */
+  expiresAt?: number;
   /** A password the person chose, kept only as its digest; without it and without `passwordless`, one is generated. */
   password?: string;
   /** No login: the URL token alone admits a viewer. */
@@ -142,7 +146,6 @@ export interface StatusListener {
 
 type Refusal = { code: 'bad-request' | 'action-failed'; message: string };
 
-const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const SLUG = new RegExp(SHARE_SLUG_PATTERN);
 const COOKIE = 'stim_share';
 const PASSWORD_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -438,6 +441,10 @@ export class ShareHub {
     this.retrying.unref?.();
   }
 
+  private reusedLive(request: ShareRequest): boolean {
+    return request.token !== undefined && this.shares.has(digest(request.token).toString('hex'));
+  }
+
   private async begin(request: ShareRequest): Promise<StartedShare | Refusal> {
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
     if (request.control && request.physical && request.platform === 'ios') {
@@ -459,6 +466,10 @@ export class ShareHub {
     }
     const taken = this.slugTaken(request.slug);
     if (taken) return taken;
+    if (request.expiresAt !== undefined && request.expiresAt <= Date.now()) {
+      return { code: 'bad-request', message: 'That link has expired.' };
+    }
+    if (this.reusedLive(request)) return { code: 'bad-request', message: 'That link is live now.' };
     const status = await this.status();
     if ('code' in status) return status;
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
@@ -484,14 +495,19 @@ export class ShareHub {
       void this.teardown();
       return late;
     }
-    const { password: chosen, view, ...kept } = request;
+    const { password: chosen, view, token: given, expiresAt: until, ...kept } = request;
+    if (this.reusedLive(request)) {
+      source.close();
+      void this.teardown();
+      return { code: 'bad-request', message: 'That link is live now.' };
+    }
     const auth: ShareAuth = request.passwordless ? 'none' : chosen !== undefined ? 'set' : 'generated';
     const shown = auth === 'generated' ? password() : null;
     const viewAuth: ViewAuth = view ? (view.password !== undefined ? 'set' : 'generated') : null;
     const viewShown = viewAuth === 'generated' ? password() : null;
-    const secret = request.slug ?? token();
+    const secret = request.slug ?? given ?? token();
     const id = `w${this.next++}`;
-    const expiresAt = Date.now() + request.expiresMinutes * 60_000;
+    const expiresAt = until ?? Date.now() + request.expiresMinutes * 60_000;
     const share: Share = {
       id,
       key: digest(secret).toString('hex'),
@@ -524,7 +540,7 @@ export class ShareHub {
       latest: status,
       facts: titleFacts(status, request),
       app: null,
-      timer: setTimeout(() => void this.end(share, 'This share expired.'), request.expiresMinutes * 60_000),
+      timer: setTimeout(() => void this.end(share, 'This share expired.'), expiresAt - Date.now()),
       unwatch: () => {},
       ended: false,
     };
@@ -995,7 +1011,7 @@ export class ShareHub {
       url = url.slice(prefix.length);
     }
     const [, secret, rest] = /^\/s\/([^/?#]+)\/([^?#]*)(?:\?.*)?$/.exec(url) ?? [];
-    if (secret === undefined || rest === undefined || !(TOKEN.test(secret) || SLUG.test(secret))) return null;
+    if (secret === undefined || rest === undefined || !(SHARE_TOKEN.test(secret) || SLUG.test(secret))) return null;
     const share = this.shares.get(digest(secret).toString('hex'));
     return share && !share.ended ? { share, rest } : null;
   }
@@ -1004,7 +1020,8 @@ export class ShareHub {
   private admit(share: Share, request: IncomingMessage): { login: Login | null } | null {
     if (share.passwordDigest === null) return { login: null };
     const session = cookieOf(request);
-    const login = session !== null && TOKEN.test(session) ? share.sessions.get(digest(session).toString('hex')) : null;
+    const login =
+      session !== null && SHARE_TOKEN.test(session) ? share.sessions.get(digest(session).toString('hex')) : null;
     return login ? { login } : null;
   }
 

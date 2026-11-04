@@ -10,6 +10,7 @@ import {
   hostedNativeRecords,
   parseHostedNativePlacement,
   hostedAndroidDeviceName,
+  reversePorts,
 } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
 import { macosAppPresent } from '../macos/state.ts';
@@ -595,7 +596,11 @@ async function stopWorkspace({
     }
   };
   const releaseReverses = async () => {
-    await removeOwnedEmulatorReverses(proj, reservedPort, operation);
+    await removeOwnedEmulatorReverses(
+      proj,
+      [reservedPort ?? [], reversePorts(readWorkspaceState(root))].flat(),
+      operation,
+    );
     await releasePhoneReverses();
   };
   if (target.status === 'none') {
@@ -665,7 +670,7 @@ async function stopWorkspace({
     outcomes.metro = { status: 'skipped', reason: 'the supervisor owns the dev server on this port' };
   } else if (reservedPort === null) {
     report(chalk.dim(phaseLine('metro', 'no port reserved')));
-    await releasePhoneReverses();
+    await releaseReverses();
   } else {
     const metro = await stopMetro(reservedPort, root, {
       server: sup,
@@ -1064,14 +1069,14 @@ function occupiedSkipReason(reason: string, holders: string[] | null | undefined
 
 async function removeOwnedEmulatorReverses(
   project: ProjectRecord | null | undefined,
-  metroPort: number | null,
+  hostPorts: readonly number[],
   operation: StimContext | undefined,
 ): Promise<void> {
-  if (metroPort === null) return;
+  if (hostPorts.length === 0) return;
   for (const { platforms } of projectDeviceSlots(project)) {
     const android = platforms.android;
     if (android?.owned && android.avdName && android.consolePort) {
-      await removeOwnedEmulatorMetroReverses(android.avdName, `emulator-${android.consolePort}`, metroPort, operation);
+      await removeOwnedEmulatorMetroReverses(android.avdName, `emulator-${android.consolePort}`, hostPorts, operation);
     }
   }
 }

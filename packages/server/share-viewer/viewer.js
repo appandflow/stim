@@ -65,6 +65,7 @@ function finish(text) {
   away = false;
   resuming = false;
   delete body.dataset.away;
+  document.getElementById('upgrade').hidden = true;
   setStatus('ended', text);
   leftText.textContent = '';
 }
@@ -631,6 +632,10 @@ const send = (message) => {
   return true;
 };
 
+for (const surface of [device, document.getElementById('toolbar')]) {
+  surface.addEventListener('contextmenu', (event) => event.preventDefault());
+}
+
 void canDecodeVideo().then((supported) => connect(supported ? 'h264' : 'jpeg'));
 
 for (const button of document.querySelectorAll('[data-button]')) {
@@ -1007,15 +1012,23 @@ if (control) {
     });
   };
   let queuedMove = null;
+  let touching = false;
   const sendTouch = (message) => {
     if (message.phase !== 'move') queuedMove = null;
+    if (message.phase === 'down') {
+      if (!live) return;
+      touching = true;
+    } else if (!touching || (message.phase === 'move' && !live)) return;
     if (message.phase === 'down') busy = false;
     if (!busy || message.phase === 'down') send(message);
     if (me) {
       const second = message.x2 === undefined ? null : { x: message.x2, y: message.y2 };
       overlay.own(me, message.phase, message.x, message.y, busy, second);
     }
-    if (message.phase === 'up') busy = false;
+    if (message.phase === 'up') {
+      busy = false;
+      touching = false;
+    }
   };
   let frame = 0;
   const flushMove = () => {
@@ -1043,6 +1056,7 @@ if (control) {
     screen.focus();
     screen.setPointerCapture(event.pointerId);
     event.preventDefault();
+    if (!live) return;
     if (event.pointerType === 'touch') {
       emit(touches.down(event.pointerId, at(event)));
       touched();
@@ -1055,6 +1069,7 @@ if (control) {
     }
   });
   screen.addEventListener('pointermove', (event) => {
+    if (!live) return;
     if (event.pointerType === 'touch') {
       emit(touches.move(event.pointerId, at(event)));
       touched();
@@ -1107,7 +1122,7 @@ if (control) {
   const keys = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Escape: 'escape' };
   const typed = { Enter: '\n', Tab: '\t', Backspace: '\b' };
   screen.addEventListener('keydown', (event) => {
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (!live || event.metaKey || event.ctrlKey || event.altKey) return;
     const key = keys[event.key];
     if (key && !event.shiftKey) {
       send({ type: 'key', key });

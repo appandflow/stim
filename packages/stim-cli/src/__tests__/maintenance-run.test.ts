@@ -104,7 +104,7 @@ test('load deferral leaves the size check due and a failing pressure check is no
   expect(measurements.measureSizes).not.toHaveBeenCalled();
 });
 
-test('an already held pass makes the child exit silently and gc refuse with the holder', async () => {
+test('an already held pass makes the child exit silently, names the holder to its caller, and gc refuses with the holder', async () => {
   const attempt = tryAcquireClaim({
     root: maintenanceRunClaims(),
     mode: 'exclusive',
@@ -115,7 +115,7 @@ test('an already held pass makes the child exit silently and gc refuse with the 
   const out = vi.spyOn(console, 'log').mockImplementation(() => {});
   const err = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
-    await runMaintenance('second-pass');
+    expect(await runMaintenance('second-pass')).toBe(`pid ${process.pid} runs a maintenance pass (first-pass)`);
     expect(readMaintenanceState()).toBeNull();
     expect(measurements.measurePressure).not.toHaveBeenCalled();
     expect(out).not.toHaveBeenCalled();

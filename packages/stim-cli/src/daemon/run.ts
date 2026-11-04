@@ -43,7 +43,7 @@ import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode }
 import { ownedHere } from './idle.ts';
 import type { TickMeasurement } from './measure.ts';
 import { listWaiting } from '../engine/wait-queue.ts';
-import { runHomePasses } from './passes.ts';
+import { createMaintenanceLane, runHomePasses, type HomePasses } from './passes.ts';
 import { reclaimForBootWaiters } from './reclaim.ts';
 import { pendingDormant } from './stages.ts';
 
@@ -226,11 +226,13 @@ async function pendingWork(
 /**
  * The per-home daemon: holds `$STIM_HOME/daemon/claim`, serves its socket, and ticks every minute while something
  * runs in the home or the pressure level is above normal, every 5 minutes otherwise, and on demand, each tick measuring
- * once, running the activity, dormant and pressure passes and automatic maintenance, and writing `snapshot.json`. A
- * command's contact brings it back to the minute. It exits after two ticks in a row with nothing running, no work
- * pending (`pendingWork`) and no contact, when `daemon.mode` turns off, or when a tick throws, releasing its claim so
- * each supervisor's own idle timer takes over. Asked to hand over, by a daemon a command from a newer installed Stim
- * build started, it exits at once between ticks, or after the tick in progress.
+ * once, running the activity, dormant and pressure passes and writing `snapshot.json`, then, unless it exits, starting
+ * the slow passes (`createMaintenanceLane`) unless the last ones still run. A command's contact brings it back to the minute. It exits
+ * after two ticks in a row with nothing running, no work pending (`pendingWork`), no slow pass running and no contact,
+ * when `daemon.mode` turns off, or when a tick throws, releasing its claim so each supervisor's own idle timer takes
+ * over. Asked to hand over, by a daemon a command from a newer installed Stim build started, it exits at once between
+ * ticks, or after the tick in progress. Once it is closing it starts no slow pass, and one still running finishes
+ * before the process ends.
  */
 export async function runDaemon({
   tickMs = TICK_MS,
@@ -284,6 +286,7 @@ export async function runDaemon({
     writer.close();
     return;
   }
+  const lane = createMaintenanceLane(log);
   const loopDelay = monitorEventLoopDelay();
   loopDelay.enable();
   const path = daemonSocket();
@@ -391,7 +394,7 @@ export async function runDaemon({
     releaseClaim(claim);
     for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
-    writer.close();
+    void lane.settled().then(() => writer.close());
   };
   for (const signal of SIGNALS) process.once(signal, onSignal);
   try {
@@ -446,18 +449,20 @@ export async function runDaemon({
     const contactSince = lastContact;
     const replying = tickReplies;
     tickReplies = [];
+    const maintaining = lane.running();
     let alive: string | null;
     let pending: string | null = null;
     let wentDormant = false;
     let phases: Record<string, number> = {};
+    let ticked: HomePasses | null = null;
     try {
       const passes = await runHomePasses({
         act: mode === 'on',
-        trigger: 'daemon',
         log,
         memoryWarningSince: lastSnapshot?.pressure?.memoryWarningSince ?? null,
       });
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
+      actions.push(...lane.take());
       scheduleDependencyMeasures();
       const reclaimStarted = performance.now();
       const reclaimed = await reclaimForBootWaiters({
@@ -477,7 +482,11 @@ export async function runDaemon({
         waiters.build.length || waiters.boot.length || waiting.length
           ? 'a run waits for a build slot or a device boot'
           : homeAlive(config, measured);
-      pending = alive ? null : await pendingWork(config, measured, slowTickMs);
+      pending = alive
+        ? null
+        : maintaining
+          ? 'automatic maintenance runs'
+          : await pendingWork(config, measured, slowTickMs);
       wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
       interval = alive || pressure.level !== 'normal' ? tickMs : slowTickMs;
       for (const { path: workspace, outcome, detail } of workspaces) {
@@ -525,6 +534,7 @@ export async function runDaemon({
       };
       writeSnapshot(lastSnapshot);
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
+      ticked = passes;
     } catch (error) {
       for (const socket of replying) socket.destroy();
       shutdown(
@@ -556,7 +566,9 @@ export async function runDaemon({
       shutdown('nothing runs in this Stim home');
       break;
     }
+    if (ticked && !handover && !closing) lane.start(ticked, mode === 'on');
   }
+  await lane.settled();
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

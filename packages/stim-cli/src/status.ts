@@ -440,6 +440,33 @@ export function metroReverseTargets(
   });
 }
 
+export function reversePortTargets(
+  state: EnvironmentState,
+  launches: Readonly<Record<string, { deviceId: string }>>,
+): { slot: string; serial: string }[] {
+  return [{ slot: 'default', android: state.android }, ...(state.slots ?? [])].flatMap(({ slot, android }) => {
+    const launch = launches[deviceSlotKey('android', slot)];
+    if (!android?.owned || android.physical || !android.serial || android.app?.state !== 'running') return [];
+    return launch?.deviceId === android.serial ? [{ slot, serial: android.serial }] : [];
+  });
+}
+
+export function addReversePortMissingIssue(
+  state: EnvironmentState,
+  { slot, serial, port }: { slot: string; serial: string; port: number },
+): void {
+  const issue: StatusIssue = {
+    code: 'android-reverse-missing',
+    severity: 'warning',
+    message: `the adb reverse for port ${port} is missing on ${serial}, so the app cannot reach the server on localhost:${port}`,
+    remedy: `stim ports reverse ${port}`,
+    workspace: state.path,
+    ...(slot === 'default' ? {} : { slot }),
+  };
+  state.issues.push(issue);
+  state.warnings.push(issueText(issue));
+}
+
 export function addReverseMissingIssue(
   state: EnvironmentState,
   { slot, serial, metroPort }: { slot: string; serial: string; metroPort: number },

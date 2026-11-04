@@ -186,7 +186,7 @@ most 30. When the device tool still does not answer, Stim sends the reload anywa
 
 An Android reload first lists \`adb reverse\` on each live owned emulator
 launched against this Metro and re-applies the Metro port's reverse where it is
-missing. adb ties a reverse to its transport, and a transport that drops and
+missing, and the same for each port reversed with \`stim ports reverse\`. adb ties a reverse to its transport, and a transport that drops and
 reconnects comes back without it and without any error, which leaves the app
 cut off from Metro and Fast Refresh. After restoring one, Stim waits up to 8
 seconds, sending nothing, until the app on every emulator it checked is
@@ -841,7 +841,12 @@ its last hello, shown once it has connected; a pairing is desktop when
 clientApp is Stim Desktop or Stim Dev and phone otherwise. They are display
 only and never change access. A person on the host renames a record
 with stim-server devices rename <id> <name>; the client sees the name on its
-next connection, and its access does not change.
+next connection, and its access does not change. An entry of a registry file
+that this stim-server cannot read is never dropped: every write keeps it as the
+text it had, it grants nothing, and devices --json lists it in unreadable as
+{ file, index, id? }. A file with a registry version newer than 2 is listed as
+{ file, version }, its records are not read, and writes to it are refused.
+Rename, grant and revoke refuse an unreadable id; the person edits the file.
 
 The host's person sees Hosted here rows in stim-server devices; --json adds
 hostedSessions beside devices. Rows show client, platform, device, installed
@@ -960,8 +965,10 @@ rebuilt; it never blocks reading collected records. The client waits up to
 park and worker termination paths fit within
 that wait; an in-flight handoff copy and closing Metro or view transports are
 outside those worker bounds.
-Collected records remain in the session home after parking or deletion;
-app blobs and materialized bundles are removed. Native queries read persisted
+Collected records remain in the session home after parking or deletion, for the
+client to copy, until the host removes the home an hour after the session stopped
+(a parked session's home stays while it lists the device); app blobs and
+materialized bundles are removed at stop. Native queries read persisted
 entries, overlap by five seconds and de-duplicate; info-level or later-persisted
 entries may be unavailable. JavaScript logs arrive through Metro.
 The host advertises hosted-ios-data for iOS handoff and native logs. An older
@@ -1032,7 +1039,7 @@ daemon startup or grant issuance on client support. The client checks the host's
 hosted-ios-agent feature before using a grant.
 
 Stim Desktop and the phone app view and control the simulator through this
-machine's stim-server relay, with an "on <machine>" label. Turn on Serve to phones
+machine's stim-server relay, with an "on <machine>" label. Turn on Allow connections
 in Desktop; pair the phone with this machine, not the hosting Mac. frames.subscribe
 and control.begin address workspace, platform ios and slot, including named
 slots. The relay shares one authenticated host connection with hosted macOS
@@ -1421,6 +1428,13 @@ result as proof instead of requiring an unrelated screenshot.`,
   containers, the pasteboard, photos, Safari data and Simulator settings are
   not cleared; \`gc --cache parked --delete\` erases a parked simulator when a
   clean system image is needed.
+  Every install \`stim ios\` makes on a local owned iOS simulator, an adopted one included, also allows
+  "Paste from Other Apps" for the installed bundle id alone, so a Command-V from
+  Desktop, the phone app or a share lands in that app without an "Allow Paste"
+  prompt. Stim writes that app's \`kTCCServicePasteboard\` row (Allow) in the
+  simulator's own TCC.db after the install and before the launch, once it has
+  checked the simulator is still Stim-owned. No setting turns it off. \`stim ios\` prints a warning for a failure and the install stands. Other apps on the simulator, Safari
+  included, keep iOS's own prompt.
 
   A parked simulator keeps its apps and data, so it can hold gigabytes. It
   uses the Mac's disk, not a fixed partition, so there is no free-space check

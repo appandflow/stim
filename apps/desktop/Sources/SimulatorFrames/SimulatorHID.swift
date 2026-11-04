@@ -97,16 +97,23 @@ struct SimulatorTouchSequence {
 /// Construction performs synchronous CoreSimulator XPC lookups and must run off the main thread.
 final class SimulatorHID {
   private let transport: Transport
+  private let device: NSObject
+  private let hardwareKeyboard: Bool
+  private var lastInput = Date.distantPast
   private var touchSequence = SimulatorTouchSequence()
   private let legacyUntil = Date().addingTimeInterval(10)
+  private static let keyboardIdle: TimeInterval = 2
+  private static let keyboardQueue = DispatchQueue(label: "stim.simulator-keyboard")
 
   private enum Transport {
     case coreDevice(CoreDeviceHID)
     case legacy(LegacyHID)
   }
 
-  init?(udid: String) {
+  init?(udid: String, hardwareKeyboard: Bool = false) {
     guard let device = CoreSimulator.device(udid: udid) else { return nil }
+    self.device = device
+    self.hardwareKeyboard = hardwareKeyboard
     if let coreDevice = CoreDeviceHID(device: device, feature: CoreDeviceHID.digitizer) {
       transport = .coreDevice(coreDevice)
     } else if let legacy = LegacyHID(device: device) {
@@ -114,6 +121,16 @@ final class SimulatorHID {
     } else {
       return nil
     }
+    if hardwareKeyboard { SimulatorHardwareKeyboard.attach(to: device) }
+    lastInput = Date()
+  }
+
+  private func noteInput() {
+    if hardwareKeyboard, Date().timeIntervalSince(lastInput) > Self.keyboardIdle {
+      let device = device
+      Self.keyboardQueue.async { SimulatorHardwareKeyboard.attach(to: device) }
+    }
+    lastInput = Date()
   }
 
   var isConnected: Bool {
@@ -128,6 +145,7 @@ final class SimulatorHID {
 
   /// `point` is a fraction of the screen in its native orientation, origin top-left.
   func touch(_ phase: TouchPhase, at point: CGPoint, second: CGPoint? = nil, screenID: UInt32 = 1) {
+    if phase == .down { noteInput() }
     let edge = touchSequence.edge(for: phase, at: point, isMultiTouch: second != nil)
     switch transport {
     case .coreDevice(let coreDevice): coreDevice.touch(phase, at: point, second: second, screenID: screenID, edge: edge)
@@ -138,6 +156,7 @@ final class SimulatorHID {
   /// Presses or releases a key, named by its macOS virtual key code.
   func hardwareKey(code: UInt16, down: Bool) {
     guard let usage = SimulatorKit.usageForKeyCode?(UInt32(code)), usage != 0 else { return }
+    if down { noteInput() }
     switch transport {
     case .coreDevice(let coreDevice): coreDevice.key(usage: UInt64(usage), down: down)
     case .legacy(let legacy): legacy.key(usage: usage, down: down)

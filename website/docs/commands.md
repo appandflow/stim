@@ -106,7 +106,7 @@ inspected platforms in Stim's state, which also registers the project for
 `stim status`, so `stim guide` can tell when doctor is due again. A run in a
 directory that is not an app records nothing.
 
-The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote Machines > Add**.
+The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Connections > This machine uses > Add**.
 
 The `readiness-markers-missing` note appears when no JavaScript or TypeScript source under the app directory contains `[stim:readiness]`. The scan skips `node_modules`, the native project and build output directories (`ios`, `android`, `macos`, `windows`, `Pods`, `build`, `dist`, `web-build`, `coverage`) and dot-directories. It does not read shared packages outside the app directory, and it reports nothing in an app with more than 5000 source files. It points to `stim guide lifecycle readiness` and the [app-declared readiness](./dev-server-and-logs.md#recommended-app-declared-readiness) logs.
 
@@ -312,6 +312,7 @@ stim ports
 stim ports get <label>
 stim ports stop [label] [--dry-run]
 stim ports release [label]
+stim ports reverse <label|port> [--remove] [--json]
 ```
 
 Reserves TCP ports 8900–8999 for web or API servers started by the
@@ -322,7 +323,20 @@ Allocation reads native TCP tables through `netstat` on macOS and Windows and
 each port with `lsof` and loopback connects instead, and refuses only when
 none of them can answer. Stopping listeners still requires `lsof` on macOS and
 Linux, or `netstat` on Windows.
-`ports` lists named allocations and Metro, marked managed.
+`ports` lists named allocations and Metro, marked managed, and the ports the
+workspace reverses. `ports --json` prints one payload with `ports`, `metroPort`
+and `reverses`.
+
+`ports reverse <label|port>` makes a server on this machine reachable at the
+same `localhost:<port>` from the workspace's devices, like `adb reverse`. It
+takes a label from `ports get` or a raw port, records it for the workspace (at
+most 16), and applies it to the devices the workspace has now. A local iOS
+simulator shares this Mac's loopback and needs nothing, an Android emulator or
+phone gets `adb reverse tcp:<port> tcp:<port>`, and an iPhone is refused because
+USB carries no reverse forward. `--remove` removes it, and `--json` prints
+`action`, `port`, `ports` and a `devices` list whose `status` is `reachable`,
+`applied`, `removed`, `pending`, `unsupported` or `failed`. See
+[Reverse ports](./dev-server-and-logs.md#reverse-ports).
 
 Labels start with a letter and contain up to 64 letters, digits, underscores,
 or hyphens. `metro` is reserved for `stim start` and `stim stop`.
@@ -1116,7 +1130,8 @@ check stim logs --source agent.
 
 ```text
 stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--view-password [value]] [--slug <name>] [--device] [--slot <name>] [--json]
-stim share stop [--json]
+stim share ios|android --reuse [--expires <minutes>] [--device] [--slot <name>] [--json]
+stim share stop [--forget] [--json]
 stim share list [--json]
 ```
 
@@ -1132,7 +1147,9 @@ token and needs a password. Viewers see each other's touches live. Every share e
 `stim worktree remove`, or stim-server. A device that goes away, as it does when
 you rebuild or relaunch the app, only makes it wait and resume. It refuses with
 `STIM_SERVER_NOT_RUNNING` when it cannot start a stim-server and
-`STIM_SHARE_REFUSED` with the reason otherwise, including at once on Windows. See
+`STIM_SHARE_REFUSED` with the reason otherwise, including at once on Windows. `--reuse` starts the saved link and passwords of the workspace's last share of
+that target again, until it expires, and `stop --forget` also deletes the saved
+links. See
 [Share a running app](./share.md) for the requirements and the security model.
 
 ## `logs`
