@@ -136,8 +136,7 @@ window. With `--control`, button groups under the device hold:
 Everyone watching sees who touches the screen: a colored dot with the person's
 name, a short trail while they drag, and a ripple for a tap, for every viewer
 with the share open and for the host when the device is controlled from Stim
-Desktop or the phone app. The login page has an optional name field; a share
-without a password asks for a name when you first open it, and you can skip.
+Desktop or the phone app. A viewer is asked for a name when it first opens the share, and can skip.
 Without a name a viewer is "Guest 1", "Guest 2" and so on. Host, Agent and
 Guest N belong to the server, so a viewer that chooses one of them is shown as
 its own Guest N. A viewer sees only the people of its own share, even when two

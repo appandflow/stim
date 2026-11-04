@@ -1150,7 +1150,6 @@ export class ShareHub {
             control: access === 'control',
             viewOnly: control && access === 'view',
             upgrade: control && access === 'view' && share.viewDigest !== null,
-            askName: share.passwordDigest === null,
             platform,
             buttons: BUTTONS[platform],
             rotate,

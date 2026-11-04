@@ -410,6 +410,7 @@ describe('a web share', () => {
     expect(page.body).toContain('name="access"');
     expect(page.body).not.toContain('type="password"');
     expect(page.body).not.toMatch(/password/i);
+    expect(page.body.match(/<input/g)).toHaveLength(1);
     expect(page.headers['cache-control']).toBe('no-store');
     for (let attempt = 0; attempt < 3; attempt++) {
       expect((await http(`${url}login`, { method: 'POST', body: 'password=wrong' })).status).toBe(401);
@@ -1104,7 +1105,6 @@ describe('a web share', () => {
       const share = await started(f, { passwordless: true, control: true });
       const url = local(share, f.hub.port ?? 0);
       const headers = { origin: origin(url) };
-      expect((await http(url)).body).toContain('data-ask-name="true"');
       const { socket } = await connect(url, headers);
       const other = await connect(url, headers);
       const seen = new Promise<Record<string, unknown>[]>((resolve) => {
@@ -1264,7 +1264,6 @@ describe('a web share', () => {
         control: true,
         viewOnly: false,
         upgrade: false,
-        askName: false,
         platform,
         buttons: BUTTONS[platform],
         rotate: true,
