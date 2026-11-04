@@ -1,6 +1,6 @@
 import { isJsonObject, type StatusPayload } from '@stim-cli/core/state';
 import type { AuditRecord } from './actions.ts';
-import type { Controller, InputCommand, SessionTarget } from './control.ts';
+import { isExtendedDeviceKey, type Controller, type InputCommand, type SessionTarget } from './control.ts';
 import type { FrameHint } from './frame-helper.ts';
 import type { Frame, FrameListener } from './frames.ts';
 import { GRAB_IDLE_MS, PointerGrab } from './pointer-grab.ts';
@@ -374,6 +374,16 @@ export class HostedShareSource implements ShareSource {
       return {
         code: 'action-failed',
         message: `${this.host.machine} cannot set or read a clipboard: update its Stim.`,
+      };
+    }
+    if (
+      command.input === 'key' &&
+      isExtendedDeviceKey(command.key, command.modifiers) &&
+      !control.lease.connection.supports('device-keyboard')
+    ) {
+      return {
+        code: 'action-failed',
+        message: `${this.host.machine} takes only the arrows and Escape as keys: update its Stim.`,
       };
     }
     try {

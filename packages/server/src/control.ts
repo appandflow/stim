@@ -173,6 +173,11 @@ function isDeviceKey(key: unknown): key is DeviceKey {
   return DEVICE_KEYS.some((candidate) => candidate === key);
 }
 
+/** Whether an `input.key` goes beyond the arrows and Escape without modifiers, which only a `device-keyboard` host takes. */
+export function isExtendedDeviceKey(key: unknown, modifiers: unknown): boolean {
+  return !isDeviceKey(key) || (Array.isArray(modifiers) && modifiers.length > 0);
+}
+
 const IOS_BUTTONS: readonly InputButton[] = ['home', 'lock'];
 const WEB_BUTTONS: readonly InputButton[] = ['back'];
 
@@ -1040,7 +1045,7 @@ export class ControlHub {
       command.input === 'touch' ||
       command.input === 'rotate' ||
       command.input === 'posture' ||
-      (session.input.keys() && !(command.input === 'key' && command.modifiers.length))
+      (session.input.keys() && !(command.input === 'key' && isExtendedDeviceKey(command.key, command.modifiers)))
     ) {
       session.input.send(
         command.input === 'touch' && command.display === undefined && command.duoRevision === undefined

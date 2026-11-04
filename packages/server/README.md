@@ -1592,7 +1592,7 @@ control session ID and `lease: null`: the hosted lifetime claim protects this
 private device. Only one controller can drive the device; `takeOver: true`
 replaces the previous controller. Use the returned control ID with
 `device-host.input.touch|text|key`, using the same parameters as ordinary input
-(`key` takes the arrows and Escape on iOS and Android; `touch` takes the second
+(`key` takes the arrows and Escape on iOS and Android, and with a worker that advertises `device-keyboard` the keys and modifiers of ordinary `input.key`; `touch` takes the second
 finger `x2` and `y2`, which a worker older than this field refuses).
 iOS also supports `device-host.input.button|rotate|posture`. Android supports
 `device-host.input.button` through scrcpy; rotation and posture are unavailable

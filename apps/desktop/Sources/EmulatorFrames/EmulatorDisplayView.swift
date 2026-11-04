@@ -524,12 +524,11 @@ public final class EmulatorDisplayNSView: NSView {
   // translates. An emulator without a hardware keyboard drops both, so its
   // keys go through `adb shell input`. A chord with Command, Control or Option
   // goes through `adb shell input keycombination` with Command as Control, the
-  // shortcut key on Android; gRPC key events with Control held did not select
-  // all on an API 36 emulator.
+  // shortcut key on Android.
   public override func keyDown(with event: NSEvent) {
     let flags = event.modifierFlags
     if flags.contains(.command) || flags.contains(.control) || flags.contains(.option) {
-      if !sendChord(event) { super.keyDown(with: event) }
+      if inputClient() == nil || !sendChord(event) { super.keyDown(with: event) }
       return
     }
     guard let input = inputClient() else { return super.keyDown(with: event) }
@@ -552,7 +551,7 @@ public final class EmulatorDisplayNSView: NSView {
 
   private func sendChord(_ event: NSEvent) -> Bool {
     let flags = event.modifierFlags
-    guard let serial, !event.isARepeat, let key = androidKeyEvent(macKeyCode: event.keyCode) ?? letterOrDigitKeyEvent(event)
+    guard let serial, let key = androidKeyEvent(macKeyCode: event.keyCode) ?? letterOrDigitKeyEvent(event)
     else { return false }
     var combination: [String] = []
     if flags.contains(.command) || flags.contains(.control) { combination.append("KEYCODE_CTRL_LEFT") }
@@ -560,7 +559,7 @@ public final class EmulatorDisplayNSView: NSView {
     if flags.contains(.option) { combination.append("KEYCODE_ALT_LEFT") }
     let adb = self.adb ?? AdbInput(serial: serial)
     self.adb = adb
-    adb.keyCombination(combination + [key])
+    if !event.isARepeat { adb.keyCombination(combination + [key]) }
     return true
   }
 

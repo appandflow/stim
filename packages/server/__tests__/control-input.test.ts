@@ -1,5 +1,11 @@
 import { expect, it } from 'vitest';
-import { adbInputArgs, parseInput, pasteTypingChunks, type SessionTarget } from '../src/control.ts';
+import {
+  adbInputArgs,
+  isExtendedDeviceKey,
+  parseInput,
+  pasteTypingChunks,
+  type SessionTarget,
+} from '../src/control.ts';
 import { MAX_CLIPBOARD_BYTES } from '../src/protocol.ts';
 
 const target = (platform: SessionTarget['platform']): SessionTarget => ({ platform, postures: [] });
@@ -77,6 +83,13 @@ it('presses a chord over adb as one key combination, with Command acting as Cont
   expect(adbInputArgs({ input: 'key', key: '7', modifiers: ['command', 'control'] })).toEqual([
     ['shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_7'],
   ]);
+});
+
+it('sends only a bare arrow or Escape to the emulator gRPC keyboard and leaves other keys to adb', () => {
+  expect(isExtendedDeviceKey('left', [])).toBe(false);
+  expect(isExtendedDeviceKey('escape', undefined)).toBe(false);
+  expect(isExtendedDeviceKey('tab', [])).toBe(true);
+  expect(isExtendedDeviceKey('left', ['shift'])).toBe(true);
 });
 
 const touch = (platform: SessionTarget['platform'], params: Record<string, unknown>, extra?: Partial<SessionTarget>) =>
