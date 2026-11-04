@@ -890,7 +890,11 @@ and reports both approvals; it asks nothing new. \`stim remote remove\` drops th
 entry and forgets this machine's credentials for it; the remote machine keeps
 its approval until a person there runs the \`stim-server devices revoke\`
 command it prints. Each takes --json. \`stim settings set remote.machines\`
-replaces the whole list.
+replaces the whole list. Each machine in \`stim remote list --json\` carries
+serverKeyFingerprint (the pinned stim-server key, or null before the first
+answer), reachability (reachable, unreachable, key-changed or unknown, from
+this run's contact) and revoke, the \`stim-server devices revoke <id>\` commands
+a person on that machine runs to withdraw its approvals.
 
 The order of \`remote.machines\` is the priority order for every workload: the
 build, simulator, emulator and macOS app each go to the first listed machine that

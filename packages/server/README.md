@@ -21,6 +21,8 @@ stim-server devices [list]        # list pairings, approved clients and hosted s
 stim-server devices grant <id> --control|--read
                                   # let a paired device run actions, or only read
 stim-server devices revoke <id>   # revoke a paired device or approved client and close its connections
+stim-server devices rename <id> <name>
+                                  # rename a paired device or approved client
 stim-server log                   # list the actions paired devices ran
 STIM_SETUP_TICKET=<t> stim-server setup --expires <iso> --build|--device-host
                                   # worker-side approval of the machine holding this ticket, see below
@@ -44,8 +46,21 @@ without `--json` the single-use note and the route note go to stderr, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
 `from` (where it paired from, as a label only), `keyFingerprint`, `pairedAt`,
 `lastSeenAt` (refreshed by a hello at most once a minute) and `capabilities`, followed by the [build clients](#build-access)
-and [device-host clients](#device-host-approval). The plain listing shows
-`from` and the first 12 characters of the key fingerprint.
+and [device-host clients](#device-host-approval). Each record also carries
+`kind` (`phone` for a pairing from `stim-server pair`, which Stim Desktop on
+another machine also uses; `build-client`; `device-host-client`), `access`
+(its capabilities as `view`, `control`, `build` and `run-devices`) and `owner`
+(`this-machine` for a phone, which works with this machine's workspaces;
+`theirs-running-here` for a build or device-host client, whose work runs here).
+`keyFingerprint` is the client's own key, so one machine's build and
+device-host records share it; the server never learns a client's server key.
+The plain listing shows `from` and the first 12 characters of the key fingerprint.
+
+`devices rename <id> <name>` renames the record with that id in whichever
+registry holds it, under the same lock and atomic write as every other registry
+change, and keeps its key and capabilities. The name is 1 to 64 characters of
+printable text on one line, trimmed. The client gets the new name in `hello`'s
+`device` on its next connection. An unknown id exits 1.
 `log --json` prints `{ "actions": [...] }`, the records described under
 [Actions](#actions).
 
@@ -2106,14 +2121,19 @@ workspace device with three methods that only the local Unix socket may call
   `passwordless: true` (no login; the URL token alone admits a viewer); with
   neither, the server generates a password. `view` (the `share-view-password`
   feature) is `{ password? }` and adds a second, view-only password, the given
-  one or a generated one; `password` stays the control password. It returns
+  one or a generated one; `password` stays the control password. `slug` (the
+  `share-slug` feature) is 3 to 32 lowercase letters, digits and hyphens,
+  starting and ending with a letter or digit, other than `assets`; the link is
+  `/s/<slug>/` instead of a random token, and the row carries `slug`. It
+  returns
   `auth` (`generated`, `set` or `none`), `viewAuth` (`generated`, `set` or
   `null`), and `password` and `viewPassword` only when it generated them, in
-  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, viewAuth, url, password, viewPassword }`.
+  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, viewAuth, slug, url, password, viewPassword }`.
   It refuses a device the workspace does not own or lease, a hosted device,
-  `control` on a physical iPhone, `password` with `passwordless`, and `view`
+  `control` on a physical iPhone, `password` with `passwordless`, `view`
   without `control`, with `passwordless`, or with the same password as
-  `password`.
+  `password`, and `slug` with `passwordless`, a malformed or reserved slug, or
+  a slug a live share holds.
 - `share.stop` takes `workspace` and ends its shares, returning `stopped`. With
   `id` (the `share-stop-id` feature) it ends only that share of the workspace,
   and refuses an `id` the workspace does not have with `bad-request`. A server

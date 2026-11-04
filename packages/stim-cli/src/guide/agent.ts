@@ -73,9 +73,10 @@ agent-device directly. Pass agent-device's own arguments and no device ids:
   stim agent-device press @e3
   stim agent-device scroll down --slot tablet --platform android
 
-Stim adds the platform, the UDID or serial, the session (stim-<slot>-<platform>
-unless you pass --session) and AGENT_DEVICE_STATE_DIR, or the remote config of
-a hosted iOS or Android session (guide lifecycle hosted-ios or hosted-android).
+Stim adds the platform, the UDID or serial and AGENT_DEVICE_STATE_DIR, or the
+remote config of a hosted iOS or Android session (guide lifecycle hosted-ios or
+hosted-android), and the session (stim-<slot>-<platform> unless you pass
+--session).
 --slot picks a slot; --platform is needed only when the slot has both. It
 revives an idle-stopped workspace before the command (progress on stderr) and
 refuses with STIM_BAD_ARG a UDID, serial, device or remote config that is not
