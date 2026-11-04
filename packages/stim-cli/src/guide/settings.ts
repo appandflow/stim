@@ -1255,8 +1255,8 @@ every offloaded iOS build, pinned or not, it writes the first node on its PATH
 React Native and Expo Android builds keep a separate Gradle home for each
 selected Node executable and version, so a warm daemon cannot use a previous
 Node. Each Node choice starts with cold Gradle dependencies and can retain
-another warm daemon; switching back reuses its cache. The caches stay until the
-client is removed. Native Gradle projects keep their existing home.
+another warm daemon; switching back reuses its cache. The caches go with their
+repository area. Native Gradle projects keep their existing home.
 When no installed Node fits the pin, the steps run on the worker's node
 and a deps-failed or prebuild-failed reason names the pin and that Node's
 version. A change of the pinned Node's major reinstalls the dependencies.
@@ -1404,6 +1404,16 @@ While none of the client's builds runs, stim-server stops it sooner
 when a build is cancelled or the client is revoked. The low-memory sweep waits
 until no offloaded build is running and the machine has less than 2 GB of
 memory available. Deleting the client's directory under the worker root stops it too.
+The worker removes repository areas of approved clients by itself: any area with
+no build or cached artifact fetch for \`server.workerAreaMaxAgeDays\` (default 7,
+0 turns this off) and, while its volume has less than 50 GB free, the least
+recently used until it has that much. It keeps each client's most recently used
+area and retains an area with a running or unfetched build, a bundle a hosted
+session can take, an open connection sending it a manifest, a running Gradle
+daemon, or a held or unresolved claim; its log names each removal and why an
+area stays. The next build of a removed area starts cold.
+\`stim-server service status\` prints a \`worker root:\` line with the root's size
+as last measured, about every 6 hours (not measured on Windows).
 \`stim-server service install [--serve]\` on a remote machine keeps stim-server
 running as a login LaunchAgent on macOS, a systemd user service on Linux
 (\`sudo loginctl enable-linger <user>\` keeps it running after logout; install

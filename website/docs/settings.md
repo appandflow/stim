@@ -670,6 +670,11 @@ its load per core is at or above its
 builds: `concurrency.maxBuilds` on the worker, derived as
 `max(1, floor(CPU cores / 6))` when `0`, so a worker with fewer than 12 cores
 runs one build at a time; set `concurrency.maxBuilds` there to allow more.
+It removes repository areas unused for longer than
+`server.workerAreaMaxAgeDays` (default 7, `0` turns this off) and, while that
+volume has less than 50 GB free, the least recently used, always keeping each
+client's most recently used area
+(see [Worker disk](./remote-machines.md#worker-disk)).
 While an offloaded build runs, it holds one of the remote machine's build slots, so a local `stim ios` or
 `stim android` there waits for the slot and counts the machine as busy. The
 slot is freed when the build ends, is cancelled, or its process is gone. Delete

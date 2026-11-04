@@ -17,6 +17,7 @@ import {
   type ServiceSpec,
 } from '../src/service-plist.ts';
 import { statusLines, updateService, type ServiceStatus } from '../src/service.ts';
+import type { WorkerRootUsage } from '../src/worker-areas.ts';
 import type { KeepAwakeStatus } from '../src/keep-awake.ts';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { permissionPanes } from '@stim-cli/core/state';
@@ -248,6 +249,7 @@ describe('service status permissions', () => {
       tailscale: null,
       route: null,
       keepAwake: null,
+      workerRoot: null,
     };
     expect(line(statusLines({ ...status, health }, permissionPanes(27)), 'health:')).toMatch(/^ {2}health: ok,/);
     const degraded = { ...health, startup: { state: 'degraded' as const, reason: 'A read did not finish.' } };
@@ -268,6 +270,7 @@ describe('service status permissions', () => {
       stimHome: '/h',
       tailscale: null,
       route: null,
+      workerRoot: null,
     };
     const keepAwakeLine = (keepAwake: KeepAwakeStatus | null) =>
       line(statusLines({ ...status, health: { ...health, keepAwake } }, permissionPanes(27)), 'keep awake:');
@@ -275,6 +278,37 @@ describe('service status permissions', () => {
     expect(keepAwakeLine({ setting: true, held: false, reason: 'unsupported' })).toContain('only macOS supports it');
     expect(keepAwakeLine({ setting: true, held: false, reason: 'not-listening' })).toContain('no tailnet or local');
     expect(keepAwakeLine(null)).toBe('');
+  });
+
+  it('reports the measured worker root size, and says when it has not been measured', () => {
+    const workerRootLine = (workerRoot: WorkerRootUsage | null) =>
+      line(
+        statusLines(
+          {
+            ...status,
+            health: {
+              startup: { state: 'ready' },
+              version: '1',
+              stim: '1',
+              stimHome: '/h',
+              tailscale: null,
+              route: null,
+              keepAwake: null,
+              workerRoot,
+            },
+          },
+          permissionPanes(27),
+        ),
+        'worker root:',
+      );
+    expect(workerRootLine(null)).toBe('  worker root: size not measured');
+    expect(
+      workerRootLine({
+        path: '/Volumes/SSD/worker',
+        bytes: 383.5 * 1024 ** 3,
+        measuredAt: new Date(Date.now() - 2.5 * 3_600_000).toISOString(),
+      }),
+    ).toBe('  worker root: /Volumes/SSD/worker, 383.5 GB, measured 2 h ago');
   });
 
   it('points a node-first service at reinstalling', () => {

@@ -15,6 +15,7 @@ import {
   rmSync,
   statfsSync,
   statSync,
+  type Dirent,
 } from 'node:fs';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { totalmem } from 'node:os';
@@ -41,6 +42,7 @@ import {
   tryAcquireBuildSlotClaim,
   windowsShortDir,
   windowsShortDirKey,
+  workerAreaMaxAgeDays,
 } from '@stim-cli/core/state';
 import {
   reactNativeArtifactQuery,
@@ -54,9 +56,21 @@ import { listCommandLines } from './processes.ts';
 import { BuildArtifactCache, validArtifactIdentity } from 'stim/build-artifact-cache';
 import { runArtifactQuery, type ArtifactQueryResult } from './artifact-query.ts';
 import {
+  areaLastUsed,
+  areasToEvict,
+  measureTreeBytes,
+  readRootUsage,
+  recordAreaUse,
+  recordRootUsage,
+  type AreaEviction,
+  type WorkerArea,
+  type WorkerRootUsage,
+} from './worker-areas.ts';
+import {
   BUILD_REPO_PATTERN,
   BUILD_RUBY_VERSION_PATTERN,
   type BuildAndroidOptions,
+  type BuildArtifactIdentity,
   type BuildArtifactResult,
   type BuildGradleArtifactQuery,
   type BuildSwiftpmArtifactQuery,
@@ -90,6 +104,12 @@ export interface BuildLimits {
   daemonSweepMs: number;
   /** How long a fetched macOS bundle stays here for a hosted session on this machine to take. */
   handoffMs: number;
+  /** Free bytes above `minFreeBytes` under which the least recently used repository areas are evicted. */
+  evictionMarginBytes: number;
+  /** How often unused repository areas are looked for while the volume is above that margin. */
+  areaSweepMs: number;
+  /** How often the worker root's size is measured. */
+  rootMeasureMs: number;
 }
 
 const DEFAULT_BUILD_LIMITS: BuildLimits = {
@@ -102,6 +122,9 @@ const DEFAULT_BUILD_LIMITS: BuildLimits = {
   minFreeMemoryBytes: 2 * 1024 ** 3,
   daemonSweepMs: 60_000,
   handoffMs: 10 * 60_000,
+  evictionMarginBytes: 40 * 1024 ** 3,
+  areaSweepMs: 15 * 60_000,
+  rootMeasureMs: 6 * 60 * 60_000,
 };
 
 const DIGEST_BYTES = 32;
@@ -112,6 +135,8 @@ const ARTIFACT_CHUNK = 1024 * 1024;
 const MAX_BUFFERED = 16 * 1024 * 1024;
 const MAX_WORKER_LINE = 1024 * 1024;
 const GROUP_POLL_MS = 200;
+const DAY_MS = 24 * 60 * 60_000;
+const EVICTED_DIR = 'evicted';
 
 type Refusal = { error: ProtocolError };
 
@@ -382,6 +407,10 @@ export function workerGradleDaemons(
   return daemons;
 }
 
+const isMissing = (error: unknown): boolean => error instanceof Error && 'code' in error && error.code === 'ENOENT';
+
+const areaKey = (client: string, repo: string): string => `${client}/${repo}`;
+
 function unknownGradleProcess(home: string, known: ReadonlySet<number>): Error | null {
   const homes = [home];
   if (existsSync(home))
@@ -442,6 +471,8 @@ interface Job {
   grace: NodeJS.Timeout | null;
 }
 
+type CachedArtifactRequest = Record<string, unknown> & { repo: string; artifact: BuildArtifactIdentity };
+
 const nowhere = (): void => {};
 
 function podsOnWorkerJob(params: Record<string, unknown>): { podsOnWorker?: true; reuseArtifact?: true } {
@@ -474,6 +505,7 @@ export class BuildHost {
   private readonly removals = new Map<string, Promise<void>>();
   private readonly queries = new Set<{
     client: string;
+    repo: string;
     run: ReturnType<typeof runArtifactQuery>;
     settled: boolean;
   }>();
@@ -489,12 +521,20 @@ export class BuildHost {
   private queued: Promise<void> | null = null;
   private readonly forced = new Set<string>();
   private readonly sweeper: NodeJS.Timeout;
+  private readonly pins = new Map<string, number>();
+  private readonly areaRefusals = new Map<string, string>();
+  private evicting: Promise<void> | null = null;
+  private lastEviction = 0;
+  private lastMeasure = 0;
+  private readonly closing = new AbortController();
+  private rootUsage: WorkerRootUsage | null = null;
 
   constructor(options: BuildHostOptions) {
     this.options = options;
     this.limits = { ...DEFAULT_BUILD_LIMITS, ...options.limits };
     this.sweeper = setInterval(() => {
       if (this.options.ready?.() ?? true) void this.sweepDaemons();
+      this.maintainAreas();
     }, this.limits.daemonSweepMs);
     this.sweeper.unref();
   }
@@ -741,16 +781,19 @@ export class BuildHost {
           reactNative !== undefined))
     )
       return refusal('bad-request', 'A SwiftPM artifact lookup needs its completed source and declared build choices.');
-    const artifact =
+    const repo = params.repo;
+    const lookup = params.artifact;
+    const artifact = await this.pinned(client, repo, async () =>
       swiftpm !== undefined
-        ? await this.privateArtifact(client, params.repo, swiftpm, signal)
+        ? this.privateArtifact(client, repo, swiftpm, signal)
         : reactNative !== undefined
-          ? await this.cache(client, params.repo).lookupReactNative(reactNative, signal)
+          ? this.cache(client, repo).lookupReactNative(reactNative, signal)
           : query !== undefined
-            ? await this.privateArtifact(client, params.repo, query, signal)
-            : params.artifact === undefined
+            ? this.privateArtifact(client, repo, query, signal)
+            : lookup === undefined
               ? undefined
-              : await this.cache(client, params.repo).lookup(params.artifact, signal);
+              : this.cache(client, repo).lookup(lookup, signal),
+    );
     if (this.closed || this.removals.has(client) || signal.aborted || !(this.options.allowed?.(client) ?? true))
       return refusal('build-refused', 'This build connection closed or lost access during the offer.');
     const toolchain = await this.toolchain((params.rubyVersion as string | undefined) ?? null, params.native);
@@ -835,7 +878,7 @@ export class BuildHost {
         signal,
         killGraceMs: this.limits.killGraceMs,
       });
-      const entry = { client, run, settled: false };
+      const entry = { client, repo, run, settled: false };
       this.queries.add(entry);
       this.served.add(client);
       try {
@@ -1079,6 +1122,7 @@ export class BuildHost {
     for (const job of jobs) job.cancel();
     const queriesSettled = await this.stopQueries(client);
     await Promise.all(jobs.map((job) => job.done));
+    await this.evicting;
     if (!queriesSettled) {
       console.error(`stim-server: retaining the build area of ${client} because artifact query cleanup is unresolved.`);
       return;
@@ -1087,7 +1131,7 @@ export class BuildHost {
     try {
       areas = await readdir(join(this.clientDir(client), 'repos'));
     } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
+      if (!isMissing(error)) {
         console.error(`stim-server: retaining unreadable build areas of ${client}: ${String(error)}`);
         return;
       }
@@ -1104,41 +1148,253 @@ export class BuildHost {
       }
     }
     if (process.platform === 'win32') await this.sweepDaemons(client);
-    const removeDir = async (dir: string) => {
-      try {
-        await rm(dir, { recursive: true, force: true, maxRetries: 10 });
-        return true;
-      } catch (error) {
-        console.error(`stim-server: could not delete the build area of ${client}: ${String(error)}`);
-        return false;
-      }
-    };
     if (process.platform === 'win32') {
       const repos = join(this.clientDir(client), 'repos');
-      for (const repo of await readdir(repos).catch(() => [])) {
-        const area = join(repos, repo);
-        try {
-          if (!lstatSync(join(area, 'src')).isSymbolicLink()) continue;
-          const checkout = windowsShortDir(realpathSync(area));
-          if (realpathSync(join(area, 'src')).toLowerCase() !== checkout.toLowerCase()) continue;
-          if (!(await removeDir(checkout))) return;
-          await rm(`${checkout}.owner`, { force: true });
-        } catch {}
+      const dirs = (await readdir(repos).catch(() => [])).flatMap((repo) => this.windowsAreaDirs(join(repos, repo)));
+      if (ownsWindowsGradleHome(this.clientDir(client))) dirs.push(gradleUserHome(this.clientDir(client)));
+      if (!(await this.removeWindowsDirs(client, dirs))) return;
+    }
+    await this.removeDir(client, this.clientDir(client));
+  }
+
+  private async removeDir(client: string, dir: string): Promise<boolean> {
+    try {
+      await rm(dir, { recursive: true, force: true, maxRetries: 10 });
+      return true;
+    } catch (error) {
+      console.error(`stim-server: could not delete the build area of ${client}: ${String(error)}`);
+      return false;
+    }
+  }
+
+  private windowsAreaDirs(area: string): string[] {
+    const dirs: string[] = [];
+    try {
+      if (lstatSync(join(area, 'src')).isSymbolicLink()) {
+        const checkout = windowsShortDir(realpathSync(area));
+        if (realpathSync(join(area, 'src')).toLowerCase() === checkout.toLowerCase()) dirs.push(checkout);
       }
-      for (const scope of this.gradleScopes(client)) {
-        const area = scope.repo ? join(this.clientDir(client), 'repos', scope.repo) : this.clientDir(client);
-        const home = gradleUserHome(area);
-        let marker: string | null = null;
-        try {
-          marker = readFileSync(`${home}.owner`, 'utf8');
-        } catch {}
-        if (marker === windowsShortDirKey('gradle', area)) {
-          if (!(await removeDir(home))) return;
-          await rm(`${home}.owner`, { force: true }).catch(() => {});
-        }
+    } catch {}
+    if (ownsWindowsGradleHome(area)) dirs.push(gradleUserHome(area));
+    return dirs;
+  }
+
+  private async removeWindowsDirs(client: string, dirs: readonly string[]): Promise<boolean> {
+    for (const dir of dirs) {
+      if (!(await this.removeDir(client, dir))) return false;
+      await rm(`${dir}.owner`, { force: true }).catch(() => {});
+    }
+    return true;
+  }
+
+  private nearDiskFloor(): boolean {
+    const free = workerFreeBytes(this.root());
+    return free !== null && free < this.limits.minFreeBytes + this.limits.evictionMarginBytes;
+  }
+
+  private maintainAreas(): void {
+    try {
+      if (this.closed || !(this.options.ready?.() ?? true)) return;
+      const interval = this.nearDiskFloor() ? this.limits.daemonSweepMs : this.limits.areaSweepMs;
+      if (Date.now() - this.lastEviction >= interval) void this.evictAreas();
+      if (Date.now() - this.lastMeasure >= this.limits.rootMeasureMs)
+        void this.measureRoot().catch((error: unknown) =>
+          console.error(`stim-server: could not measure the worker root: ${String(error)}`),
+        );
+    } catch (error) {
+      console.error(`stim-server: could not check the build areas: ${String(error)}`);
+    }
+  }
+
+  private async measureRoot(): Promise<void> {
+    this.lastMeasure = Date.now();
+    const path = this.root();
+    if (!existsSync(path)) {
+      this.rootUsage = { path, bytes: 0, measuredAt: new Date().toISOString() };
+      return;
+    }
+    const recorded = readRootUsage(path);
+    if (recorded) {
+      this.rootUsage = recorded;
+      const measured = Date.parse(recorded.measuredAt);
+      if (Date.now() - measured < this.limits.rootMeasureMs) {
+        this.lastMeasure = measured;
+        return;
       }
     }
-    await removeDir(this.clientDir(client));
+    const bytes = await measureTreeBytes(path, this.closing.signal);
+    if (bytes === null) return;
+    this.rootUsage = { path, bytes, measuredAt: new Date().toISOString() };
+    recordRootUsage(this.rootUsage);
+  }
+
+  workerRootUsage(): WorkerRootUsage | null {
+    return this.rootUsage;
+  }
+
+  /**
+   * Evicts repository areas of approved clients: those unused for longer than `server.workerAreaMaxAgeDays` and, while
+   * the volume is near the disk floor, the least recently used. Calls made during a pass join it.
+   */
+  evictAreas(): Promise<void> {
+    this.evicting ??= this.evictionPass()
+      .catch((error: unknown) => console.error(`stim-server: could not evict build areas: ${String(error)}`))
+      .finally(() => {
+        this.evicting = null;
+      });
+    return this.evicting;
+  }
+
+  private async evictionPass(): Promise<void> {
+    this.lastEviction = Date.now();
+    const maxAgeMs = workerAreaMaxAgeDays() * DAY_MS;
+    const refused = new Set<string>();
+    const emptied = new Set<string>();
+    while (!this.closed) {
+      const next = areasToEvict(this.workerAreas(), {
+        now: Date.now(),
+        maxAgeMs,
+        low: this.nearDiskFloor(),
+      }).find((area) => !refused.has(areaKey(area.client, area.repo)));
+      if (!next) break;
+      const key = areaKey(next.client, next.repo);
+      const kept = await this.evictArea(next, maxAgeMs);
+      if (kept === null) {
+        emptied.add(next.client);
+        this.areaRefusals.delete(key);
+        continue;
+      }
+      refused.add(key);
+      if (this.areaRefusals.get(key) !== kept) console.error(`stim-server: retaining the build area ${key}: ${kept}.`);
+      this.areaRefusals.set(key, kept);
+    }
+    for (const key of this.areaRefusals.keys()) if (!refused.has(key)) this.areaRefusals.delete(key);
+    for (const client of emptied) this.pruneBlobs(client);
+    for (const client of this.workerClients()) await this.removeDir(client, join(this.clientDir(client), EVICTED_DIR));
+  }
+
+  private workerClients(): string[] {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(this.root(), { withFileTypes: true });
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+      return [];
+    }
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((client) => !this.removals.has(client) && (this.options.allowed?.(client) ?? true));
+  }
+
+  private workerAreas(): WorkerArea[] {
+    return this.workerClients().flatMap((client) => {
+      const repos = join(this.clientDir(client), 'repos');
+      try {
+        return readdirSync(repos, { withFileTypes: true })
+          .filter(
+            (entry) =>
+              entry.isDirectory() && !entry.name.endsWith('.claims') && new RegExp(BUILD_REPO_PATTERN).test(entry.name),
+          )
+          .map((entry) => ({ client, repo: entry.name, usedAt: areaLastUsed(join(repos, entry.name)) }));
+      } catch (error) {
+        if (!isMissing(error))
+          console.error(`stim-server: retaining unreadable build areas of ${client}: ${String(error)}`);
+        return [];
+      }
+    });
+  }
+
+  /** Runs `read`, which uses the area outside any claim; eviction retains the area until it settles. */
+  pinned<T>(client: string, repo: string, read: () => Promise<T>): Promise<T> {
+    const unpin = this.pin(client, repo);
+    return read().finally(unpin);
+  }
+
+  private pin(client: string, repo: string): () => void {
+    const key = areaKey(client, repo);
+    this.pins.set(key, (this.pins.get(key) ?? 0) + 1);
+    return () => {
+      const count = (this.pins.get(key) ?? 1) - 1;
+      if (count > 0) this.pins.set(key, count);
+      else this.pins.delete(key);
+    };
+  }
+
+  private areaBusy(client: string, repo: string): string | null {
+    const here = (entry: { client: string; repo: string }) => entry.client === client && entry.repo === repo;
+    if ([...this.jobs].some(here)) return 'a build is running in it';
+    if ([...this.owned.values()].some(here)) return 'a finished build in it waits to be fetched';
+    if ([...this.retained.values()].some(here)) return 'it holds a bundle for a hosted session to take';
+    if ([...this.queries].some(here)) return 'an artifact query is running in it';
+    if (this.pins.has(areaKey(client, repo))) return 'its artifacts are being read';
+    for (const [session, owner] of this.sessions)
+      if (owner === client && session.syncedRepo() === repo) return 'an open connection is sending it a manifest';
+    return null;
+  }
+
+  private async evictArea({ client, repo, usedAt, reason }: AreaEviction, maxAgeMs: number): Promise<string | null> {
+    const area = join(this.clientDir(client), 'repos', repo);
+    let processes: string;
+    try {
+      processes = await listCommandLines();
+    } catch (error) {
+      return `its Gradle daemons could not be listed: ${String(error)}`;
+    }
+    if (this.closed || this.removals.has(client)) return 'this server is closing or removing the client';
+    const busy = this.areaBusy(client, repo);
+    if (busy) return busy;
+    try {
+      const daemons = workerGradleDaemons(processes, this.root(), process.platform, [{ client, repo }]);
+      if (daemons.some((daemon) => daemon.client === client && daemon.repo === repo))
+        return 'a Gradle daemon is running in it';
+      const unknown = unknownGradleProcess(gradleUserHome(area), new Set());
+      if (unknown) return unknown.message;
+    } catch (error) {
+      return `its Gradle processes could not be checked: ${String(error)}`;
+    }
+    const claims = `${area}.claims`;
+    let claim: ClaimHandle;
+    try {
+      const attempt = tryAcquireClaim({
+        root: claims,
+        mode: 'exclusive',
+        details: { client, repo, eviction: true },
+        label: 'build worker',
+      });
+      if (!attempt.acquired) {
+        if (attempt.pending) releaseClaim(attempt.pending);
+        return `its claim at ${claims} is held${attempt.held ? ` by process ${attempt.held.owner.pid}` : ''}`;
+      }
+      claim = attempt.acquired;
+    } catch (error) {
+      return `its claim is unresolved: ${String(error)}`;
+    }
+    const evicted = join(this.clientDir(client), EVICTED_DIR, `${repo}-${randomUUID()}`);
+    try {
+      const shortDirs = process.platform === 'win32' ? this.windowsAreaDirs(area) : [];
+      mkdirSync(dirname(evicted), { recursive: true, mode: 0o700 });
+      renameSync(area, evicted);
+      await this.removeWindowsDirs(client, shortDirs);
+    } catch (error) {
+      return `it could not be moved aside: ${String(error)}`;
+    } finally {
+      releaseClaim(claim);
+    }
+    const clearance = clearFreeClaimSet({ root: claims, label: 'build worker' });
+    if (clearance.status !== 'cleared')
+      console.error(`stim-server: left the claim set of the evicted area at ${claims}: ${clearance.status}.`);
+    await this.removeDir(client, evicted);
+    const free = workerFreeBytes(this.root());
+    const days = ((Date.now() - usedAt) / DAY_MS).toFixed(1);
+    const why =
+      reason === 'age'
+        ? `unused for ${days} days, over the ${maxAgeMs / DAY_MS} of server.workerAreaMaxAgeDays`
+        : `the least recently used (${days} days ago) while the volume is near its disk floor`;
+    console.error(
+      `stim-server: removed the build area ${areaKey(client, repo)}: ${why}; ${free === null ? 'free disk unknown' : `${gb(free)} GB free`}.`,
+    );
+    return null;
   }
 
   /** Starts the build of one synced manifest; the job belongs to the caller's connection. */
@@ -1173,7 +1429,6 @@ export class BuildHost {
         return refusal('build-busy', `Inspect this client's legacy Gradle processes before retrying: ${String(error)}`);
       }
     }
-    mkdirSync(join(area, 'home'), { recursive: true, mode: 0o700 });
     let claim: ClaimHandle;
     try {
       const attempt = tryAcquireClaim({
@@ -1190,6 +1445,13 @@ export class BuildHost {
     } catch (error) {
       return refusal('build-refused', (error as Error).message);
     }
+    try {
+      mkdirSync(join(area, 'home'), { recursive: true, mode: 0o700 });
+    } catch (error) {
+      releaseClaim(claim);
+      return refusal('build-refused', String(error));
+    }
+    recordAreaUse(area);
     const id = randomUUID();
     let slot: ClaimHandle | null = null;
     const releaseClaims = () => {
@@ -1433,6 +1695,7 @@ export class BuildHost {
         settle();
       });
     });
+    this.maintainAreas();
     return entry;
   }
 
@@ -1522,7 +1785,14 @@ export class BuildHost {
       return 'That build belongs to another machine: its build client and this device-host client have different keys.';
     clearTimeout(entry.timer);
     this.retained.delete(token);
-    return { bundle: entry.bundle, release: () => rmSync(entry.dir, { recursive: true, force: true }) };
+    const unpin = this.pin(entry.client, entry.repo);
+    return {
+      bundle: entry.bundle,
+      release: () => {
+        rmSync(entry.dir, { recursive: true, force: true });
+        unpin();
+      },
+    };
   }
 
   /**
@@ -1545,12 +1815,14 @@ export class BuildHost {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.closing.abort();
     clearInterval(this.sweeper);
     for (const job of this.owned.values()) this.abandon(job);
     for (const token of this.retained.keys()) this.drop(token);
     await this.stopQueries();
     await Promise.all([...this.jobs].map((job) => job.done));
     await this.sweeping;
+    await this.evicting;
     await Promise.all(this.removals.values());
   }
 }
@@ -1660,6 +1932,10 @@ export class BuildSession {
 
   digests(): string[] {
     return [...this.files.values()].map((file) => file.sha256);
+  }
+
+  syncedRepo(): string | null {
+    return this.repo;
   }
 
   /** One binary frame: a 32-byte sha256, then the next bytes of that blob. Returns why the frame is refused. */
@@ -1905,6 +2181,13 @@ export class BuildSession {
     if (!isJsonObject(params) || !validRepo(params.repo) || !validArtifactIdentity(params.artifact))
       return refusal('bad-request', 'A cached artifact needs its repository and complete identity.');
     if (this.closed) return refusal('build-refused', 'The connection closed.');
+    const request = { ...params, repo: params.repo, artifact: params.artifact };
+    return this.host.pinned(this.client, request.repo, () => this.serveCachedArtifact(request));
+  }
+
+  private async serveCachedArtifact(
+    params: CachedArtifactRequest,
+  ): Promise<{ result: CachedBuildArtifact | null } | Refusal> {
     if (
       params.gradleArtifact !== undefined ||
       params.reactNativeArtifact !== undefined ||
@@ -1948,6 +2231,7 @@ export class BuildSession {
         .cache(this.client, params.repo)
         .fetch(params.artifact, temporary, this.transfers.signal);
       if (!cached) return { result: null };
+      recordAreaUse(area);
       const streamed = await this.streamArtifact(cached.path, cached.artifact);
       return streamed ?? { result: cached.artifact };
     } catch (error) {

@@ -81,6 +81,7 @@ import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
+import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   CLIPBOARD_INPUT_COST,
   ControlHub,
@@ -431,6 +432,8 @@ interface ServerHealth {
   /** The local network addresses the server listens on now, from `server.lanAddresses`; absent when there are none. */
   lan?: { addresses: string[]; port: number };
   keepAwake: KeepAwakeStatus;
+  /** The last measurement of `server.workerRoot`; null before the first, and on Windows. */
+  workerRoot: WorkerRootUsage | null;
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -5553,6 +5556,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ...(options.loopbackOnly ? { loopbackOnly: true as const } : {}),
       ...lanHealth(),
       keepAwake: keepAwake.status(),
+      workerRoot: builds.workerRootUsage(),
     };
     response
       .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
