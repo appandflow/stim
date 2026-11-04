@@ -6,7 +6,14 @@ agent-device record start [path] --remote-config <file> records the ${noun};
 record stop downloads the video to path, or ./recording-<time>.mp4, on this
 machine. The host writes it only in a private directory for the session in its
 temporary directory and deletes the files after the download, on stim stop or session teardown and
-when its daemon restarts. One recording runs per session; a second start, a host output
+when its daemon restarts.${
+  noun === 'simulator'
+    ? `
+The host stops the recorder before it parks or deletes the simulator, and a
+stim-server that restarts stops a recorder its previous run left.`
+    : ''
+}
+One recording runs per session; a second start, a host output
 path, record inside batch and a record stop from another agent-device session
 are refused. The host stops a recording after 10 minutes; a record stop within
 the next 15 minutes downloads it. A finished recording over 512 MiB is deleted
@@ -633,10 +640,11 @@ stop and worktree remove wait for device-host.stop, park the host's eligible own
 emulator within pool.androidParkedMax (delete otherwise), close the Metro links and clear placement. stop --json reports
 outcomes.device["android:host:<slot>"]. Forbidden or unknown-session also clears
 placement; an unreachable host keeps it and fails cleanup. A clean host restart
-parks eligible devices; a later reserve by the same client adopts a compatible
-parked emulator with all third-party apps removed. Running sessions left by a
-crash stay unknown until explicit stop; booted devices are never re-attached
-after restart. See hosted-ios for retention and eviction. JavaScript logs
+leaves a ready session and its running emulator in place and the restarted server
+resumes it, verified against its private ledger; a later reserve by the same client
+adopts a compatible parked emulator with all third-party apps removed. A session the
+restarted server cannot verify is stopped, or stays unknown when that is unprovable.
+See hosted-ios for retention and eviction. JavaScript logs
 arrive through local Metro.
 
 AGENT CONTROL
@@ -823,12 +831,15 @@ independent and selects a compatible build worker for a cache miss.
 The host's own owned devices count toward concurrency.maxDevices and its per-platform cap
 (concurrency.maxIosDevices, concurrency.maxAndroidDevices; macOS apps use concurrency.maxMacosApps).
 
-Each record in stim-server devices --json carries kind (phone for a pairing
-from stim-server pair, which Stim Desktop on another machine also uses,
-build-client or device-host-client), access (view, control, build or
-run-devices), owner (this-machine for a phone, theirs-running-here for a
-build or device-host client) and keyFingerprint, the client key one machine's
-build and device-host records share. A person on the host renames a record
+Each record in stim-server devices --json carries kind (phone or desktop for
+a pairing from stim-server pair, build-client or device-host-client), access
+(view, control, build or run-devices), owner (this-machine for a phone or
+desktop, theirs-running-here for a build or device-host client) and
+keyFingerprint, the client key one machine's build and device-host records
+share. clientApp and clientVersion are the app and version the client named in
+its last hello, shown once it has connected; a pairing is desktop when
+clientApp is Stim Desktop or Stim Dev and phone otherwise. They are display
+only and never change access. A person on the host renames a record
 with stim-server devices rename <id> <name>; the client sees the name on its
 next connection, and its access does not change.
 
@@ -878,9 +889,15 @@ The default slot appears only in ios, never in slots[]. No host UDID enters loca
 status. Hosted ios --json results use udid: null and the actual simulator name as
 deviceName; host.agent.command addresses the hosted app. Ready is normal;
 stopped has a rerun hint; unknown or unreachable is
-unverified. A clean host server restart stops its sessions and retains eligible
-parked devices. A running session left by a crash stays unknown until explicit
-stop; the restarted server never re-attaches to a booted device.
+unverified. A host server restart leaves ready iOS and Android sessions running and
+the restarted server resumes them once their ownership claim is provably free: the
+journal stays ready, the simulator or emulator stays booted, the Metro bridge listens
+on its recorded port again and the agent-device grant keeps the same token, so the
+Metro links and remote config of the client keep working and a rerun reattaches. A
+session whose device is not verified as the recorded, ledger-owned, running one is
+stopped, as are sessions with an install in flight at shutdown, revoked sessions and
+macOS apps. An install a restart interrupted is marked unknown for that attempt only.
+A session whose owner is still held by a live process stays unknown until explicit stop.
 
 stop and worktree remove wait for the host to stop, park its eligible owned
 simulator within pool.iosParkedMax (delete otherwise), close the Metro links and clear placement. stop --json

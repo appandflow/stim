@@ -1010,7 +1010,16 @@ test('hosting setup routes approval through doctor and a separate person-granted
 
 test('the guides name the connection fields of stim-server devices and stim remote list, and rename', () => {
   const lifecycle = renderSection('lifecycle', 'hosted-ios');
-  for (const term of ['kind', 'access', 'owner', 'run-devices', 'theirs-running-here', 'stim-server devices rename'])
+  for (const term of [
+    'kind',
+    'access',
+    'owner',
+    'run-devices',
+    'theirs-running-here',
+    'clientApp',
+    'desktop',
+    'stim-server devices rename',
+  ])
     expect(lifecycle).toContain(term);
   const settings = renderTopic('settings');
   for (const field of ['serverKeyFingerprint', 'reachability', 'revoke']) expect(settings).toContain(field);

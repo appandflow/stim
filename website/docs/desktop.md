@@ -440,9 +440,10 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   password. A share with control and a password can also have a separate
   view-only password (generated or chosen), shown as **View password** next to
   the control one. The link and generated passwords appear once, each with a Copy button;
-  Desktop does not keep them. **Settings > Web Shares** lists the live shares with
+  Desktop does not keep them. **Settings > Web Shares** lists the shares, live or waiting, with
   their viewers and time left ("View and control, view password" for a share with
-  two passwords). **Stop** on a row ends that one share; a workspace with
+  two passwords). A share whose device is away waits and keeps its row; Desktop
+  does not mark it yet, but `stim share list` does. **Stop** on a row ends that one share; a workspace with
   several shares also has **Stop All**. A stim-server older than this (without the
   `share-stop-id` feature) has only the workspace-wide **Stop**, which ends every share of
   the workspace. Quitting
@@ -630,9 +631,12 @@ device's apps, and agents driving it, can read text sent to it. Opening a viewer
 Turn it off with **Sync clipboard** in the options popover (the sliders button),
 which also has **Paste Mac Clipboard** and **Copy Device Clipboard** for one-off
 transfers. Syncing only sets the device clipboard; to insert text, paste in the
-guest. An iOS simulator shows its own "Allow Paste" prompt for text that came from
-another source; click **Allow Paste** in the viewer. After a paste on an iOS simulator
-Desktop shows a notice that says to tap the paste suggestion on the device if nothing
+guest. **Paste Mac Clipboard** on an iOS simulator types printable ASCII, line breaks and tabs
+into the focused field, about 35 characters a second, so no paste prompt appears and a
+SimSlim-slimmed simulator takes it too; the field's own typing rules (smart quotes and dashes)
+still apply. Text with other characters, such as accents and emoji, is pasted instead, and an
+iOS simulator shows its own "Allow Paste" prompt for it: click **Allow Paste** in the viewer.
+Desktop then shows a notice that says to tap the paste suggestion on the device if nothing
 appears. Unicode and line breaks are preserved.
 
 A device Desktop shows through stim-server has the same options once **Control** is on, with sync on by default, so the current Mac text is sent to the device's machine as soon as Control starts:
@@ -778,7 +782,7 @@ See [Phone app](./phone-app.md) for installation, pairing, notifications and acc
 
 ### Pair with another machine
 
-Desktop can pair with the `stim-server` of another machine on your tailnet, such as
+Desktop can pair with the `stim-server` of another machine on your tailnet or local network, such as
 a Linux server where an agent starts workspaces, the same way a phone does. With
 the **Paired machines** flag on:
 
@@ -786,7 +790,13 @@ the **Paired machines** flag on:
 2. In **Stim > Settings > Paired Machines**, choose **Pair with a Machine…** and paste everything
    the command printed. The sheet shows the machine's name, endpoint and the fingerprint of its key.
    Desktop pairs only with the machine whose key has that fingerprint. It accepts a
-   `wss://` endpoint on a `.ts.net` name, or `ws://` to a Tailscale address.
+   `wss://` endpoint on a `.ts.net` name, or `ws://` to a Tailscale or private network address
+   (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, link-local or unique local), which is what
+   `stim-server pair` prints when Tailscale is off, but only when the machine's
+   `server.lanAddresses` setting lists an address (it is empty by default). For a local
+   network address the sheet asks you to paste a code copied directly from the machine's own
+   terminal. Without a listed address, `stim-server pair` prints a loopback endpoint
+   (`127.0.0.1`), which Desktop refuses because it only works on the machine that printed it.
 3. The code works once, for 5 minutes. A pairing made from `stim-server pair` can only read;
    one made from `stim-server pair --control` can also run actions and control devices.
 
@@ -797,16 +807,21 @@ after Forget, or `stim-server devices` to find this Mac's record when the machin
 pairing and pair again. A build of Desktop without the Keychain entitlement, such as a development
 copy, keeps pairings only until it quits and says so in the sheet.
 
-Once paired, the machine gets its own section in the sidebar, below this Mac's
-projects, with its name, a connection dot and **View Only**, or **View and Control**
-for a control pairing. Its workspaces open the same workspace page as this Mac's own,
+Once paired, the machine gets its own section in the sidebar, below this machine's
+projects, titled "NAME (viewing)" because the work in it belongs to that machine, with a
+connection dot and **View Only**, or **View and Control** for a control pairing. Its workspaces open the same workspace page as this machine's own,
 with the devices, build, Metro and agent sections the machine reports, and a line
 under the header that names the machine controlling them, such as "Viewing floco ·
 read-only" or "Controlled by floco". Controls that need the machine's files, logs or
 `stim`, such as **Run**, **Show Logs**, build **Details** and **Review Changes**, are
 disabled with the reason as their help text.
-**Machines** lists the paired machine after your build machines, with its
-capacity, its hosted devices and its offloaded builds. When the machine is
+The **Machines** page groups its machine buttons under **Your machines** (this machine
+and your remote machines) and **Viewing** (paired machines). The group labels appear once a
+machine is paired. A remote machine's page lists **Your work on MACHINE**, the hosted
+simulators and offloaded builds your workspaces run there. A paired machine's page shows
+its capacity and the hosted devices and offloaded builds it places on other machines,
+worded "NAME runs it on MACHINE". In the sidebar, a device of yours that runs on a
+remote machine reads "on MACHINE", and one a paired machine placed reads "theirs, on MACHINE". When the machine is
 offline, Desktop keeps showing its last status with "Offline since" and the
 time. Hiding a paired machine's workspace lasts until Desktop quits.
 
@@ -850,6 +865,9 @@ here, with their client, device, app, state and session age. **Stop** asks for
 confirmation, then ends the session and deletes or parks its device on this Mac.
 Parked sessions remain listed without a Stop button. The list refreshes every
 five seconds and stays hidden when an older local server does not support it.
+The Machines page for this machine lists the same sessions under **Hosting for other
+machines**, each labelled with its client's name. They are other machines' work and never
+appear among this machine's workspaces.
 
 The phone validates server replies and live events before displaying them.
 Malformed known data triggers a reconnect with a connection error; message

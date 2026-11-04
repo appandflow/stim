@@ -78,8 +78,16 @@ remote config of a hosted iOS or Android session (guide lifecycle hosted-ios or
 hosted-android), and the session (stim-<slot>-<platform> unless you pass
 --session).
 --slot picks a slot; --platform is needed only when the slot has both. It
-revives an idle-stopped workspace before the command (progress on stderr) and
-refuses with STIM_BAD_ARG a UDID, serial, device or remote config that is not
+revives an idle-stopped workspace before the command (progress on stderr).
+For a hosted session, a single-action command (snapshot, press, tap, scroll,
+type and the like) that fails with SESSION_NOT_FOUND because the host restarted
+and lost the agent-device session is retried once after opening the app the
+workspace last launched on the same session; the command acts on that app's
+screen as it is after the reopen, so take a fresh snapshot when a coordinate
+gesture matters. Only the final run's output is printed, so --json output stays
+one document. Multi-step commands (batch, replay,
+test) are never retried.
+stim agent-device refuses with STIM_BAD_ARG a UDID, serial, device or remote config that is not
 this workspace's, and boot and shutdown: Stim owns the device lifecycle. stdout, stderr and the exit
 code are agent-device's, so --json output stays parseable. Take snapshots with
 --json so viewers can outline the element each press acts on. It needs

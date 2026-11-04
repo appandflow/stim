@@ -84,6 +84,7 @@ import {
   readDevices,
   revokeDevice,
   serverIdentity,
+  spendSecret,
   storeSetupSecret,
 } from '../src/registry.ts';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
@@ -1051,6 +1052,24 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(await local.request('share.stop', { workspace: root, id: '' })).toMatchObject({
       error: { code: 'bad-request' },
     });
+    expect(await local.request('share.stop', { workspace: root, slot: 'beta' })).toEqual(
+      expect.objectContaining({ result: { stopped: [] } }),
+    );
+    for (const params of [
+      { workspace: root, slot: 'not a slot' },
+      { workspace: root, id: 'w1', slot: 'beta' },
+    ]) {
+      expect(await local.request('share.stop', params)).toMatchObject({ error: { code: 'bad-request' } });
+    }
+    for (const [params, message] of [
+      [{ slug: 'Pokedex' }, 'params.slug must be'],
+      [{ slug: 'assets' }, 'params.slug cannot be assets'],
+      [{ slug: 'pokedex', passwordless: true }, 'needs a password'],
+    ] as const) {
+      expect(await local.request('share.start', { workspace: root, platform: 'ios', ...params })).toMatchObject({
+        error: { code: 'bad-request', message: expect.stringContaining(message) },
+      });
+    }
   });
 
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {
@@ -1268,6 +1287,40 @@ describe('pairing', () => {
     });
   });
 
+  it('records the app and version a hello names without changing what the device may do', async () => {
+    const port = await start();
+    const keyPair = generateNoiseKeyPair();
+    const { token } = createPairingToken();
+    const first = await connect(port, undefined, { secret: token, keyPair });
+    const paired = await first.request('hello', { client: { name: 'Stim Desktop', version: '1.4.0' } });
+    expect(paired).toMatchObject({ result: { capabilities: ['read'] } });
+    first.socket.close();
+    expect(readDevices()).toEqual([
+      expect.objectContaining({ clientApp: 'Stim Desktop', clientVersion: '1.4.0', capabilities: ['read'] }),
+    ]);
+
+    const returningHello = await (await connect(port, undefined, { keyPair })).request('hello', { client: CLIENT });
+    expect(returningHello).toMatchObject({ result: { capabilities: ['read'] } });
+    expect(readDevices()[0]).toMatchObject({ clientApp: 'Stim Desktop', clientVersion: '1.4.0' });
+  });
+
+  it('fills in the app of a record paired before it was recorded on its next connection', async () => {
+    const port = await start();
+    const keyPair = generateNoiseKeyPair();
+    const { token } = createPairingToken();
+    const spent = spendSecret(
+      secretValues(Buffer.from(token, 'base64url')).lookup.toString('hex'),
+      keyPair.publicKey.toString('base64url'),
+      'Old phone',
+      'test',
+    );
+    assert(spent?.device);
+    expect(spent.device).not.toHaveProperty('clientApp');
+    const client = await connect(port, undefined, { keyPair });
+    await client.request('hello', { client: { name: 'stim-mobile', version: '0.9.0' } });
+    expect(readDevices()).toEqual([{ ...spent.device, clientApp: 'stim-mobile', clientVersion: '0.9.0' }]);
+  });
+
   it('records the key that spends a pairing token, with the token capabilities, and refuses a second use', async () => {
     const port = await start();
     const keyPair = generateNoiseKeyPair();
@@ -1340,7 +1393,9 @@ describe('pairing', () => {
           'presence',
           'device-clipboard',
           'share-view-password',
+          'share-waiting',
           'hosted-presence',
+          'share-slug',
         ],
         actions: [],
         device: { name: 'Test phone' },
@@ -4146,7 +4201,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       protocol: 2,
       stimHome: process.env.STIM_HOME,
       startup: { state: 'ready' },
-      busy: { builds: 0, hostedSessions: 0 },
+      busy: { builds: 0, hostedSessions: 0, hostedWork: 0, resumes: true },
       tailscale: { state: 'not-running', backendState: 'Stopped' },
       nativeViewerOpened: false,
     });

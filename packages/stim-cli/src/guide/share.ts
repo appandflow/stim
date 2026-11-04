@@ -17,13 +17,14 @@ asks for it.
   stim share ios --slot tablet        # the device of another slot
   stim share ios --password '<value>' # a password you choose, 8 to 128 characters
   stim share ios --no-password        # no login: the link alone opens it
+  stim share ios --slug pokedex       # link /s/pokedex/ instead of a random token
   stim share android --control --view-password   # a second, watch-only password, generated
   stim share android --control --view-password '<value>'   # or one you choose
-  stim share list                     # live shares: target, control, viewers, expiry
+  stim share list                     # shares: target, control, state, viewers, expiry
   stim share stop                     # ends this workspace's shares now
 
 It prints the URL and, by default, a generated password once. Neither is
-stored anywhere; run stim share again for a new link. --json prints one
+stored anywhere; a lost password means a new share and a new link. --json prints one
 payload with url, auth (generated, set or none), expiresAt, control and the
 target; password is in it only when it was generated. A password you set is
 never printed back. A value passed on the command line can land in your shell
@@ -37,6 +38,29 @@ with STIM_BAD_ARG without --control, with --no-password, and when it equals
 is not read as its value. The output then lists both passwords, and --json adds
 viewAuth (generated, set or null) and viewPassword, present only when it was
 generated.
+
+A SHARE WAITS FOR ITS DEVICE
+
+A share follows the workspace's device in its slot, so running stim ios or
+stim android again, or rebuilding, does not end it. When the device goes away
+on its own (the frame stream fails, as it does when an app install closes a
+hosted session's capture; the simulator or emulator shuts down or is replaced;
+the hosted session stops or is replaced) the share waits: viewers stay
+connected and signed in, see the dimmed last frame and "Waiting for the
+device...", and the link, passwords, sessions and expiry stay. Control is
+released. When the slot's device is back (booted, running, or a ready hosted
+session) the share resumes on the same page with no reload and no new
+password; control starts again on the next tap. If the slot now runs another
+simulator or emulator, the share resumes on that one. After a failed stream it
+retries every few seconds, up to 30 seconds apart. share list shows
+"waiting for the device" and --json rows have state (live or waiting). A
+waiting share still expires at its expiry, still keeps its workspace up and its
+stim-server running.
+
+Only an explicit stop ends a share early: stim share stop, stim stop (the
+workspace, or one slot with --slot), stim worktree remove, Stop in Stim
+Desktop, or stim-server stopping. Tell the user a share survives a rebuild;
+never run stim share stop to "restart" one.
 
 TAB TITLES
 
@@ -67,6 +91,21 @@ screen. A view-only viewer sees the same and sends nothing. Hosted sessions
 machine's stim-server, and the agent's actions on the hosted device come from
 the host Mac (a host on an older Stim shows none; stim agent-device still shows
 the agent's command).
+
+A READABLE LINK (--slug)
+
+--slug <name> makes the link <public url>/s/<name>/ instead of a random
+256-bit token, for a demo link someone can type or read aloud. A slug is 3 to
+32 lowercase letters, digits and hyphens, starting and ending with a letter or
+digit; assets is reserved. Anyone can guess a slug, so the password is the
+share's only secret: --slug refuses with STIM_BAD_ARG with --no-password, and
+anyone who knows the link reaches the login page and can spend the share's
+wrong-password budget (10 wrong passwords in 10 minutes lock new logins for
+that share; signed-in viewers stay). Keep the generated password, or set a
+long one. A slug a live share uses is refused with STIM_SHARE_REFUSED, naming
+that share; stim share stop in its workspace, or its expiry, frees it. Nothing
+reserves a slug after its share ends. share list and --json show slug. A
+stim-server older than this stim refuses --slug; update it.
 
 With --no-password, anyone with the link can watch, or control with
 --control; stim share warns about it on stderr, and share list shows such a
@@ -108,13 +147,13 @@ WHAT IT NEEDS
   connection, one host stream for the H.264 viewers and one for the JPEG
   viewers, none while nobody watches. The
   host needs no new approval. A session that is not ready refuses the share;
-  the share ends when the session stops or is replaced, or the host stream or
-  its connection fails; control the host refuses reaches the viewer as
-  "Control is not available right now".
+  once started, a session that stops, is replaced or loses its capture makes
+  the share wait and resume (A SHARE WAITS FOR ITS DEVICE); control the host
+  refuses reaches the viewer as "Control is not available right now".
 
-A LIVE SHARE KEEPS ITS WORKSPACE UP
+A LIVE OR WAITING SHARE KEEPS ITS WORKSPACE UP
 
-A share that has not ended or expired keeps its workspace out of the idle
+A share that has not ended or expired, waiting ones included, keeps its workspace out of the idle
 stage, the pressure ladder and the dormant stage, whether or not anyone
 watches; with no stim-daemon, the dev server's supervisor keeps it up too.
 The daemon never shuts its device down for a run waiting for a device slot;
@@ -269,7 +308,7 @@ SECURITY MODEL
   Android phone only. A device an agent or another client drives answers
   busy instead of being taken over.
 - Clipboard, with --control on an iOS simulator, Android emulator or Android phone: Command-V or Control-V while
-  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field. The
+  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field; an iOS simulator types printable ASCII, line breaks and tabs, and pastes other text with Command-V, where iOS can ask first. The
   top bar's options menu has a Sync clipboard switch, on by default for control viewers and remembered in the
   browser: while the page is focused and visible it polls the device clipboard every two seconds (slower after
   failures) and writes new text to the browser clipboard, with a Copy from device chip when the browser refuses
@@ -285,10 +324,9 @@ SECURITY MODEL
   fingers on a phone or tablet, Option-drag with a mouse for a pinch (the second finger mirrors
   the first through the screen center) and Shift-Option-drag to move both fingers together. A
   circle marks each finger while Option is held.
-- A share ends at its expiry, on stim share stop, stim stop (without --slot),
-  stim worktree remove, when its device stops or changes (stim stop --slot
-  ends a share of that slot this way), when the device's frames fail, and when
-  stim-server stops. Ending
+- A share ends at its expiry, on stim share stop, stim stop (the workspace, or
+  one slot with --slot), stim worktree remove, Stop in Stim Desktop, and when
+  stim-server stops. A device that goes away only makes it wait. Ending
   closes its viewers' sockets. The last one removes the Funnel route first and
   only then closes the listener, so the route never points at a free port (the
   listener the background service keeps in proxy mode stays bound until the

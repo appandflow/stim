@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
 import { decodeSecret, keyFingerprint, secretValues } from '@stim-cli/core/noise-session';
-import { createPairingToken, readDevices, serverIdentity, spendSecret } from '../src/registry.ts';
+import { createPairingToken, readDevices, serverIdentity, spendSecret, touchDevice } from '../src/registry.ts';
 import { setupClient } from './noise-client.ts';
 
 const BIN = join(import.meta.dirname, '..', 'bin', 'stim-server.ts');
@@ -128,6 +128,35 @@ describe('--json', () => {
       { ...client, capabilities: ['build'], kind: 'build-client', access: ['build'] },
       { ...client, capabilities: ['device-host'], kind: 'device-host-client', access: ['run-devices'] },
     ]);
+  });
+
+  it('devices reports Stim Desktop as desktop, any other or unrecorded app as phone, and the recorded app additively', () => {
+    const desktop = spend(createPairingToken().token, 'Studio Mac')?.device;
+    const phone = spend(createPairingToken().token, 'Phone')?.device;
+    const legacy = spend(createPairingToken().token, 'Old phone')?.device;
+    const machine = setupClient(['build'], 'Studio Mac');
+    const build = machine.records.build;
+    assert(desktop && phone && legacy && build);
+    touchDevice(desktop.id, { name: 'Stim Desktop', version: '1.4.0' });
+    touchDevice(phone.id, { name: 'stim-mobile', version: '0.9.0' });
+    touchDevice(build.id, { name: 'Stim Desktop', version: '1.4.0' });
+    expect(run('devices', '--json')).toMatchObject({
+      devices: [
+        {
+          id: desktop.id,
+          kind: 'desktop',
+          clientApp: 'Stim Desktop',
+          clientVersion: '1.4.0',
+          access: ['view'],
+          owner: 'this-machine',
+          capabilities: ['read'],
+        },
+        { id: phone.id, kind: 'phone', clientApp: 'stim-mobile', clientVersion: '0.9.0' },
+        { id: legacy.id, kind: 'phone' },
+        { id: build.id, kind: 'build-client', clientApp: 'Stim Desktop' },
+      ],
+    });
+    expect(readDevices().find((record) => record.id === legacy.id)).not.toHaveProperty('clientApp');
   });
 });
 

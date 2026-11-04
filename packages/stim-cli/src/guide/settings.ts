@@ -1301,7 +1301,10 @@ While a machine builds, Stim pings it every 15 seconds and treats a minute of
 silence as a dropped connection while it waits for the build. When the
 connection drops without a close, Stim reconnects to the same pinned machine
 for up to 3 minutes and takes the running build back; the machine keeps it
-running for 5 minutes without a connection, then cancels it. With auto, a drop while the
+running for 5 minutes without a connection, then cancels it. When that machine's
+stim-server restarted in between and no longer holds the build, or the connection drops while the source syncs and no other
+machine can take the build, Stim waits for the machine to answer (up to 3 minutes) and starts the same build again
+there, up to twice, before the run falls back or refuses. With auto, a drop while the
 app is fetched still builds here. Interrupting the run with Ctrl-C closes the
 connection, which cancels the build there; a run killed another way, or
 interrupted while it reconnects, leaves it until those 5 minutes pass. With auto, a failure after a machine took the build prints \`offload failed: <reason>
@@ -1350,8 +1353,9 @@ toolchain discovery does not find.
 that exact stim-server release from the public npm registry once npm verifies
 its integrity and registry signatures; \`--from <dir>\` installs the packed
 packages of a checkout instead, with the same signature check on each npm
-dependency but none for Stim's own packages. It waits for offloaded builds and hosted
-sessions to finish, restarts the job, and switches back when the new server
+dependency but none for Stim's own packages. It waits for offloaded builds and for hosted
+sessions with a native step in flight (an install, for example) to finish, restarts the job, which
+(on a server that reports it resumes sessions) leaves every other ready hosted iOS or Android session running for the new server to resume, and switches back when the new server
 exits or does not answer within 90 seconds; \`stim-server service rollback\` returns
 to the previous server. A client machine approved for builds or device hosting
 there can ask for the same update over its tailnet connection: an npm release

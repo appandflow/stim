@@ -38,6 +38,7 @@ export interface HomePasses {
   pressure: DaemonPressure;
   actions: DaemonLadderAction[];
   phases: HomePassPhases;
+  operation: StimContext;
 }
 
 /**
@@ -147,6 +148,7 @@ export async function runHomePasses({
     pressure,
     actions,
     phases: { measureMs, idleMs, dormantMs, dependenciesMs, ladderMs, maintenanceMs },
+    operation,
   };
 }
 

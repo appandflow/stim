@@ -4,9 +4,10 @@ import {
   type AgentDriverActions,
   type AgentDriverClient,
   type AgentDriverInput,
+  type AgentDriverRecoveryInput,
 } from '@stim-cli/agent-driver';
 import { createAgentActionReader } from '@stim-cli/core/state';
-import { AgentDeviceDriver } from './driver.ts';
+import { AgentDeviceDriver, recorderClaimRoot, stopRecorders } from './driver.ts';
 
 export { AgentDeviceDriver, resolveAgentDevice, type AgentDeviceDriverOptions } from './driver.ts';
 export { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS, type DeviceCommandRule } from './device-policy.ts';
@@ -17,6 +18,10 @@ export const id: string = 'agent-device';
 
 export function createAgentDriver(input: AgentDriverInput): AgentDeviceDriver {
   return new AgentDeviceDriver(input);
+}
+
+export function recover({ stateDir }: AgentDriverRecoveryInput): Promise<void> {
+  return stopRecorders(recorderClaimRoot(stateDir));
 }
 
 export const client: AgentDriverClient = {

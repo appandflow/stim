@@ -437,7 +437,7 @@ export function DeviceView({
             });
           setNote({
             text:
-              platform === 'ios'
+              platform === 'ios' && outcome === 'pasted'
                 ? t`Pasted. If nothing appears, tap the paste suggestion on the device.`
                 : t`Pasted from the phone.`,
             success: true,

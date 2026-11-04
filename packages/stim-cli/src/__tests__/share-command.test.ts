@@ -144,6 +144,24 @@ describe('stim share', () => {
     });
   });
 
+  it('lists each share with its state, and says when it waits for its device', async () => {
+    const deps = fake([
+      () => ({
+        result: {
+          shares: [
+            { ...ROW, state: 'live' },
+            { ...ROW, id: 'w2', slot: 'beta', state: 'waiting' },
+          ],
+        },
+      }),
+    ]);
+    const result = await runShare('list', {}, deps, '1.0.0');
+    expect(result).toMatchObject({ ok: true, output: { shares: [{ state: 'live' }, { state: 'waiting' }] } });
+    const lines = (result as { text: string }).text.split('\n');
+    expect(lines[0]).not.toContain('waiting');
+    expect(lines[1]).toContain('waiting for the device');
+  });
+
   it('never starts a server to list or stop shares', async () => {
     const deps = fake([unavailable, unavailable]);
     expect(await runShare('list', {}, deps, '1.0.0')).toMatchObject({ error: { code: 'STIM_SERVER_NOT_RUNNING' } });
@@ -175,6 +193,38 @@ describe('stim share', () => {
       expect(await runShare('android', opts, deps, '1.0.0')).toMatchObject({ error: { code: 'STIM_BAD_ARG' } });
     }
     expect(deps.sent).toEqual([]);
+  });
+
+  it('refuses a slug that is malformed, reserved or without a password, before asking the server', async () => {
+    const deps = fake([]);
+    for (const opts of [
+      { slug: 'ab' },
+      { slug: 'Pokedex' },
+      { slug: '-pokedex' },
+      { slug: 'a'.repeat(33) },
+      { slug: 'assets' },
+      { slug: 'pokedex', password: false as const },
+    ]) {
+      expect(await runShare('ios', opts, deps, '1.0.0')).toMatchObject({ error: { code: 'STIM_BAD_ARG' } });
+    }
+    expect(deps.sent).toEqual([]);
+  });
+
+  it('asks for a slug link, shows it on the row and says the password is its only secret', async () => {
+    const deps = fake([
+      () => ({ result: { ...ROW, auth: 'generated', slug: 'pokedex', url: 'https://demo.example.com/s/pokedex/' } }),
+    ]);
+    const result = await runShare('android', { slug: 'pokedex' }, deps, '1.0.0');
+    expect(deps.sent[0]?.params).toMatchObject({ slug: 'pokedex' });
+    expect(result).toMatchObject({ ok: true, text: expect.stringContaining('link /s/pokedex/') });
+    expect(result).toMatchObject({ text: expect.stringMatching(/only the password keeps the share private/) });
+  });
+
+  it('names an outdated stim-server when it does not take a slug', async () => {
+    const deps = fake([() => ({ error: { code: 'bad-request', message: 'share.start does not take slug.' } })]);
+    expect(await runShare('ios', { slug: 'pokedex' }, deps, '1.0.0')).toMatchObject({
+      error: { code: 'STIM_SHARE_REFUSED', remedy: expect.stringContaining('stim-server service update') },
+    });
   });
 
   it('asks for a generated or a chosen view password and prints both passwords once', async () => {

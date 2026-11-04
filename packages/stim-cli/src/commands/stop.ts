@@ -320,6 +320,7 @@ export async function runStop(options: StopArgs & { slot?: string }): Promise<St
   }
   if (options.slot === WEB_SLOT) return stopBrowserOnly(options);
   const slot = validateDeviceSlot(options.slot);
+  await endWorkspaceShares(options.root, slot);
   const root = options.root;
   const project = options.project === undefined ? getProject(root) : options.project;
   const records = options.collectors === undefined ? readCollectorState(root) : options.collectors;

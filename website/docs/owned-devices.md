@@ -845,9 +845,15 @@ slot. Reload reports the failure and remedy in JSON when no other app can
 reload, and logs remain readable. A hello refusal after this machine loses hosting
 access clears its placement during stop or worktree removal; other refusals
 retain it.
-A clean host server restart stops its sessions and preserves eligible parked
-devices for adoption by the same client. A running session left by a crash stays
-`unknown` until explicit stop; booted devices are never re-attached after restart.
+A host server restart leaves ready iOS and Android sessions running, and the
+restarted server resumes them once their ownership claim is provably free. The
+simulator or emulator stays booted, the Metro bridge listens on its recorded port
+again and the agent-device grant keeps its token, so a rerun reattaches and the
+client's Metro links and agent config keep working. A session whose device is not
+verified as the recorded, ledger-owned, running one is stopped instead; an install
+that was in flight at shutdown, a revoked session and a macOS app are stopped too.
+A session whose owner is still held by a live process stays `unknown` until explicit
+stop. Eligible parked devices persist for adoption by the same client.
 On the hosting Mac, `stim gc` lists parked hosted devices and `stim gc --delete`
 deletes them through their owning session homes under a session claim. A held
 claim or unverified ledger ownership keeps the device. Android deletion requires
@@ -971,7 +977,9 @@ which the client downloads, rather than arbitrary host destinations.
 `record stop` downloads the video to that path, or `./recording-<time>.mp4`, on
 your machine. The hosting Mac writes the recording only in a private directory
 for the session in its temporary directory and deletes the files after the download, on `stim stop` or
-session teardown and when the session's daemon restarts. One recording runs per
+session teardown and when the session's daemon restarts. The hosting Mac stops the
+recorder before it parks or deletes the simulator, and a stim-server that restarts
+stops a recorder its previous run left. One recording runs per
 session; a second `record start`, a host output path, `record` inside `batch` and
 a `record stop` from another agent-device session are refused. The host stops a
 recording after 10 minutes; a `record stop` within the next 15 minutes downloads

@@ -7,6 +7,8 @@ import {
   FEATURES,
   type Method,
   PUSH_TOKEN_PATTERN,
+  SHARE_SLUG_PATTERN,
+  RESERVED_SHARE_SLUGS,
   ERROR_CODES,
   LOG_SOURCES,
   LOG_LEVELS,
@@ -2279,13 +2281,18 @@ export function protocolJsonSchema(): JsonSchema {
                 additionalProperties: false,
                 properties: { password: { type: 'string', minLength: 8, maxLength: 128 } },
               },
+              slug: { type: 'string', pattern: SHARE_SLUG_PATTERN, not: { enum: [...RESERVED_SHARE_SLUGS] } },
             },
           }),
           request('share.stop', {
             type: 'object',
             required: ['workspace'],
             additionalProperties: false,
-            properties: { workspace: { type: 'string', minLength: 1 }, id: { type: 'string', minLength: 1 } },
+            properties: {
+              workspace: { type: 'string', minLength: 1 },
+              id: { type: 'string', minLength: 1 },
+              slot: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
+            },
           }),
           optionalParams('share.list', { type: 'object', maxProperties: 0 }),
           request('presence.publish', {

@@ -724,8 +724,10 @@ On an iOS simulator, an Android emulator or an Android phone, when the server li
 `device-clipboard`, **More** also has **Paste from Phone** and **Copy Device
 Clipboard** while Control is on. Paste reads the phone's clipboard when you tap it
 (iOS asks to allow the paste), sets the device clipboard to that text and pastes it
-into the focused field; text over 8 KiB is not sent, and a note says so. On iOS the
-note after a paste adds that the device may show a paste suggestion to tap, which
+into the focused field; text over 8 KiB is not sent, and a note says so. An iOS
+simulator types printable ASCII, line breaks and tabs into the field (the server answers
+`typed`), so no paste prompt is involved. Only when the text has other characters does the
+note after a paste on iOS add that the device may show a paste suggestion to tap, which
 simulators slimmed by `simslimProfile` cannot show. Copy reads the device clipboard
 into the phone's and a note confirms it. Text only; nothing syncs by itself, and the
 app never logs the text. A web page, a Mac app and a physical iPhone have neither action.

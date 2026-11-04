@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ControlHub, type InputCommand } from '../src/control.ts';
+import { ControlHub, PASTE_TYPING_CHARS_PER_SECOND, type InputCommand } from '../src/control.ts';
 import { FramePool, type Device, type DeviceInput } from '../src/frames.ts';
 import { MAX_CLIPBOARD_BYTES, MAX_CLIPBOARD_READ_BYTES } from '../src/protocol.ts';
 
@@ -126,6 +126,68 @@ describe.skipIf(process.platform === 'win32')('an iOS simulator clipboard (simct
     expect(await hub.input(owner, id, set(TEXT, true))).toBeNull();
     expect(calls()).toEqual([{ args: ['simctl', 'pbcopy', 'SIM-UDID'], lang: 'en_US.UTF-8', input: TEXT }]);
     expect(events.filter((event) => event.startsWith('helper'))).toEqual(['helper {"clipboard":"paste"}']);
+  });
+
+  it('types ASCII text into the field as input.text pieces instead of pasting it, and still sets the clipboard', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      recordingTool(join(home, 'bin', 'xcrun'), '');
+      const id = await session(device, { ...process.env, PATH: `${join(home, 'bin')}:${process.env.PATH}` });
+      const text = `${'a'.repeat(300)}\r\nb`;
+      expect(await hub.input(owner, id, set(text, true))).toEqual({ typed: true });
+      expect(calls()).toEqual([{ args: ['simctl', 'pbcopy', 'SIM-UDID'], lang: 'en_US.UTF-8', input: text }]);
+      const typed = () => events.filter((event) => event.startsWith('helper')).map((event) => event.slice(7));
+      expect(typed()).toEqual([JSON.stringify({ input: 'text', text: 'a'.repeat(256) })]);
+      vi.advanceTimersByTime((256 / PASTE_TYPING_CHARS_PER_SECOND) * 1000);
+      expect(typed()).toEqual([
+        JSON.stringify({ input: 'text', text: 'a'.repeat(256) }),
+        JSON.stringify({ input: 'text', text: `${'a'.repeat(44)}\nb` }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refuses a second typed paste while the first is still being typed', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      recordingTool(join(home, 'bin', 'xcrun'), '');
+      const id = await session(device, { ...process.env, PATH: `${join(home, 'bin')}:${process.env.PATH}` });
+      expect(await hub.input(owner, id, set('first', true))).toEqual({ typed: true });
+      expect(await hub.input(owner, id, set('second', true))).toMatchObject({ code: 'device-busy' });
+      vi.advanceTimersByTime(1000);
+      expect(await hub.input(owner, id, set('second', true))).toEqual({ typed: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refuses a typed paste that arrives while the first is still setting the clipboard', async () => {
+    recordingTool(join(home, 'bin', 'xcrun'), '');
+    const id = await session(device, { ...process.env, PATH: `${join(home, 'bin')}:${process.env.PATH}` });
+    const [first, second] = await Promise.all([
+      hub.input(owner, id, set('first', true)),
+      hub.input(owner, id, set('second', true)),
+    ]);
+    expect(first).toEqual({ typed: true });
+    expect(second).toMatchObject({ code: 'device-busy' });
+    expect(events.filter((event) => event.startsWith('helper'))).toEqual([
+      `helper ${JSON.stringify({ input: 'text', text: 'first' })}`,
+    ]);
+  });
+
+  it('stops feeding a typed paste once the session ends', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      recordingTool(join(home, 'bin', 'xcrun'), '');
+      const id = await session(device, { ...process.env, PATH: `${join(home, 'bin')}:${process.env.PATH}` });
+      await hub.input(owner, id, set('a'.repeat(300), true));
+      await hub.close();
+      vi.advanceTimersByTime(60_000);
+      expect(events.filter((event) => event.startsWith('helper'))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not paste when only setting, and reads the text back through simctl pbpaste', async () => {

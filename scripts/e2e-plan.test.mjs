@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { planSuites } from './e2e-plan.mjs';
 
 describe('native e2e plan', () => {
-  it('runs the smoke on every platform for a push to main', () => {
+  it('runs the smoke on iOS and Linux Android, not Windows, for a push to main', () => {
     expect(planSuites({ eventName: 'push', labels: [] })).toEqual({
       ios: ['smoke'],
       android: ['smoke'],
-      windows: ['smoke'],
+      windows: [],
     });
   });
 

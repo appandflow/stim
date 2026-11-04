@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
-import type { Methods, WebShareRow } from '@stim-cli/core/protocol';
+import { RESERVED_SHARE_SLUGS, SHARE_SLUG_PATTERN, type Methods, type WebShareRow } from '@stim-cli/core/protocol';
 import {
   LocalServerUnavailable,
   requestLocalServer,
@@ -18,6 +18,7 @@ import { repoRootAsync } from '../workspace/worktree.ts';
 const DEFAULT_MINUTES = 60;
 const MAX_MINUTES = 480;
 const SLOT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const SLUG = new RegExp(SHARE_SLUG_PATTERN);
 
 interface ShareFailure {
   code: string;
@@ -38,6 +39,7 @@ interface ShareOptions {
   viewPassword?: string | true;
   /** Both `--password` and `--no-password` were passed. */
   bothPasswords?: boolean;
+  slug?: string;
   json?: boolean;
 }
 
@@ -117,10 +119,12 @@ async function ask<M extends ShareMethod>(
     );
   }
   if ('result' in answer) return answer;
-  if (answer.error.code === 'unknown-method') {
+  if (answer.error.code === 'unknown-method' || /does not take slug\b/.test(answer.error.message)) {
     return failure(
       'STIM_SHARE_REFUSED',
-      'The running stim-server does not serve web shares.',
+      answer.error.code === 'unknown-method'
+        ? 'The running stim-server does not serve web shares.'
+        : 'The running stim-server does not take --slug.',
       'Update stim-server to the version of this stim (`stim-server service update`), then run stim share again.',
     );
   }
@@ -147,7 +151,9 @@ function parseMinutes(value: string | undefined): number | ShareFailure {
 function describeRow(row: ShareRow): string {
   const target = `${row.platform}${row.physical ? ' device' : ''}${row.slot === 'default' ? '' : ` (slot ${row.slot})`}`;
   const mode = `${row.control ? 'view and control' : 'view only'}${row.auth === 'none' ? ', no password' : ''}${row.viewAuth ? ', view password' : ''}`;
-  return `${target} of ${row.workspace}: ${mode}, ${row.viewers} viewer${row.viewers === 1 ? '' : 's'}, expires ${row.expiresAt}`;
+  const waiting = row.state === 'waiting' ? ', waiting for the device' : '';
+  const link = row.slug !== undefined ? `, link /s/${row.slug}/` : '';
+  return `${target} of ${row.workspace}: ${mode}${link}${waiting}, ${row.viewers} viewer${row.viewers === 1 ? '' : 's'}, expires ${row.expiresAt}`;
 }
 
 export async function runShare(
@@ -287,6 +293,30 @@ export async function runShare(
       };
     }
   }
+  if (opts.slug !== undefined) {
+    if (!SLUG.test(opts.slug) || RESERVED_SHARE_SLUGS.includes(opts.slug)) {
+      return {
+        ok: false,
+        error: failure(
+          'STIM_BAD_ARG',
+          `--slug ${JSON.stringify(opts.slug)} is not a share slug.`,
+          RESERVED_SHARE_SLUGS.includes(opts.slug)
+            ? `${opts.slug} is reserved for the share pages; choose another slug.`
+            : 'Use 3 to 32 lowercase letters, digits and hyphens, starting and ending with a letter or digit, such as --slug pokedex.',
+        ),
+      };
+    }
+    if (passwordless) {
+      return {
+        ok: false,
+        error: failure(
+          'STIM_BAD_ARG',
+          '--slug and --no-password cannot be used together: anyone can guess a slug, so the password is what keeps the share private.',
+          'Leave --no-password out to have a password generated, or leave --slug out to get a random link.',
+        ),
+      };
+    }
+  }
   if (passwordless) {
     deps.note(
       `Warning: this share has no password. Anyone with the link can ${opts.control ? 'watch and control' : 'watch'} the device until it expires.`,
@@ -305,6 +335,7 @@ export async function runShare(
       ...(chosen !== undefined ? { password: chosen } : {}),
       ...(passwordless ? { passwordless: true } : {}),
       ...(view !== undefined ? { view: typeof view === 'string' ? { password: view } : {} } : {}),
+      ...(opts.slug !== undefined ? { slug: opts.slug } : {}),
     },
     version,
     true,
@@ -335,6 +366,9 @@ export async function runShare(
       `Shared ${describeRow(started)}.`,
       `URL:${started.viewAuth ? '              ' : '      '}${started.url}`,
       ...secret,
+      ...(started.slug !== undefined
+        ? ['The link uses a chosen slug, so anyone can guess it: only the password keeps the share private.']
+        : []),
       'Stop it with: stim share stop',
     ].join('\n'),
   };
@@ -356,7 +390,7 @@ export function registerShare(program: Command, version: string, deps: Partial<S
   program
     .command('share <action>')
     .description(
-      "Share this workspace's running app through a public web link, with a generated password unless you set or drop it: share ios|android starts one (and a stim-server, when none runs), share stop ends this workspace's shares, share list lists live shares.",
+      "Share this workspace's running app through a public web link, with a generated password unless you set or drop it: share ios|android starts one (and a stim-server, when none runs), share stop ends this workspace's shares, share list lists shares and whether one waits for its device.",
     )
     .option('--slot <name>', 'Share the device of this slot')
     .option('--device', 'Share the physical device this workspace leases instead of its simulator or emulator')
@@ -366,6 +400,10 @@ export function registerShare(program: Command, version: string, deps: Partial<S
     .option(
       '--view-password [value]',
       'With --control, a second password that only watches (8 to 128 characters, generated without a value)',
+    )
+    .option(
+      '--slug <name>',
+      'Use /s/<name>/ as the link instead of a random token (3 to 32 lowercase letters, digits and hyphens; needs a password)',
     )
     .option('--expires <minutes>', `Minutes until the share ends, 1 to ${MAX_MINUTES}`, String(DEFAULT_MINUTES))
     .option('--json', 'Emit one JSON payload')
