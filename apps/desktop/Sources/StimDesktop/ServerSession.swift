@@ -55,6 +55,11 @@ import StimKit
     adoptionWatch = controller.$provisional.sink { [weak self] _ in
       DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow(controller.state) } }
     }
+    controller.reconnect = { [weak self] in
+      guard let self else { return }
+      key = nil
+      follow(controller.state)
+    }
   }
 
   init(pairing: PairedServer, client: ServerClient, offlineSince: Date? = nil) {
@@ -166,8 +171,10 @@ import StimKit
     connection?.stop()
     connection = nil
     client = nil
+    let replacesServer = self.key != nil
     self.key = key
     self.state = .idle
+    if health == nil || replacesServer { controller.connectionRefused(nil) }
     guard let health, health.protocolVersion >= Self.protocolVersion else { return }
     let home = health.stimHome
     let socket = StimHome.localSocket(home: home)
@@ -178,6 +185,11 @@ import StimKit
     client.onState = { [weak self, weak client] state in
       guard let self, let client, client === self.connection else { return }
       self.state = state
+      switch state {
+      case .refused(let refusal): controller.connectionRefused(refusal.message)
+      case .open: controller.connectionRefused(nil)
+      case .idle, .connecting, .waiting: break
+      }
     }
     connection = client
     if controller.adoption.allowsWrites(home: home) { self.client = client }
