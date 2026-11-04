@@ -14,6 +14,7 @@ import { constants } from 'node:os';
 import { dirname, join } from 'node:path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
+import { workspaceId } from '@stim-cli/core';
 import {
   agentActionGesture,
   agentSnapshotFile,
@@ -302,15 +303,27 @@ export function planAgentDevice(
 }
 
 /**
+ * The session name when the agent names none. A hosted session's name carries the workspace id because agent-device
+ * keeps one saved remote connection per name for the whole machine; a local device's sessions live in the workspace's
+ * own state directory.
+ */
+function defaultSessionName(root: string, device: WorkspaceDevice): string {
+  const name = `stim-${device.slot}-${device.platform}`;
+  return device.kind === 'hosted' ? `${name}-${workspaceId(root).slice(0, 8)}` : name;
+}
+
+/**
  * The full agent-device arguments for a plan: the selection for a local device or the hosted session's remote config,
- * with `stim-<slot>-<platform>` as the session when the agent names none. Refuses a device that is not running.
+ * with `stim-<slot>-<platform>` (`-<workspace id>` for a hosted session) as the session when the agent names none.
+ * Refuses a device that is not running.
  */
 export function agentDeviceArgs(
   plan: AgentDevicePlan,
+  root: string,
 ): { args: string[]; session: string | null } | { refusal: AgentDeviceRefusal } {
   const { device } = plan;
   const sessionless = plan.command !== null && SESSIONLESS_COMMANDS.has(plan.command);
-  const name = plan.session ?? `stim-${device.slot}-${device.platform}`;
+  const name = plan.session ?? defaultSessionName(root, device);
   if (device.kind === 'hosted') {
     if (!device.remoteConfig) {
       return refusal(
@@ -585,7 +598,7 @@ async function runAgentDevice(argv: string[], version: string): Promise<void> {
     plan = planAgentDevice(await resolveDevices(root, project, state), argv);
     if ('refusal' in plan) return refuse(plan.refusal, json);
   }
-  const built = agentDeviceArgs(plan);
+  const built = agentDeviceArgs(plan, root);
   if ('refusal' in built) return refuse(built.refusal, json);
   await execute(invocation, argv, { plan, ...built }, root, version);
 }
@@ -648,7 +661,7 @@ function hostedReopen(root: string, plan: AgentDevicePlan, args: readonly string
   if (args.includes('--text-stdin')) return null;
   const appId = readWorkspaceLaunches(root)[deviceSlotKey(device.platform, device.slot)]?.appId;
   if (!appId) return null;
-  const session = plan.session ?? `stim-${device.slot}-${device.platform}`;
+  const session = plan.session ?? defaultSessionName(root, device);
   return ['open', appId, '--session', session, '--remote-config', device.remoteConfig];
 }
 

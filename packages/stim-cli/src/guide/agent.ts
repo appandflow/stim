@@ -76,7 +76,8 @@ agent-device directly. Pass agent-device's own arguments and no device ids:
 Stim adds the platform, the UDID or serial and AGENT_DEVICE_STATE_DIR, or the
 remote config of a hosted iOS or Android session (guide lifecycle hosted-ios or
 hosted-android), and the session (stim-<slot>-<platform> unless you pass
---session).
+--session; a hosted session adds -<8 hex digits of the workspace id>, so two
+workspaces on one machine do not share a name).
 --slot picks a slot; --platform is needed only when the slot has both. It
 revives an idle-stopped workspace before the command (progress on stderr).
 For a hosted session, a single-action command (snapshot, press, tap, scroll,

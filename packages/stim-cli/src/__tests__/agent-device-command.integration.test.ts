@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { workspaceStateDir } from '@stim-cli/core';
+import { workspaceId, workspaceStateDir } from '@stim-cli/core';
 import { readAgentSnapshot, serverLocalSocket, workspaceAgentDeviceDir } from '@stim-cli/core/state';
 
 const cli = fileURLToPath(new URL('../../bin/cli.ts', import.meta.url));
@@ -176,7 +176,7 @@ test.skipIf(process.platform === 'win32')(
         '@e1',
         '--json',
         '--session',
-        'stim-default-ios',
+        `stim-default-ios-${workspaceId(app).slice(0, 8)}`,
         '--remote-config',
         config,
       ]);
@@ -231,7 +231,16 @@ describe.skipIf(process.platform === 'win32')('hosted reopen', () => {
           .trim()
           .split('\n')
           .map((line) => JSON.parse(line)),
-      ).toEqual([['open', 'com.example.app', '--session', 'stim-default-ios', '--remote-config', config]]);
+      ).toEqual([
+        [
+          'open',
+          'com.example.app',
+          '--session',
+          `stim-default-ios-${workspaceId(app).slice(0, 8)}`,
+          '--remote-config',
+          config,
+        ],
+      ]);
       expect(readFileSync(join(home, 'taps'), 'utf8').trim().split('\n')).toHaveLength(2);
     },
     60_000,

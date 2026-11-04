@@ -1083,7 +1083,11 @@ Stim adds what agent-device needs to reach the device:
   leased phone wins over the slot's simulator or emulator.
 - `--remote-config` for a [hosted iOS](./owned-devices.md#run-ios-on-another-mac)
   or [hosted Android](./remote-machines.md) session.
-- `--session stim-<slot>-<platform>` unless you pass `--session`.
+- `--session stim-<slot>-<platform>` unless you pass `--session`. A hosted session's
+  name ends with the first eight hex digits of the workspace id
+  (`stim-default-ios-1a2b3c4d`), because agent-device keeps one saved remote
+  connection per session name on the machine and two workspaces would otherwise
+  share it. The name stays the same across commands in one workspace.
 - For a hosted session whose host no longer holds the agent-device session (its
   stim-server restarted, or no command reached the session for an hour, so agent-device
   answers `SESSION_NOT_FOUND`), a
