@@ -471,6 +471,16 @@ describe('a web share', () => {
     for (const viewer of [second, other, stranger, third]) viewer.socket.close();
   });
 
+  it('closes viewers without an ended message when stim-server itself stops, so their pages reconnect', async () => {
+    const share = await started(f, { passwordless: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket, messages } = await connect(url, { origin: origin(url) });
+    const closed = new Promise<number>((resolve) => socket.once('close', (code) => resolve(code)));
+    await f.hub.close();
+    expect(await closed).toBe(1001);
+    expect(messages.map((message) => message.type)).not.toContain('ended');
+  });
+
   it('streams H.264 at 60 fps to a viewer that asks for it, from a keyframe it requests on join, and JPEG at 10 fps otherwise', async () => {
     const share = await started(f);
     const url = local(share, f.hub.port!);

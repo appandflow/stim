@@ -34,6 +34,7 @@ let reconnecting = false;
 let attempt = 0;
 let missingSince = null;
 let releaseInput = () => {};
+const PROBE_TIMEOUT_MS = 10000;
 
 function setStatus(state, text) {
   statusBox.dataset.state = state;
@@ -549,7 +550,9 @@ function connect(codec) {
   overlay.clear();
   renderRoster();
   const current = new WebSocket(`${socketUrl}?id=${pageId}${codec === 'h264' ? '&codec=h264' : ''}`);
+  const previous = socket;
   socket = current;
+  if (previous && previous.readyState <= WebSocket.OPEN) previous.close();
   body.dataset.codec = codec;
   current.binaryType = 'arraybuffer';
   current.addEventListener('open', () => {
@@ -570,6 +573,7 @@ function connect(codec) {
       reconnecting = false;
       attempt = 0;
       missingSince = null;
+      clearTimeout(retryTimer);
       delete body.dataset.reconnecting;
       if (typeof message.title === 'string') document.title = message.title;
       expiresAt = Date.parse(message.expiresAt);
@@ -621,7 +625,6 @@ function retryIn(delay) {
   retryTimer = setTimeout(probe, delay);
 }
 
-/** The socket closed without an `ended` message: keep the last frame, drop what the device holds for this page, retry. */
 function lostConnection() {
   live = false;
   away = false;
@@ -638,24 +641,30 @@ function lostConnection() {
   retryIn(globalThis.stimReconnect.reconnectDelay(attempt++));
 }
 
-/** Asks the server what the link says now, then rejoins it, goes to the login page or keeps trying. */
 async function probe() {
   clearTimeout(retryTimer);
   if (probing || finished) return;
   probing = true;
   let verdict = 'retry';
+  const abort = new AbortController();
+  const giveUp = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS);
   try {
     const response = await fetch(location.href.replace(/[?#].*$/, ''), {
       cache: 'no-store',
       credentials: 'same-origin',
+      signal: abort.signal,
     });
     verdict = globalThis.stimReconnect.probeVerdict(response.status, await response.text());
   } catch {
     verdict = 'retry';
   }
+  clearTimeout(giveUp);
   probing = false;
   if (finished) return;
-  if (verdict === 'viewer') return connect(body.dataset.codec);
+  if (verdict === 'viewer') {
+    missingSince = null;
+    return connect(body.dataset.codec);
+  }
   if (verdict === 'login') return location.reload();
   if (verdict === 'missing') {
     missingSince ??= Date.now();
@@ -670,7 +679,6 @@ async function probe() {
   retryIn(globalThis.stimReconnect.reconnectDelay(attempt++));
 }
 
-/** The browser is back online or the page is visible again: do not wait out the backoff. */
 function retryNow() {
   if (finished || probing) return;
   if (!reconnecting) {

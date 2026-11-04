@@ -282,7 +282,6 @@ interface Viewer {
   chosen: string | null;
   renamedAt: number;
   login: Login | null;
-  /** The random id the viewer page keeps across its reconnects; a new socket with it replaces the page's old one. */
   pageId: string | null;
   socket: WebSocket;
   /** Whether the page asked for H.264 access units. */
@@ -840,8 +839,11 @@ export class ShareHub {
         socket.terminate();
         continue;
       }
-      socket.send(JSON.stringify({ type: 'ended', message: VIEWER_TEXT.ended }));
-      socket.close(1000, 'share ended');
+      if (this.closed) socket.close(1001, 'stim-server stopped');
+      else {
+        socket.send(JSON.stringify({ type: 'ended', message: VIEWER_TEXT.ended }));
+        socket.close(1000, 'share ended');
+      }
       setTimeout(() => socket.terminate(), CLOSE_GRACE_MS).unref?.();
     }
     share.viewers.clear();
@@ -1189,7 +1191,6 @@ export class ShareHub {
     this.wss.handleUpgrade(request, socket, head, (ws) => this.watch(share, ws, video, admitted.login, pageId));
   }
 
-  /** The viewers of one page of one browser session: a page that reconnects replaces its own stale sockets. */
   private pageViewers(share: Share, pageId: string, login: Login | null): Viewer[] {
     return [...share.viewers].filter((viewer) => viewer.pageId === pageId && viewer.login === login);
   }
@@ -1213,7 +1214,12 @@ export class ShareHub {
       gate: null,
       stopPresence: null,
     };
-    if (pageId !== null) for (const stale of this.pageViewers(share, pageId, login)) stale.socket.terminate();
+    if (pageId !== null) {
+      for (const stale of this.pageViewers(share, pageId, login)) {
+        share.viewers.delete(stale);
+        stale.socket.terminate();
+      }
+    }
     this.attach(share, viewer);
     const json = (message: Record<string, unknown>) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));

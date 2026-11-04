@@ -2248,7 +2248,7 @@ and once a local device resolves or a hosted session of the slot is ready it
 builds a new source, feeds every connected viewer again and sends
 `{ "type": "resumed" }`. A slot that now runs another device is followed to it.
 A waiting share still counts as a share for the listener, the Funnel route and
-idleness. A viewer page that loses its socket without an `ended` message keeps its last frame dimmed
+idleness. When the hub itself closes (stim-server stopping) it closes viewer sockets with code 1001 and sends no `ended`. A viewer page that loses its socket without an `ended` message keeps its last frame dimmed
 and reconnects on its own: it asks the link with a GET (the viewer page: join again; the login page, because the
 server no longer knows the session: reload to it; 404: try every 30 seconds for 10 minutes, so a link that comes
 back under `--reuse` is joined again; any other status: back off) and connects again with the same random

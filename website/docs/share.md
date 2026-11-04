@@ -300,8 +300,9 @@ then every few seconds (up to 15), and tries at once when the browser is back
 online or the page is shown again. If the server no longer knows the sign-in,
 for example after a restart, the page shows the login for the same link. If the
 link is not found, it keeps checking every 30 seconds for 10 minutes, so a
-share that comes back under the same link is joined again. "This share has
-ended." is final.
+share that comes back under the same link is joined again. When stim-server
+itself stops, viewers are not told the share ended; their pages reconnect the
+same way. "This share has ended." from a stop or an expiry is final.
 
 `stim share list` shows `waiting for the device` on such a share, and `--json`
 gives each share a `state` of `live` or `waiting`. A waiting share still counts

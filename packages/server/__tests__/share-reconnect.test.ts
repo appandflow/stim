@@ -32,6 +32,7 @@ describe('the viewer reconnect', () => {
     expect(reconnect.probeVerdict(200, viewer)).toBe('viewer');
     expect(reconnect.probeVerdict(200, loginPage(null, null))).toBe('login');
     expect(reconnect.probeVerdict(404, endedPage())).toBe('missing');
+    expect(reconnect.probeVerdict(200, '<html><body>Sign in to the network</body></html>')).toBe('retry');
   });
 
   it('retries on a proxy or rate-limit answer instead of treating it as the share being gone', () => {
