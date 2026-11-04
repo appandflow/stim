@@ -1614,6 +1614,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-machine-history']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-remote']) } });
     expect(hello).toMatchObject({
       result: { features: expect.not.arrayContaining(['desktop-report-invalidate-target']) },
     });
@@ -1634,6 +1635,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
           'desktop-reports',
           'desktop-machine-history',
           'desktop-report-platform',
+          'desktop-report-remote',
           'desktop-report-invalidate-target',
         ]),
       },
@@ -1674,6 +1676,9 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       expect(await client.request('desktop.reports.get', { report })).toMatchObject({
         result: { pending: false, value: { records: [record] } },
       });
+    expect(await client.request('desktop.reports.get', { report: 'remote' })).toMatchObject({
+      result: { pending: false, value: { machines: [], findings: [] } },
+    });
     const subscribed = await client.request('desktop.reports.subscribe', { report: 'gc' });
     expect(subscribed).toHaveProperty('result.subscription');
     expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: first.result });

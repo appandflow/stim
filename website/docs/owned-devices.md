@@ -637,7 +637,7 @@ replayable.
 
 Recordings stay on your machine and are served only to paired phones and Stim
 Desktop. Turn them off for the whole machine in the phone's Settings or in Stim
-Desktop's Paired Devices settings, or on the Mac, where a repository or workspace can
+Desktop's Advanced settings, or on the Mac, where a repository or workspace can
 also be set on its own:
 
 ```bash
@@ -899,7 +899,7 @@ info-level or later-persisted entries may be unavailable. JavaScript logs reach 
 An older host prints an update note, uses uploads and shows previously copied logs.
 
 Stim Desktop shows the simulator with the machine's name and the phone app with an
-**on &lt;machine&gt;** label. Turn on **Serve to phones** in Desktop and pair the phone with the client
+**on &lt;machine&gt;** label. Turn on **Allow connections** in Desktop and pair the phone with the client
 machine. Both view and control it through that machine's local stim-server relay;
 neither connects directly to the hosting Mac. Named slots work independently.
 Touch and text work in Desktop. Local Simulator.app, rotation, hardware buttons

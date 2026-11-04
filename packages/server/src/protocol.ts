@@ -1221,7 +1221,7 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['report'],
             additionalProperties: false,
-            properties: { report: { enum: ['gc', 'gc-history', 'builds'] } },
+            properties: { report: { enum: ['gc', 'gc-history', 'builds', 'remote'] } },
           },
           {
             type: 'object',

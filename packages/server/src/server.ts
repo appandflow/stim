@@ -1573,7 +1573,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const retainedLifecycles = new Set<() => void>();
   const planQueues = new Map<string, Promise<void>>();
   const readDetailsReport = (
-    method: 'stats' | 'gc' | 'doctor' | 'gc-history' | 'builds',
+    method: 'stats' | 'gc' | 'doctor' | 'gc-history' | 'builds' | 'remote',
     cwd = homedir(),
     platform?: 'ios' | 'android',
     signal?: AbortSignal,
@@ -1600,6 +1600,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             }),
           };
         if (method === 'doctor') return await stim.doctor({ signal: abort.signal, platform });
+        if (method === 'remote') return await stim.remoteMachines({ signal: abort.signal });
         return method === 'gc'
           ? await stim.gc({ signal: abort.signal, measureBuildState: false })
           : await stim.stats({ signal: abort.signal });
@@ -2193,6 +2194,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-reports',
                 'desktop-machine-history',
                 'desktop-report-platform',
+                'desktop-report-remote',
                 'desktop-report-invalidate-target',
                 'desktop-settings',
                 'desktop-settings-schema',
@@ -4582,7 +4584,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (
         !isJsonObject(params) ||
-        !['doctor', 'gc', 'gc-history', 'builds'].includes(String(params.report)) ||
+        !['doctor', 'gc', 'gc-history', 'builds', 'remote'].includes(String(params.report)) ||
         Object.keys(params).some(
           (key) => key !== 'report' && (params.report !== 'doctor' || (key !== 'cwd' && key !== 'platform')),
         ) ||
@@ -4595,10 +4597,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(
           id,
           'bad-request',
-          'Choose report gc, gc-history or builds, or report doctor with an absolute cwd and optional ios/android platform.',
+          'Choose report gc, gc-history, builds or remote, or report doctor with an absolute cwd and optional ios/android platform.',
         );
       const target: DesktopReportTarget =
-        params.report === 'gc' || params.report === 'gc-history' || params.report === 'builds'
+        params.report === 'gc' ||
+        params.report === 'gc-history' ||
+        params.report === 'builds' ||
+        params.report === 'remote'
           ? { report: params.report }
           : {
               report: 'doctor',

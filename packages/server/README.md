@@ -92,7 +92,7 @@ it does not, `reason` is `off`, `unsupported`, `loopback-only`, `not-listening` 
 (see [Keep this machine awake](#keep-this-machine-awake)). A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
 carries, gets only `{ "version" }`, which Stim
-Desktop's Remote Machines list uses to find stim-server on the other machines of the
+Desktop's Connections settings use to find stim-server on the other machines of the
 tailnet. A request from this machine with a `Host` other than `127.0.0.1` or
 `localhost` gets HTTP 426, like any other plain HTTP request.
 
@@ -311,6 +311,11 @@ The local-only `desktop-report-platform` feature adds an optional `"platform": "
 or `"platform": "android"` to doctor targets. Omitting it checks all selected platforms.
 Reports for each cwd and selector have separate cache entries and subscriptions.
 Clients requiring a filtered report check this feature before requesting one.
+
+The local-only `desktop-report-remote` feature adds `{ "report": "remote" }`,
+whose value is the `{ "machines": [...], "findings": [...] }` that
+`stim remote list --json` prints. It contacts each machine in `remote.machines`
+and asks nothing new.
 
 `desktop.reports.subscribe` takes the same target and returns a subscription id.
 It pushes `desktop-report` events with that `subscription`, `target`, and a

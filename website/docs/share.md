@@ -381,7 +381,7 @@ stim-server cannot list its shares, Stim keeps the workspace running.
 control, whether one waits for its device, viewer count and expiry, never their
 link or password.
 `stim share stop` ends every share of the current workspace. To end one share,
-use **Stop** on its row in Stim Desktop's Settings > Web Shares.
+use **Stop** on its row in Stim Desktop's Settings > Connections > Using this machine > Share links.
 
 Stim Desktop makes, lists and stops shares too: see [Stim Desktop](./desktop.md).
 

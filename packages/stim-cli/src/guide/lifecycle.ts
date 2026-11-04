@@ -1034,7 +1034,7 @@ daemon startup or grant issuance on client support. The client checks the host's
 hosted-ios-agent feature before using a grant.
 
 Stim Desktop and the phone app view and control the simulator through this
-machine's stim-server relay, with an "on <machine>" label. Turn on Serve to phones
+machine's stim-server relay, with an "on <machine>" label. Turn on Allow connections
 in Desktop; pair the phone with this machine, not the hosting Mac. frames.subscribe
 and control.begin address workspace, platform ios and slot, including named
 slots. The relay shares one authenticated host connection with hosted macOS

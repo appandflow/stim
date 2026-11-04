@@ -10,7 +10,7 @@ import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
 :::note[Phone app feature flag]
 Stim Desktop hides everything about the phone app unless the **Phone app**
-feature flag is on: the Paired Devices page, **Serve to phones**, pairing, the phone
+feature flag is on: **Add... > Pair a Phone...** in **Settings > Connections** (paired phones stay listed there), the phone
 steps of the setup guide and tutorial, and phone suggestions. Turn it on in
 **Settings > Advanced > Feature flags**. A Mac that already serves phones or has
 a paired phone starts with it on. Turning the flag off does not stop a running
@@ -45,7 +45,7 @@ flow is iOS TestFlight. Contributors can build the app from
 - A Mac running [Stim Desktop](./desktop.md), or the server from
   `@stim-cli/server`.
 - Tailscale running on the Mac and phone, signed in to the same tailnet.
-- **Serve to phones** enabled in Desktop, with a verified private route.
+- **Allow connections** enabled in Desktop, with a verified private route.
   A standalone server needs the equivalent Tailscale Serve route.
 
 Install Tailscale on the phone, sign in and turn its connection on. Both
@@ -58,16 +58,16 @@ opens the scanner. **Not Now** dismisses the welcome screen for later launches.
 After pairing, the app opens its workspace list. Forgetting a Mac does not
 bring back a welcome screen you have already dismissed or completed.
 
-## Serve to phones
+## Allow connections
 
-On the Mac, open **Stim > Settings > Paired Devices > Pair a Phone...**, or choose
+On the Mac, open **Stim > Settings > Connections > Using this machine > Add... > Pair a Phone...**, or choose
 **Pair a Phone...** in the first-run guide's **Pair Your Phone** step. The wizard
 walks through getting Stim Mobile and Tailscale on your phone, connecting both
-devices to the same tailnet, turning on serving, scanning a code, and confirming
+devices to the same tailnet, allowing connections, scanning a code, and confirming
 the paired phone. Checks update automatically.
 
 Desktop runs the server while it is open, or uses one already running. The
-wizard turns on serving and uses its authenticated loopback `route.setup`
+wizard allows connections and uses its authenticated loopback `route.setup`
 request to configure a private tailnet-only route. Setup preserves existing
 routes and never enables Funnel. If Tailscale asks to enable HTTPS, open
 **Open Tailscale Setup**, approve it in your browser, then choose **Try Again**.
@@ -135,8 +135,8 @@ A read-only phone can see workspace status, builds, logs, device screens and
 replay. With workspace diff support, it can also read changed and untracked
 text files in registered workspaces, including non-ignored `.env` files.
 
-To allow input, choose **Allow Control** from the phone's menu in Desktop's
-**Settings > Paired Devices**, or run `stim-server devices grant <id> --control` on
+To allow input, choose **Control** under **Change Access** in the phone's menu in Desktop's
+**Settings > Connections**, or run `stim-server devices grant <id> --control` on
 the Mac. Use `--read` to take control away while retaining viewing access.
 The server's npx prefix is shown above. The phone's **Allow Control** action
 explains this Mac-side change; it cannot grant itself access. **Reconnect**
@@ -168,7 +168,7 @@ servers that support it.
 
 ## Revoke access
 
-In Desktop's **Settings > Paired Devices**, choose **Revoke...** from the phone's menu, or run
+In Desktop's **Settings > Connections**, choose **Revoke Access...** on the phone's row, or run
 `stim-server devices revoke <id>` on the Mac. Revocation closes its active
 connections; the server checks registrations on changes and once a second.
 The phone must pair again to reconnect.
@@ -236,7 +236,7 @@ Older `stim` versions send none of these fields, and the sheet omits them.
 
 A leased iPhone connected over USB is view-only and must be unlocked and trust
 the Mac; over Wi-Fi it has no screen stream. Hosted iOS simulators can be viewed
-and controlled through the main machine's relay, with **Serve to phones** enabled.
+and controlled through the main machine's relay, with **Allow connections** enabled.
 See [remote machines](./remote-machines.md) for host setup.
 
 The phone cannot start a build, create a worktree, edit or stage source files,

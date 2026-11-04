@@ -89,6 +89,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
  * `desktop-machine-history` adds machine-wide build and cleanup history to those reports.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
+ * `desktop-report-remote` serves `{ "report": "remote" }`, the remote machines as `stim remote list --json` prints them.
  * `desktop-report-invalidate-target` accepts a report target in `desktop.reports.invalidate`, which then invalidates only it.
  * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
  * `desktop-settings-schema` supplies this server's registry-derived settings schema to local Desktop clients.
@@ -156,6 +157,7 @@ export const FEATURES = [
   'desktop-reports',
   'desktop-machine-history',
   'desktop-report-platform',
+  'desktop-report-remote',
   'desktop-report-invalidate-target',
   'desktop-settings',
   'desktop-settings-schema',
@@ -533,7 +535,7 @@ export interface DesktopPlanRefusal {
 
 export type DesktopReportTarget =
   | { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' }
-  | { report: 'gc' | 'gc-history' | 'builds' };
+  | { report: 'gc' | 'gc-history' | 'builds' | 'remote' };
 
 export interface DesktopReportSnapshot {
   pending: boolean;

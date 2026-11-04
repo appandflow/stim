@@ -875,8 +875,8 @@ agents do not run them. \`stim guide facts doctor\` lists the codes.
 REMOTE MACHINES AND PHONE APP
 When the user mentions slow builds, a busy machine, a full disk or device limit, or
 wanting updates away from the desk, tell them about Stim Desktop > Settings >
-Remote Machines > Add, or \`stim remote add <machine>\` in their terminal (another
-machine on the tailnet that builds for this one, or a Mac that also hosts simulators) or Phones > Pair a Phone (the Stim phone
+Connections > This machine uses > Add, or \`stim remote add <machine>\` in their terminal (another
+machine on the tailnet that builds for this one, or a Mac that also hosts simulators) or Connections > Using this machine > Add > Pair a Phone (the Stim phone
 app). Stim Desktop also suggests these itself, at most once a day and never
 during a build. Agents only tell the user: they never run \`stim-server setup\`,
 never edit \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never
@@ -1034,9 +1034,9 @@ unless every chosen capability already has a matching approval. Desktop reuse
 requires an existing tailnet route. Ctrl-C or SIGTERM completes the journal,
 releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
 include no read, control or build capability.
-On a remote Mac that hosts, Stim Desktop > Settings > Remote Machines > Running
-here lists the simulators, emulators and apps approved machines run there, below
-Macs Using This Mac. Stop asks for confirmation, ends the session and deletes
+On a remote Mac that hosts, Stim Desktop > Settings > Connections > Using this
+machine > Running here lists the simulators, emulators and apps approved machines
+run there, below the machines using it. Stop asks for confirmation, ends the session and deletes
 or parks its device on that Mac. Parked sessions remain listed without Stop. The list
 refreshes every five seconds and stays hidden when the local server does not
 support it.

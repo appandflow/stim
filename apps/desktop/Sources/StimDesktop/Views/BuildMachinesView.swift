@@ -2,29 +2,33 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// This Mac's remote Macs: the `remote.machines` it builds on, each with its state from `stim doctor`. Adding
-/// one opens the wizard, which does the tailnet discovery and the setup. Stim Desktop changes the setting with
-/// `stim settings` and asks for access with `stim doctor --fix`; approving happens on the other Mac.
+/// The "This machine uses" side of Settings > Connections: the `remote.machines` it builds on and runs devices on,
+/// each with its state from `stim doctor`, and the machines it paired with to view or control their work, one row per
+/// pinned server key. Adding a remote machine opens the wizard; pairing opens the pairing sheet. Stim Desktop changes
+/// the setting with `stim settings` and asks for access with `stim doctor --fix`; approving happens on the other
+/// machine.
 struct BuildMachinesView: View {
   var model: BuildMachinesModel
   @ObservedObject var ledger: BuildLedgerModel
   @ObservedObject var store: StatusStore
   var workspace: String?
   var actions: ActionCenter?
+  var servers: PairedServers = .shared
 
-  @State private var removing: String?
+  @State private var removing: OutgoingConnection?
   @State private var opened: String?
   @State private var adding: AddMachineModel?
+  @State private var pairing = false
   @AppStorage(AppPreferences.Key.updatesBuildMachines) private var updatesAutomatically = false
-  @ObservedObject private var server = ServerController.shared
-  @State private var hosted = HostedSessionsModel()
-  @State private var revokingClient: PairedDevice?
-  @State private var stoppingSession: HostedSession?
-
-  private var hostClients: [PairedDevice] { server.devices.filter { $0.isBuildClient || $0.isDeviceHostClient } }
 
   private var checkout: String? {
     doctorCheckout(for: workspace, in: store.payload?.environments ?? [], project: store.project(ofPath:))?.path
+  }
+
+  private var connections: [OutgoingConnection] {
+    Connections.outgoing(
+      entries: model.entries ?? [], statuses: statuses, hosts: model.check(in: checkout)?.hosts, listing: model.listing,
+      paired: servers.entries)
   }
 
   var body: some View {
@@ -51,34 +55,6 @@ struct BuildMachinesView: View {
     }
     .task { await model.load(checkout: checkout) }
     .task { await model.refreshTailnet() }
-    .task {
-      while !Task.isCancelled {
-        server.reloadDevices()
-        await hosted.refresh()
-        try? await Task.sleep(for: .seconds(5))
-      }
-    }
-    .confirmationDialog(
-      revokingClient.map { "Revoke \($0.name)?" } ?? "",
-      isPresented: .init(get: { revokingClient != nil }, set: { if !$0 { revokingClient = nil } }),
-      presenting: revokingClient
-    ) { device in
-      Button("Revoke", role: .destructive) { server.revoke(device) }
-    } message: { device in
-      Text(
-        device.isDeviceHostClient
-          ? "That Mac's device hosting approval is removed. It must be set up here again."
-          : "That Mac can no longer build here and must be set up here again.")
-    }
-    .confirmationDialog(
-      stoppingSession.map { "Stop \($0.client.name)'s \($0.device ?? $0.app ?? "session")?" } ?? "",
-      isPresented: .init(get: { stoppingSession != nil }, set: { if !$0 { stoppingSession = nil } }),
-      presenting: stoppingSession
-    ) { session in
-      Button("Stop", role: .destructive) { Task { await hosted.stop(session) } }
-    } message: { _ in
-      Text("This ends the session and deletes or parks its device on this Mac.")
-    }
     .task(id: PollKey(waiting: waiting, checkout: checkout)) {
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(waiting ? 15 : 60))
@@ -103,21 +79,21 @@ struct BuildMachinesView: View {
     ) {
       if let adding { AddMachineSheet(model: adding) }
     }
+    .sheet(isPresented: $pairing) { PairMachineSheet(servers: servers) }
     .onQuitRequested {
       adding?.stop()
       adding = nil
+      pairing = false
     }
-    .sheet(isPresented: .init(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
-      if let entry = removing {
-        RemoveMachineSheet(
-          entry: entry, message: removalMessage(entry),
-          requests: [statuses?.first { $0.machine == entry }?.deviceId, hostRequest(entry)].compactMap { $0 },
-          cancel: { removing = nil },
-          remove: {
-            removing = nil
-            Task { await model.remove(entry, checkout: checkout) }
-          })
-      }
+    .sheet(item: $removing) { connection in
+      RemoveMachineSheet(
+        connection: connection, message: removalMessage(connection),
+        cancel: { removing = nil },
+        remove: {
+          removing = nil
+          if let pairing = connection.pairing { servers.forget(id: pairing.id) }
+          if let entry = connection.entry { Task { await model.remove(entry, checkout: checkout) } }
+        })
     }
   }
 
@@ -133,7 +109,8 @@ struct BuildMachinesView: View {
       install: status.flatMap { model.install(for: $0) }, back: { opened = nil },
       ask: { Task { await model.ask(entry, checkout: checkout) } },
       startUpdate: { Task { await model.update(entry, checkout: checkout) } },
-      stopHosted: { stopHosted(entry, $0) }, remove: { removing = entry }, showsToggles: model.poolDisabled != nil,
+      stopHosted: { stopHosted(entry, $0) },
+      remove: { removing = connections.first { $0.entry == entry } }, showsToggles: model.poolDisabled != nil,
       toggles: BuildMachinePoolToggles(
         machine: entry, poolDisabled: model.poolDisabled,
         hostsSimulators: !model.androidOnlyNames.contains(OffloadMachines.name(entry)), disabled: model.isBusy,
@@ -164,7 +141,7 @@ struct BuildMachinesView: View {
 
   private var list: some View {
     BuildMachinesContent(
-      entries: model.entries, statuses: statuses, hosts: model.check(in: checkout)?.hosts, updates: model.updates,
+      entries: model.entries, statuses: statuses, connections: connections, updates: model.updates,
       installs: Dictionary(
         (statuses ?? []).compactMap { status in model.install(for: status).map { (status.machine, $0) } },
         uniquingKeysWith: { first, _ in first }),
@@ -174,11 +151,14 @@ struct BuildMachinesView: View {
       retry: { Task { await model.load(checkout: checkout) } },
       canAsk: checkout != nil,
       addDisabled: model.working != nil,
+      pairingBusy: servers.isPairing,
       updatesAutomatically: $updatesAutomatically,
       add: { adding = model.addMachine(checkout: checkout) },
+      pair: { pairing = true },
       ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
       update: { entry in Task { await model.update(entry, checkout: checkout) } },
-      remove: { entry in removing = entry },
+      remove: { removing = $0 },
+      reconnect: { servers.reconnect(id: $0) },
       move: { entry, offset in Task { await model.move(entry, by: offset) } },
       open: { opened = $0 },
       poolDisabled: model.poolDisabled,
@@ -186,24 +166,23 @@ struct BuildMachinesView: View {
       hostsSimulators: { !model.androidOnlyNames.contains(OffloadMachines.name($0)) },
       hosted: { hostedDevices(on: $0, in: store.payload?.environments ?? []) },
       stopHosted: { stopHosted($0, $1) },
-      showsThisMac: ThisMacAccessSections.shows(clients: hostClients, sessions: hosted.sessions ?? []),
-      thisMac: ThisMacAccessSections(
-        clients: hostClients, sessions: hosted.sessions ?? [], stopping: hosted.stopping,
-        revoke: { revokingClient = $0 },
-        stop: { stoppingSession = $0 })
+      showsNotices: !servers.keepsPairings || servers.storeError != nil || servers.forgotten != nil,
+      notices: PairingNotices(servers: servers)
     )
   }
 
-  private func hostRequest(_ entry: String) -> String? {
-    model.check(in: checkout)?.hosts?.first { OffloadMachines.name($0.machine) == OffloadMachines.name(entry) }?.deviceId
-  }
-
-  private func removalMessage(_ entry: String) -> String {
-    guard statuses?.first(where: { $0.machine == entry })?.state == .keyChanged else {
-      return "Removes it from remote.machines. Builds and hosted simulators stop going to it."
+  private func removalMessage(_ connection: OutgoingConnection) -> String {
+    var parts: [String] = []
+    if let entry = connection.entry {
+      parts.append(
+        statuses?.first(where: { $0.machine == entry })?.state == .keyChanged
+          ? "Builds stop going to it, and this machine forgets the old key and asks again any listed machine that has not approved it."
+          : "Removes it from remote.machines. Builds and hosted simulators stop going to it.")
     }
-    return
-      "Builds stop going to it, and this Mac forgets the old key and asks again any listed machine that has not approved it."
+    if connection.pairing != nil {
+      parts.append("Stim Desktop deletes this machine's key for it, so its workspaces stop showing here.")
+    }
+    return parts.joined(separator: " ")
   }
 
   private var statuses: [BuildMachineStatus]? {
@@ -233,11 +212,48 @@ private struct DetailKey: Hashable {
   var checkout: String?
 }
 
-/// The Remote Machines tab for the state it is given: a progress view, the empty state, or the list.
-struct BuildMachinesContent<ThisMac: View>: View {
+/// The Keychain notices of the pairings: a build that cannot keep them, a store error, and the revoke command of the
+/// pairing just removed.
+struct PairingNotices: View {
+  var servers: PairedServers
+
+  var body: some View {
+    if !servers.keepsPairings {
+      Banner(tone: .warning, icon: "exclamationmark.triangle.fill") {
+        Text("Pairings are not kept in this build").font(.stim(.body, weight: .semibold))
+        Text(
+          "This copy of Stim Desktop is not signed with the entitlement the Keychain needs, so a pairing ends when it quits."
+        )
+        .foregroundStyle(Palette.secondary)
+      }
+    }
+    if let error = servers.storeError {
+      Text(error).foregroundStyle(Palette.error).textSelection(.enabled)
+    }
+    if let forgotten = servers.forgotten {
+      Banner(tone: .info, icon: "key.slash", onDismiss: servers.dismissForgotten) {
+        Text("Removed \(forgotten.name)").font(.stim(.body, weight: .semibold))
+        Text(
+          forgotten.revokes
+            ? "\(forgotten.name.capitalizedFirst) still lists this machine. To revoke it there too, run this there."
+            : "\(forgotten.name.capitalizedFirst) still lists this machine. Run this there to find it, then revoke it with stim-server devices revoke and its id."
+        )
+        .foregroundStyle(Palette.secondary)
+        CopyableCommand(command: forgotten.command, runsOn: forgotten.name)
+      }
+    }
+  }
+}
+
+extension String {
+  fileprivate var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
+/// The "This machine uses" list for the state it is given: a progress view, or the machines with the Add menu.
+struct BuildMachinesContent<Notices: View>: View {
   var entries: [String]?
   var statuses: [BuildMachineStatus]?
-  var hosts: [BuildMachineStatus]?
+  var connections: [OutgoingConnection]
   var updates: [String: MachineUpdatePhase]
   var installs: [String: StimInstall] = [:]
   var working: String?
@@ -249,11 +265,14 @@ struct BuildMachinesContent<ThisMac: View>: View {
   var retry: () -> Void = {}
   var canAsk: Bool
   var addDisabled: Bool
+  var pairingBusy = false
   @Binding var updatesAutomatically: Bool
   var add: () -> Void
+  var pair: () -> Void = {}
   var ask: (String) -> Void
   var update: (String) -> Void
-  var remove: (String) -> Void
+  var remove: (OutgoingConnection) -> Void
+  var reconnect: (String) -> Void = { _ in }
   var move: (String, Int) -> Void = { _, _ in }
   var open: (String) -> Void = { _ in }
   var poolDisabled: [String: [String]]? = nil
@@ -261,62 +280,25 @@ struct BuildMachinesContent<ThisMac: View>: View {
   var hostsSimulators: (String) -> Bool = { _ in true }
   var hosted: (String) -> [HostedOnMachine] = { _ in [] }
   var stopHosted: (String, [HostedOnMachine]) -> Void = { _, _ in }
-  var showsThisMac = false
-  var thisMacName = Host.current().localizedName ?? "This Mac"
-  var thisMac: ThisMac
+  var thisMachineName = Host.current().localizedName ?? "This machine"
+  var showsNotices = false
+  var notices: Notices
 
   var body: some View {
     if let entries {
-      if entries.isEmpty, showsThisMac || poolDisabled != nil {
-        Form {
-          localPool
-          Section {
-            notices
-            BuildMachinesEmptyState(
-              add: add, addDisabled: addDisabled, tailscaleOff: tailscaleRunning == false,
-              checking: tailscaleRunning == nil)
-          }
-          thisMac
-        }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-      } else if entries.isEmpty {
-        VStack(spacing: 0) {
-          notices.padding([.horizontal, .top], Space.xl)
-          BuildMachinesEmptyState(
-            add: add, addDisabled: addDisabled, tailscaleOff: tailscaleRunning == false,
-            checking: tailscaleRunning == nil)
-        }
-      } else {
-        list(entries)
-      }
-    } else if showsThisMac {
-      Form {
-        Section { waiting }
-        thisMac
-      }
-      .formStyle(.grouped)
-      .scrollContentBackground(.hidden)
-    } else {
-      waiting
-    }
-  }
-
-  @ViewBuilder private var waiting: some View {
-    if let settingsReadFailure {
+      list(entries)
+    } else if let settingsReadFailure {
       EmptyState(title: "Settings Unavailable", message: settingsReadFailure, actionTitle: "Try Again", action: retry)
     } else {
       ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
     }
   }
 
-  @ViewBuilder private var notices: some View {
-    VStack(alignment: .leading, spacing: Space.md) {
-      if let failure {
-        Text(failure).foregroundStyle(Palette.error).textSelection(.enabled)
-      }
+  @ViewBuilder private var failureNotice: some View {
+    if let failure {
+      Text(failure).foregroundStyle(Palette.error).textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   @ViewBuilder private var localPool: some View {
@@ -326,7 +308,7 @@ struct BuildMachinesContent<ThisMac: View>: View {
           Image(systemName: "laptopcomputer").iconFont(IconSize.large).foregroundStyle(Palette.accent)
             .frame(width: 24).accessibilityHidden(true)
           VStack(alignment: .leading, spacing: Space.lg) {
-            Text(verbatim: thisMacName).font(.stim(.body, weight: .semibold)).lineLimit(1)
+            Text(verbatim: thisMachineName).font(.stim(.body, weight: .semibold)).lineLimit(1)
             poolToggles("local")
           }
           Spacer(minLength: 0)
@@ -344,29 +326,42 @@ struct BuildMachinesContent<ThisMac: View>: View {
       setPool: setPool)
   }
 
+  private var addMenu: some View {
+    Menu("Add\u{2026}") {
+      Button("Build or Run Simulators There\u{2026}", action: add).disabled(addDisabled)
+      Button("View or Control Its Work\u{2026}", action: pair).disabled(pairingBusy)
+    }
+    .menuStyle(.button)
+    .buttonStyle(.stim(.primary))
+    .fixedSize()
+    .accessibilityLabel("Add a machine this machine uses")
+  }
+
   private func list(_ entries: [String]) -> some View {
     Form {
+      if showsNotices { Section { notices } }
       localPool
-      if failure != nil { Section { notices } }
+      if failure != nil { Section { failureNotice } }
       Section {
-        ForEach(Array(entries.enumerated()), id: \.element) { position, entry in
-          let status = statuses?.first { $0.machine == entry }
-          BuildMachineRow(
-            entry: entry, position: position + 1, count: entries.count, move: { move(entry, $0) }, status: status,
-            checking: canAsk && (statuses == nil || (status == nil && refreshing)),
-            failed: canAsk && failure != nil && status == nil,
-            refreshing: canAsk && refreshing && status != nil && working != entry,
-            capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
-            progress: working == entry ? progress : nil,
-            canAsk: canAsk, update: updates[entry], install: installs[entry], hosted: hosted(entry), ask: { ask(entry) },
-            startUpdate: { update(entry) }, stopHosted: { stopHosted(entry, $0) },
-            open: { open(entry) }, remove: { remove(entry) }, toggles: poolToggles(entry))
+        if connections.isEmpty {
+          BuildMachinesEmptyState(
+            add: add, compact: true, addDisabled: addDisabled, tailscaleOff: tailscaleRunning == false,
+            checking: tailscaleRunning == nil)
+        }
+        ForEach(connections) { connection in
+          if let entry = connection.entry, let position = entries.firstIndex(of: entry) {
+            entryRow(entry, position: position, count: entries.count, connection: connection)
+          } else {
+            PairedConnectionRow(
+              connection: connection, busy: pairingBusy, reconnect: { connection.pairing.map { reconnect($0.id) } },
+              remove: { remove(connection) })
+          }
         }
       } header: {
         HStack {
-          Text("Remote Machines")
+          Text("Machines this machine uses")
           Spacer()
-          Button("Add Remote Machine\u{2026}", action: add).buttonStyle(.stim(.primary)).disabled(addDisabled)
+          addMenu
         }
       } footer: {
         VStack(alignment: .leading, spacing: Space.xs) {
@@ -376,22 +371,106 @@ struct BuildMachinesContent<ThisMac: View>: View {
             )
             .foregroundStyle(Palette.secondary)
           }
-          if !canAsk {
+          if !canAsk, !entries.isEmpty {
             Text("Start a workspace with Stim to check these machines.").foregroundStyle(Palette.tertiary)
           }
         }
       }
-      Section {
-        VStack(alignment: .leading, spacing: Space.xxs) {
-          Toggle("Keep remote machines on this Mac's Stim version", isOn: $updatesAutomatically)
-          Text("When this Mac's Stim changes, update stim-server on approved remote machines so builds can keep offloading.")
+      if !entries.isEmpty {
+        Section {
+          VStack(alignment: .leading, spacing: Space.xxs) {
+            Toggle("Keep remote machines on this machine's Stim version", isOn: $updatesAutomatically)
+            Text(
+              "When this machine's Stim changes, update stim-server on approved remote machines so builds can keep offloading."
+            )
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          }
         }
       }
-      thisMac
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
+  }
+
+  private func entryRow(_ entry: String, position: Int, count: Int, connection: OutgoingConnection) -> some View {
+    let status = statuses?.first { $0.machine == entry }
+    return BuildMachineRow(
+      entry: entry, position: position + 1, count: count, move: { move(entry, $0) }, status: status,
+      checking: canAsk && (statuses == nil || (status == nil && refreshing)),
+      failed: canAsk && failure != nil && status == nil,
+      refreshing: canAsk && refreshing && status != nil && working != entry,
+      access: connection.access, pairing: connection.pairing, working: working == entry,
+      progress: working == entry ? progress : nil,
+      canAsk: canAsk, update: updates[entry], install: installs[entry], hosted: hosted(entry), ask: { ask(entry) },
+      startUpdate: { update(entry) }, stopHosted: { stopHosted(entry, $0) },
+      open: { open(entry) }, reconnect: { connection.pairing.map { reconnect($0.id) } },
+      remove: { remove(connection) }, toggles: poolToggles(entry))
+  }
+}
+
+/// The access levels a connection holds, in one row of pills; Build and Run devices in the warning tone.
+struct AccessPills: View {
+  var access: [ConnectionAccess]
+
+  var body: some View {
+    HStack(spacing: Space.xs) {
+      ForEach(access, id: \.self) { level in
+        Pill(level.title, tone: level.tone, size: .small)
+      }
+    }
+  }
+}
+
+/// A machine this machine paired with to view or control its work, and nothing else.
+private struct PairedConnectionRow: View {
+  var connection: OutgoingConnection
+  var busy: Bool
+  var reconnect: () -> Void
+  var remove: () -> Void
+
+  var body: some View {
+    let status = connection.pairing?.status
+    HStack(alignment: .top, spacing: Space.lg) {
+      Image(systemName: connection.pairing?.pairing == nil ? "exclamationmark.triangle.fill" : "desktopcomputer")
+        .iconFont(IconSize.large)
+        .foregroundStyle(connection.pairing?.pairing == nil ? Palette.warning : Palette.accent)
+        .frame(width: 24).accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: Space.xs) {
+        HStack(spacing: Space.sm) {
+          Text(verbatim: connection.name).font(.stim(.body, weight: .semibold)).lineLimit(1)
+          if let status { Pill(status.title, tone: status.tone, size: .small) }
+        }
+        if let endpoint = connection.pairing?.pairing?.endpoint {
+          Text(verbatim: endpoint.absoluteString)
+            .font(.stim(.caption, mono: true)).foregroundStyle(Palette.tertiary).lineLimit(1).truncationMode(.middle)
+            .textSelection(.enabled)
+        }
+        if let detail = status?.detail, !detail.isEmpty {
+          Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        if let command = status?.command { CopyableCommand(command: command, runsOn: connection.name) }
+        AccessPills(access: connection.access)
+      }
+      Spacer(minLength: 0)
+      if connection.pairing?.pairing != nil {
+        Menu {
+          Button("Reconnect", action: reconnect)
+        } label: {
+          Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel("More actions for \(connection.name)")
+      }
+      Button("Remove\u{2026}", action: remove)
+        .buttonStyle(.stim(.secondary))
+        .fixedSize()
+        .disabled(busy)
+        .accessibilityLabel("Remove \(connection.name)")
+    }
+    .padding(.vertical, Space.sm)
   }
 }
 
@@ -438,7 +517,8 @@ private struct BuildMachineRow<Toggles: View>: View {
   var checking: Bool
   var failed: Bool
   var refreshing: Bool
-  var capabilities: [String]
+  var access: [ConnectionAccess]
+  var pairing: PairedServers.Entry?
   var working: Bool
   var progress: String?
   var canAsk: Bool
@@ -449,6 +529,7 @@ private struct BuildMachineRow<Toggles: View>: View {
   var startUpdate: () -> Void
   var stopHosted: ([HostedOnMachine]) -> Void
   var open: () -> Void
+  var reconnect: () -> Void
   var remove: () -> Void
   var toggles: Toggles
 
@@ -487,11 +568,10 @@ private struct BuildMachineRow<Toggles: View>: View {
           if let resources = status?.capacity?.resources, !resources.isEmpty {
             RemoteResourceSummary(resources: resources)
           }
-          HStack(spacing: Space.xs) {
-            ForEach(capabilities, id: \.self) { name in
-              Pill(tone: .neutral, size: .small, outlined: true) { Text(verbatim: name) }
-            }
+          if let status = pairing?.status, status.tone != .success {
+            Text(verbatim: "Viewing: \(status.title)").font(.stim(.footnote)).foregroundStyle(Color(status.tone))
           }
+          AccessPills(access: access)
         }
         if update != nil || install != nil {
           VStack(alignment: .leading, spacing: Space.sm) {
@@ -549,6 +629,7 @@ private struct BuildMachineRow<Toggles: View>: View {
           .disabled(working || !canAsk)
       }
       Button("Details", systemImage: "info.circle", action: open)
+      if pairing?.pairing != nil { Button("Reconnect", systemImage: "arrow.clockwise", action: reconnect) }
       if count > 1 {
         Divider()
         Button("Move Up", systemImage: "chevron.up") { move(-1) }.disabled(working || position == 1)
@@ -593,31 +674,34 @@ private struct RemoteResourceSummary: View {
   }
 }
 
-/// Removing a remote Mac: what changes on this Mac, and the optional cleanup to run on that Mac itself.
+/// Removing a machine this machine uses: what changes here, and the revoke commands to run on that machine, since
+/// removing it here never revokes this machine there.
 private struct RemoveMachineSheet: View {
-  var entry: String
+  var connection: OutgoingConnection
   var message: String
-  var requests: [String]
   var cancel: () -> Void
   var remove: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("Stop using \(entry)?").font(.stim(.headline))
+      Text("Remove \(connection.name) from this machine?").font(.stim(.headline))
       Text(message).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       VStack(alignment: .leading, spacing: Space.sm) {
-        Text("Optional, on \(entry):").font(.stim(.footnote, weight: .semibold))
-        if !requests.isEmpty {
-          Text("Revoke this Mac's access").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-          ForEach(requests, id: \.self) { CopyableCommand(command: "stim-server devices revoke \($0)") }
+        if !connection.revokeCommands.isEmpty {
+          Text("To revoke it on \(connection.name) too, run there:").font(.stim(.footnote, weight: .semibold))
+          ForEach(connection.revokeCommands, id: \.self) { CopyableCommand(command: $0, runsOn: connection.name) }
         }
-        Text("Stop stim-server there if nothing else uses it").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-        CopyableCommand(command: "stim-server service uninstall")
+        if connection.entry != nil {
+          Text("To stop stim-server there if nothing else uses it:").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          CopyableCommand(command: "stim-server service uninstall", runsOn: connection.name)
+        }
       }
-      Text(
-        "If ios.remote or android.remote names \(entry), simulators stop starting until you change it, for example with stim settings unset ios.remote."
-      )
-      .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      if let entry = connection.entry {
+        Text(
+          "If ios.remote or android.remote names \(entry), simulators stop starting until you change it, for example with stim settings unset ios.remote."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      }
       HStack {
         Spacer()
         Button("Cancel", action: cancel).buttonStyle(.stim(.secondary)).keyboardShortcut(.cancelAction)
@@ -642,13 +726,13 @@ struct WaitingSessions: View {
         Button("Stop and Update\u{2026}") { confirming = true }
           .buttonStyle(.stim(.secondary))
           .fixedSize()
-          .help("Stops this Mac's hosted devices on \(machine) so its update can restart stim-server.")
+          .help("Stops this machine's hosted devices on \(machine) so its update can restart stim-server.")
       }
       let others = sessions - hosted.count
       if others > 0 {
         Text(
           verbatim:
-            "\(others) hosted \(others == 1 ? "simulator belongs" : "simulators belong") to another Mac. Only someone on \(machine) can stop \(others == 1 ? "it" : "them")."
+            "\(others) hosted \(others == 1 ? "simulator belongs" : "simulators belong") to another machine. Only someone on \(machine) can stop \(others == 1 ? "it" : "them")."
         )
         .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       }
