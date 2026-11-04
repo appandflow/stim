@@ -123,9 +123,10 @@ describe('the tailnet a machine was approved on', () => {
       tailnet: home1,
       diagnosis: { code: 'peer-wrong-tailnet' },
     });
+    expect(diagnosis?.message).toContain('laptop asked mini');
     expect(diagnosis?.message).toContain('janic@example.com (tail1.ts.net)');
     expect(diagnosis?.message).toContain('work.example.com (tail9.ts.net)');
-    expect(diagnosis?.remedy).toContain('Switch Tailscale on this Mac to janic@example.com');
+    expect(diagnosis?.remedy).toContain('Switch Tailscale on laptop to janic@example.com');
     expect(findings[0]?.fix).toBe(diagnosis?.remedy);
 
     const old = fakeIo([]).io;
@@ -304,7 +305,7 @@ describe('inspectBuildMachines', () => {
       expect(findings).toEqual([
         expect.objectContaining({
           fix: expect.stringMatching(
-            /^On mini, run `stim-server service update --release 9\.9\.9` \(add `--label <name>` for a custom service label; .*\), then run `stim remote add mini` here\.$/,
+            /^On mini, run `stim-server service update --release 9\.9\.9` \(add `--label <name>` for a custom service label; .*\), then run `stim remote add mini` on laptop\.$/,
           ),
         }),
       ]);

@@ -245,7 +245,7 @@ function RecordingRow({
       colors={colors}
       title={t`Record on ${name}`}
       icon={ICONS.video}
-      value={setting.fromEnvironment ? t`Set by STIM_RECORDING on the Mac` : (setting.error ?? undefined)}
+      value={setting.fromEnvironment ? t`Set by STIM_RECORDING on the machine` : (setting.error ?? undefined)}
       valueColor={setting.error ? colors.error : undefined}
       onPress={() => !locked && setting.set(!setting.enabled)}
       trailing={

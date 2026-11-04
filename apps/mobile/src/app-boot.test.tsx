@@ -157,7 +157,7 @@ class MockSocket {
           protocol: 2,
           server: {
             id: MockSocket.homeId,
-            name: 'Mock Mac',
+            name: 'Mock machine',
             version: '0.0.0-mock',
             stim: statusFixture.stimVersion,
             home: statusFixture.home,
@@ -251,7 +251,7 @@ function seedPreviousInstall() {
     JSON.stringify([
       {
         id: MAC_ID,
-        name: 'Mock Mac',
+        name: 'Mock machine',
         endpoint: ENDPOINT,
         pairedAt: '2026-09-01T00:00:00.000Z',
         serverKey: 'server-key',
@@ -260,7 +260,7 @@ function seedPreviousInstall() {
   );
   mockStore('stim.status').set(
     `status:${MAC_ID}`,
-    JSON.stringify({ v: 1, name: 'Mock Mac', seenAt: Date.now() - 60_000, status: olderStatus() }),
+    JSON.stringify({ v: 1, name: 'Mock machine', seenAt: Date.now() - 60_000, status: olderStatus() }),
   );
   const path = statusFixture.payload.environments[0]!.path;
   const entry = { occurrence: 'a', since: 0, heldSince: 0, seenAt: Date.now() - 60_000, notifiedAt: null, done: false };
@@ -298,7 +298,7 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
   const [mac] = JSON.parse(paired);
   mockStore('secure-store').set(
     'stim.macs',
-    JSON.stringify([mac, { ...mac, id: 'mac2', name: 'Quiet Mac', endpoint: 'ws://quiet-mac:7787' }]),
+    JSON.stringify([mac, { ...mac, id: 'mac2', name: 'Quiet machine', endpoint: 'ws://quiet-mac:7787' }]),
   );
   const activate = launchInactive();
   const errors: string[] = [];
@@ -343,7 +343,7 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
   expect(errors).toEqual([]);
   expect(screen.queryByTestId('splash-overlay')).toBeNull();
   expect(readyLogs()).toBe(1);
-  expect(screen.getAllByText('Mock Mac').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Mock machine').length).toBeGreaterThan(0);
   expect(mockStore('stim.app').get('marker')).not.toBe(PREVIOUS_MARKER);
   expect(mockStore('stim.status').has(`status:${MAC_ID}`)).toBe(false);
   expect(JSON.parse(mockStore('stim.notifications').get('prefs')!)).toMatchObject({ enabled: true });
@@ -617,7 +617,7 @@ it('does not resolve a shared link from previous workspace views after reconnect
     router.replace(`/mac/${MAC_ID}`);
     await jest.advanceTimersByTimeAsync(6000);
   });
-  expect(screen.getByText('Update stim-server on this Mac to load its live status.')).toBeTruthy();
+  expect(screen.getByText('Update stim-server on the machine to load its live status.')).toBeTruthy();
   expect(screen.queryByText(/Pair this machine again/)).toBeNull();
   expect(MockSocket.sent).not.toContain('status.subscribe');
 }, 60_000);

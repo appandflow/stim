@@ -1563,7 +1563,7 @@ approval** (someone on that machine approves it by running the setup command
 there; the row says when the request lapses, such as "Waiting for approval
 until 21:05", in local time),
 the title of the layer doctor's `diagnosis` names when the machine cannot be used
-(**Tailscale is off**, **Mac is offline**, **No serve route**, **Server not running**,
+(**Tailscale is off**, **Machine is offline**, **No serve route**, **Server not running**,
 **Server not ready** and so on; **Unreachable** when an older `stim` reports none), with its
 message and remedy as the detail line,
 **Needs update** (it runs an incompatible Stim build; **Updating** while an update runs),
