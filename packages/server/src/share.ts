@@ -154,7 +154,8 @@ export interface StatusListener {
   failed: (message: string) => void;
 }
 
-export type Refusal = { code: 'bad-request' | 'action-failed'; message: string };
+/** `busy`: the workspace's native-run claim is held, which a restore waits out instead of giving up. */
+export type Refusal = { code: 'bad-request' | 'action-failed'; message: string; busy?: true };
 
 const SLUG = new RegExp(SHARE_SLUG_PATTERN);
 const COOKIE = 'stim_share';
@@ -487,7 +488,6 @@ export class ShareHub {
     }
   }
 
-  /** Reads the device and registers the share; the caller holds the workspace claim until this returns. */
   private async register(request: ShareRequest, restore: boolean): Promise<StartedShare | Refusal> {
     const status = await this.status();
     if ('code' in status) return status;

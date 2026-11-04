@@ -134,6 +134,14 @@ describe('restoring saved shares', () => {
     expect(refused.lines).toEqual(['did not restore the web share of ios of /work/app: That link is live now.']);
   });
 
+  it('keeps trying while the workspace claim is busy, past the usual five waits, until the entry is not wanted', async () => {
+    const busy = { code: 'action-failed', busy: true, message: 'still held' } as const;
+    const f = deps([busy, busy, busy, busy, busy, busy, busy, { started: true, id: 'w1' }]);
+    await restoreSavedShares(f.d, [link()]);
+    expect(f.waits).toEqual([5000, 10_000, 20_000, 40_000, 60_000, 60_000, 60_000]);
+    expect(f.lines).toEqual(['restored the web share of ios of /work/app']);
+  });
+
   it('does not start a share whose saved entry was stopped while it waited to retry, and ends one stopped mid-start', async () => {
     const waiting = deps([
       { code: 'action-failed', message: 'later' },

@@ -392,8 +392,9 @@ the share. An automatic shutdown or device deletion therefore runs before or
 after the start, never in between. The start waits up to 30 seconds for a
 `stim ios`, `stim android` or `stim stop` run or an automatic shutdown that holds
 the claim, then fails with `STIM_SHARE_REFUSED` naming it; run `stim share` again
-once it ends. A saved share retries on its own. `stim stop` waits for the few
-seconds a start holds the claim.
+once it ends. A saved share retries on its own for as long as its saved entry is live.
+`stim stop` and `stim ios` wait for a start to finish, including opening the
+share's route.
 
 ## Options
 

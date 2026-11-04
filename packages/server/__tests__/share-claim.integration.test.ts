@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { holdNativeRun, nativeRunClaimPath } from '../src/share-claim.ts';
+import { workspaceNativeRunClaim } from '@stim-cli/core/state';
+import { holdNativeRun } from '../src/share-claim.ts';
 
 const WORKSPACE = '/work/app';
 
@@ -21,7 +22,7 @@ describe("the native-run claim a web share takes for the workspace's device", ()
 
   const other = () => {
     const attempt = tryAcquireClaim({
-      root: nativeRunClaimPath(WORKSPACE),
+      root: workspaceNativeRunClaim(WORKSPACE),
       mode: 'exclusive',
       label: 'native-run lock',
       details: { command: 'ios' },
@@ -33,10 +34,10 @@ describe("the native-run claim a web share takes for the workspace's device", ()
   it('is recorded as a share, which stim stop waits for instead of signalling', async () => {
     const hold = await holdNativeRun(WORKSPACE, { waitMs: 100, stop: () => false });
     if ('code' in hold) throw new Error(hold.message);
-    const [holder] = readClaimSet(nativeRunClaimPath(WORKSPACE)).live;
+    const [holder] = readClaimSet(workspaceNativeRunClaim(WORKSPACE)).live;
     expect(holder?.details).toEqual({ command: 'share', purpose: 'web share' });
     hold.release();
-    expect(readClaimSet(nativeRunClaimPath(WORKSPACE)).live).toEqual([]);
+    expect(readClaimSet(workspaceNativeRunClaim(WORKSPACE)).live).toEqual([]);
   });
 
   it('waits for a holder that finishes within the wait', async () => {

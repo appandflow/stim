@@ -216,11 +216,12 @@ budget).
 
 A share start, and the restart of a saved share with stim-server, holds the
 workspace's native-run claim (native-run.lock) while it reads the device and
-registers, so an automatic shutdown or device deletion runs before or after it,
+registers the share, so an automatic shutdown or device deletion runs before or after it,
 never in between. It waits up to 30 seconds for a stim ios, android or stop run
 or an automatic shutdown that holds the claim, then fails with
 STIM_SHARE_REFUSED naming the claim; run stim share again once that run ends. A
-restart retries on its own. stim stop waits for the few seconds a start holds it.
+restart retries on its own for as long as its saved entry is live. stim stop and
+stim ios wait for a start to finish, including opening the share's route.
 
 CUSTOM DOMAIN (PROXY MODE)
 

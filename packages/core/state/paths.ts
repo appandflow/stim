@@ -53,6 +53,11 @@ export function workspaceEndedAgentsLock(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'ended-agents.lock');
 }
 
+/** The claim a native run, a stop, an automatic shutdown or a web share start holds on one workspace's devices. */
+export function workspaceNativeRunClaim(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'native-run.lock');
+}
+
 export function supervisorPidFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'supervisor.pid');
 }
