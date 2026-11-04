@@ -95,6 +95,7 @@ import {
 import { pruneSetupJournals, writeSetupJournal } from '../src/setup-journal.ts';
 import { setupClaim, type SetupDeps } from '../src/setup.ts';
 import { fetchHealth } from '../src/service.ts';
+import type { InstalledService } from '../src/service-plist.ts';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
 import { acceptNoise, newSecret, secretValues } from '@stim-cli/core/noise-session';
 import {
@@ -2586,6 +2587,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
         await client.request('desktop.setup.answer', {
           journal: asked.journal,
           answer: 'approve',
+          capability: 'build',
         }),
       ).toHaveProperty('error.code', 'forbidden');
     }
@@ -2610,12 +2612,24 @@ describe('setup approval in Stim Desktop on this machine', () => {
     const desktopClient = await desktop();
     const asked = request(['build', 'device-host']);
     expect(await desktopClient.request('desktop.setup.subscribe', asked.params)).toHaveProperty('result.subscription');
+    expect(await desktopClient.request('desktop.setup.subscribe', asked.params)).toHaveProperty(
+      'error.code',
+      'bad-request',
+    );
     await nextSetup(desktopClient, asking('build'));
+    expect(
+      await desktopClient.request('desktop.setup.answer', {
+        journal: asked.journal,
+        answer: 'approve',
+        capability: 'device-host',
+      }),
+    ).toHaveProperty('error.code', 'bad-request');
     expect(asked.stored()).toBe(false);
     expect(
       await desktopClient.request('desktop.setup.answer', {
         journal: asked.journal,
         answer: 'approve',
+        capability: 'build',
       }),
     ).toEqual(expect.objectContaining({ result: {} }));
     await nextSetup(desktopClient, asking('device-host'));
@@ -2623,6 +2637,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
     await desktopClient.request('desktop.setup.answer', {
       journal: asked.journal,
       answer: 'refuse',
+      capability: 'device-host',
     });
     await nextSetup(desktopClient, waitsForMachine);
     expect(asked.stored()).toBe(true);
@@ -2637,17 +2652,26 @@ describe('setup approval in Stim Desktop on this machine', () => {
       'result.capabilities',
       ['build'],
     );
-    await nextSetup(desktopClient, step('permissions.'));
+    await nextSetup(desktopClient, step('permissions.screenRecording'));
     expect(
       await desktopClient.request('desktop.setup.answer', {
         journal: asked.journal,
         answer: 'skip',
+        permission: 'deviceControl',
+      }),
+    ).toHaveProperty('error.code', 'bad-request');
+    expect(
+      await desktopClient.request('desktop.setup.answer', {
+        journal: asked.journal,
+        answer: 'skip',
+        permission: 'screenRecording',
       }),
     ).toEqual(expect.objectContaining({ result: {} }));
     await nextSetup(desktopClient, step('permissions.deviceControl'));
     await desktopClient.request('desktop.setup.answer', {
       journal: asked.journal,
       answer: 'skip',
+      permission: 'deviceControl',
     });
     const end = await nextSetup(desktopClient, ended);
     expect(end).toMatchObject({ exitCode: 1, output: { granted: [{ capability: 'build' }] } });
@@ -2670,6 +2694,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
     await desktopClient.request('desktop.setup.answer', {
       journal: asked.journal,
       answer: 'refuse',
+      capability: 'build',
     });
     const end = await nextSetup(desktopClient, ended);
     expect(end).toMatchObject({ exitCode: 1, output: { granted: [] } });
@@ -2702,17 +2727,20 @@ describe('setup approval in Stim Desktop on this machine', () => {
       await desktopClient.request('desktop.setup.answer', {
         journal: second.journal,
         answer: 'approve',
+        capability: 'build',
       }),
     ).toHaveProperty('error.code', 'bad-request');
     expect(
       await desktopClient.request('desktop.setup.answer', {
         journal: first.journal,
         answer: 'skip',
+        permission: 'screenRecording',
       }),
     ).toHaveProperty('error.code', 'bad-request');
     await desktopClient.request('desktop.setup.answer', {
       journal: first.journal,
       answer: 'refuse',
+      capability: 'build',
     });
     await nextSetup(desktopClient, ended);
     expect(second.stored()).toBe(false);
@@ -2730,6 +2758,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
     await desktopClient.request('desktop.setup.answer', {
       journal: asked.journal,
       answer: 'approve',
+      capability: 'build',
     });
     await nextSetup(desktopClient, waitsForMachine);
     expect(asked.stored()).toBe(true);
@@ -2738,6 +2767,35 @@ describe('setup approval in Stim Desktop on this machine', () => {
     await expect(connect(port, '100.64.0.2', { secret: asked.ticket })).rejects.toMatchObject({
       code: 'unknown-secret',
     });
+  });
+  it('refuses on a machine with a stim-server service installed instead of installing or changing it', async () => {
+    const service: InstalledService = {
+      label: 'dev.stim.server',
+      host: null,
+      node: '/node',
+      script: '/server.mjs',
+      port: 0,
+      env: [],
+      pathPrepend: [],
+      stimHome: root,
+      logPath: '/log',
+      managed: true,
+      serve: null,
+      previousScript: null,
+      programArguments: [],
+    };
+    let port = 0;
+    port = await start({ setupDeps: () => ({ ...setupDeps(), installed: async () => ({ ...service, port }) }) });
+    const desktopClient = await desktop();
+    const asked = request();
+    await desktopClient.request('desktop.setup.subscribe', asked.params);
+    const end = await nextSetup(desktopClient, (event) => ended(event) || asking('build')(event));
+    expect(end).toMatchObject({
+      event: 'desktop-setup-ended',
+      exitCode: 1,
+      output: { warnings: expect.arrayContaining([expect.stringContaining('is installed on this machine')]) },
+    });
+    expect(asked.stored()).toBe(false);
   });
 });
 

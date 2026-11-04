@@ -1808,13 +1808,28 @@ export function protocolJsonSchema(): JsonSchema {
             },
           }),
           request('desktop.setup.answer', {
-            type: 'object',
-            required: ['journal', 'answer'],
-            additionalProperties: false,
-            properties: {
-              journal: { type: 'string', pattern: '^[a-f0-9]{64}$' },
-              answer: { enum: ['approve', 'refuse', 'skip'] },
-            },
+            oneOf: [
+              {
+                type: 'object',
+                required: ['journal', 'answer', 'capability'],
+                additionalProperties: false,
+                properties: {
+                  journal: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+                  answer: { enum: ['approve', 'refuse'] },
+                  capability: { enum: ['build', 'device-host'] },
+                },
+              },
+              {
+                type: 'object',
+                required: ['journal', 'answer', 'permission'],
+                additionalProperties: false,
+                properties: {
+                  journal: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+                  answer: { const: 'skip' },
+                  permission: { enum: ['screenRecording', 'deviceControl'] },
+                },
+              },
+            ],
           }),
           request('desktop.build.subscribe', {
             type: 'object',

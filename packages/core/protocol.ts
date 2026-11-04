@@ -1897,7 +1897,9 @@ export interface Methods {
     result: SubscribeResult;
   };
   'desktop.setup.answer': {
-    params: { journal: string; answer: 'approve' | 'refuse' | 'skip' };
+    params:
+      | { journal: string; answer: 'approve' | 'refuse'; capability: SetupCapability }
+      | { journal: string; answer: 'skip'; permission: 'screenRecording' | 'deviceControl' };
     result: Record<string, never>;
   };
   'desktop.build.subscribe': {

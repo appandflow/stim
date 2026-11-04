@@ -90,7 +90,7 @@ import {
 import { Recorder, type RecordLimits } from './recorder.ts';
 import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
 import { defaultSetupDeps, type SetupDeps } from './setup.ts';
-import { startDesktopSetup, type DesktopSetup } from './desktop-setup.ts';
+import { startDesktopSetup, type DesktopSetup, type DesktopSetupAnswer } from './desktop-setup.ts';
 import {
   probeDirectories,
   STARTUP_PROBE_MS,
@@ -213,6 +213,7 @@ import {
 import {
   acceptNoise,
   decodeSecret,
+  secretValues,
   HandshakeRefusal,
   HOME_UNAVAILABLE_MESSAGE,
   CLOSE_REFUSED,
@@ -4595,6 +4596,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(id, 'bad-request', 'Choose a setup ticket, its expiry and build or device-host.');
       const port = addresses[0]?.port;
       if (port === undefined) return error(id, 'bad-request', 'This server has no port for setup to use.');
+      const ticket = decodeSecret(params.ticket);
+      if (ticket && setupRuns.has(secretValues(ticket).journal))
+        return error(id, 'bad-request', 'This connection already has that setup request open.');
       let subscription: string | null = null;
       let run: DesktopSetup;
       try {
@@ -4627,14 +4631,24 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function answerDesktopSetup(id: RequestId, params: unknown): void {
-      if (
-        !isJsonObject(params) ||
-        Object.keys(params).some((key) => key !== 'journal' && key !== 'answer') ||
-        typeof params.journal !== 'string' ||
-        (params.answer !== 'approve' && params.answer !== 'refuse' && params.answer !== 'skip')
-      )
-        return error(id, 'bad-request', 'Answer a setup request of this connection with approve, refuse or skip.');
-      if (!setupRuns.get(params.journal)?.answer(params.answer))
+      const given: DesktopSetupAnswer | null = !isJsonObject(params)
+        ? null
+        : (params.answer === 'approve' || params.answer === 'refuse') &&
+            (params.capability === 'build' || params.capability === 'device-host') &&
+            Object.keys(params).every((key) => key === 'journal' || key === 'answer' || key === 'capability')
+          ? { answer: params.answer, capability: params.capability }
+          : params.answer === 'skip' &&
+              (params.permission === 'screenRecording' || params.permission === 'deviceControl') &&
+              Object.keys(params).every((key) => key === 'journal' || key === 'answer' || key === 'permission')
+            ? { answer: 'skip', permission: params.permission }
+            : null;
+      if (!given || !isJsonObject(params) || typeof params.journal !== 'string')
+        return error(
+          id,
+          'bad-request',
+          'Answer a setup request of this connection: approve or refuse with its capability, or skip with its permission.',
+        );
+      if (!setupRuns.get(params.journal)?.answer(given))
         return error(id, 'bad-request', 'No setup request of this connection is waiting for that answer.');
       send(socket, { id, result: {} });
     }
