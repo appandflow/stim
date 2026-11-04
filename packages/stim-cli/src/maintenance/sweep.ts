@@ -30,6 +30,7 @@ import { listBuildSlots } from '../engine/build-slots.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { finishedWorkspaces, planDeviceDeletion, planDeviceDeletionAsync } from './devices.ts';
 import type { MaintenancePlan } from './plan.ts';
+import { planPrune } from './prune.ts';
 import type { MaintenanceSettings } from './settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
@@ -151,6 +152,10 @@ export async function planSweep({
       check: 'sweep',
     });
   }
+  const prune = await planPrune({ now, mounted, operation });
+  actions.push(...prune.actions.map((action) => ({ ...action, check: 'sweep' as const })));
+  skips.push(...prune.skips);
+  blocked.push(...prune.blocked);
   const sweep = await planRung6(settings, { operation });
   actions.push(...sweep.actions.map((action) => ({ ...action, check: 'sweep' as const })));
   skips.push(...sweep.skips);

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { sep } from 'node:path';
+import { dirname, sep } from 'node:path';
 import { buildCacheRoot, metroCacheRoot, type StimContext } from '@stim-cli/core';
 import { sharedCompilationCache, type MaintenanceAction } from '@stim-cli/core/state';
 import { cacheLabel } from '../budget.ts';
@@ -11,6 +11,10 @@ import { deleteGradleVersion, waitForGradleExit } from '../commands/gc/gradle-ve
 import { stopIdleGradleDaemons } from '../commands/gc/memory.ts';
 import { deleteTempLeftovers } from '../commands/gc/temp-leftovers.ts';
 import { deleteTrash } from '../commands/gc/trash.ts';
+import { collectStaleStatusCachesAsync, deleteStaleStatusCaches } from '../commands/gc/status-caches.ts';
+import { archivesPastRetention, enforceArchiveRetention } from '../archive.ts';
+import { removeExpiredLeaseAsync } from '../engine/device-lease.ts';
+import { pruneEmptyProcessLockDirs } from '../engine/tunnel.ts';
 import { plural } from '../command-output.ts';
 import { takeGcResults, GC_OUTPUT, type GcResult, type GcOutput } from '../commands/gc/results.ts';
 import {
@@ -22,6 +26,7 @@ import {
 import { removeWorktrees, type WorktreeSweep } from '../commands/gc/worktrees.ts';
 import {
   DEVICE_LIST_TIMEOUT_MS,
+  collectDeviceLeases,
   collectParkedAvds,
   collectParkedSims,
   deleteParkedAvds,
@@ -54,6 +59,7 @@ import {
   workspaceActiveReasonAsync,
 } from './activity.ts';
 import { stopIdleWorkspace } from './idle-stop.ts';
+import { archiveExpiryReason, leaseKeepReason } from './prune.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
 export interface ActionOutcome {
@@ -419,6 +425,42 @@ async function deleteTempLeftoversAction(): Promise<ActionOutcome> {
   return done.count ? { status: 'done', bytes: done.bytes, detail: `${done.count} deleted` } : kept('none is idle now');
 }
 
+async function deleteStatusCachesAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
+  const signal = context.operation?.signal;
+  const { stale } = await collectStaleStatusCachesAsync(listMountedVolumes(), signal);
+  const own = stale.filter((entry) => dirname(entry.file) === action.target);
+  if (!own.length) return kept('no entry in it describes a folder that is provably gone any more');
+  const { results } = await quietly(() => deleteStaleStatusCaches(own, GC_OUTPUT, signal));
+  return outcomeOf(
+    results,
+    own.reduce((sum, entry) => sum + entry.bytes, 0),
+  );
+}
+
+async function deleteProcessLocksAction(context: ActContext): Promise<ActionOutcome> {
+  const count = await pruneEmptyProcessLockDirs(context.operation?.signal);
+  return count ? { status: 'done', bytes: 0, detail: `${count} deleted` } : kept('none is empty now');
+}
+
+async function deleteDeviceLeaseAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
+  const entry = collectDeviceLeases(Date.now()).expired.find((candidate) => candidate.path === action.target);
+  if (!entry) return kept('it is no longer an expired lease');
+  const keep = await leaseKeepReason(entry, context.operation);
+  if (keep) return kept(`the lease expired, but ${keep}`);
+  return (await removeExpiredLeaseAsync(entry, context.operation?.signal))
+    ? { status: 'done', bytes: 0, detail: entry.name }
+    : kept('it was renewed or removed since the pass planned it');
+}
+
+async function deleteExpiredArchivesAction(context: ActContext): Promise<ActionOutcome> {
+  const expiry = await archivesPastRetention(Date.now(), context.operation);
+  if ('refusal' in expiry) return kept(expiry.refusal);
+  if (expiry.records.length + expiry.parts.length + expiry.worktreeArchives.length === 0)
+    return kept('nothing is past its retention now');
+  await enforceArchiveRetention(Date.now(), context.operation);
+  return { status: 'done', bytes: expiry.bytes, detail: archiveExpiryReason(expiry) };
+}
+
 function unregisterCache(action: MaintenanceAction): ActionOutcome {
   const dir = action.dir ?? action.target;
   if (
@@ -477,6 +519,14 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
       return deleteTempLeftoversAction();
     case 'would-delete-trash':
       return deleteTrashAction();
+    case 'would-delete-status-caches':
+      return deleteStatusCachesAction(action, context);
+    case 'would-delete-process-locks':
+      return deleteProcessLocksAction(context);
+    case 'would-delete-device-lease':
+      return deleteDeviceLeaseAction(action, context);
+    case 'would-delete-expired-archives':
+      return deleteExpiredArchivesAction(context);
     default:
       return kept('automatic maintenance does not stop devices or dev servers yet');
   }

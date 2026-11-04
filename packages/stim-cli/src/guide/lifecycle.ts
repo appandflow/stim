@@ -2969,7 +2969,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   \`stop\` releases this workspace's leases and stops its log collectors.
   On a physical iPhone that also closes the app, because its collector owns
-  the devicectl launch session. \`gc --delete\` removes expired lease files;
+  the devicectl launch session. \`gc --delete\` and the daily maintenance sweep remove expired lease files;
   neither command shuts down the phone or uninstalls the app.
 
   WATCHING THE PHONE: while this workspace holds the lease, stim-server

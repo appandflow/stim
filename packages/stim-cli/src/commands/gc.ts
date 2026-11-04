@@ -1219,7 +1219,7 @@ async function runGcCore(
   }
 
   if (report.cacheScope === null) {
-    const emptyLockDirs = pruneEmptyProcessLockDirs();
+    const emptyLockDirs = await pruneEmptyProcessLockDirs(signal);
     if (emptyLockDirs > 0) output.log(chalk.dim(`Removed ${emptyLockDirs} empty process lock entries`));
   }
 

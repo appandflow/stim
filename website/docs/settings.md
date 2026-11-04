@@ -924,7 +924,8 @@ Sizes use binary GB and MB; 0 means keep none.
 <ArchiveSettings />
 
 Retention runs on every worktree removal, archived or not, once an archive
-exists. It deletes records past their age or count limit first, then expires
+exists, and in the daily age sweep of [automatic maintenance](./build-caches.md#automatic-maintenance),
+so archives that outlive their limits go without another removal. It deletes records past their age or count limit first, then expires
 recordings, agent actions and logs by age from removal; trims logs by oldest
 rotated generation, then build logs, then oldest other files; and removes the
 largest kind of the oldest archive while total caps are exceeded. Artifact

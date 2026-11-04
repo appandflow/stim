@@ -20,7 +20,11 @@ export type MaintenanceActionKind =
   | 'would-stop-gradle-daemons'
   | 'would-delete-gradle-version'
   | 'would-delete-temp-leftovers'
-  | 'would-delete-trash';
+  | 'would-delete-trash'
+  | 'would-delete-status-caches'
+  | 'would-delete-process-locks'
+  | 'would-delete-device-lease'
+  | 'would-delete-expired-archives';
 
 /** Disk pressure: 0 above every threshold, 1 under the budget floor, 2 under the urgent threshold, 3 under the critical threshold or the hard floor. */
 export type DiskPressureLevel = 0 | 1 | 2 | 3;
@@ -160,6 +164,10 @@ const KINDS: readonly string[] = [
   'would-delete-gradle-version',
   'would-delete-temp-leftovers',
   'would-delete-trash',
+  'would-delete-status-caches',
+  'would-delete-process-locks',
+  'would-delete-device-lease',
+  'would-delete-expired-archives',
 ];
 
 /** Rejects missing, corrupt or unsupported payloads without throwing. */
