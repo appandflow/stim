@@ -200,7 +200,7 @@ export class HostedShareSource implements ShareSource {
     let subscription: string;
     let answer: string;
     try {
-      if (!lease.connection.supports('hosted-webrtc')) {
+      if (!lease.connection.supports('hosted-webrtc') || !lease.connection.supports('hosted-webrtc-private')) {
         throw new Error(`${this.host.machine} cannot send WebRTC: update its Stim.`);
       }
       const reply = await lease.connection.request('device-host.webrtc.offer', {

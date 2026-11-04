@@ -1255,6 +1255,7 @@ describe('a web share', () => {
         buttons: BUTTONS[platform],
         rotate: true,
         webrtc: false,
+        stun: '',
       });
       for (const button of BUTTONS[platform]) expect(page).toContain(`data-button="${button}"`);
       for (const direction of ['left', 'right']) expect(page).toContain(`data-rotate="${direction}"`);

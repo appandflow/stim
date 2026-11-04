@@ -1149,6 +1149,7 @@ export class ShareHub {
             buttons: BUTTONS[platform],
             rotate,
             webrtc: this.deps.webrtc?.() === true,
+            stun: process.env.STIM_WEBRTC_STUN ?? '',
           }),
           extra,
         );

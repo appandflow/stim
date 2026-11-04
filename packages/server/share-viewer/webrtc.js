@@ -12,7 +12,10 @@
   const wanted = offered && preferred === 'webrtc' && typeof RTCPeerConnection === 'function';
   const visible = wanted || query.has('stats');
   const basePath = location.pathname.replace(/[^/]*$/, '');
-  const STUN = 'stun:stun.l.google.com:19302';
+  const iceServers = (document.body.dataset.stun || '')
+    .split(',')
+    .filter(Boolean)
+    .map((urls) => ({ urls }));
   const GATHER_MS = 2500;
   const CONNECT_MS = 12000;
   const WINDOW_MS = 1000;
@@ -200,7 +203,7 @@
     state.pair = null;
     state.samples.rtc = [];
     state.offsets.rtc = null;
-    const peer = new RTCPeerConnection({ iceServers: [{ urls: STUN }] });
+    const peer = new RTCPeerConnection({ iceServers });
     pc = peer;
     const lifetime = Number(query.get('ttl'));
     video = peer.createDataChannel(
