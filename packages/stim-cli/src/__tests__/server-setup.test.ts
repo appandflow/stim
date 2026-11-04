@@ -321,6 +321,14 @@ describe('serverSetupFindings', () => {
       expect(codes(value)).toEqual(['server-keep-awake']);
     });
 
+    it('ignores a server of another Stim home, whose clients are not counted here', () => {
+      const value = setup({
+        clients: { build: 1, deviceHost: 0 },
+        servers: [reading({ health: health({ stimHome: '/tmp/scratch', keepAwake: asleep }) })],
+      });
+      expect(codes(value)).not.toContain('server-keep-awake');
+    });
+
     it.each([
       [
         'no approved clients',
