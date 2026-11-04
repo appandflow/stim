@@ -69,6 +69,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   resetExecutor();
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
@@ -187,6 +188,24 @@ describe.skipIf(process.platform === 'win32')(
       expect(readMaintenanceState()?.plan).toHaveLength(1);
     }
 
+    function awaitRemoval(): void {
+      mkdirSync(join(home, 'maintenance'), { recursive: true });
+      writeFileSync(
+        maintenanceStateFile(),
+        JSON.stringify({
+          version: 1,
+          lastAt: {},
+          pressure: null,
+          sizes: [],
+          lastPass: null,
+          recent: [],
+          plan: [],
+          nextRemoval: { target: '/w/merged', at: Date.now() + 60 * MINUTE_MS },
+        }),
+      );
+      expect(readMaintenanceState()?.nextRemoval?.target).toBe('/w/merged');
+    }
+
     /** Runs a quiet daemon for its first tick and two slow ones; ends one still running and says whether it exited first. */
     async function exitsAfterTwoQuietTicks(mode: DaemonMode = 'on'): Promise<boolean> {
       const before = existsSync(daemonNdjsonFile()) ? ticks().length : 0;
@@ -276,6 +295,52 @@ describe.skipIf(process.platform === 'win32')(
         planRemoval({ kept });
         expect(await exitsAfterTwoQuietTicks(mode)).toBe(true);
       });
+
+      test('a finished worktree waiting for its grace period keeps it until a maintenance pass clears the record, and the exit tick starts no pass', async () => {
+        vi.stubEnv('STIM_DAEMON', 'on');
+        awaitRemoval();
+        let passes = 0;
+        const maintenance = vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(async () => {
+          passes += 1;
+          if (passes !== 2) return;
+          const state = readMaintenanceState();
+          if (state) writeFileSync(maintenanceStateFile(), JSON.stringify({ ...state, nextRemoval: undefined }));
+        });
+        const started = Date.now();
+        let exited = false;
+        const daemon = (async () => {
+          await runDaemon({ mode: 'on' });
+          exited = true;
+        })();
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+        expect(ticks()[0]?.msg).toContain('the finished worktree /w/merged becomes removable at');
+        await vi.advanceTimersByTimeAsync(3 * 5 * MINUTE_MS);
+        await vi.waitFor(() => expect(exited).toBe(true));
+        await daemon;
+        expect(ticks().map(({ at }) => Math.round((at - started) / MINUTE_MS))).toEqual([1, 6, 11, 16]);
+        expect(maintenance).toHaveBeenCalledTimes(3);
+      });
+
+      test('a finished worktree the last worktree check kept for its grace period does', async () => {
+        vi.stubEnv('STIM_DAEMON', 'on');
+        awaitRemoval();
+        expect(await exitsAfterTwoQuietTicks()).toBe(false);
+      });
+
+      test.each([
+        ['in report mode', 'on', 'report', 'true'],
+        ['with STIM_DAEMON report', 'report', 'on', 'true'],
+        ['with maintenance.removeFinishedWorktrees false', 'on', 'on', 'false'],
+      ] as const)(
+        'a finished worktree waiting for its grace period %s does not',
+        async (_, maintenance, mode, removeFinished) => {
+          vi.stubEnv('STIM_DAEMON', maintenance);
+          vi.stubEnv('STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES', removeFinished);
+          awaitRemoval();
+          expect(await exitsAfterTwoQuietTicks(mode)).toBe(true);
+        },
+      );
     });
 
     test("a command's hello brings a quiet daemon back to the 60 s tick", async () => {

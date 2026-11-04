@@ -1018,7 +1018,10 @@ its dormant stage, so the stage fires in a quiet home. A workspace waits until i
 have passed plus one slow tick, and never while `maintenance.keep`,
 `idle.minutes` 0, `idle.dormantDays` 0, a hosted placement, an unreadable state
 or a failing device listing keeps it out, nor with no activity recorded in its
-state. A finished-worktree removal does not keep the daemon. Each tick it
+state. A merged or closed worktree that the last worktree check kept only for
+its `gc.worktreeGraceMinutes` grace period keeps it, while `daemon.mode` is `on`
+and `maintenance.removeFinishedWorktrees` is true, until a later check removes
+the worktree or keeps it for another reason. Each tick it
 measures the machine once,
 classifies the pressure level, moves workspaces with no activity for
 `idle.minutes` into the [idle stage](./dev-server-and-logs.md#idle-stop) and

@@ -15,6 +15,7 @@ import {
   macosAppState,
   readMacosRecord,
   readDaemonSnapshot,
+  readMaintenanceState,
   type DaemonMode,
   type DaemonRecentAction,
   type DaemonSnapshot,
@@ -28,6 +29,7 @@ import {
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
+import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
@@ -212,15 +214,26 @@ function homeAlive(config: Config | null, measured: TickMeasurement): string | n
 
 /**
  * Work the daemon still has to do in a quiet home, which keeps it alive at the slow cadence: a workspace the dormant
- * stage will take, until its due time plus one slow tick.
+ * stage will take, until its due time plus one slow tick, and, while maintenance acts and removes finished worktrees,
+ * a finished worktree the last worktree check kept only for its grace period, until a later check removes it or keeps
+ * it for another reason.
  */
 async function pendingWork(
   config: Config | null,
   measured: TickMeasurement,
   slowTickMs: number,
+  act: boolean,
 ): Promise<string | null> {
   const dormant = await pendingDormant(config, { simsFailed: measured.sims === null }, { graceMs: slowTickMs });
-  return dormant ? `${dormant} is not dormant yet` : null;
+  if (dormant) return `${dormant} is not dormant yet`;
+  const settings = resolveMaintenanceSettings(config);
+  const removal =
+    act && settings.mode === 'on' && settings.removeFinishedWorktrees ? readMaintenanceState()?.nextRemoval : undefined;
+  if (!removal) return null;
+  const at = new Date(removal.at).toISOString();
+  return removal.at > Date.now()
+    ? `the finished worktree ${removal.target} becomes removable at ${at}`
+    : `the finished worktree ${removal.target}, removable since ${at}, waits for the next worktree check`;
 }
 
 /**
@@ -486,7 +499,7 @@ export async function runDaemon({
         ? null
         : maintaining
           ? 'automatic maintenance runs'
-          : await pendingWork(config, measured, slowTickMs);
+          : await pendingWork(config, measured, slowTickMs, mode === 'on');
       wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
       interval = alive || pressure.level !== 'normal' ? tickMs : slowTickMs;
       for (const { path: workspace, outcome, detail } of workspaces) {

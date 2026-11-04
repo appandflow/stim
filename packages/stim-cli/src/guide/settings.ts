@@ -676,7 +676,10 @@ run waiting to boot, and automatic maintenance.
           plus one slow tick, and never while maintenance.keep, idle.minutes
           0, idle.dormantDays 0, a hosted placement, an unreadable state or a
           failing device listing keeps it out, nor with no activity recorded
-          in its state. A finished-worktree removal does not keep the daemon.
+          in its state. A merged or closed worktree that the last worktree
+          check kept only for its gc.worktreeGraceMinutes grace period keeps
+          it in on, while maintenance.removeFinishedWorktrees is true, until a
+          later check removes the worktree or keeps it for another reason.
           Each tick it measures the
           machine once, classifies the pressure level, moves idle workspaces
           into the idle stage (idle.minutes) and dormant ones into the dormant

@@ -31,6 +31,7 @@ export function triggeringRoot(operation?: StimContext): string {
 
 export interface PlannedMaintenance extends MaintenancePlan {
   worktreeSweep?: WorktreeSweep;
+  nextRemoval?: { target: string; at: number };
 }
 
 export async function plannedMaintenance(
@@ -140,6 +141,7 @@ export async function plannedMaintenance(
     });
     merge(planned);
     result.worktreeSweep = planned.sweep;
+    if (planned.nextRemoval) result.nextRemoval = planned.nextRemoval;
   }
   if (idle && devices) {
     const now = Date.now();

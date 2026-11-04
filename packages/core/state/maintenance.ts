@@ -113,6 +113,11 @@ export interface MaintenanceState {
   recent: MaintenanceRecord[];
   plan: MaintenanceAction[];
   skipKeys?: string[];
+  /**
+   * The finished worktree the last worktree check kept only for its grace period that becomes removable first, and
+   * when. The daemon stays alive until a later check removes it or keeps it for another reason.
+   */
+  nextRemoval?: { target: string; at: number };
 }
 
 export interface MaintenanceStatus {
@@ -155,6 +160,11 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
   if (!isJsonObject(value) || value.version !== 1 || !isJsonObject(value.lastAt)) return null;
   if (!Object.values(value.lastAt).every(finite)) return null;
   if (value.skipKeys !== undefined && !strings(value.skipKeys)) return null;
+  if (
+    value.nextRemoval !== undefined &&
+    (!isJsonObject(value.nextRemoval) || typeof value.nextRemoval.target !== 'string' || !finite(value.nextRemoval.at))
+  )
+    return null;
   if (
     value.deferredAt !== undefined &&
     (!isJsonObject(value.deferredAt) || !Object.values(value.deferredAt).every(finite))

@@ -32,10 +32,11 @@ dropping its own autopilot thresholds.
   nothing runs. A workspace counts only until its dormant due time plus one slow tick, and never while the dormant pass
   keeps skipping it for a reason the daemon's presence does not change (a hosted placement, an unreadable state, a
   failing device listing, `maintenance.keep`, `idle.minutes` 0, `idle.dormantDays` 0), nor without any activity
-  recorded in its state. A finished-worktree removal does not keep it alive: in `on` mode maintenance's plan holds only
-  removals it already tried and did not finish, and a finished worktree inside its grace window counts through its
-  workspace until that workspace's dormant due time. After that the daemon exits as if nothing were pending, and the
-  next command restarts it.
+  recorded in its state. A planned finished-worktree removal does not keep it alive: in `on` mode maintenance's plan
+  holds only removals it already tried and did not finish. Amended 2026-11-04 (#5022, approved): a merged or ended
+  worktree that the last worktree check kept only for its grace window keeps it alive in `on` mode, while
+  `maintenance.removeFinishedWorktrees` is true, until a later check removes it or keeps it for another reason. After
+  that the daemon exits as if nothing were pending, and the next command restarts it.
 - Ownership claim `$STIM_HOME/daemon/claim` through `@stim-cli/core/ownership-claim`; a second daemon finds the claim
   held and exits. A tick that throws logs the error, releases the claim and exits, so the fallbacks resume.
 - Socket `$STIM_HOME/daemon/daemon.sock` (mode 0600, same long-path fallback as stim-server), messages: `hello`,

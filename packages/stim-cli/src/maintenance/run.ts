@@ -386,6 +386,10 @@ export async function runMaintenance(
       result = { actions: [], blocked: [], skips: [] };
       for (const check of ['sweep', 'worktree'] as const) if (ran.has(check)) delete state.lastAt[check];
     }
+    if (plannedWorktrees) {
+      if (result.nextRemoval) state.nextRemoval = result.nextRemoval;
+      else delete state.nextRemoval;
+    }
     async function executePlan(
       actions: readonly MaintenanceAction[],
     ): Promise<{ action: MaintenanceAction; outcome: ActionOutcome }[]> {
