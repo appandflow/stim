@@ -1287,8 +1287,11 @@ if it has not exited after 3 seconds. A
 killed server leaves its `stim status --watch` child running until that child's
 next write fails. A stim-server older than the `--loopback-only` flag exits at once,
 and the sidebar footer shows a warning icon that says to update it. A failure of any
-other kind, such as a port held by another program or a server for another Stim home,
-shows the same icon with the reason in its tooltip; click it to retry now. Desktop also retries a failed start every 30 seconds or more, except for an outdated server. No dialog
+other kind, such as a server for another Stim home, shows the same icon with the reason
+in its tooltip; click it to retry now. A port that something holds without answering
+`/health`, such as a stim-server too busy to reply, is neither adopted nor replaced:
+Desktop starts no second server onto it and shows it as degraded until it answers or the
+port is free. Desktop also retries a failed start every 30 seconds or more, except for an outdated server. No dialog
 interrupts. `--loopback-only` removes the server's own Tailscale listeners and makes it refuse any
 request that a `tailscale serve --https` route forwards to the port, so paired phones and other
 Macs cannot reach it; Desktop never removes or edits the route. Turning **Allow connections** off restarts the

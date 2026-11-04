@@ -333,6 +333,37 @@ public struct StimServerCLI: Sendable {
     return decodeHealth(data, statusCode: response.statusCode)
   }
 
+  /// Whether something accepts a connection on `port` of this Mac's loopback, such as a stim-server too busy to answer
+  /// `/health`. A connection that is neither accepted nor refused within half a second counts as held.
+  public static func portIsHeld(_ port: Int) async -> Bool {
+    await Task.detached { () -> Bool in
+      let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+      guard descriptor >= 0 else { return false }
+      defer { close(descriptor) }
+      _ = fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK)
+      var address = sockaddr_in()
+      address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+      address.sin_family = sa_family_t(AF_INET)
+      address.sin_port = in_port_t(UInt16(truncatingIfNeeded: port)).bigEndian
+      address.sin_addr.s_addr = inet_addr("127.0.0.1")
+      let result = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+          connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
+      }
+      if result == 0 { return true }
+      guard errno == EINPROGRESS else { return false }
+      var wait = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
+      let ready = poll(&wait, 1, 500)
+      if ready == 0 { return true }
+      guard ready > 0 else { return false }
+      var failure: Int32 = 0
+      var length = socklen_t(MemoryLayout<Int32>.size)
+      getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &failure, &length)
+      return failure == 0
+    }.value
+  }
+
   static func decodeHealth(_ data: Data, statusCode: Int) -> ServerHealthProbe? {
     if statusCode == 200 {
       guard let health = try? decoder.decode(ServerHealth.self, from: data), health.server == "stim-server" else {
