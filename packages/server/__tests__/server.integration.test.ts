@@ -1367,6 +1367,7 @@ describe('pairing', () => {
           'duo-frames',
           'workspace-diff',
           'hosted-congestion',
+          'hosted-webrtc',
           'hosted-ios-data',
           'hosted-ios-process',
           'hosted-app-state',

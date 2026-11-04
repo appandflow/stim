@@ -73,6 +73,8 @@ interface Fixture {
     inputs: unknown[];
     closed: number;
     keyframes: number;
+    offers: string[];
+    peersClosed: number;
   }[];
 }
 
@@ -191,6 +193,8 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
         inputs: [] as unknown[],
         closed: 0,
         keyframes: 0,
+        offers: [] as string[],
+        peersClosed: 0,
       };
       f.hostedSources.push(record);
       const source: ShareSource = {
@@ -202,6 +206,10 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
         },
         keyframe: () => record.keyframes++,
         congested: () => {},
+        webrtc: async (offer) => {
+          record.offers.push(offer);
+          return { answer: 'answer-sdp', close: () => record.peersClosed++ };
+        },
         begin: async () => ({ session: 'h1', platform: 'ios', lease: { grantedAt: 'l', expiresAt: '' }, postures: [] }),
         targetOf: (_owner, session) => (session === 'h1' ? { platform: 'ios', postures: [] } : null),
         input: async (_owner, session, method, params) => {
@@ -1660,6 +1668,36 @@ describe('a web share', () => {
           },
         },
       ],
+    });
+
+    it('answers a WebRTC offer from the source and leaves the video off the share socket', async () => {
+      f.status(hostedPayload() as never);
+      const share = await started(f);
+      const url = local(share, f.hub.port ?? 0);
+      const cookie = await login(url, share.password!);
+      const record = f.hostedSources[0]!;
+      const plain = await connect(url, { origin: origin(url), cookie }, '?codec=h264');
+      plain.socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp' }));
+      await vi.waitFor(() => expect(plain.messages.some((m) => m.type === 'webrtc-failed')).toBe(true));
+      expect(record.offers).toEqual([]);
+      plain.socket.close();
+
+      const { socket, messages } = await connect(url, { origin: origin(url), cookie }, '?codec=h264&transport=webrtc');
+      expect(record.subscribed.at(-1)!.video).toBeUndefined();
+      socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp' }));
+      await vi.waitFor(() => expect(messages).toContainEqual({ type: 'webrtc-answer', sdp: 'answer-sdp' }));
+      expect(record.offers).toEqual(['offer-sdp']);
+      socket.close();
+      await vi.waitFor(() => expect(record.peersClosed).toBe(1));
+    });
+
+    it('refuses a WebRTC offer from a viewer that is not signed in', async () => {
+      f.status(hostedPayload() as never);
+      const share = await started(f);
+      const url = local(share, f.hub.port ?? 0);
+      const { status } = await connect(url, { origin: origin(url) }, '?codec=h264&transport=webrtc');
+      expect(status).toBe(401);
+      expect(f.hostedSources[0]!.offers).toEqual([]);
     });
 
     it('streams and drives through the hosted source, never the local frame pool or control hub', async () => {
