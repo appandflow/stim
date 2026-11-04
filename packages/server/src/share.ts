@@ -137,6 +137,16 @@ export interface ShareDeps {
   recordingChanged?: () => void;
   /** Called when the last share has ended and its route is gone. */
   idle?: () => void;
+  /**
+   * Holds the workspace's native-run claim while a share reads its device and registers, so an automatic shutdown or
+   * deletion of the workspace's devices, which reads the share list under that claim, runs wholly before or wholly
+   * after it. Waits a bounded time for a holder; `stop` ends the wait.
+   */
+  holdWorkspace?: (workspace: string, stop: () => boolean) => Promise<WorkspaceHold | Refusal>;
+}
+
+export interface WorkspaceHold {
+  release: () => void;
 }
 
 export interface StatusListener {
@@ -468,6 +478,17 @@ export class ShareHub {
       return { code: 'bad-request', message: 'That link has expired.' };
     }
     if (this.reusedLive(request)) return { code: 'bad-request', message: 'That link is live now.' };
+    const held = this.deps.holdWorkspace ? await this.deps.holdWorkspace(request.workspace, () => this.closed) : null;
+    if (held && 'code' in held) return held;
+    try {
+      return await this.register(request, restore);
+    } finally {
+      held?.release();
+    }
+  }
+
+  /** Reads the device and registers the share; the caller holds the workspace claim until this returns. */
+  private async register(request: ShareRequest, restore: boolean): Promise<StartedShare | Refusal> {
     const status = await this.status();
     if ('code' in status) return status;
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
