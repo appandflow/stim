@@ -1437,6 +1437,35 @@ watchers, native helpers or recorder; it reads again every 30 seconds and
 serves once a read returns. It preserves claims and recordings; it does not
 restore an inaccessible volume or grant filesystem access.
 
+STIM-SERVER SETUP CHECKS (stim doctor)
+\`stim doctor\` reads this machine's stim-server setup in any app directory and
+reports problems as findings with the exact command or step; it never stops,
+starts, updates or reconfigures a server. It reads the installed service (the
+LaunchAgent on macOS, the systemd user unit on Linux), the process list, each
+server's \`/health\` on 127.0.0.1 (1.5 seconds at most) and the Stim home's
+local socket, and does nothing beyond the process list when no service, server
+process or socket exists. Findings carry a code that starts with \`server-\`;
+a \`cost\` finding is shown as a problem and reaches Stim Desktop's needs-attention
+list, a \`note\` finding only the doctor report:
+  server-multiple        cost: several servers serve one Stim home (the service,
+                         Stim Desktop's bundled server, a server started by hand);
+                         it names the one to keep (the service, else the one holding
+                         the local socket) and how to stop each other
+  server-service-crash   cost: the service is installed but not running, or keeps
+                         exiting (run count and last exit code, the log path and
+                         \`stim-server service rollback\` when a previous server
+                         exists); note: it restarted but runs now
+  server-desktop-authority  cost: the server on the local socket (not Desktop's own)
+                         does not advertise desktop-local-authority, so Desktop
+                         cannot run actions through it; update it
+  server-version         note: a server's stim version differs from this stim; the
+                         service updates with \`stim-server service update --release
+                         <version>\`, Desktop's bundled server with the app
+  server-home            note: a server serves another Stim home than this stim's
+  server-leftover        note: servers started by hand, with pid, home and port
+  server-keep-awake      note: this Mac serves approved build or device-host clients
+                         with server.keepAwake off
+
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
 \`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes
 a merged or idle linked worktree. The clock starts at the worktree's latest
