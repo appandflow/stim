@@ -520,6 +520,25 @@ const CLIPBOARD_TIMEOUT_MS = 10_000;
 
 export const CLIPBOARD_INPUT_COST = 10;
 
+/**
+ * Takes `cost` from a token bucket refilled at `perSecond` up to `capacity`. A caller may let the bucket go up to
+ * `debt` below zero, so an input that must arrive still does while a stream of others has drained it.
+ */
+export function take(
+  bucket: { tokens: number; at: number },
+  cost: number,
+  perSecond: number,
+  capacity: number,
+  debt = 0,
+): boolean {
+  const now = Date.now();
+  bucket.tokens = Math.min(capacity, bucket.tokens + ((now - bucket.at) / 1000) * perSecond);
+  bucket.at = now;
+  if (bucket.tokens - cost < -debt) return false;
+  bucket.tokens -= cost;
+  return true;
+}
+
 /** `simctl pbcopy` reads its stdin as bytes in the process's locale, so a non-ASCII clipboard needs UTF-8. */
 function simctlEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return { ...env, LC_ALL: 'en_US.UTF-8' };
