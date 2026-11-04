@@ -366,14 +366,15 @@ async function parkOwnedIosSim(
   settled: ResolvedIosSim,
   udid: string,
   park: ParkRequest,
+  keepBooted: boolean,
   operation?: StimContext,
 ): Promise<{ record: ParkedSim; evicted: ParkedSim[] }> {
   if (settled.missing) throw new Error(`simulator ${udid} disappeared after shutdown`);
   if (settled.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(settled.notOwned)}`);
   const sim = settled.sim as IosSimRecord;
-  if (park.bootedUntil ? sim.state !== 'Booted' : sim.state !== 'Shutdown') {
+  if (keepBooted ? sim.state !== 'Booted' : sim.state !== 'Shutdown') {
     throw new Error(
-      park.bootedUntil ? `simulator ${udid} is ${sim.state}, not Booted` : iosShutdownFailureReason(udid, sim.state),
+      keepBooted ? `simulator ${udid} is ${sim.state}, not Booted` : iosShutdownFailureReason(udid, sim.state),
     );
   }
   const model =
@@ -389,7 +390,7 @@ async function parkOwnedIosSim(
     deviceTypeIdentifier: sim.deviceTypeIdentifier,
     runtimeIdentifier: sim.runtime,
     parkedAt: new Date().toISOString(),
-    ...(park.bootedUntil ? { bootedUntil: park.bootedUntil } : {}),
+    ...(keepBooted && park.bootedUntil ? { bootedUntil: park.bootedUntil } : {}),
     simslimManaged: Boolean(park.simslimManaged),
     ...(park.appId ? { bundleId: park.appId } : {}),
     ...(park.cacheKey ? { cacheKey: park.cacheKey } : {}),
@@ -451,7 +452,7 @@ export async function teardownOwnedIosSim(
         const settled = keepBooted
           ? await resolveOwnedIosSimNow(udid, operation)
           : await settleIosSimShutdown(udid, shutdownClock, operation);
-        const { record, evicted } = await parkOwnedIosSim(settled, udid, park, operation);
+        const { record, evicted } = await parkOwnedIosSim(settled, udid, park, keepBooted, operation);
         const removed: ParkedDevice[] = [];
         const failures: string[] = [];
         for (const entry of evicted) {
@@ -473,7 +474,10 @@ export async function teardownOwnedIosSim(
         if (e instanceof WorkspaceProcessCleanupError) throw e;
         operation?.signal.throwIfAborted();
         parkFallback = String((e as Error)?.message || e);
-        if (keepBooted) await shutdownIosSim(udid, operation);
+        if (keepBooted) {
+          await shutdownIosSim(udid, operation);
+          await settleIosSimShutdown(udid, shutdownClock, operation);
+        }
       }
     }
     if (del) {

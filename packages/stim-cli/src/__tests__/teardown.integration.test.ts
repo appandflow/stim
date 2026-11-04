@@ -375,6 +375,18 @@ test('teardownOwnedIosSim shuts a booted simulator down to park it when no grace
     expect(readParked('ios')[0]?.bootedUntil).toBeUndefined();
   }));
 
+test('teardownOwnedIosSim parks a simulator that is already shut down without a booted mark, whatever the grace period', () =>
+  withParkingHome(async (projectPath) => {
+    const exec = iosExecutor({ sims: [{ ...OWNED, state: 'Shutdown' }] });
+    setExecutor(exec);
+    const bootedUntil = new Date(Date.now() + 15 * 60_000).toISOString();
+    const result = await teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1, bootedUntil } });
+    expect(result).toMatchObject({ status: 'torn-down', parked: { udid: 'U1' } });
+    expect(result.parkFallback).toBeUndefined();
+    expect(exec.calls.some((call) => /simctl delete/.test(call))).toBe(false);
+    expect(readParked('ios')[0]?.bootedUntil).toBeUndefined();
+  }));
+
 test('shutDownBootedParkedIosSim shuts the simulator down and keeps it parked without the booted mark', () =>
   withParkingHome(async (projectPath) => {
     const exec = iosExecutor({ sims: [OWNED] });

@@ -618,7 +618,7 @@ async function takeParkedIosSim({
     };
     const adopted = await adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device });
     if (!adopted) continue;
-    await requireOwnedIosSim(parked.udid);
+    const current = await requireOwnedIosSim(parked.udid);
     try {
       await renameIosSim(parked.udid, name);
     } catch {}
@@ -627,7 +627,7 @@ async function takeParkedIosSim({
         adopted.schemeApprovals && adopted.schemeApprovals.length > 0
           ? { ...device, schemeApprovals: adopted.schemeApprovals }
           : device,
-      booted: sim.state === 'Booted',
+      booted: current.state === 'Booted',
     };
   }
   return null;

@@ -269,6 +269,7 @@ async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protect
         act: mode === 'on',
         log: (level, event, msg, fields = {}) => writer.write({ src: trigger, level, event, msg, ...fields }),
         devices: measured.devices,
+        sims: measured.sims,
         simsFailed: measured.sims === null,
         remeasure: classify,
         fromRung: 2,
