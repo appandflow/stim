@@ -17,6 +17,7 @@ import {
   type ServiceSpec,
 } from '../src/service-plist.ts';
 import { statusLines, updateService, type ServiceStatus } from '../src/service.ts';
+import type { KeepAwakeStatus } from '../src/keep-awake.ts';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { installHostApp, permissionPanes, unpackRelease } from '../src/stim-host.ts';
 
@@ -245,6 +246,7 @@ describe('service status permissions', () => {
       stimHome: '/h',
       tailscale: null,
       route: null,
+      keepAwake: null,
     };
     expect(line(statusLines({ ...status, health }, permissionPanes(27)), 'health:')).toMatch(/^ {2}health: ok,/);
     const degraded = { ...health, startup: { state: 'degraded' as const, reason: 'A read did not finish.' } };
@@ -255,6 +257,23 @@ describe('service status permissions', () => {
     expect(line(statusLines({ ...status, health: pending }, permissionPanes(27)), 'health:')).toMatch(
       /^ {2}health: starting/,
     );
+  });
+
+  it('reports whether the keep-awake assertion is held, and why not', () => {
+    const health = {
+      startup: { state: 'ready' as const },
+      version: '1',
+      stim: '1',
+      stimHome: '/h',
+      tailscale: null,
+      route: null,
+    };
+    const keepAwakeLine = (keepAwake: KeepAwakeStatus | null) =>
+      line(statusLines({ ...status, health: { ...health, keepAwake } }, permissionPanes(27)), 'keep awake:');
+    expect(keepAwakeLine({ setting: true, held: true, pid: 4242 })).toBe('  keep awake: held (caffeinate pid 4242)');
+    expect(keepAwakeLine({ setting: true, held: false, reason: 'unsupported' })).toContain('only macOS supports it');
+    expect(keepAwakeLine({ setting: true, held: false, reason: 'not-listening' })).toContain('no tailnet or local');
+    expect(keepAwakeLine(null)).toBe('');
   });
 
   it('points a node-first service at reinstalling', () => {

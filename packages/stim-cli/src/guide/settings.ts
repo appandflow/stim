@@ -996,6 +996,24 @@ Set either setting to false to resume that capability. A pause does not make the
 machine idle: wait for existing work to finish or stop the relevant sessions before
 benchmarking. Agents change these settings only when the user asks them to.
 
+KEEP A WORKER AWAKE
+A worker that sleeps stops answering the machines that build or host simulators on it,
+paired phones and share links. On the worker machine:
+
+  stim settings set server.keepAwake true
+
+It defaults to false. On macOS the running server then prevents idle system sleep
+(caffeinate -s, so only on AC power; the display may still sleep) while it accepts
+connections from other machines: its Tailscale or server.lanAddresses listener is up and
+it is not a --loopback-only server. It lets go when the setting turns false, when those
+listeners go away, and when it stops, and it reads the setting without a restart.
+\`stim-server service status\` prints a keep awake line, and /health carries keepAwake
+with held and, when not held, a reason (off, unsupported, loopback-only, not-listening,
+failed). A failed caffeinate is not restarted by itself: restart stim-server to retry. Turning
+the setting off and on also works, but the server polls the setting every 5 seconds, so
+wait more than 5 seconds between the two and confirm with \`stim-server service status\`. On Linux and Windows the setting has no effect and the status says so. Agents
+change this setting only when the user asks them to.
+
 DEVICE HOSTING
 Only \`stim remote add\` and \`doctor --fix\` ask for device-host access: they
 make a setup ticket and print the command. A person approves by running \`stim-server setup\` on the

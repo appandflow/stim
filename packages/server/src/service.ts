@@ -43,6 +43,7 @@ import {
 import { hostPermissionPanes, requestHostPermissions, type HostApp } from './stim-host.ts';
 import { findTailscale, readTailscaleStatus, serveCommand, serveRoute } from '@stim-cli/transport-tailscale';
 import type { StartupState } from './startup.ts';
+import type { KeepAwakeReason, KeepAwakeStatus } from './keep-awake.ts';
 
 const HEALTH_TIMEOUT_MS = 5_000;
 const HEALTH_WAIT_MS = 15_000;
@@ -185,6 +186,7 @@ interface Health {
   tailscale?: { state: string; dnsName?: string | null; backendState?: string; reason?: string };
   route?: { state: string; port?: number; ports?: number[]; reason?: string };
   lan?: { addresses: string[]; port: number };
+  keepAwake?: KeepAwakeStatus;
 }
 
 export async function fetchHealth(port: number): Promise<Health | null> {
@@ -450,6 +452,8 @@ export interface ServiceStatus {
     stimHome: string;
     tailscale: string | null;
     route: string | null;
+    /** Whether the server holds the keep-awake assertion; null when the server predates it. */
+    keepAwake: KeepAwakeStatus | null;
   } | null;
   serve: ServeRecord | null;
   logPath: string | null;
@@ -516,6 +520,7 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
           stimHome: health.stimHome,
           tailscale: tailscaleText(health.tailscale),
           route: routeText(health.route),
+          keepAwake: health.keepAwake ?? null,
         }
       : null,
     serve: installed?.serve ?? null,
@@ -543,6 +548,19 @@ function tailscaleText(tailscale: Health['tailscale']): string | null {
   if (tailscale.state === 'running') return tailscale.dnsName ? `running (${tailscale.dnsName})` : 'running';
   const detail = tailscale.backendState ?? tailscale.reason;
   return detail ? `${tailscale.state} (${detail})` : tailscale.state;
+}
+
+const KEEP_AWAKE_REASONS: Record<KeepAwakeReason, string> = {
+  off: 'off (server.keepAwake is false)',
+  unsupported: 'not held, only macOS supports it',
+  'loopback-only': 'not held, this server accepts only this machine',
+  'not-listening': 'not held, no tailnet or local network listener is up',
+  failed: 'not held, caffeinate did not start or stopped (restart stim-server to retry)',
+};
+
+function keepAwakeText(keepAwake: KeepAwakeStatus): string {
+  if (keepAwake.held) return `held${keepAwake.pid ? ` (caffeinate pid ${keepAwake.pid})` : ''}`;
+  return KEEP_AWAKE_REASONS[keepAwake.reason ?? 'off'];
 }
 
 function routeText(route: Health['route']): string | null {
@@ -578,6 +596,7 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
   );
   if (status.health?.tailscale) lines.push(`  tailscale: ${status.health.tailscale}`);
   if (status.health?.route) lines.push(`  tailscale route: ${status.health.route}`);
+  if (status.health?.keepAwake) lines.push(`  keep awake: ${keepAwakeText(status.health.keepAwake)}`);
   if (status.serve) {
     lines.push(
       `  serve route: https ${status.serve.port} (${status.serve.created ? 'created by install' : 'not created by install'})`,

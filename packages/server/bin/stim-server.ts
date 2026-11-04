@@ -51,7 +51,7 @@ import { readDesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { loadTransport } from '@stim-cli/transport';
 import { localTransport, resolveLanAddresses } from '@stim-cli/transport-local';
-import { readLanAddresses, watchLanAddresses } from '../src/lan.ts';
+import { readLanAddresses, watchServerSettings } from '../src/lan.ts';
 import {
   findTailscale,
   serveCommand,
@@ -180,7 +180,7 @@ async function serve(
     fail('@stim-cli/transport-tailscale did not create a Tailscale transport');
   const transport = loaded.transport;
   const { state: tailscale } = transport.snapshot();
-  const lanSetting = watchLanAddresses();
+  const lanSetting = watchServerSettings();
   await Promise.race([lanSetting.ready, new Promise((done) => setTimeout(done, 1000).unref())]);
   const lan = localTransport({ entries: lanSetting.current });
   const stim = bundledStim();
@@ -221,6 +221,7 @@ async function serve(
       env,
       currentEnv,
       transports: [transport, lan],
+      keepAwake: { setting: lanSetting.keepAwake, onChange: lanSetting.onKeepAwakeChange },
       service: {
         label: serviceManagerOrNull()?.runningLabel(process.env) ?? null,
         node: process.execPath,
