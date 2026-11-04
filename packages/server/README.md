@@ -1280,8 +1280,14 @@ Hosted iOS and Android sessions allow `record start` and `record stop`, outside
 `clientArtifactPaths.outPath`. It replaces the path with
 `<tmpdir>/stim-server-recordings-<hash>/<random>/recording.<ext>` (directory mode
 0700), where `<tmpdir>` is the server's `os.tmpdir()` and `<hash>` derives from
-the session's agent-device state directory, so the daemon writes the video, its
-chunks and gesture telemetry only there. The recording stays off the Stim home
+the session's agent-device state directory. agent-device 0.21.35 and later ignore
+that path for a remote request and write `recording-<uuid>.<ext>` in the session's
+directory under `<state dir>/sessions/`, so when the driver starts the daemon it
+replaces `<state dir>/sessions` with a link to
+`<tmpdir>/stim-server-recordings-<hash>/sessions` (mode 0700). A `record start`
+answers 500 when that link is missing or points elsewhere. The daemon writes the video, its
+chunks and gesture telemetry only under `<tmpdir>`, and the hosted session's
+agent-device session logs live there until the driver stops. The recording stays off the Stim home
 because the simulator's `SimRenderServer` writes the file, and macOS denies it
 removable volumes such as an external disk holding `~/.stim`. `record stop` returns them as daemon artifacts, which the
 client downloads over `GET /artifacts/<id>` on the same agent route, and the

@@ -1,10 +1,12 @@
 import { EventEmitter } from 'node:events';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -428,7 +430,7 @@ test('writes a recording only in a private temp directory, one at a time, and re
 
   mkdirSync(join(recordings, 'left-by-a-crash'), { recursive: true });
   await start();
-  expect(existsSync(recordings)).toBe(false);
+  expect(readdirSync(recordings)).toEqual(['sessions']);
 });
 
 test.skipIf(process.platform === 'win32')(
@@ -441,6 +443,7 @@ test.skipIf(process.platform === 'win32')(
     const elsewhere = join(home, 'elsewhere');
     mkdirSync(elsewhere, { mode: 0o700 });
     await start();
+    rmSync(recordings, { recursive: true });
     symlinkSync(elsewhere, recordings, 'dir');
     const calls = fixture.calls.length;
     expect((await rpc(recordStart())).status).toBe(500);
@@ -450,11 +453,106 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+const SESSIONS = () => join(home, 'agent', 'sessions');
+
+function agentDeviceRecording(name = 'recording-0a1b2c.mp4', session = 'stim.s_default') {
+  const dir = join(SESSIONS(), session);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, name);
+  writeFileSync(file, 'x');
+  return file;
+}
+
+test.skipIf(process.platform === 'win32')(
+  'agent-device resolves its session directory off the Stim home, replacing one left there',
+  async () => {
+    mkdirSync(join(SESSIONS(), 'stim.s_old'), { recursive: true });
+    writeFileSync(join(SESSIONS(), 'stim.s_old', 'events.ndjson'), '');
+    await start();
+    expect(lstatSync(SESSIONS()).isSymbolicLink()).toBe(true);
+    const file = agentDeviceRecording();
+    expect(existsSync(join(SESSIONS(), 'stim.s_old'))).toBe(false);
+    const real = realpathSync(file);
+    expect(relative(realpathSync(home), real).startsWith('..')).toBe(true);
+    expect(relative(realpathSync(tmpdir()), real).startsWith('..')).toBe(false);
+    expect(statSync(dirname(dirname(real))).mode & 0o777).toBe(0o700);
+
+    await driver.stop();
+    expect(existsSync(real)).toBe(false);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'refuses to record when agent-device would write its session directory inside the Stim home',
+  async () => {
+    await start();
+    rmSync(SESSIONS());
+    mkdirSync(SESSIONS());
+    const calls = fixture.calls.length;
+    expect((await rpc(recordStart())).status).toBe(500);
+    expect(fixture.calls.slice(calls).some((call) => call.body.includes('"record"'))).toBe(false);
+  },
+);
+
+test.each([
+  { stop: 'client', maxRecordingMs: 600_000 },
+  { stop: 'time limit', maxRecordingMs: 200 },
+])(
+  'deletes a recording agent-device wrote in its own session directory over the size limit after a $stop stop',
+  async ({ maxRecordingMs }) => {
+    await driver.stop();
+    driver = new AgentDeviceDriver({
+      env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
+      stateDir: join(home, 'agent'),
+      claimRoot: join(home, 'claims'),
+      device: { session: SESSION, udid: UDID },
+      maxRecordingBytes: 10,
+      maxRecordingMs,
+    });
+    await start();
+    await rpc(recordStart());
+    const file = agentDeviceRecording();
+    writeFileSync(file, 'more than ten bytes');
+    const stop = { command: 'record', session: 'default', positionals: ['stop'] };
+    const answer =
+      maxRecordingMs < 600_000
+        ? await vi.waitFor(async () => {
+            if (existsSync(file)) throw new Error('waiting for the time-limit stop');
+            return JSON.parse((await rpc(stop)).text);
+          })
+        : JSON.parse((await rpc(stop)).text);
+    expect(answer).toMatchObject({ result: { ok: false, error: { details: { reason: 'STIM_RECORDING_TOO_LARGE' } } } });
+    expect(existsSync(file)).toBe(false);
+  },
+);
+
+test('a later recording leaves an earlier one that was not downloaded yet alone', async () => {
+  await driver.stop();
+  driver = new AgentDeviceDriver({
+    env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
+    stateDir: join(home, 'agent'),
+    claimRoot: join(home, 'claims'),
+    device: { session: SESSION, udid: UDID },
+    maxRecordingBytes: 10,
+  });
+  await start();
+  await rpc(recordStart());
+  const first = agentDeviceRecording('recording-first.mp4');
+  writeFileSync(first, '0123456789');
+  const stop = { command: 'record', session: 'default', positionals: ['stop'] };
+  expect(JSON.parse((await rpc(stop)).text)).toMatchObject({ result: { ok: true } });
+  await rpc(recordStart());
+  const second = agentDeviceRecording('recording-second.mp4');
+  writeFileSync(second, '0123456789');
+  expect(JSON.parse((await rpc(stop)).text)).toMatchObject({ result: { ok: true } });
+  expect(existsSync(first)).toBe(true);
+});
+
 test('a start the daemon refuses leaves no recording behind', async () => {
   await start();
   fixture.recordError = { code: 'COMMAND_FAILED', message: 'recorder failed to start' };
   expect((await rpc(recordStart())).status).toBe(200);
-  expect(readdirSync(dirname(dirname(forwardedRecord().params.positionals[1])))).toEqual([]);
+  expect(readdirSync(dirname(dirname(forwardedRecord().params.positionals[1])))).toEqual(['sessions']);
   fixture.recordError = { code: '', message: '' };
   expect((await rpc(recordStart())).status).toBe(200);
 });
