@@ -75,7 +75,7 @@ test('a lookup younger than maxAgeMs is answered from the cache without asking G
   expect(gh).toHaveLength(1);
 });
 
-test('a stale lookup, or one for another HEAD, asks GitHub again and rewrites the cache', async () => {
+test('a stale lookup, one dated in the future, or one for another HEAD asks GitHub again and rewrites the cache', async () => {
   const refresh = refreshPullRequests({ maxAgeMs: MAX_AGE, now });
   await refresh('/repo', [request('one')]);
   clock += MAX_AGE;
@@ -83,8 +83,12 @@ test('a stale lookup, or one for another HEAD, asks GitHub again and rewrites th
   expect(gh).toHaveLength(2);
   expect(readPullRequestCache(request('one').path)?.checkedAt).toBe(new Date(clock).toISOString());
 
-  await refresh('/repo', [request('one', 'b'.repeat(40))]);
+  clock -= 1000;
+  await refresh('/repo', [request('one')]);
   expect(gh).toHaveLength(3);
+
+  await refresh('/repo', [request('one', 'b'.repeat(40))]);
+  expect(gh).toHaveLength(4);
   expect(readPullRequestCache(request('one').path)?.head).toBe('b'.repeat(40));
 });
 

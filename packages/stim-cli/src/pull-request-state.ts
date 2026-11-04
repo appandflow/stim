@@ -100,7 +100,8 @@ export function cachedPullRequest(
   const cached = readPullRequestCache(path);
   if (!cached || cached.branch !== branch || cached.head !== head) return null;
   if (detail && cached.partial) return null;
-  if (!(now() - Date.parse(cached.checkedAt) < maxAgeMs)) return null;
+  const age = now() - Date.parse(cached.checkedAt);
+  if (!(age >= 0 && age < maxAgeMs)) return null;
   return lookupOf(cached);
 }
 
