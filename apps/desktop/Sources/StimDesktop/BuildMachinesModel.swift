@@ -339,16 +339,17 @@ final class BuildMachinesModel {
       (status.map(Tailnet.peers(statusJSON:)) ?? []).filter(\.mac.buildsAndroidOnly).flatMap { [$0.mac.machine, $0.mac.dnsName] })
   }
 
+  /// The listing runs after doctor, never beside it: both take the device-host inspection claim, and the one that
+  /// loses it reports every hosting machine as busy.
   func load(checkout: String?) async {
     async let settingsRead: Void = settings.refresh()
-    async let listed: Void = refreshListing()
     await checkTailscale()
     await settingsRead
     await refreshStatuses(checkout: checkout, ask: false)
-    await listed
+    await refreshListing()
   }
 
-  func refreshListing() async {
+  private func refreshListing() async {
     guard let listed = try? await remoteListing(), !Task.isCancelled else { return }
     listing = listed
   }

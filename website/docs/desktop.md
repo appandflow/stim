@@ -239,7 +239,7 @@ show refusals for removals started from its own workspace actions.
 
 :::note[Phone app feature flag]
 Stim Desktop hides everything about the phone app unless the **Phone app**
-feature flag is on: paired phones and **Add... > Pair a Phone...** in **Settings > Connections**,
+feature flag is on: **Add... > Pair a Phone...** in **Settings > Connections** (paired phones stay listed there),
 the phone steps of the setup guide and tutorial, and phone suggestions. Turn it on in
 **Settings > Advanced > Feature flags**. A Mac that already serves phones or has
 a paired phone starts with it on. Turning the flag off revokes no pairings and
@@ -753,7 +753,7 @@ stim ios`}
 2. Click a device to open its viewer. **Take over** lets you use it; Escape
    gives it back.
 3. To use the phone app, open **Stim > Settings > Connections > Using this machine**
-   and choose **Add... > Pair a Phone…**. The wizard checks Tailscale, turns on serving, sets up a private
+   and choose **Add... > Pair a Phone…**. The wizard checks Tailscale, allows connections, sets up a private
    tailnet route, shows a code and waits for the phone. Setup keeps existing
    Tailscale routes and never enables Funnel. If Tailscale asks to enable HTTPS,
    approve its browser setup and retry. Pairing waits for a verified private
@@ -882,18 +882,20 @@ existing workspace and archive behavior.
 
 ## Connections
 
-**Settings > Connections** lists every connection of this Mac in two segments.
+**Settings > Connections** lists every connection of this machine in two segments.
 
-**Using this machine** lists what uses this Mac:
+**Using this machine** lists what uses this machine:
 
 - **Allow connections** lets paired phones and machines reach Desktop's own
-  `stim-server` over your tailnet. Off, the server answers this Mac only and every
+  `stim-server` over your tailnet. Off, the server answers this machine only and every
   pairing is kept. Share links use their own route either way. A warning under it
   says when Tailscale is off, the server is public through Funnel, or its private
-  tailnet route is missing, with a button that fixes it.
-- **Keep this machine awake** prevents sleep while the Mac is plugged in and
+  tailnet route is missing, with a button that fixes it. The first launch of this
+  version turns it off once on a Mac whose Phone app flag is off, since that Mac's
+  server answered it alone until now.
+- **Keep this machine awake** prevents sleep while the machine is plugged in and
   connections are allowed. It shows when your Stim has the setting.
-- One row per phone or machine, grouped by its key, with its name, **Device**
+- One row per phone or machine, grouped by its key, whatever the Phone app flag says, with its name, **Device**
   (a `stim-server pair` pairing, which a phone and Stim Desktop on another machine
   both use) or **Machine**, when it last connected, and its access: **View**,
   **Control**, **Build** or **Run devices**. Build and Run devices run that machine's
@@ -901,15 +903,14 @@ existing workspace and archive behavior.
   record of that key. The row's menu changes a pairing between **View** and
   **Control**, renames every record of the row with `stim-server devices rename`
   (the client sees the name on its next connection), and copies each record id.
-  Build and Run devices are approved only with `stim-server setup` on this Mac.
-  With the Phone app flag off, pairings that may be phones are hidden.
+  Build and Run devices are approved only with `stim-server setup` on this machine.
 - **Share links** lists the live [web shares](./share.md), each with **Stop**.
 - **Running here** lists the hosted simulators, emulators and apps other machines
-  run on this Mac, each with **Stop**.
+  run on this machine, each with **Stop**.
 - **Add...** offers **Pair a Phone...** (with the Phone app flag on) and explains how
   another machine asks to build here and how to share a device.
 
-**This machine uses** lists one row per machine this Mac uses: its
+**This machine uses** lists one row per machine this machine uses: its
 `remote.machines` entries in placement order, and the machines it paired with to
 view or control their work. A remote machine and a pairing that pinned the same
 `stim-server` key, as `stim remote list --json` reports it, share one row. Each row
@@ -919,7 +920,7 @@ fingerprint matches the one `stim-server setup` printed there) or **Server is
 outdated**, and its access. **Remove...** forgets the machine here, removing it
 from `remote.machines` and deleting the pairing's key from the Keychain, and shows
 the `stim-server devices revoke <id>` commands to run on that machine, since
-removing it here never revokes this Mac there. **Add...** offers **Build or Run
+removing it here never revokes this machine there. **Add...** offers **Build or Run
 Simulators There...**, the setup wizard below, and **View or Control Its Work...**,
 the pairing sheet described in [Pair with another machine](#pair-with-another-machine).
 

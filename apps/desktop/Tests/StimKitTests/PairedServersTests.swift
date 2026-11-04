@@ -265,7 +265,7 @@ private let code =
     rig.servers.reload()
     rig.servers.start()
     await rig.settle { rig.servers.entries.first?.status.title.contains("no longer knows") == true }
-    #expect(rig.servers.entries[0].status.title == "floco no longer knows this Mac")
+    #expect(rig.servers.entries[0].status.title == "floco no longer knows this machine")
     rig.servers.forget(id: kept.id)
     #expect(rig.servers.entries.isEmpty)
     rig.servers.stop()
@@ -368,8 +368,8 @@ private let code =
   @Test func aPairingTheServerNeverRecordedSaysSoInsteadOfClaimingARevocation() {
     var entry = PairedServers.Entry(
       id: "x", kind: .pairing(pairing(10, capabilities: [])), connection: .refused(NoiseClientTransport.refusal("unauthorized")))
-    #expect(entry.status.title == "floco never recorded this Mac")
+    #expect(entry.status.title == "floco never recorded this machine")
     entry.kind = .pairing(pairing(10, capabilities: ["read"]))
-    #expect(entry.status.title == "floco no longer knows this Mac")
+    #expect(entry.status.title == "floco no longer knows this machine")
   }
 }

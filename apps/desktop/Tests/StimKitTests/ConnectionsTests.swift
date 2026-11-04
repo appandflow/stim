@@ -23,7 +23,7 @@ struct ConnectionsTests {
     """
 
   @Test func groupsIncomingRecordsByClientKeyWithEveryAccessTheyHold() throws {
-    let rows = Connections.incoming(try devices(listed), phoneApp: true)
+    let rows = Connections.incoming(try devices(listed))
     #expect(rows.map(\.id) == ["k-phone", "k-studio", "k-desk", "k-old"])
     let studio = rows[1]
     #expect(studio.records.map(\.id) == ["build", "host"])
@@ -33,10 +33,6 @@ struct ConnectionsTests {
     #expect(rows[0].kind == .device && rows[0].access == [.view, .control] && rows[0].pairing?.id == "phone")
     #expect(rows[2].kind == .machine && rows[3].kind == .device)
     #expect(rows[3].lastConnected == "Never connected")
-  }
-
-  @Test func hidesPairingsThatMayBePhonesWhileThePhoneAppIsOff() throws {
-    #expect(Connections.incoming(try devices(listed), phoneApp: false).map(\.id) == ["k-studio", "k-desk"])
   }
 
   private func pairing(_ byte: UInt8, name: String, capabilities: [String], deviceID: String?) -> PairedServers.Entry {
@@ -78,9 +74,14 @@ struct ConnectionsTests {
     #expect(rows[3].revokeCommands.isEmpty)
   }
 
-  @Test func keepsRemoteMachinesApartFromPairingsWithoutAPinnedKey() {
+  @Test func neverMergesAPairingIntoARemoteMachineByName() throws {
     let mini = pairing(7, name: "mini", capabilities: ["read"], deviceID: nil)
-    let rows = Connections.outgoing(entries: ["mini"], statuses: nil, hosts: nil, listing: nil, paired: [mini])
-    #expect(rows.map(\.entry) == ["mini", nil])
+    let other = try JSONDecoder().decode(
+      RemoteMachineListing.self,
+      from: Data(#"{"machines":[{"machine":"mini","serverKeyFingerprint":"another-key","revoke":[]}]}"#.utf8))
+    for listing in [nil, other] {
+      let rows = Connections.outgoing(entries: ["mini"], statuses: nil, hosts: nil, listing: listing, paired: [mini])
+      #expect(rows.map(\.entry) == ["mini", nil])
+    }
   }
 }

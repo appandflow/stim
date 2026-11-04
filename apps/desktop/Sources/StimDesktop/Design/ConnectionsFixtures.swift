@@ -107,7 +107,7 @@
     private var incoming: some View {
       IncomingConnectionsContent(
         allowsConnections: $allows, problem: nil, phoneApp: true,
-        connections: Connections.incoming(devices, phoneApp: true), keepsAwake: $awake, shares: shares,
+        connections: Connections.incoming(devices), keepsAwake: $awake, shares: shares,
         workspaceTitle: { _ in "checkout" }, sessions: sessions, addPhone: {}, explain: { _ in }, fix: { _ in },
         setAccess: { _, _ in }, rename: { _ in }, revoke: { _ in }, stopShare: { _ in }, stopWorkspaceShares: { _ in },
         stopSession: { _ in },

@@ -101,9 +101,9 @@ public struct RemoteMachineListing: Decodable, Equatable, Sendable {
 }
 
 public enum Connections {
-  /// The records of `stim-server devices --json`, one connection per client key in the order they arrive. With the
-  /// phone app off, a key that only paired with `stim-server pair` is left out, since it may be a phone.
-  public static func incoming(_ devices: [PairedDevice], phoneApp: Bool) -> [IncomingConnection] {
+  /// The records of `stim-server devices --json`, one connection per client key in the order they arrive. Every record
+  /// that can connect is listed, whatever the phone app flag says.
+  public static func incoming(_ devices: [PairedDevice]) -> [IncomingConnection] {
     var order: [String] = []
     var groups: [String: [PairedDevice]] = [:]
     for device in devices {
@@ -113,7 +113,7 @@ public enum Connections {
     return order.compactMap { key in
       let records = groups[key] ?? []
       let machine = records.contains { !$0.isPhone || $0.kind == "desktop" }
-      guard machine || phoneApp, let first = records.first else { return nil }
+      guard let first = records.first else { return nil }
       return IncomingConnection(
         id: key, name: first.name, kind: machine ? .machine : .device, records: records,
         lastSeenAt: records.compactMap(\.lastSeenAt).max(),

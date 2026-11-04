@@ -61,9 +61,7 @@ struct BuildMachinesView: View {
         guard !model.isBusy, !Task.isCancelled, model.entries != nil else { continue }
         await model.checkTailscale()
         guard !(model.entries ?? []).isEmpty else { continue }
-        async let listed: Void = model.refreshListing()
         await model.refreshStatuses(checkout: checkout, ask: false)
-        await listed
       }
     }
     .sheet(

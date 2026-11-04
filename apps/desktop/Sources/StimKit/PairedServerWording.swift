@@ -35,13 +35,13 @@ public enum PairedServerWording {
       switch context {
       case .pairing:
         return PairedServerNotice(
-          tone: .error, title: "\(machine) did not accept this Mac",
-          detail: "It refused to record this Mac, so nothing was saved. Run stim-server pair on it for a new code.",
+          tone: .error, title: "\(machine) did not accept this machine",
+          detail: "It refused to record this machine, so nothing was saved. Run stim-server pair on it for a new code.",
           command: "stim-server pair")
       case .connection:
         return PairedServerNotice(
-          tone: .error, title: "\(machine) no longer knows this Mac",
-          detail: "Its record for this Mac was revoked. Remove this pairing, then pair again with a new code.",
+          tone: .error, title: "\(machine) no longer knows this machine",
+          detail: "Its record for this machine was revoked. Remove this pairing, then pair again with a new code.",
           command: "stim-server pair")
       }
     case "server-key-mismatch":
@@ -73,7 +73,7 @@ public enum PairedServerWording {
         detail: "The server that answered is not the one Stim Desktop expected at this address.", command: nil)
     case "already-paired":
       return PairedServerNotice(
-        tone: .warning, title: "This Mac is already paired with \(machine)",
+        tone: .warning, title: "This machine is already paired with \(machine)",
         detail:
           "This attempt did not use the code. To pair again, remove the existing pairing first.",
         command: nil)
@@ -93,11 +93,11 @@ public enum PairedServerWording {
       return PairedServerNotice(
         tone: .warning, title: "\(machine.capitalizedFirst) did not confirm the pairing",
         detail:
-          "\(error.message.sentence) The code may be used up and \(machine) may have recorded this Mac, so Stim Desktop kept the pairing. It finishes when \(machine) answers. To undo it, remove it here, then find this Mac in the list on \(machine) and revoke it.",
+          "\(error.message.sentence) The code may be used up and \(machine) may have recorded this machine, so Stim Desktop kept the pairing. It finishes when \(machine) answers. To undo it, remove it here, then find this machine in the list on \(machine) and revoke it.",
         command: "stim-server devices")
     case "own-server":
       return PairedServerNotice(
-        tone: .warning, title: "That is this Mac's own server",
+        tone: .warning, title: "That is this machine's own server",
         detail:
           "Stim Desktop already shows it, so the pairing was removed. Revoke the record it left in Settings > Connections > Using this machine, or with this command on this machine.",
         command: error.message)
@@ -110,7 +110,7 @@ public enum PairedServerWording {
       return PairedServerNotice(
         tone: .error, title: "Can't reach \(machine)",
         detail: unresolved
-          ? "This Mac could not resolve its name. Check that Tailscale is on and that its DNS settings let this Mac resolve names on that tailnet. \(error.message.sentence)"
+          ? "This machine could not resolve its name. Check that Tailscale is on and that its DNS settings let this machine resolve names on that tailnet. \(error.message.sentence)"
           : "\(error.message.sentence) Check that Tailscale is on, that \(machine) is on the tailnet and that stim-server is running there.",
         command: nil)
     default:
@@ -139,7 +139,7 @@ public enum PairedServerWording {
   /// The sidebar title of a paired machine's section, which holds work that belongs to that machine.
   public static func sectionTitle(name: String) -> String { "\(displayName(name)) \(viewingSuffix)" }
 
-  /// The command that removes this Mac's record on the server, which Remove does not do.
+  /// The command that removes this machine's record on the server, which Remove does not do.
   public static func revokeCommand(deviceID: String?) -> String {
     plainDeviceID(deviceID).map { "stim-server devices revoke \($0)" } ?? "stim-server devices"
   }
@@ -173,7 +173,7 @@ extension PairedServers.Entry {
         tone: .error, title: "Unreadable pairing",
         detail: "Stim Desktop cannot read this item in the Keychain. Remove it here.", command: nil)
     }
-    let unconfirmed = pairing.isConfirmed ? nil : "This Mac has not been confirmed by the machine yet."
+    let unconfirmed = pairing.isConfirmed ? nil : "This machine has not been confirmed by the machine yet."
     switch connection {
     case .idle:
       return PairedServerStatus(tone: .tertiary, title: "Not connected", detail: unconfirmed, command: nil)
@@ -191,7 +191,7 @@ extension PairedServers.Entry {
     case .refused(let error) where error.code == "unauthorized" && !pairing.isConfirmed:
       let name = pairing.name.isEmpty ? "The machine" : pairing.name
       return PairedServerStatus(
-        tone: .error, title: "\(name) never recorded this Mac",
+        tone: .error, title: "\(name) never recorded this machine",
         detail: "It refused this pairing, so it cannot finish. Remove it and pair again with a new code.", command: nil)
     case .refused(let error):
       let notice = PairedServerWording.notice(for: error, context: .connection, name: pairing.name)

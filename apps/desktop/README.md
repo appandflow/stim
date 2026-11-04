@@ -280,7 +280,7 @@ Advanced > Feature flags** lists them with **Reset to Defaults**. Code asks `Fea
 (StimKit), or `FeatureFlagStore.shared` from a view. A launch argument such as `-featureFlag.phoneApp YES` sets a
 flag for one run.
 
-**Phone app** is off by default. Off, Desktop hides paired phones and **Add... > Pair a Phone...** in **Settings > Connections**, the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
+**Phone app** is off by default. Off, Desktop hides **Add... > Pair a Phone...** in **Settings > Connections** (paired phones stay listed), the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
 phones in copy. It never revokes a pairing and leaves **Allow connections** as it is. A Mac that already serves phones or has a
 paired phone gets the flag on at first launch with flags. The phone app is documented in
 `website/docs/phone-app.md`.
@@ -1392,12 +1392,19 @@ with **Build** and **Run devices**. A row shows the name, **Device** for a `stim
 machine's Desktop; until servers report `kind: desktop` the two cannot be told apart) or **Machine**, last connected,
 the access pills and **Revoke Access...**, which revokes every record of the key. Its menu holds **Change Access**
 (**View** or **Control**, through `stim-server devices grant`, for the pairing record only), **Rename...**
-(`stim-server devices rename <id> <name>` for every record of the row) and each record id. With the Phone app flag
-off, a key with only `stim-server pair` records is hidden. **Share links** and **Running here** follow.
+(`stim-server devices rename <id> <name>` for every record of the row) and each record id. Every record that can
+connect is listed whatever the Phone app flag says; the flag hides only **Add... > Pair a Phone...** and the phone
+wizard. **Revoke Access...** revokes the records one after another and keeps the first failure shown. **Share links**
+and **Running here** follow.
+
+`servesPhones` used to open the tailnet listener only together with the Phone app flag. On the first launch with
+Connections, `FeatureFlags.resetServingWithoutPhoneApp` runs once after `FeatureFlags.seed` and turns `servesPhones`
+off where the flag is off, so no server that was loopback-only starts listening on the tailnet by itself.
 
 **This machine uses** lists `Connections.outgoing`: the `remote.machines` entries in placement order, each joined with
 the Keychain pairing whose id equals the entry's `serverKeyFingerprint` from the server's `remote` desktop report
-(`stim remote list --json`), then the pairings no entry shares, including unreadable ones. Without that report, from
+(`stim remote list --json`, read once doctor's check has finished, since both take the device-host inspection claim),
+then the pairings no entry shares, including unreadable ones. Without that report, from
 an older server, entries and pairings stay separate rows. Doctor's states win over the report's. Access pills come from
 the pairing's capabilities and the approved build and device-host states. **Remove...** opens one sheet that removes
 the entry from `remote.machines`, forgets the pairing, and lists the `stim-server devices revoke <id>` commands to run

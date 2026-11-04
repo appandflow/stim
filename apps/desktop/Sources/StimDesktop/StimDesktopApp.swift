@@ -228,6 +228,7 @@ struct StimDesktopApp: App {
     AppPreferences.migrate(.standard)
     FeatureFlags.seed(
       servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones), pairedPhones: nil)
+    FeatureFlags.resetServingWithoutPhoneApp()
     CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
     let stimHome = UserDefaults.standard.string(forKey: AppPreferences.Key.stimHome)
     let overrides = UserDefaults.standard.string(forKey: AppPreferences.Key.environmentOverrides)

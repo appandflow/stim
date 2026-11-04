@@ -26,7 +26,7 @@ struct IncomingConnectionsView: View {
   var body: some View {
     IncomingConnectionsContent(
       allowsConnections: $allowsConnections, problem: problem, phoneApp: flags.phoneApp,
-      connections: Connections.incoming(server.devices, phoneApp: flags.phoneApp),
+      connections: Connections.incoming(server.devices),
       changing: Set(server.pendingGrants.keys), errors: [server.devicesError, server.changeError].compactMap { $0 },
       keepsAwake: keepsAwake, shares: shares.shares, stopsOneShare: shares.stopsOneShare, stoppingShares: shares.stopping,
       workspaceTitle: { store.names(ofPath: $0).title }, sessions: hosted.sessions ?? [], stoppingSessions: hosted.stopping,
@@ -67,7 +67,7 @@ struct IncomingConnectionsView: View {
       presenting: revoking
     ) { connection in
       Button("Revoke Access", role: .destructive) {
-        for record in connection.records { server.revoke(record) }
+        server.revoke(connection.records)
       }
     } message: { connection in
       Text(
@@ -223,11 +223,8 @@ struct IncomingConnectionsContent<Server: View>: View {
         }
         ForEach(errors, id: \.self) { Text(abbreviatingHome($0)).foregroundStyle(Palette.error).textSelection(.enabled) }
         if connections.isEmpty {
-          Text(
-            phoneApp
-              ? "No phone or machine uses this machine yet." : "No other machine uses this machine yet."
-          )
-          .foregroundStyle(Palette.secondary)
+          Text("Nothing else uses this machine yet.")
+            .foregroundStyle(Palette.secondary)
         }
         ForEach(connections) { connection in
           IncomingConnectionRow(
@@ -237,7 +234,7 @@ struct IncomingConnectionsContent<Server: View>: View {
         }
       } header: {
         HStack {
-          Text(phoneApp ? "Phones and machines using this machine" : "Machines using this machine")
+          Text(phoneApp ? "Phones and machines using this machine" : "Devices and machines using this machine")
           Spacer()
           addMenu
         }
@@ -262,7 +259,7 @@ struct IncomingConnectionsContent<Server: View>: View {
       Toggle("Allow connections", isOn: $allowsConnections)
       Text(
         allowsConnections
-          ? "\(phoneApp ? "Paired phones and machines" : "Paired machines") reach this machine's stim-server over your tailnet."
+          ? "Paired devices and machines reach this machine's stim-server over your tailnet."
           : "Only this machine reaches its stim-server. Pairings are kept. Share links use their own route."
       )
       .font(.stim(.footnote)).foregroundStyle(Palette.secondary)

@@ -18,7 +18,7 @@ public enum FeatureFlag: String, CaseIterable, Identifiable, Sendable {
     switch self {
     case .phoneApp:
       return
-        "Shows everything about the Stim phone app: paired phones and Pair a Phone in Settings > Connections, the setup guide and tutorial steps, tips and suggestions that mention phones. Turning it off hides them; Allow connections and pairings stay as they are."
+        "Shows everything about the Stim phone app: Pair a Phone in Settings > Connections, the setup guide and tutorial steps, tips and suggestions that mention phones. Turning it off hides them; Allow connections and pairings stay as they are."
     }
   }
 
@@ -63,6 +63,21 @@ public enum FeatureFlags {
   /// Drops every choice so each flag follows its default again.
   public static func reset(defaults: UserDefaults = .standard) {
     for flag in FeatureFlag.allCases { defaults.removeObject(forKey: flag.overrideKey) }
+  }
+
+  public static let servingResetKey = "featureFlags.servingReset"
+
+  /// Once, after `seed`: turns off `servesPhones` on a Mac whose Phone app flag is off. Its server listened on
+  /// loopback only while that flag was off, and Allow connections no longer depends on the flag.
+  @discardableResult
+  public static func resetServingWithoutPhoneApp(defaults: UserDefaults = .standard) -> Bool {
+    guard defaults.object(forKey: servingResetKey) == nil else { return false }
+    defaults.set(true, forKey: servingResetKey)
+    guard defaults.bool(forKey: AppPreferences.Key.servesPhones), !isEnabled(.phoneApp, defaults: defaults) else {
+      return false
+    }
+    defaults.set(false, forKey: AppPreferences.Key.servesPhones)
+    return true
   }
 
   /// Decides, once, whether the phone app is on by default: on when this Mac already serves phones or has paired one,

@@ -568,20 +568,20 @@ final class ServerController: ObservableObject {
     control ? ["read", "control"] : ["read"]
   }
 
-  func revoke(_ device: PairedDevice) {
+  func revoke(_ devices: [PairedDevice]) {
     Task {
       let cli = await cli()
-      switch await Result.awaiting({ try await cli.revoke(device.id) }) {
-      case .success:
-        changeError = nil
-        devicesEpoch += 1
-        reloadDevices()
-      case .failure(let error): changeError = error.localizedDescription
+      changeError = nil
+      for device in devices {
+        if case .failure(let error) = await Result.awaiting({ try await cli.revoke(device.id) }), changeError == nil {
+          changeError = error.localizedDescription
+        }
       }
+      devicesEpoch += 1
+      reloadDevices()
     }
   }
 
-  /// Renames every record of one connection, so each shows the same name.
   func rename(_ devices: [PairedDevice], to name: String) {
     Task {
       let cli = await cli()

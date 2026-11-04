@@ -10,7 +10,7 @@ import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
 :::note[Phone app feature flag]
 Stim Desktop hides everything about the phone app unless the **Phone app**
-feature flag is on: paired phones and **Add... > Pair a Phone...** in **Settings > Connections**, the phone
+feature flag is on: **Add... > Pair a Phone...** in **Settings > Connections** (paired phones stay listed there), the phone
 steps of the setup guide and tutorial, and phone suggestions. Turn it on in
 **Settings > Advanced > Feature flags**. A Mac that already serves phones or has
 a paired phone starts with it on. Turning the flag off does not stop a running
@@ -67,7 +67,7 @@ devices to the same tailnet, allowing connections, scanning a code, and confirmi
 the paired phone. Checks update automatically.
 
 Desktop runs the server while it is open, or uses one already running. The
-wizard turns on serving and uses its authenticated loopback `route.setup`
+wizard allows connections and uses its authenticated loopback `route.setup`
 request to configure a private tailnet-only route. Setup preserves existing
 routes and never enables Funnel. If Tailscale asks to enable HTTPS, open
 **Open Tailscale Setup**, approve it in your browser, then choose **Try Again**.
