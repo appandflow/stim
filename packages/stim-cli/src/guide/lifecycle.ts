@@ -2270,7 +2270,10 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   order lives in those directories, and it reconnects on its next poll. Runs
   behind the head of the boot queue reuse the last device listing while it
   is under 10s old instead of listing again, and a boot starts only on a
-  listing taken under the admission lock. Every 10s a waiting
+  listing taken under the admission lock. A waiting boot reads the device caps
+  again on every poll, so raising concurrency.maxDevices or a per-platform cap
+  admits it on its next poll, and lowering one holds back boots not yet
+  admitted but never stops a device that is already booted. Every 10s a waiting
   run prints its queue position and what it waits for:
 
     build       waiting for a build slot: queue position 2 of 3, all 1 in use, 40s elapsed -- stim guide lifecycle concurrency

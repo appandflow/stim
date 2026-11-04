@@ -260,6 +260,48 @@ describe('per-platform device caps', () => {
   });
 });
 
+describe('a waiting run re-reads the device caps each round', () => {
+  const writeConcurrency = (concurrency: Record<string, number>) =>
+    writeFileSync(join(root, 'config.json'), JSON.stringify({ concurrency }));
+  const waitThen = (change: () => void, sims: typeof occupied) => {
+    let slept = 0;
+    let now = Date.now();
+    return withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => 'booted', {
+      root,
+      waitMs: 60_000,
+      sources: { ...empty, sims },
+      memory: () => null,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+        if (++slept === 1) change();
+      },
+    });
+  };
+
+  test('a raised concurrency.maxDevices admits the run that was already waiting', async () => {
+    writeConcurrency({ maxDevices: 1 });
+    await expect(waitThen(() => writeConcurrency({ maxDevices: 2 }), occupied)).resolves.toBe('booted');
+  });
+
+  test('a raised environment override and a raised per-platform cap admit it too', async () => {
+    writeConcurrency({ maxDevices: 1 });
+    await expect(waitThen(() => vi.stubEnv('STIM_MAX_DEVICES', '2'), occupied)).resolves.toBe('booted');
+    vi.unstubAllEnvs();
+    writeConcurrency({ maxDevices: 30, maxIosDevices: 1 });
+    await expect(waitThen(() => writeConcurrency({ maxDevices: 30, maxIosDevices: 2 }), occupied)).resolves.toBe(
+      'booted',
+    );
+  });
+
+  test('a cap that stays low keeps the run waiting until its ceiling', async () => {
+    writeConcurrency({ maxDevices: 1 });
+    await expect(waitThen(() => writeConcurrency({ maxDevices: 1 }), occupied)).rejects.toMatchObject({
+      code: 'STIM_AT_CAPACITY',
+    });
+  });
+});
+
 test('a wait under the derived device cap says the cap is derived and names the setting that overrides it', async () => {
   vi.stubEnv('STIM_MAX_DEVICES', '0');
   const { maxDevices, derived } = admissionLimits();

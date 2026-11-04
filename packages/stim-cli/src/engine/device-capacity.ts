@@ -882,7 +882,7 @@ export async function withDeviceBootAdmission<T>(
   {
     root,
     max: maxOption,
-    platformMax = getPlatformDeviceLimits(),
+    platformMax: platformMaxOption,
     sources = {},
     lockWaitMs = ADMISSION_LOCK_WAIT_MS,
     out = () => {},
@@ -907,8 +907,16 @@ export async function withDeviceBootAdmission<T>(
     memory?: () => { level: string | null; availableBytes: number | null } | null;
   },
 ): Promise<T> {
-  const admission = maxOption === undefined ? admissionLimits() : null;
-  const max = maxOption ?? admission?.maxDevices ?? 0;
+  let admission: ReturnType<typeof admissionLimits> | null = null;
+  let max = maxOption ?? 0;
+  let platformMax: Partial<Record<CappedPlatform, number>> = platformMaxOption ?? {};
+  let ownCap = 0;
+  const readLimits = () => {
+    admission = maxOption === undefined ? admissionLimits() : null;
+    max = maxOption ?? admission?.maxDevices ?? 0;
+    platformMax = platformMaxOption ?? getPlatformDeviceLimits();
+    ownCap = isCappedPlatform(device.platform) ? (platformMax[device.platform] ?? 0) : 0;
+  };
   const requireMembership = () => {
     if (automatic && !automaticMachineEnabled('device', 'local'))
       throw new DeviceAdmissionRefusal({
@@ -919,7 +927,6 @@ export async function withDeviceBootAdmission<T>(
   };
   signal?.throwIfAborted();
   requireMembership();
-  const ownCap = isCappedPlatform(device.platform) ? (platformMax[device.platform] ?? 0) : 0;
   const workspace = workspaceId(root);
   device = { ...device, workspace, displayName, root };
   const wake = daemonWaiter('boot');
@@ -945,6 +952,7 @@ export async function withDeviceBootAdmission<T>(
   const round = () => {
     signal?.throwIfAborted();
     requireMembership();
+    readLimits();
     const waiters = liveWaiters('boot');
     const mine = waiters.findIndex((holder) => holder.claimId === ticket?.claimId);
     const ahead = mine < 0 ? waiters : waiters.slice(0, mine);
