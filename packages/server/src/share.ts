@@ -111,7 +111,7 @@ export const SHARE_EXPIRY = { default: 60, max: 480 } as const;
 /** What the share hub needs of the rest of stim-server. */
 export interface ShareDeps {
   frames: Pick<FramePool, 'subscribe' | 'keyframe' | 'congested'>;
-  control: Pick<ControlHub, 'begin' | 'input' | 'release' | 'targetOf' | 'endFor'>;
+  control: Pick<ControlHub, 'begin' | 'input' | 'release' | 'targetOf' | 'endFor' | 'endById'>;
   /** Who else touches a local device; without it viewers see only their own touches. */
   presence?: Pick<PresenceHub, 'subscribe' | 'join' | 'leave'>;
   subscribeStatus: (listener: StatusListener) => () => void;
@@ -667,6 +667,7 @@ export class ShareHub {
           }
         : {}),
       endFor: (owner, message) => control.endFor(owner, null, message),
+      end: (owner, session, message) => void control.endById(owner, session, message),
       close: () => {},
     };
   }
@@ -1532,7 +1533,7 @@ export class ShareHub {
       )
       .then((outcome) => {
         if (share.ended || share.source !== source) {
-          if (!('code' in outcome)) source.endFor(share.owner, 'The share ended.');
+          if (!('code' in outcome)) source.end(share.owner, outcome.session, 'The share ended.');
           return null;
         }
         if ('code' in outcome) {
@@ -1545,7 +1546,7 @@ export class ShareHub {
           return null;
         }
         if (share.ended || share.source !== source || share.viewers.size === 0) {
-          source.endFor(share.owner, 'The share ended.');
+          source.end(share.owner, outcome.session, 'The share ended.');
           this.releaseRecording(share);
           return null;
         }

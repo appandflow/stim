@@ -118,6 +118,7 @@ describe('web shares in proxy mode', () => {
         input: async () => null,
         release: () => {},
         endFor: () => {},
+        endById: () => true,
       },
       subscribeStatus: (listener) => {
         listeners.add(listener);

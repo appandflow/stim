@@ -69,6 +69,8 @@ export interface ShareSource {
     leave: (id: string) => void;
   };
   endFor: (owner: Controller, message: string) => void;
+  /** Ends only `session`, which may already be gone or replaced by a newer one. */
+  end: (owner: Controller, session: string, message: string) => void;
   close: () => void;
 }
 
@@ -432,6 +434,10 @@ export class HostedShareSource implements ShareSource {
 
   endFor(_owner: Controller, message: string): void {
     this.endControl(null, message, 'end');
+  }
+
+  end(_owner: Controller, session: string, message: string): void {
+    if (this.control?.session === session) this.endControl(null, message, 'end');
   }
 
   private endControl(reason: string | null, message: string, host: 'ended' | 'end'): void {

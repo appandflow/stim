@@ -48,6 +48,12 @@ interface Fixture {
   releases: string[];
   /** The messages the control hub was told to end the share's control session with. */
   endFors: string[];
+  /** Ids of the control sessions the fake control hub started. */
+  startedSessions: string[];
+  /** Ids of the control sessions the fake control hub ended; `endFor` ends every session started so far. */
+  endedSessions: string[];
+  /** Holds the fake control hub's `begin` after it started its session, before it returns, as the real one does while it opens. */
+  startGate: Promise<void> | null;
   /** A holder name the fake control hub turns every touch away for. */
   busy: string | null;
   /** Holds the fake control hub's `begin` until it resolves. */
@@ -91,6 +97,9 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
     inputBy: [],
     releases: [],
     endFors: [],
+    startedSessions: [],
+    endedSessions: [],
+    startGate: null,
     busy: null,
     beginGate: null,
     beginCalls: 0,
@@ -137,9 +146,12 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
         f.begins.push(target);
         f.exemptAtBegin.push([...f.hub.unrecordedTargets()]);
         if (f.refuseControl) return { code: 'device-busy', message: 'This device is driven by Stim Desktop.' };
-        return { session: 'c1', platform: 'ios', lease: { grantedAt: 'lease-1', expiresAt: '' }, postures: [] };
+        const session = `c${f.beginCalls}`;
+        await f.startGate;
+        f.startedSessions.push(session);
+        return { session, platform: 'ios', lease: { grantedAt: 'lease-1', expiresAt: '' }, postures: [] };
       },
-      targetOf: (_owner, session) => (session === 'c1' ? { platform: 'ios', postures: [] } : null),
+      targetOf: (_owner, session) => (session.startsWith('c') ? { platform: 'ios', postures: [] } : null),
       input: async (_owner, session, command, participant) => {
         f.inputs.push({ session, command });
         f.inputBy.push(participant?.name ?? '');
@@ -149,8 +161,14 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
       release: (_owner, _session, participant) => {
         f.releases.push(participant.name);
       },
-      endFor: (_owner, _session, message) => {
+      endFor: (_owner, _reason, message) => {
         f.endFors.push(message);
+        f.endedSessions.push(...f.startedSessions.filter((session) => !f.endedSessions.includes(session)));
+      },
+      endById: (_owner, session) => {
+        if (!f.startedSessions.includes(session) || f.endedSessions.includes(session)) return false;
+        f.endedSessions.push(session);
+        return true;
       },
     },
     subscribeStatus: (listener) => {
@@ -213,6 +231,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
           return null;
         },
         endFor: () => {},
+        end: () => {},
         close: () => {
           record.closed++;
         },
@@ -610,7 +629,7 @@ describe('a web share', () => {
     socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
     await vi.waitFor(() => expect(f.begins).toHaveLength(2));
     await vi.waitFor(() => expect(f.inputs).toHaveLength(2));
-    f.owner?.send(idle);
+    f.owner?.send({ ...idle, session: 'c2' });
     await vi.waitFor(() => expect(messages).toContainEqual({ type: 'control', message: 'Control ended.' }));
     expect(messages.filter((message) => message.type === 'control')).toHaveLength(1);
     socket.close();
@@ -1572,6 +1591,29 @@ describe('a web share', () => {
 
       await vi.waitFor(() => expect(f.begins).toHaveLength(1));
       expect(messages.map((message) => message.type)).not.toContain('control');
+      socket.close();
+    });
+
+    it('ends only the control session a stale begin started, not the one the share started on the new source', async () => {
+      let release = () => {};
+      f.startGate = new Promise<void>((resolve) => (release = resolve));
+      const { socket } = await signedIn({ control: true });
+      await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+      f.startGate = null;
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      f.status(payload('Booted'));
+      await vi.waitFor(() => expect(f.startedSessions).toEqual(['c2']));
+      await vi.advanceTimersByTimeAsync(20);
+      expect(f.endedSessions).toEqual([]);
+
+      release();
+      await vi.advanceTimersByTimeAsync(20);
+
+      expect(f.startedSessions).toEqual(['c2', 'c1']);
+      expect(f.endedSessions).toEqual(['c1']);
+      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      await vi.waitFor(() => expect(f.inputs).toEqual([expect.objectContaining({ session: 'c2' })]));
       socket.close();
     });
 
