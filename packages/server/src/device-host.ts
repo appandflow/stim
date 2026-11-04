@@ -2063,19 +2063,7 @@ export class DeviceHost {
 
   private async detach(record: HostedDeviceSession): Promise<boolean> {
     const owned = this.owned.get(record.id);
-    if (
-      !owned ||
-      record.state !== 'ready' ||
-      record.platform === 'macos' ||
-      !owned.reachedReady ||
-      owned.stopping ||
-      owned.installing ||
-      owned.data ||
-      owned.imagePhase ||
-      this.revoked.has(record.id) ||
-      !this.options.allowed(record.client)
-    )
-      return false;
+    if (!owned || !this.detachable(record, owned)) return false;
     try {
       owned.run?.cancel();
       if (owned.run && !(await owned.run.done).settled) return false;
@@ -2088,6 +2076,32 @@ export class DeviceHost {
     if (this.owned.has(record.id)) return false;
     this.detachedSessions.add(record.id);
     return true;
+  }
+
+  private detachable(record: HostedDeviceSession, owned: OwnedSession): boolean {
+    return (
+      record.state === 'ready' &&
+      record.platform !== 'macos' &&
+      owned.reachedReady === true &&
+      !owned.stopping &&
+      !owned.installing &&
+      !owned.data &&
+      !owned.imagePhase &&
+      !this.revoked.has(record.id) &&
+      this.options.allowed(record.client)
+    );
+  }
+
+  working(): number {
+    try {
+      const records = readHostedSessions();
+      return [...this.owned].filter(([id, owned]) => {
+        const record = records.find((each) => each.id === id);
+        return !record || !this.detachable(record, owned);
+      }).length;
+    } catch {
+      return this.owned.size;
+    }
   }
 
   async resumeSessions(): Promise<void> {

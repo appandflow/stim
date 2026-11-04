@@ -543,10 +543,13 @@ read of a session only records the device's text. Mac items with concealed or tr
 marks (`org.nspasteboard.ConcealedType`, `org.nspasteboard.TransientType` and older password
 manager types), files or images, and empty or over-256 KB text are not sent to the device. Device text
 is written to the Mac marked transient, since its sensitivity is unknown. The popover also has
-**Paste Mac Clipboard**, which presses Command-V on an iOS simulator (iOS asks
-"Allow Paste" for text from another source) and **Copy Device Clipboard**.
-After a paste on an iOS simulator, a notice says to tap the paste suggestion on the device
-if nothing appears. Apps on the device, and agents driving it, can read the text sent to it.
+**Paste Mac Clipboard** and **Copy Device Clipboard**. On an iOS simulator, Paste
+types printable ASCII, line breaks and tabs into the focused field as key presses (about 35
+characters a second, so a long paste takes a while), so iOS shows no paste prompt and a
+simulator slimmed by SimSlim takes it too; the field's own typing rules still apply, such as
+smart quotes and dashes. Text with any other character (accents, emoji) is pasted with
+Command-V, where iOS asks "Allow Paste" for text from another source, and a notice says to tap
+the paste suggestion on the device if nothing appears. Apps on the device, and agents driving it, can read the text sent to it.
 
 A device Desktop shows through stim-server (a hosted iOS or Android session, a device of a paired
 machine, a leased Android phone) has the same section once **Control** is on, and a disabled one that names the server to update when its hello lacks the feature. Sync is on by default, so the current Mac text is sent to the device's machine as soon as Control starts. Sync, **Paste Mac
@@ -556,8 +559,9 @@ is disabled and names the server to update. The device takes at most 8 KiB of UT
 Mac: a larger Mac item is not synced and shows a notice, and **Paste Mac Clipboard** refuses it with
 its size. Each call costs 10 inputs of the connection's budget. Text crosses the network, so a hosted
 device on another Mac receives it over the tailnet. Failures show their server message in a notice
-(sync) or an alert (the buttons). The paste hint above applies to iOS devices reached through the
-server too. A leased iPhone, macOS apps, web pages, remote EAS previews and replay never sync.
+(sync) or an alert (the buttons). Pasting into an iOS simulator reached through the
+server types the text the same way (the server does it), and the paste hint applies only when it
+could not. A leased iPhone, macOS apps, web pages, remote EAS previews and replay never sync.
 
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,
@@ -2114,6 +2118,14 @@ the same rules as a lint, which is what desktop CI runs. CI also builds and
 tests with `-Xswiftc -warnings-as-errors`, so fix a warning instead of
 introducing one.
 
+A pull request and a push to `main` run the formatting, token, ASCII, debug
+build, linked SDK and `swift test` checks, about 9 minutes. The Release
+configuration compile, the `stim-frames` helper compile, the hardened-runtime
+server start and an ad-hoc release package run nightly at 05:00 UTC and on
+dispatch, so a change that breaks only one of them fails the next nightly run,
+not its pull request. Run them for a branch with
+`gh workflow run desktop.yml --ref <branch>`.
+
 `Sources/StimDesktop/Design/Tokens.swift` is generated from the phone app's
 design tokens in `apps/mobile/src/design/tokens.ts`: spacing, radii, opacity,
 the text styles with their macOS sizes from `macosText`, and the light and dark
@@ -2216,7 +2228,7 @@ hardened runtime and `Support/Node/node.entitlements`:
 `com.apple.security.cs.disable-library-validation`, because the `stim`
 commands the server runs on this Node can load a project's own native addons,
 signed by another team or not at all. Both are in the set Node.js signs its own
-macOS release with. The Desktop workflow stages the server on every run, signs
+macOS release with. The Desktop workflow stages the server on every run; its nightly run signs
 it the same way ad hoc and checks that it answers `/health` under an empty
 environment.
 
@@ -2383,7 +2395,7 @@ The fixture test skips without the variable and never starts the CLI or a device
 - `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo and observe its angle from the phone.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. An emulator without a hardware keyboard (`hw.keyboard=no`) drops key events, so Desktop types on it with `adb shell input`. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/WebFrames`: the Stim-owned Chrome page from `stim web`, over the Chrome DevTools Protocol on the loopback `cdpEndpoint` `stim status` reports. It connects only when `SystemInfo.getProcessInfo` names the Chrome pid status reports, attaches to the page's `targetId`, streams it with `Page.startScreencast` and sends `Input.dispatch*` events. Public protocol only; no WebKit view, which would render a different engine than the one agents test.
-- stim-server's `stim-frames` helper compiles the shared files listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. This includes the SceneKit Duo model used for composed mobile frames. Desktop CI compiles it; keep SwiftUI and StimKit dependencies behind module availability checks. Desktop and the helper both send simulator keys through `SimulatorHID.hardwareKey`, and page input through `WebPage`.
+- stim-server's `stim-frames` helper compiles the shared files listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. This includes the SceneKit Duo model used for composed mobile frames. The nightly Desktop workflow compiles it; keep SwiftUI and StimKit dependencies behind module availability checks. Desktop and the helper both send simulator keys through `SimulatorHID.hardwareKey`, and page input through `WebPage`.
 - `Sources/StimDesktop`: the SwiftUI app. `Design/` holds the generated tokens, the theme layer over them (`.textStyle(_:)`, `Font.stim(_:)` and the dynamic colors), and the component kit that mirrors the phone's: `.buttonStyle(.stim(_:_:))`, `IconButton`, `Pill`, `Banner`, `ListSection`/`ListRow`, `Card`, `HoverRowStyle`, `StatusDot`, `StimProgressBar`, `InlineEmpty` and the `IconSize` scale. A debug build has **Window > SwiftUI Playground** for production screen fixtures and design tokens.
 
 ### Native visual fixture exports

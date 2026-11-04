@@ -47,11 +47,18 @@ without `--json` the single-use note and the route note go to stderr, and
 `from` (where it paired from, as a label only), `keyFingerprint`, `pairedAt`,
 `lastSeenAt` (refreshed by a hello at most once a minute) and `capabilities`, followed by the [build clients](#build-access)
 and [device-host clients](#device-host-approval). Each record also carries
-`kind` (`phone` for a pairing from `stim-server pair`, which Stim Desktop on
-another machine also uses; `build-client`; `device-host-client`), `access`
+`kind` (`phone` or `desktop` for a pairing from `stim-server pair`;
+`build-client`; `device-host-client`), `access`
 (its capabilities as `view`, `control`, `build` and `run-devices`) and `owner`
-(`this-machine` for a phone, which works with this machine's workspaces;
+(`this-machine` for a phone or Desktop, which works with this machine's workspaces;
 `theirs-running-here` for a build or device-host client, whose work runs here).
+Each hello records `client.name` and `client.version` on the record, cleaned
+like a pairing name, and `devices --json` reports them as `clientApp` and
+`clientVersion` once the client has connected (a record paired earlier fills in
+on its next connection). `kind` is `desktop` when a pairing's `clientApp` is
+`Stim Desktop` or `Stim Dev`, and `phone` otherwise or while none is recorded.
+A client names itself, so these fields are for display: they never decide
+authorization or capabilities.
 `keyFingerprint` is the client's own key, so one machine's build and
 device-host records share it; the server never learns a client's server key.
 The plain listing shows `from` and the first 12 characters of the key fingerprint.
@@ -67,7 +74,8 @@ printable text on one line, trimmed. The client gets the new name in `hello`'s
 `GET http://127.0.0.1:7787/health` answers requests from this machine with the
 server's name, versions, `stimBuild` (the digest of the bundled Stim's build),
 protocol, `stimHome`, `startup`, `busy`
-(the offloaded `builds` and `hostedSessions` running now) and the current
+(the offloaded `builds` and `hostedSessions` running now, `hostedWork`, the sessions a restart
+would stop, and `resumes`, true when the rest are left running for the next server) and the current
 Tailscale state. It answers HTTP 200 once `startup.state` is `ready`; while the
 state is `pending` or `degraded` (see the LaunchAgent notes below) it answers
 HTTP 503 with the same body. While Tailscale runs, it also carries `route`, read from
@@ -1187,7 +1195,16 @@ succeeds or up to 10 times, after which it deletes the files, and answers the
 client's next `record stop` within 15 minutes with that result. A finished
 recording over 512 MiB, whichever stop finished it, is deleted and `record stop`
 fails with `STIM_RECORDING_TOO_LARGE`. A request the relay cannot process
-answers 500 instead of rejecting. Driver stop and daemon start
+answers 500 instead of rejecting. On a hosted simulator, the adapter records the
+`simctl io <udid> recordVideo` process that agent-device starts as the child of an
+ownership claim under `<state dir>/recorder.claims`; when it cannot identify that
+process, it stops the recording and answers 500. Driver stop, which runs before
+the session's simulator is parked or deleted, and the next `record start` stop
+that recorder with SIGINT, so simctl finalizes the video, and with SIGKILL after
+10 seconds. When stim-server starts, it stops each recorder whose stim-server is
+gone after checking its recorded process identity. It never signals a recorder
+whose identity it cannot establish: it keeps that claim, and its log names the
+claim and the command that removes it. Driver stop and daemon start
 delete the session's recordings directory, which must be a directory of the
 server's user with no group or other access. `stim gc --delete` run by that user
 without `STIM_HOME` removes one idle for 24 hours as a Stim temp directory. Hosted macOS refuses `record`, because
@@ -1514,9 +1531,14 @@ stim-server service rollback [--label <name>]
 stim-server service uninstall [--label <name>]
 ```
 
-Updates wait for offloaded builds and hosted sessions to finish by default.
-Use `--no-wait` to restart with work still active: shutdown interrupts those
-builds and sessions. Service shutdown, health checks and rollback still apply.
+Updates wait for offloaded builds and for the hosted sessions a restart would stop
+(a reservation being prepared, an app install or app transfer, a stop in progress, a
+session that is not ready, a macOS app, or a client that lost approval), by default; a server that resumes its hosted sessions reports `busy.hostedWork` and
+`busy.resumes` in `/health`, and its other ready iOS and Android sessions keep running
+through the restart and are resumed by the new server. An older server, which stops
+every session at shutdown, is still waited for entirely. Use `--no-wait` to restart
+with that work still active: shutdown interrupts those builds and native steps
+(a client retries an interrupted build on the machine; see offloaded builds). Service shutdown, health checks and rollback still apply.
 `stim-server setup --no-wait` uses the same policy when it updates a managed
 service; if setup requires a separate service update, its remedy includes the flag.
 
@@ -1657,8 +1679,9 @@ never run. Each install goes to
 named by its version, Stim build and server code, plus the package files for
 `--from`, and must start with the job's
 `node` before the switch. `update` then waits up to 30 minutes for `/health` to
-report no offloaded build and no hosted session (a server older than `busy` in
-`/health` restarts without waiting), rewrites only the server script in the
+report no offloaded build and no hosted session with a native step in flight
+(`busy.hostedWork`; a server older than `busy.resumes` waits for every hosted
+session, and one older than `busy` in `/health` restarts without waiting), rewrites only the server script in the
 plist (recording the previous one), restarts the job and waits up to 90 seconds
 for `/health` to answer with the new version and Stim build. When it does not,
 `update` puts the previous plist back and restarts it. Interrupt signals wait
@@ -2126,7 +2149,10 @@ workspace device with three methods that only the local Unix socket may call
   returns
   `auth` (`generated`, `set` or `none`), `viewAuth` (`generated`, `set` or
   `null`), and `password` and `viewPassword` only when it generated them, in
-  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, viewAuth, slug, url, password, viewPassword }`.
+  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, state, auth, viewAuth, slug, url, password, viewPassword }`.
+  `state` (the `share-waiting` feature) is `live` while the device streams and
+  `waiting` while it is away; a server without the feature sends none, which
+  means `live`.
   It refuses a device the workspace does not own or lease, a hosted device,
   `control` on a physical iPhone, `password` with `passwordless`, `view`
   without `control`, with `passwordless`, or with the same password as
@@ -2135,7 +2161,11 @@ workspace device with three methods that only the local Unix socket may call
 - `share.stop` takes `workspace` and ends its shares, returning `stopped`. With
   `id` (the `share-stop-id` feature) it ends only that share of the workspace,
   and refuses an `id` the workspace does not have with `bad-request`. A server
-  without the feature refuses `id`, so a client checks the feature first.
+  without the feature refuses `id`, so a client checks the feature first. With
+  `slot` (the `share-waiting` feature) it ends only that slot's shares
+  (`default` for the default slot), and `id` and `slot` together are refused.
+  `stim stop` and `stim worktree remove` end shares this way, because a device
+  that goes away only makes a share wait.
 - `share.list` returns `shares`, the same rows without `url`, `password` or
   `viewPassword`.
 
@@ -2153,8 +2183,19 @@ startup, it does not wait: it logs why and exits, so `stim share` refuses with
 ("This share has ended.", "Control is not available right now."); the reasons
 go to the server log.
 
-Shares live in memory only and end at their expiry, on `share.stop`, when the
-device stops or changes in status, when its frames fail, and when the server stops. The server serves
+Shares live in memory only and end at their expiry, on `share.stop` and when the
+server stops. When a share's device goes away on its own (the frame stream
+fails, the status shows the device or hosted session gone, or not ready) the
+share waits instead: it releases control, closes its source and stops capture,
+and keeps its token, password digests, signed-in sessions, viewer sockets and
+expiry. Each viewer gets `{ "type": "waiting" }` and the page says so. The share
+re-resolves its slot's device on every status item, and by a timer (every 2
+seconds, backing off to 30 after a failed stream, which leaves status as it was),
+and once a local device resolves or a hosted session of the slot is ready it
+builds a new source, feeds every connected viewer again and sends
+`{ "type": "resumed" }`. A slot that now runs another device is followed to it.
+A waiting share still counts as a share for the listener, the Funnel route and
+idleness. The server serves
 them on one listener on a loopback port of its own, not on this protocol, and
 publishes it with `tailscale funnel --bg --yes --https=<port>
 http://127.0.0.1:<listener>` on the first Funnel port the node's
@@ -2211,7 +2252,8 @@ presence `touch` carries the second finger as `second`.
 With `control` on an iOS simulator, an Android emulator or an Android phone, a
 `clipboard-set` message (`text`, optional `paste`) and a `clipboard-get` message
 (`id`) from a viewer go through `input.clipboard.set` and `input.clipboard.get`,
-each costing ten inputs. The viewer sends `clipboard-set` with `paste: true` on
+each costing ten inputs. After a `paste: true` on an iOS simulator that was not typed, the
+viewer is told to tap the paste suggestion on the device. The viewer sends `clipboard-set` with `paste: true` on
 Command-V or Control-V while the screen has focus, from the browser's `paste`
 event. With its options menu's Sync clipboard switch on (the default) and the
 page focused, it sends `clipboard-get` with `poll: true` every 2 seconds, backing
@@ -3021,10 +3063,15 @@ sends reaches any other device.
   keys. When hello advertises `device-clipboard`, `input.clipboard.set` takes
   `text`, any Unicode text of at most 8192 UTF-8 bytes (a request is one
   message of at most 64 KiB, and JSON escapes a control character in up to six
-  bytes), and an optional `paste` that then pastes it into the focused field.
+  bytes), and an optional `paste` that then pastes it into the focused field. On an
+  iOS simulator, `paste` text of printable ASCII, line breaks and tabs (CRLF is one Return) is
+  typed instead, as `input.text` pieces of at most 256 characters fed at about 32 characters a
+  second, and the call answers `{ "typed": true }` once the first piece is sent; a second typed
+  paste is refused `device-busy` until the first has been typed. Other text is pasted with
+  Command-V, and the answer is `{}`.
   `input.clipboard.get` answers `{ "text" }`, refusing a clipboard over 65536
   bytes. An iOS simulator's clipboard is `simctl pbcopy` and `pbpaste` and its
-  paste is Command-V through the HID connection; an Android emulator's is the
+  paste is the typed text above, or Command-V through the HID connection; an Android emulator's is the
   gRPC `setClipboard` and `getClipboard`, pasted with `KEYCODE_PASTE` over
   `adb`; an Android phone's is scrcpy's `SET_CLIPBOARD` (with its paste flag)
   and `GET_CLIPBOARD`. A web page, a native macOS window and a physical iPhone

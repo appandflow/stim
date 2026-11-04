@@ -43,6 +43,11 @@ describe('pasteFromPhone', () => {
     expect(set).toHaveBeenCalledWith(text, true);
   });
 
+  test('reports a paste the server typed into the field', async () => {
+    const set = jest.fn().mockResolvedValue({ typed: true });
+    await expect(pasteFromPhone({ read: () => Promise.resolve('typed text'), set })).resolves.toBe('typed');
+  });
+
   test('takes exactly 8192 bytes', async () => {
     const { set, outcome } = run('a'.repeat(8192));
     await expect(outcome).resolves.toBe('pasted');

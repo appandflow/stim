@@ -416,6 +416,21 @@ async function listedAsync<T>(source: () => Promise<T>, empty: T): Promise<T> {
   }
 }
 
+/** The counts of {@link countLiveOwnedDevicesByPlatform}, read without blocking the event loop. */
+export async function countLiveOwnedDevicesByPlatformAsync(
+  sources: AsyncInventorySources,
+): Promise<HostedLocalPlatformCounts | { unknown: string }> {
+  try {
+    const inventory = await readInventoryAsync(sources);
+    if ('code' in inventory) return { unknown: inventory.message };
+    const keys = inventoryKeys(inventory);
+    return { ios: platformCount(keys, 'ios'), android: platformCount(keys, 'android') };
+  } catch (error) {
+    if (isClaimRefusal(error)) return { unknown: error.message };
+    throw error;
+  }
+}
+
 export async function countLiveOwnedDevicesFrom(
   sources: AsyncInventorySources,
   { exclude = [] }: { exclude?: DeviceCountExclusion[] } = {},

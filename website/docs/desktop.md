@@ -410,7 +410,7 @@ it over the tailnet stays opt-in: **Allow connections** in **Settings > Connecti
   installs this Mac's npm release there, or this checkout's own build when the
   machine allows it with `server.acceptClientBuilds`. The update goes over the
   tailnet, with no ssh, and the old server comes back if the new one does not
-  start. **Settings > Connections** can keep them on this Mac's Stim version automatically.
+  start. **Settings > Connections** can keep them on this machine's Stim version automatically.
   The install only moves a machine forward: when the machine runs a newer Stim than
   this Mac, the button is replaced by a note to update Stim Desktop.
   A removed selection returns to **This Mac**; remote selections have no local
@@ -435,8 +435,9 @@ it over the tailnet stays opt-in: **Allow connections** in **Settings > Connecti
   view-only password (generated or chosen), shown as **View password** next to
   the control one. The link and generated passwords appear once, each with a Copy button;
   Desktop does not keep them. **Settings > Connections > Using this machine > Share
-  links** lists the live shares with their viewers and time left ("View and control, view password" for a share with
-  two passwords). **Stop** on a row ends that one share. With a stim-server older than this (without the
+  links** lists the shares, live or waiting, with their viewers and time left ("View and control, view password" for a share with
+  two passwords). A share whose device is away waits and keeps its row; Desktop
+  does not mark it yet, but `stim share list` does. **Stop** on a row ends that one share. With a stim-server older than this (without the
   `share-stop-id` feature) each row has **Stop All** instead, which ends every share of
   the workspace. Quitting
   Desktop asks first while the server it started holds live shares, since quitting ends them.
@@ -623,9 +624,12 @@ device's apps, and agents driving it, can read text sent to it. Opening a viewer
 Turn it off with **Sync clipboard** in the options popover (the sliders button),
 which also has **Paste Mac Clipboard** and **Copy Device Clipboard** for one-off
 transfers. Syncing only sets the device clipboard; to insert text, paste in the
-guest. An iOS simulator shows its own "Allow Paste" prompt for text that came from
-another source; click **Allow Paste** in the viewer. After a paste on an iOS simulator
-Desktop shows a notice that says to tap the paste suggestion on the device if nothing
+guest. **Paste Mac Clipboard** on an iOS simulator types printable ASCII, line breaks and tabs
+into the focused field, about 35 characters a second, so no paste prompt appears and a
+SimSlim-slimmed simulator takes it too; the field's own typing rules (smart quotes and dashes)
+still apply. Text with other characters, such as accents and emoji, is pasted instead, and an
+iOS simulator shows its own "Allow Paste" prompt for it: click **Allow Paste** in the viewer.
+Desktop then shows a notice that says to tap the paste suggestion on the device if nothing
 appears. Unicode and line breaks are preserved.
 
 A device Desktop shows through stim-server has the same options once **Control** is on, with sync on by default, so the current Mac text is sent to the device's machine as soon as Control starts:
@@ -789,10 +793,10 @@ a Linux server where an agent starts workspaces, the same way a phone does:
 3. The code works once, for 5 minutes. A pairing made from `stim-server pair` can only read;
    one made from `stim-server pair --control` can also run actions and control devices.
 
-**Remove...** on the machine's row deletes this Mac's key for the machine from the macOS Keychain, so the machine's
+**Remove...** on the machine's row deletes this machine's key for the machine from the macOS Keychain, so the machine's
 record can never connect again, but it does not remove that record. Run
 `stim-server devices revoke <id>` on the machine for that. Desktop shows the command
-before and after removing it, or `stim-server devices` to find this Mac's record when the machine never told it the id. A key that changes on the machine is never accepted again: remove the
+before and after removing it, or `stim-server devices` to find this machine's record when the machine never told it the id. A key that changes on the machine is never accepted again: remove the
 pairing and pair again. A build of Desktop without the Keychain entitlement, such as a development
 copy, keeps pairings only until it quits and says so in the sheet.
 
@@ -891,8 +895,8 @@ existing workspace and archive behavior.
   pairing is kept. Share links use their own route either way. A warning under it
   says when Tailscale is off, the server is public through Funnel, or its private
   tailnet route is missing, with a button that fixes it. The first launch of this
-  version turns it off once on a Mac whose Phone app flag is off, since that Mac's
-  server answered it alone until now.
+  version turns it off once on a machine whose Phone app flag is off, since that
+  machine's server answered it alone until now.
 - **Keep this machine awake** prevents sleep while the machine is plugged in and
   connections are allowed. It shows when your Stim has the setting.
 - One row per phone or machine, grouped by its key, whatever the Phone app flag says, with its name, **Device**
@@ -936,7 +940,7 @@ See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for 
 
 **Settings > Connections > This machine uses** lists your remote machines with a status
 (**Approved**, **Waiting for approval**, **Key not confirmed**, **Server is outdated**, the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading),
-a line with its running builds and free disk, its access (**Build**, **Run devices**, and **View** or **Control** when this Mac also paired with it), up and down buttons, **Details** and
+a line with its running builds and free disk, its access (**Build**, **Run devices**, and **View** or **Control** when this machine also paired with it), up and down buttons, **Details** and
 **Remove...**. The status shows only a state that stops this Mac using the machine; notes, such as an
 Android SDK package Gradle downloads on the first build, never change it. With two or more machines each row shows its place in the list. The order is the placement priority: builds, simulators, emulators and macOS apps go to the first machine that has room and a load under its own limit, and to the next only when it has none. The buttons write the new order to `remote.machines`. Right-clicking a row shows the same actions. A machine's page also lists the ten newest builds that ran there, each opening to its phases and failure like the **Builds** page. It updates itself; there is no Refresh button. With none, it
 offers **Add Remote Machine…**, which guides you through five steps:
@@ -969,7 +973,7 @@ on the new Mac, as an optional test. Desktop also uses that sample for setup
 requests if you have no listed workspace. The wizard removes it when it closes.
 Cancel removes only settings the wizard added and shows revoke commands for the
 worker Mac. **Remove** in Connections shows the revoke commands to run on that
-Mac, since removing it here never revokes this Mac there.
+machine, since removing it here never revokes this machine there.
 
 **Details** opens the page of one machine. It shows why this Mac cannot use the machine, with
 the remedy and a **Copy** button for each command; every problem and note grouped by iOS, Android,

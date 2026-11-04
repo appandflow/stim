@@ -34,6 +34,7 @@ import {
   capabilitiesFor,
   createPairingToken,
   grantDevice,
+  isDesktopClient,
   readBuildClients,
   readDeviceHostClients,
   readDevices,
@@ -82,7 +83,7 @@ const USAGE = `Usage:
                                     install that stim-server release from npm, or the .tgz
                                     packages in <dir>, beside the current one, switch the
                                     service to it, and switch back if it does not answer
-                                    --no-wait interrupts active builds and hosted sessions at restart
+                                    --no-wait also restarts with builds and hosted installs still running, which interrupts them
   stim-server service rollback [--label <name>]
                                     switch the service back to the server it ran before
   stim-server service uninstall [--label <name>]
@@ -369,7 +370,7 @@ const ACCESS: Record<Capability, string> = {
 };
 
 function listed(device: PairedDevice, registry: keyof typeof KINDS) {
-  const { id, name, from, publicKey, pairedAt, lastSeenAt, capabilities } = device;
+  const { id, name, from, publicKey, pairedAt, lastSeenAt, capabilities, clientApp, clientVersion } = device;
   return {
     id,
     name,
@@ -378,7 +379,9 @@ function listed(device: PairedDevice, registry: keyof typeof KINDS) {
     pairedAt,
     lastSeenAt,
     capabilities,
-    kind: KINDS[registry],
+    ...(clientApp ? { clientApp } : {}),
+    ...(clientVersion ? { clientVersion } : {}),
+    kind: registry === 'device' && isDesktopClient(device) ? 'desktop' : KINDS[registry],
     access: capabilities.map((capability) => ACCESS[capability]),
     owner: registry === 'device' ? 'this-machine' : 'theirs-running-here',
   };

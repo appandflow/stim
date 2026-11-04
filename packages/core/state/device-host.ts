@@ -196,6 +196,19 @@ export function deviceHostArea(id: string): string {
   return join(configDir(), 'device-host', 'sessions', id);
 }
 
+/** The area of every hosted session that has one, whether or not the journal still lists it. */
+export function deviceHostAreas(): string[] {
+  const root = join(configDir(), 'device-host', 'sessions');
+  try {
+    return readdirSync(root)
+      .filter((id) => /^[a-f0-9-]{36}$/.test(id))
+      .map((id) => join(root, id));
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
 export function parseHostedChoice(value: unknown): HostedIosChoice | null {
   if (!isJsonObject(value)) return null;
   const { deviceTypeId, runtimeId, deviceType, runtime, architecture } = value;

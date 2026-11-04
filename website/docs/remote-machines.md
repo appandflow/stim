@@ -762,9 +762,10 @@ A worker whose stim-server predates protocol 2 cannot authenticate this machine.
 `stim-server service update --release <version>` there with this machine's
 Stim version, then `stim remote add <machine>` here.
 
-If active builds or hosted simulators prevent that update, add `--no-wait` to
-the service update command. This interrupts the server's active work during
-restart instead of waiting for it to finish; shutdown, health checks and rollback
+If active builds or a hosted native step (an install, for example) prevent that
+update, add `--no-wait` to the service update command. This interrupts that work
+during restart instead of waiting for it to finish; a server that resumes its hosted
+sessions leaves its other ready simulators and emulators running through the restart; shutdown, health checks and rollback
 still apply. Setup also accepts `--no-wait` for its managed-service update.
 
 ### Linux worker
@@ -1091,9 +1092,10 @@ An exact npm release needs no extra setting. Installing this checkout's own
 build requires `server.acceptClientBuilds=true` on the worker; it defaults to
 false. A failed server health check restores the previous version.
 
-The worker restarts only once its offloaded builds and hosted sessions end, and
-the card says what it waits for, such as "Waiting for 1 hosted simulator to
-end...". When this Mac's own workspaces hold those hosted simulators, **Stop and
+The worker restarts only once its offloaded builds and hosted native steps end (a
+worker that resumes its hosted sessions leaves ready iOS and Android sessions running
+and does not wait for them), and the card says what it waits for. When a worker that
+does not resume holds this Mac's hosted simulators, **Stop and
 Update...** stops them with `stim stop` after a confirmation that names each
 device and workspace; another machine's sessions can only be stopped on the worker.
 The update shows as finished once the worker runs this machine's Stim build, even

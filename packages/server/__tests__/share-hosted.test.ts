@@ -220,6 +220,20 @@ describe('a share of a hosted device', () => {
     });
   });
 
+  it('returns only the typed flag of a hosted clipboard set', async () => {
+    const f = fixture(
+      {
+        'device-host.control.begin': { session: 'hc1', postures: [] },
+        'device-host.input.clipboard.set': { typed: true, extra: 1 },
+      },
+      ['device-clipboard'],
+    );
+    await f.source.begin(owner, { workspace: '/w', platform: 'ios' }, '/w', () => true);
+    expect(
+      await f.source.input(owner, 'hc1', 'input.clipboard.set', { text: 'abc', paste: true }, unusedCommand, viewer),
+    ).toEqual({ typed: true });
+  });
+
   it('refuses the clipboard calls for a host without device-clipboard, without sending them', async () => {
     const f = fixture({ 'device-host.control.begin': { session: 'hc1', postures: [] } });
     await f.source.begin(owner, { workspace: '/w', platform: 'ios' }, '/w', () => true);

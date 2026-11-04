@@ -248,8 +248,8 @@ artifact upload; lifecycle and test execution remain in `@stim-cli/ci`.
 
 The GitHub dogfood workflow builds once, then installs, launches, probes and stops Mobile on iOS
 and Android and Desktop on macOS. It then repeats with the job's warm build
-state. It runs for relevant changes on `main`, manual dispatches, and relevant
-pull requests carrying the `e2e-smoke` label.
+state. It runs nightly on `main`, on manual dispatches, and on relevant pull
+requests carrying the `e2e-smoke` label.
 
 These checks prove that the exact installed native app process stays alive
 for five seconds. They do not assert screen rendering, navigation, or a

@@ -52,12 +52,12 @@ There are four native suites and one shared harness
 wrappers, the cleanup checks and the diagnostics dump so all drivers build and
 tear down the same app the same way):
 
-| suite      | driver                       | proves                                                  | platforms           | when                                        |
-| ---------- | ---------------------------- | ------------------------------------------------------- | ------------------- | ------------------------------------------- |
-| **smoke**  | `run-native-e2e.mjs --smoke` | one worktree builds, launches and stops                 | iOS, Linux, Windows | every push to `main`, `e2e-smoke`, dispatch |
-| **loop**   | `run-native-e2e.mjs`         | the dev loop works end to end                           | iOS, Linux, Windows | nightly, `e2e-loop`, dispatch               |
-| **caches** | `run-cache-e2e.mjs`          | each individual cache is engaged, storing and reused    | iOS, Linux          | `e2e-caches`, dispatch                      |
-| **pool**   | `run-pool-e2e.mjs`           | iOS simulators are parked, evicted, adopted, and reaped | iOS                 | `e2e-pool`, dispatch                        |
+| suite      | driver                       | proves                                                  | platforms           | when                                            |
+| ---------- | ---------------------------- | ------------------------------------------------------- | ------------------- | ----------------------------------------------- |
+| **smoke**  | `run-native-e2e.mjs --smoke` | one worktree builds, launches and stops                 | iOS, Linux, Windows | `main` push (iOS, Linux), `e2e-smoke`, dispatch |
+| **loop**   | `run-native-e2e.mjs`         | the dev loop works end to end                           | iOS, Linux, Windows | nightly, `e2e-loop`, dispatch                   |
+| **caches** | `run-cache-e2e.mjs`          | each individual cache is engaged, storing and reused    | iOS, Linux          | `e2e-caches`, dispatch                          |
+| **pool**   | `run-pool-e2e.mjs`           | iOS simulators are parked, evicted, adopted, and reaped | iOS                 | `e2e-pool`, dispatch                            |
 
 The `e2e-*` names are pull-request labels; the `e2e-all` label is loop, caches
 and pool together. See [CI](#ci) for the gate.
@@ -103,7 +103,9 @@ earlier loop or smoke installs from cache. Observed on the `e2e-smoke` runs of
 #905: iOS 8 to 17 minutes and Linux Android 3 to 4 minutes with the cache warm
 (the build phase was 60 to 90 seconds; the rest is fixture creation,
 `pod install` and device boot), Windows Android 13 minutes warm and 25 cold,
-of which the Gradle build was 20. A run that changes the fingerprint pays the
+of which the Gradle build was 20. Windows Android takes 15 minutes at the
+median, so its smoke does not run on a push to `main`; the nightly loop
+covers it. A run that changes the fingerprint pays the
 cold build on every platform.
 
 The fixture-creation commands are version-sensitive; each is overridable with an
@@ -280,12 +282,12 @@ PATH).
 - **`stim-ci.yml`** -- "Stim CI dogfood": builds, launches, probes and stops
   the mobile app on iOS (`xcode-27`) and Android (`ubuntu-latest`) and the
   Desktop app on macOS (`macos-15`) through the `stim-ci` action, twice per job
-  to cover the warm path. It runs on dispatch, on a pull request labeled
-  `e2e-smoke`, and on a push to `main` that changes `apps/mobile`,
-  `apps/desktop`, `packages/ci`, `packages/core`, `packages/stim-cli`,
-  `scripts/ci`, the action or the workflow. A change to the other packages or
-  to the lockfile does not start it on push; a pull request label or dispatch
-  runs it on demand.
+  to cover the warm path. It runs nightly at 09:00 UTC on `main`, on dispatch,
+  and on a pull request labeled `e2e-smoke` that changes `apps/mobile`,
+  `apps/desktop`, `packages`, `scripts/ci`, the action, the workflow or the
+  lockfile. A push to `main` does not start it, so a merge that breaks the app
+  lifecycle shows in the next nightly run; dispatch or the label runs it on
+  demand.
   No workflow uses a larger runner, because larger runners are billed per minute
   even on public repositories.
 
@@ -298,6 +300,16 @@ PATH).
   run on the release commit; the Windows, macOS and native jobs are checked
   after publishing (RELEASE.md section 5).
 
+- **`desktop.yml`** -- "Desktop": builds and tests `apps/desktop` on
+  `macos-15`. Its single job, `build`, runs on a pull request or push to `main`
+  that touches a Desktop path, and on dispatch and nightly. The pull request and
+  push run takes about 9 minutes: the token, ASCII and formatting checks, the
+  warnings-as-errors debug build, the linked SDK check, the staged server and
+  `swift test`. Nightly (05:00 UTC) and dispatch add the Release configuration
+  compile, the `stim-frames` helper compile, the hardened-runtime server start
+  and an ad-hoc release package, which together take about 15 to 20 more minutes.
+  The Release compile is also built by every `Desktop next` run on `main`.
+
 - **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner
   like the Android lane and holds it open behind Tailscale SSH or tmate.
 
@@ -306,7 +318,7 @@ PATH).
 
   | event               | suites                                                                                              |
   | ------------------- | --------------------------------------------------------------------------------------------------- |
-  | push to `main`      | smoke on iOS, Linux Android and Windows Android                                                     |
+  | push to `main`      | smoke on iOS and Linux Android                                                                      |
   | nightly schedule    | loop on iOS, Linux Android and Windows Android                                                      |
   | `workflow_dispatch` | the `suite` input (`smoke` \| `loop` \| `caches` \| `pool` \| `all`, default `loop`)                |
   | pull request        | the union of its labels `e2e-smoke`, `e2e-loop`, `e2e-caches`, `e2e-pool`, `e2e-all`; none, nothing |

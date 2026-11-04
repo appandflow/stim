@@ -219,12 +219,15 @@ import Foundation
   /// The most text `input.clipboard.set` takes, in UTF-8 bytes: `MAX_CLIPBOARD_BYTES` in `packages/core/protocol.ts`.
   public nonisolated static let maxClipboardBytes = 8192
 
-  /// Replaces the device clipboard's text, then pastes it into the focused field when `paste` is true.
-  public func setClipboard(_ text: String, paste: Bool) async throws {
+  /// Replaces the device clipboard's text, then pastes it into the focused field when `paste` is true. Returns true
+  /// when an iOS simulator typed the text instead of pasting it, so iOS showed no paste prompt.
+  @discardableResult
+  public func setClipboard(_ text: String, paste: Bool) async throws -> Bool {
     guard text.utf8.count <= Self.maxClipboardBytes else { throw ClipboardTooLarge(bytes: text.utf8.count) }
     var params: [String: JSONValue] = ["text": .string(text)]
     if paste { params["paste"] = .bool(true) }
-    _ = try await controlRequest("input.clipboard.set", params)
+    let result = try await controlRequest("input.clipboard.set", params)
+    return result.objectValue?["typed"]?.bool ?? false
   }
 
   public func clipboard() async throws -> String {
