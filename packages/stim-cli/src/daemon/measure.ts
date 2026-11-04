@@ -9,6 +9,7 @@ import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressureAsync } from '../host-memory.ts';
 import type { Config } from '../workspace/config.ts';
 import { updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
+import { readParked } from '../devices/sim-pool.ts';
 import { ownedHere } from './idle.ts';
 import { probeFocusedDeviceUse, type FocusedDeviceUse } from './probe.ts';
 
@@ -58,7 +59,10 @@ export async function measureMemory(): Promise<DaemonMeasurement['memory']> {
 
 /** Whether `measureTick` lists simulators: on macOS, when a registered workspace owns one. */
 export function tickListsSims(config: Config | null): boolean {
-  return process.platform === 'darwin' && ownsDevice(config, 'ios');
+  return (
+    process.platform === 'darwin' &&
+    (ownsDevice(config, 'ios') || readParked('ios', { config }).some((record) => record.bootedUntil !== undefined))
+  );
 }
 
 function ownsDevice(config: Config | null, platform: 'ios' | 'android'): boolean {

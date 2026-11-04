@@ -100,13 +100,16 @@ export interface VolumeInfo {
 export interface PoolFacts {
   platform: 'ios' | 'android';
   parked: number;
+  /** Parked devices kept booted until their grace period passes. */
+  booted?: number;
   max: number;
 }
 
-export function poolLine({ platform, parked, max }: PoolFacts): string | null {
+export function poolLine({ platform, parked, booted = 0, max }: PoolFacts): string | null {
   if (parked <= 0) return null;
   const what = plural(parked, `parked ${platform === 'ios' ? 'iOS simulator' : 'Android emulator'}`);
-  return max > 0 ? `pool: ${what} (max ${max})` : `pool: ${what} (parking off; gc --delete removes them)`;
+  const kept = booted > 0 ? `, ${booted} kept booted` : '';
+  return max > 0 ? `pool: ${what} (max ${max}${kept})` : `pool: ${what} (parking off${kept}; gc --delete removes them)`;
 }
 
 export const RECENT_LAUNCH_MS: number = 30 * 60 * 1000;

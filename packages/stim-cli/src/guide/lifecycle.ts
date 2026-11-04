@@ -1416,7 +1416,9 @@ result as proof instead of requiring an unrelated screenshot.`,
     at park       shut down and renamed
                   \`stim-parked (<model> <runtime>) <4 hex>\`; nothing is
                   erased, and the pool record names the installed app's
-                  bundle id and build cache key
+                  bundle id and build cache key. A simulator that is booted
+                  when \`worktree remove\` parks it is kept booted, see
+                  KEEPING A PARKED SIMULATOR BOOTED
     at adoption   renamed for the adopting workspace, then, inside the boot
                   the run pays anyway, \`simctl privacy reset all\` and
                   \`simctl keychain reset\`; at install, every other user app
@@ -1446,11 +1448,32 @@ result as proof instead of requiring an unrelated screenshot.`,
   uses the Mac's disk, not a fixed partition, so there is no free-space check
   on iOS; \`stim gc\` lists each parked simulator's app and size.
 
-  Park takes only a simulator that reports Shutdown. It waits up to 15s for
+  Park takes only a simulator that reports Shutdown, or a booted one kept booted as above. It waits up to 15s for
   the shutdown to settle, retries the shutdown once, and waits up to 15s more.
   A simulator that is still booted after that is deleted instead, and
   \`worktree remove\` prints
   \`could not park <name>: ... -- deleted it instead\`.
+
+  KEEPING A PARKED SIMULATOR BOOTED
+  \`pool.bootedGraceMinutes\` (default 15; 0 shuts down at park) keeps a
+  simulator that is booted when \`worktree remove\` parks it booted for that
+  long, so the next adoption of the same model and runtime skips the boot. The
+  pool record carries \`bootedUntil\`. Stim keeps it booted only while macOS
+  memory pressure reads normal and a device slot besides this simulator is
+  free under \`concurrency.maxDevices\` and \`concurrency.maxIosDevices\`;
+  otherwise it shuts the simulator down as before. The leftover app is
+  terminated at park. \`stim stop\` shuts the workspace's simulator down
+  before it is parked, so run \`worktree remove\` without a prior \`stop\`
+  (it stops the workspace itself) to keep it booted.
+  Adopting a booted parked simulator runs the same cleanup as any adoption
+  (privacy and keychain reset, other user apps removed, app data cleared, the
+  install verified by bytes) without the boot, and prefers it over a shut-down
+  one. The stim-daemon shuts a booted parked simulator down, through
+  teardown, when its grace period passes, under any macOS memory pressure
+  (before it touches a workspace's device), and before it reclaims another
+  workspace's device for a run waiting on a device slot; the simulator stays
+  parked. Booted parked simulators count against the device caps. \`stim
+  status\` shows how many are booted. Android emulators are shut down at park.
 
   Adoption matches the device type AND the runtime EXACTLY: a ticket that asks
   for an iPad never gets an iPhone, and a request for iOS 18.5 never gets 26.5.

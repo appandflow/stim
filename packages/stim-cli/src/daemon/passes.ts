@@ -13,6 +13,7 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { daemonClaimHeld, requestDaemonTick } from './client.ts';
 import { commandWorkspace } from './command-workspace.ts';
+import { runBootedParkedPass } from './booted-parked.ts';
 import { runDormantDependencies } from './dependencies.ts';
 import { daemonMode } from './mode.ts';
 import { runIdlePass, type IdlePassInput } from './idle.ts';
@@ -81,6 +82,14 @@ export async function runHomePasses({
     return pressure;
   };
   let pressure = classify(measured.measurement);
+  const memoryLevel = measured.measurement.memory.level;
+  const parkedActions = await runBootedParkedPass({
+    sims: measured.sims,
+    memory: memoryLevel !== 'normal' ? memoryLevel : pressure.memory !== 'normal' ? 'warning' : memoryLevel,
+    act,
+    log,
+    operation,
+  });
   const workspaces = await runIdlePass({
     config,
     now,
@@ -92,8 +101,9 @@ export async function runHomePasses({
     operation,
     ...(pressure.level === 'normal' ? {} : { pressure: { level: pressure.level, reasons: pressure.reasons } }),
   });
-  const actions: DaemonLadderAction[] =
-    pressure.level === 'normal'
+  const actions: DaemonLadderAction[] = [
+    ...parkedActions,
+    ...(pressure.level === 'normal'
       ? []
       : workspaces.flatMap((entry) =>
           entry.outcome === 'idle' || entry.outcome === 'would-idle'
@@ -110,7 +120,8 @@ export async function runHomePasses({
                 },
               ]
             : [],
-        );
+        )),
+  ];
   const idleMs = lap();
   const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
@@ -122,6 +133,7 @@ export async function runHomePasses({
         act,
         log,
         ...reading,
+        sims: measured.sims,
         remeasure: async () => {
           const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
           return classify({ disk, memory });
@@ -283,6 +295,12 @@ async function runCommandIdle(trigger: string, env: NodeJS.ProcessEnv, protected
   const measured = await measureTick(config, now);
   const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
   try {
+    await runBootedParkedPass({
+      sims: measured.sims,
+      memory: measured.measurement.memory.level,
+      act: mode === 'on',
+      log: (level, event, msg, fields = {}) => writer.write({ src: trigger, level, event, msg, ...fields }),
+    });
     await runIdlePass({
       config,
       now,

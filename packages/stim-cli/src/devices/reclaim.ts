@@ -15,6 +15,7 @@ import {
 import { existsSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../supervisor/stop-cause.ts';
+import { readBootedParkDeadline } from './booted-park.ts';
 import {
   teardownOwnedBrowser,
   teardownOwnedIosSim,
@@ -244,6 +245,7 @@ function parkRequest(
   projectPath: string,
   slot: string,
   simslimManaged: boolean,
+  bootedUntil: string | null,
 ): ParkRequest | undefined {
   const { max, error } = parkedMaxSetting('ios');
   if (error || max <= 0) return undefined;
@@ -254,6 +256,7 @@ function parkRequest(
     slot,
     appId: typeof project?.bundleId === 'string' ? project.bundleId : null,
     cacheKey: lastBuildCacheKey(projectPath, 'ios'),
+    ...(bootedUntil ? { bootedUntil } : {}),
   };
 }
 
@@ -286,7 +289,17 @@ async function reclaimOwnedDevices(
         operation,
         del: true,
         label,
-        ...(park ? { park: parkRequest(project, projectPath, slot, Boolean(ios.simslimManaged)) } : {}),
+        ...(park
+          ? {
+              park: parkRequest(
+                project,
+                projectPath,
+                slot,
+                Boolean(ios.simslimManaged),
+                await readBootedParkDeadline('ios', operation),
+              ),
+            }
+          : {}),
       });
       if (r.parkFallback) poolNotes.push(`could not park ${label}: ${r.parkFallback} -- deleted it instead`);
       for (const failure of r.evictionFailures ?? []) poolNotes.push(failure);

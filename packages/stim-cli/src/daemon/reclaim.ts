@@ -8,6 +8,8 @@ import type { IosSimRecord } from '../devices/ios.ts';
 import { countLiveOwnedDevicesByPlatformAsync } from '../engine/device-capacity.ts';
 import { liveWaiters } from '../engine/wait-queue.ts';
 import { liveShareKeepReason, readWebShares, shareKeepReason } from '../local-server.ts';
+import { readParked } from '../devices/sim-pool.ts';
+import { shutDownBootedParkedIosSim } from '../devices/teardown.ts';
 import { admissionLimits, getPlatformDeviceLimits } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { ownedHere, type IdlePassInput } from './idle.ts';
@@ -67,6 +69,41 @@ export async function reclaimForBootWaiters({
     }),
   );
   if (!totalFull && fullPlatforms.size === 0) return null;
+  const parked = readParked('ios')
+    .filter(
+      (record) => record.bootedUntil !== undefined && sims.find((sim) => sim.udid === record.udid)?.state === 'Booted',
+    )
+    .toSorted((a, b) => a.parkedAt.localeCompare(b.parkedAt))[0];
+  if (parked && (totalFull || fullPlatforms.has('ios'))) {
+    const label = `parked simulator ${parked.name}`;
+    const reason = `a run waits to boot and the booted devices fill ${totalFull ? `concurrency.maxDevices (${maxDevices})` : 'the ios cap'}; a parked simulator held booted goes first`;
+    if (!act) {
+      log('info', 'device_would_reclaim', `would shut down ${label}: ${reason}`);
+      return {
+        rung: 0,
+        kind: 'reclaim-device',
+        target: parked.udid,
+        outcome: 'would',
+        bytes: 0,
+        detail: 'daemon.mode report acts on nothing',
+      };
+    }
+    const outcome = await shutDownBootedParkedIosSim(parked.udid, { label: parked.name, operation });
+    const done = outcome.status === 'torn-down';
+    const detail = done
+      ? `shut down ${label} for a waiting run: ${reason}`
+      : `kept ${label}: ${outcome.reason ?? outcome.status}`;
+    log(done ? 'info' : 'warn', done ? 'device_reclaimed' : 'device_reclaim_kept', detail, { target: parked.udid });
+    if (done || outcome.status === 'failed')
+      return {
+        rung: 0,
+        kind: 'reclaim-device',
+        target: parked.udid,
+        outcome: done ? 'done' : 'failed',
+        bytes: 0,
+        detail,
+      };
+  }
   const waiting = new Set(
     waiters.flatMap(({ details }) => {
       const root = typeof details.root === 'string' ? safeCanonical(details.root) : null;
