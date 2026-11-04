@@ -373,6 +373,16 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     return calls;
   }
 
+  function syncListings(): () => string[] {
+    const listed = vi.spyOn(fs, 'readdirSync');
+    syncBuiltinESMExports();
+    onTestFinished(() => {
+      listed.mockRestore();
+      syncBuiltinESMExports();
+    });
+    return () => listed.mock.calls.map(([path]) => String(path));
+  }
+
   function idleWorkspaces(): string[] {
     const git = (cwd: string, ...args: string[]) =>
       getExecutor().runFile('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, timeoutMs: 10_000 });
@@ -414,12 +424,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       vi.restoreAllMocks();
     });
     const calls = asyncOnlyTools();
-    const listed = vi.spyOn(fs, 'readdirSync');
-    syncBuiltinESMExports();
-    onTestFinished(() => {
-      listed.mockRestore();
-      syncBuiltinESMExports();
-    });
+    const listed = syncListings();
 
     const passes = await runHomePasses({ act: true, log: () => {} });
     const lane = createMaintenanceLane(() => {});
@@ -429,12 +434,11 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     expect(passes.pressure.level).not.toBe('normal');
     expect(readMaintenanceState()?.lastPass?.trigger).toBe('daemon');
     expect(calls.sync).toEqual([]);
-    const walked = new Set([tmpdir(), ...roots]);
-    expect(listed.mock.calls.map(([path]) => String(path)).filter((path) => walked.has(path))).toEqual([]);
+    expect(listed().filter((path) => path === tmpdir() || roots.includes(path))).toEqual([]);
   }, 60_000);
 
   test.skipIf(process.platform !== 'darwin')(
-    'a tick that idles a workspace with an owned booted simulator, then re-checks it for a waiting run, starts no child process synchronously',
+    'a tick that idles a workspace with an owned booted simulator, then re-checks it for a waiting run, starts no child process and lists no project directory synchronously',
     async () => {
       const root = join(home, 'booted');
       mkdirSync(root);
@@ -463,6 +467,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
         vi.restoreAllMocks();
       });
       const calls = asyncOnlyTools();
+      const listed = syncListings();
       sims = [{ udid: 'UDID-B', name: 'stim-booted (iPhone 16 18.0)', state: 'Booted' }];
 
       const passes = await runHomePasses({ act: true, log: () => {} });
@@ -475,6 +480,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       });
 
       expect(calls.sync).toEqual([]);
+      expect(listed().filter((path) => path === root)).toEqual([]);
       expect(passes.workspaces).toEqual([expect.objectContaining({ path: root, outcome: 'idle' })]);
       expect(sims).toEqual([expect.objectContaining({ udid: 'UDID-B', state: 'Shutdown' })]);
       expect(reclaimed).toMatchObject({
