@@ -1,5 +1,5 @@
 export * from '@stim-cli/core/protocol';
-import { SETTING_SCOPES } from '@stim-cli/core/state';
+import { MAX_REVERSE_PORTS, SETTING_SCOPES } from '@stim-cli/core/state';
 
 import {
   PROTOCOL_VERSION,
@@ -1538,7 +1538,20 @@ export function protocolJsonSchema(): JsonSchema {
             },
           }),
           request('device-host.metro.close', session({})),
-          request('device-host.metro.link', session({})),
+          request('device-host.metro.link', session({ port: { type: 'integer', minimum: 1, maximum: 65535 } })),
+          request(
+            'device-host.reverse.set',
+            session(
+              {
+                ports: {
+                  type: 'array',
+                  maxItems: MAX_REVERSE_PORTS,
+                  items: { type: 'integer', minimum: 1, maximum: 65535 },
+                },
+              },
+              ['ports'],
+            ),
+          ),
           request('device-host.agent.link', session({})),
           request(
             'device-host.frames.subscribe',

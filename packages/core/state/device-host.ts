@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { configDir } from '../index.ts';
 import { loadConfig } from './config.ts';
 import { isJsonObject } from './json-file.ts';
+import { isTcpPort, MAX_REVERSE_PORTS } from './reverse-ports.ts';
 import { coerceSettingText, settingDefinition, settingValueError } from './settings-registry.ts';
 import {
   hostedMacosAppSlot,
@@ -150,6 +151,7 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
   agent?: HostedAgentGrant;
   metroPort?: number;
   clientMetroPort?: number;
+  reverses?: Record<string, number>;
 }
 
 function machineSetting(key: string, env: NodeJS.ProcessEnv): { value: unknown } | { invalid: string } {
@@ -502,7 +504,13 @@ export function readHostedSessions(): HostedDeviceSession[] {
         (typeof entry.metroPort !== 'number' ||
           !Number.isInteger(entry.metroPort) ||
           entry.metroPort < 1 ||
-          entry.metroPort > 65535))
+          entry.metroPort > 65535)) ||
+      (entry.reverses !== undefined &&
+        (!isJsonObject(entry.reverses) ||
+          Object.keys(entry.reverses).length > MAX_REVERSE_PORTS ||
+          Object.entries(entry.reverses).some(
+            ([port, worker]) => !isTcpPort(Number(port)) || !isTcpPort(worker) || entry.platform === 'macos',
+          )))
     )
       throw new Error(`Malformed hosted session record: ${root}`);
     ids.add(entry.id);

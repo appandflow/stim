@@ -215,6 +215,31 @@ instead of compiling or booting here. Disabling local alone never triggers bille
 EAS fallback; an existing `remote.easFallback` opt-in still needs the physical device
 cap or queue condition.
 
+## Reverse ports on hosted devices
+
+`stim ports reverse <label|port>` also works for a hosted simulator or emulator, so an app on the host reaches a server on your machine at the same `localhost:<port>`. The machine you run Stim on can be a Linux sandbox that accepts no inbound connections: the host never connects to it.
+
+<StimTabs code={`stim start
+stim ios --remote janics-mac-mini
+stim ports reverse 4318`} />
+
+Your Metro supervisor, started by `stim start`, keeps idle connections open to the host, one set per reversed port. The host listens on its own loopback and hands each connection the device makes to one of them, and your machine forwards it only to the same port on its own loopback. The port list comes from your workspace, so the host cannot ask for another port. This needs the same `device-host` approval as the hosted session and a host stim-server that advertises `hosted-reverse-ports`.
+
+- A hosted iOS simulator shares the host's loopback, so the host listens on the same port number. A port another process holds on the host is refused; reverse another port or free it there.
+- A hosted Android emulator has its own loopback, so the host listens on a private loopback port and points the emulator's `adb reverse` at it. Two sessions can reverse the same port.
+- Any process on the host Mac can connect to those loopback ports while the session lasts. Reverse only servers you would let that Mac's users reach.
+- `stim ios --remote` and `stim android --remote` set the reversed ports up again when they place an app, `stim reload android` restores an emulator's, and a host restart resumes them with the session. Stopping or losing the session, or `ports reverse --remove`, closes them.
+
+Copy this prompt into your agent:
+
+```text
+My agent runs in a sandbox and the app runs on the hosted simulator on
+janics-mac-mini. Read stim guide ports, reverse the port of the server the app
+must reach, and confirm the app connects at localhost:<port>.
+```
+
+For Appduct, set `advertisedIp` in `~/.appduct/config.json` to `127.0.0.1`, run `stim ports reverse <daemon port>`, and deliver its link with `stim agent-device open <app> "<link>"`.
+
 ## Hosted parking and restart
 
 On stop, the host parks healthy iOS simulators and Android emulators of approved

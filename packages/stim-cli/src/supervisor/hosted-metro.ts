@@ -9,6 +9,7 @@ import {
   HOSTED_METRO_REQUESTS_KEY,
   type HostedMetroRequest,
   type HostedMetroLinks,
+  reversePorts,
 } from '@stim-cli/core/state';
 import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
@@ -17,6 +18,8 @@ import { parseMachine } from '../offload/tailnet.ts';
 import { openAgentRelay } from './agent-relay.ts';
 import { openMetroLinks, type MetroLinkPool } from './metro-links.ts';
 import { watchWorkspaceState } from '../workspace/workspace-state-watch.ts';
+
+const REVERSE_RETRY_MS = 60_000;
 
 function reconcileHostedMetro(
   requests: Record<string, HostedMetroRequest>,
@@ -32,6 +35,9 @@ function reconcileHostedMetro(
 export function watchHostedMetro(root: string, metroPort: number, processToken: string): () => Promise<void> {
   const active: Record<string, HostedMetroRequest> = {};
   const pools = new Map<string, MetroLinkPool>();
+  const reversePools = new Map<string, MetroLinkPool>();
+  const stopped = new Set<string>();
+  const reverseFailedAt = new Map<string, number>();
   let closed = false;
   let running: Promise<void> = Promise.resolve();
   let probingAt = 0;
@@ -157,14 +163,46 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
         },
       });
     }
+    const wanted = new Map<string, { machine: string; session: string; port: number }>();
+    for (const placement of placements)
+      if (!stopped.has(placement.session))
+        for (const port of reversePorts(state))
+          wanted.set(`${placement.session}:${port}`, { machine: placement.machine, session: placement.session, port });
+    for (const [key, pool] of reversePools) {
+      if (wanted.has(key)) continue;
+      pool.close();
+      reversePools.delete(key);
+    }
+    for (const [key, { machine, session, port }] of wanted) {
+      if (reversePools.has(key) || Date.now() - (reverseFailedAt.get(key) ?? 0) < REVERSE_RETRY_MS) continue;
+      reversePools.set(
+        key,
+        openMetroLinks({
+          machine,
+          session,
+          metroPort: port,
+          reverse: true,
+          onReady: () => {},
+          onLost: () => {},
+          onError: (message) => {
+            process.stderr.write(`reverse port ${port}: ${message}\n`);
+            reversePools.get(key)?.close();
+            reversePools.delete(key);
+            reverseFailedAt.set(key, Date.now());
+          },
+        }),
+      );
+    }
     if (!probing && Date.now() >= probingAt) {
       clearTimeout(probeTimer);
       probingAt = Date.now() + 10_000;
       probing = true;
       void Promise.all(
         placements.map(async (placement) => {
-          if ((await probeHostedSession(placement)).state === 'stopped' && !closed)
+          if ((await probeHostedSession(placement)).state === 'stopped' && !closed) {
+            stopped.add(placement.session);
             clearHostedMetro(root, placement.session);
+          }
         }),
       )
         .catch(() => {})
@@ -198,6 +236,6 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
     clearTimeout(republish);
     clearInterval(timer);
     await running;
-    for (const pool of pools.values()) pool.close();
+    for (const pool of [...pools.values(), ...reversePools.values()]) pool.close();
   };
 }

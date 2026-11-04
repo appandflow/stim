@@ -8,6 +8,9 @@ import { prepareHostedNative, placeHostedNative, stopHostedNative, type HostedNa
 import { connectHost, call } from './hosted-client.ts';
 import { requestHostedMetro } from './metro-request.ts';
 import { throwIfCancelled } from '../cancellation.ts';
+import { reversePorts } from '@stim-cli/core/state';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { syncHostedReverses } from './reverse.ts';
 export interface HostedAndroidTarget extends HostedNativeTarget {
   choice: HostedAndroidChoice;
 }
@@ -45,6 +48,8 @@ export async function reopenHostedAndroidMetro(
     await requestHostedMetro(root, placement.session, host.credential, signal);
     throwIfCancelled(signal, 'reload');
     await call(host, 'device-host.metro.open', { session: placement.session, clientMetroPort });
+    if (reversePorts(readWorkspaceState(root)).length > 0)
+      await syncHostedReverses(root, host, placement.session).catch(() => {});
   } finally {
     host.connection.close();
   }

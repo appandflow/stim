@@ -32,6 +32,7 @@ import {
   readHostedMacosApp,
   readHostedDeviceLedger,
   readNdjsonGenerations,
+  MAX_REVERSE_PORTS,
   type HostedDeviceSession,
 } from '@stim-cli/core/state';
 import {
@@ -176,6 +177,11 @@ if(input.mode === 'inspect') {
   if(input.deviceProfile === 'delayed-reverse') await new Promise(resolve=>setTimeout(resolve,300));
   if(input.deviceProfile === 'failing-reverse' && existsSync(join(home,'fail-reverse'))) { out({state:'unknown',device:null,notice:'adb is restarting'}); process.exit(0); }
   out({state:'ready',device:JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'))});
+} else if(input.mode === 'reverse-ports') {
+  appendFileSync(join(home,'reversed-ports'),JSON.stringify({reverses:input.reverses,removed:input.removed})+'\\n');
+  if(input.deviceProfile === 'delayed-reverse-ports') await new Promise(resolve=>setTimeout(resolve,800));
+  if(input.deviceProfile === 'failing-reverse-ports' && input.reverses.length) { out({state:'unknown',device:null,notice:'adb is restarting'}); process.exit(0); }
+  out({state:'ready',device:JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'))});
 } else if(input.mode === 'install') {
   appendFileSync(join(home,'installed'),input.attempt+'\\n');
   writeFileSync(join(home,'install-metro-port'),String(input.metroPort ?? ''));
@@ -317,6 +323,31 @@ function linkMetro(session: string, metroPort: number): void {
     close: () => {},
   };
   host.metroLink('client', { session }, link);
+}
+
+function linkReverse(session: string, port: number, clientPort = port): void {
+  const link: MetroLink = {
+    open: (socket) => {
+      linkReverse(session, port, clientPort);
+      const upstream = connect(clientPort, '127.0.0.1');
+      upstream.on('error', () => upstream.destroy());
+      socket.once('close', () => upstream.destroy());
+      upstream.once('close', () => socket.destroy());
+      socket.pipe(upstream).pipe(socket);
+      socket.resume();
+      return true;
+    },
+    close: () => {},
+  };
+  host.metroLink('client', { session, port }, link);
+}
+
+async function freePort(): Promise<number> {
+  const probe = createServer();
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+  const port = boundPort(probe);
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  return port;
 }
 
 test('keeps HTTP and WebSocket Metro on the owned session port across reconnect and closes it on revocation', async () => {
@@ -842,6 +873,159 @@ function recordAbsence(id: string, absentMs: number) {
   writeFileSync(file, JSON.stringify(journal));
 }
 
+describe('reverse ports', () => {
+  const closeServer = async (server: ReturnType<typeof createServer>) => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  };
+  let client: ReturnType<typeof createServer>;
+  beforeEach(async () => {
+    client = createServer((_request, response) => response.end('client daemon'));
+    await new Promise<void>((resolve) => client.listen(0, '127.0.0.1', resolve));
+  });
+  afterEach(() => closeServer(client));
+  const reversed = (id: string) => readHostedSessions().find((entry) => entry.id === id)?.reverses;
+
+  test('a simulator reaches the client server at the same loopback port until the port is removed', async () => {
+    const session = await reserve();
+    await state(session.id, 'ready');
+    const port = await freePort();
+    expect(await host.reverseSet('other', { session: session.id, ports: [port] })).toHaveProperty('error');
+    const set = await host.reverseSet('client', { session: session.id, ports: [port] });
+    expect(set).toEqual({ result: { ports: [{ port, workerPort: port }] } });
+    expect(reversed(session.id)).toEqual({ [port]: port });
+    linkReverse(session.id, port, boundPort(client));
+    expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe('client daemon');
+    expect(
+      host.metroLink('client', { session: session.id, port: port + 1 }, { open: () => false, close() {} }),
+    ).toHaveProperty('error');
+    expect(await host.reverseSet('client', { session: session.id, ports: [] })).toEqual({ result: { ports: [] } });
+    expect(reversed(session.id)).toBeUndefined();
+    await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow('fetch failed');
+  });
+
+  test('a port another listener holds on the host is refused, and a revoked client keeps no listener', async () => {
+    const session = await reserve();
+    await state(session.id, 'ready');
+    expect(await host.reverseSet('client', { session: session.id, ports: [boundPort(client)] })).toMatchObject({
+      error: { code: 'device-busy', message: expect.stringContaining(`Port ${boundPort(client)} is in use`) },
+    });
+    expect(reversed(session.id)).toBeUndefined();
+    const port = await freePort();
+    expect(await host.reverseSet('client', { session: session.id, ports: [port] })).toHaveProperty('result');
+    allowed.delete('client');
+    host.revoke();
+    await state(session.id, 'stopped');
+    await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow('fetch failed');
+  });
+
+  test('a set that cannot bind one port closes the ports it opened and keeps the earlier set', async () => {
+    const session = await reserve();
+    await state(session.id, 'ready');
+    const first = await freePort();
+    const second = await freePort();
+    expect(await host.reverseSet('client', { session: session.id, ports: [first] })).toHaveProperty('result');
+    expect(
+      await host.reverseSet('client', { session: session.id, ports: [first, second, boundPort(client)] }),
+    ).toHaveProperty('error.code', 'device-busy');
+    expect(reversed(session.id)).toEqual({ [first]: first });
+    linkReverse(session.id, first, boundPort(client));
+    expect(await (await fetch(`http://127.0.0.1:${first}/`)).text()).toBe('client daemon');
+    await expect(fetch(`http://127.0.0.1:${second}/`)).rejects.toThrow('fetch failed');
+  });
+
+  test('an emulator gets an adb reverse to a private bridge port, and the session Metro port is refused', async () => {
+    const session = await reserve({ platform: 'android', attempt: 'android-reverse-ports' });
+    await state(session.id, 'ready');
+    const port = await freePort();
+    expect(await host.metroOpen('client', { session: session.id, clientMetroPort: 8082 })).toHaveProperty(
+      'result.port',
+    );
+    expect(await host.reverseSet('client', { session: session.id, ports: [8082] })).toHaveProperty(
+      'error.code',
+      'action-failed',
+    );
+    const set = await host.reverseSet('client', { session: session.id, ports: [port] });
+    if ('error' in set) throw new Error(set.error.message);
+    const workerPort = set.result.ports[0]?.workerPort ?? 0;
+    expect(workerPort).not.toBe(port);
+    const log = () =>
+      readFileSync(join(deviceHostArea(session.id), 'home', 'reversed-ports'), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+    expect(log()).toEqual([{ reverses: [{ devicePort: port, bridgePort: workerPort }], removed: [] }]);
+    linkReverse(session.id, port, boundPort(client));
+    expect(await (await fetch(`http://127.0.0.1:${workerPort}/`)).text()).toBe('client daemon');
+    await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow('fetch failed');
+    expect(await host.reverseSet('client', { session: session.id, ports: [] })).toEqual({ result: { ports: [] } });
+    expect(log().at(-1)).toEqual({ reverses: [], removed: [workerPort] });
+    await expect(fetch(`http://127.0.0.1:${workerPort}/`)).rejects.toThrow('fetch failed');
+  });
+
+  interface ReverseLogEntry {
+    reverses: { devicePort: number; bridgePort: number }[];
+    removed: number[];
+  }
+  const reverseLog = (id: string) =>
+    readFileSync(join(deviceHostArea(id), 'home', 'reversed-ports'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line): ReverseLogEntry => JSON.parse(line));
+
+  test('a failed adb reverse closes the bridge it opened and takes the reverse back off the emulator', async () => {
+    const session = await reserve({
+      platform: 'android',
+      attempt: 'android-reverse-rollback',
+      deviceProfile: 'failing-reverse-ports',
+    });
+    await state(session.id, 'ready');
+    const port = await freePort();
+    expect(await host.reverseSet('client', { session: session.id, ports: [port] })).toHaveProperty(
+      'error.code',
+      'action-failed',
+    );
+    expect(reversed(session.id)).toBeUndefined();
+    const [attempt, rollback] = reverseLog(session.id);
+    const bridgePort = attempt?.reverses[0]?.bridgePort;
+    expect(bridgePort).toBeDefined();
+    expect(rollback).toEqual({ reverses: [], removed: [bridgePort] });
+    await expect(fetch(`http://127.0.0.1:${bridgePort}/`)).rejects.toThrow('fetch failed');
+  });
+
+  test('a stop that lands while ports are being reversed leaves no bridge listening', async () => {
+    const session = await reserve({
+      platform: 'android',
+      attempt: 'android-reverse-stop',
+      deviceProfile: 'delayed-reverse-ports',
+    });
+    await state(session.id, 'ready');
+    const pending = host.reverseSet('client', { session: session.id, ports: [await freePort()] });
+    await vi.waitFor(() => expect(reverseLog(session.id)).toHaveLength(1));
+    host.stop('client', { session: session.id });
+    expect(await pending).toHaveProperty('error');
+    await state(session.id, 'stopped');
+    const bridgePort = reverseLog(session.id)[0]?.reverses[0]?.bridgePort;
+    expect(bridgePort).toBeDefined();
+    await expect(fetch(`http://127.0.0.1:${bridgePort}/`)).rejects.toThrow('fetch failed');
+  });
+
+  test('the wire accepts at most the workspace cap of valid ports', () => {
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    validator.addSchema(protocolJsonSchema(), 'protocol');
+    const validate = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+    const params = (ports: unknown[]) => ({
+      id: 1,
+      method: 'device-host.reverse.set',
+      params: { session: 's', ports },
+    });
+    expect(validate(params([8900, 65535]))).toBe(true);
+    expect(validate(params(Array.from({ length: MAX_REVERSE_PORTS + 1 }, (_, i) => 9000 + i)))).toBe(false);
+    expect(validate(params([0]))).toBe(false);
+    expect(validate(params([70000]))).toBe(false);
+  });
+});
+
 describe('a hosted session across a server restart', () => {
   const modes = (id: string) =>
     readFileSync(join(deviceHostArea(id), 'home', 'modes'), 'utf8')
@@ -916,6 +1100,26 @@ describe('a hosted session across a server restart', () => {
       await host.metroClose('client', { session: session.id });
       metro.closeAllConnections();
       await new Promise<void>((resolve) => metro.close(() => resolve()));
+    }
+  });
+
+  test('listens its reverse bridges on the recorded ports again after a restart', async () => {
+    const { session } = await installed();
+    const client = createServer((_request, response) => response.end('client daemon'));
+    await new Promise<void>((resolve) => client.listen(0, '127.0.0.1', resolve));
+    try {
+      const port = await freePort();
+      expect(await host.reverseSet('client', { session: session.id, ports: [port] })).toHaveProperty('result');
+      await host.close();
+      await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow('fetch failed');
+
+      host = nextServer();
+      await host.resumeSessions();
+      linkReverse(session.id, port, boundPort(client));
+      expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe('client daemon');
+    } finally {
+      client.closeAllConnections();
+      await new Promise<void>((resolve) => client.close(() => resolve()));
     }
   });
 

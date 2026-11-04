@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { MAX_REVERSE_PORTS, reversePorts } from '@stim-cli/core/state';
 import type { LeaseFileEntry } from '../engine/device-lease.ts';
 import { setDevice, upsertProject } from '../workspace/config.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
 import { recordPhoneReverse, readPhoneReverseSerials } from '../devices/phone-reverses.ts';
 import {
   applyRecordedReverses,
@@ -195,5 +195,56 @@ describe('ports recorded for a workspace', () => {
     await dropLabelReverses(root, 'api', deps);
     expect(reversePorts(readWorkspaceState(root))).toEqual([3000]);
     expect(removed).toEqual(['emulator-5554 8901']);
+  });
+});
+
+describe('reverseOnDevices on hosted sessions', () => {
+  const session = '12345678-1234-1234-1234-123456789abc';
+  beforeEach(() => {
+    const host = (platform: string) => ({
+      [platform]: { host: { machine: 'mini', session, appAttempt: 'a', selected: 'mini', device: null } },
+    });
+    updateWorkspaceState(root, (state) => ({ ...state, ...host('ios'), deviceSlots: { tablet: host('android') } }));
+  });
+
+  test('a hosted simulator and emulator are reported with how the host reaches this machine', async () => {
+    const synced: string[] = [];
+    const reports = await reverseOnDevices(root, 8901, 'add', {
+      leases: () => [],
+      requireLinks: () => {},
+      syncHosted: async (_root, machine, id) => {
+        synced.push(`${machine} ${id}`);
+        return [{ port: 8901, workerPort: 49152 }];
+      },
+    });
+    expect(synced).toEqual([`mini ${session}`, `mini ${session}`]);
+    expect(reports).toEqual([
+      expect.objectContaining({
+        platform: 'ios',
+        status: 'applied',
+        detail: expect.stringContaining('loopback port 8901'),
+      }),
+      expect.objectContaining({
+        platform: 'android',
+        status: 'applied',
+        detail: expect.stringContaining('adb reverse tcp:8901 tcp:49152'),
+      }),
+    ]);
+  });
+
+  test('a host that cannot reverse, or a missing Metro supervisor, is unsupported with its remedy', async () => {
+    const reports = await reverseOnDevices(root, 8901, 'add', {
+      leases: () => [],
+      requireLinks: () => {
+        throw Object.assign(new Error('needs the supervisor'), {
+          code: 'STIM_HOSTING_REFUSED',
+          remedy: 'Run stim start.',
+        });
+      },
+    });
+    expect(reports.map((r) => [r.status, r.detail])).toEqual([
+      ['unsupported', 'needs the supervisor Run stim start.'],
+      ['unsupported', 'needs the supervisor Run stim start.'],
+    ]);
   });
 });

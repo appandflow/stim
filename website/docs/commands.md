@@ -333,7 +333,7 @@ takes a label from `ports get` or a raw port, records it for the workspace (at
 most 16), and applies it to the devices the workspace has now. A local iOS
 simulator shares this Mac's loopback and needs nothing, an Android emulator or
 phone gets `adb reverse tcp:<port> tcp:<port>`, and an iPhone is refused because
-USB carries no reverse forward. `--remove` removes it, and `--json` prints
+USB carries no reverse forward. Hosted devices are bridged through the Metro supervisor's links to the host; see [Remote machines](./remote-machines.md#reverse-ports-on-hosted-devices). `--remove` removes it, and `--json` prints
 `action`, `port`, `ports` and a `devices` list whose `status` is `reachable`,
 `applied`, `removed`, `pending`, `unsupported` or `failed`. See
 [Reverse ports](./dev-server-and-logs.md#reverse-ports).

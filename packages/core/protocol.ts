@@ -65,6 +65,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
  * `hosted-metro-link` carries hosted Metro over `device-host.metro.link` connections the client opens, so the host never
  * connects to the client.
+ * `hosted-reverse-ports` is `device-host.reverse.set`, which makes servers on the client's loopback reachable from a
+ * hosted device at the same `localhost` ports, over `device-host.metro.link` connections registered for one `port`.
  * `hosted-agent-link` is `device-host.agent.link`, which carries one HTTP connection to a session's agent route over a
  * connection its client opened and authenticated, so agent control needs no tailnet node.
  * `hosted-metro-ports` is `device-host.metro.ports`, which names the listed ports that already accept loopback
@@ -153,6 +155,7 @@ export const FEATURES = [
   'hosted-android-process',
   'hosted-metro-ports',
   'hosted-metro-link',
+  'hosted-reverse-ports',
   'hosted-agent-link',
   'server-update',
   'build-compat',
@@ -285,6 +288,7 @@ export const METHODS = [
   'device-host.metro.ports',
   'device-host.metro.close',
   'device-host.metro.link',
+  'device-host.reverse.set',
   'device-host.agent.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
@@ -351,6 +355,7 @@ export const DEVICE_HOST_METHODS = [
   'device-host.metro.ports',
   'device-host.metro.close',
   'device-host.metro.link',
+  'device-host.reverse.set',
   'device-host.agent.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
@@ -1830,7 +1835,11 @@ export interface Methods {
   };
   'device-host.metro.ports': { params: { ports: number[] }; result: { busy: number[] } };
   'device-host.metro.close': { params: { session: string }; result: { port: null } };
-  'device-host.metro.link': { params: { session: string }; result: Record<string, never> };
+  'device-host.metro.link': { params: { session: string; port?: number }; result: Record<string, never> };
+  'device-host.reverse.set': {
+    params: { session: string; ports: number[] };
+    result: { ports: { port: number; workerPort: number }[] };
+  };
   'device-host.agent.link': { params: { session: string }; result: Record<string, never> };
   'device-host.frames.subscribe': {
     params: { session: string; fps?: number; maxEdge?: number; video?: string[] };
