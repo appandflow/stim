@@ -719,8 +719,8 @@ reaches the device that much later, and a second finger that lands later lifts
 the first and presses both. Once either finger lifts, the gesture ends and the
 other finger is ignored until every finger is up. A macOS app, a web page and an
 iPhone Duo take one finger. A server older than this field turns a two-finger
-gesture into one finger, and an older hosted worker refuses it. The toolbar under the screen
-is a compact icon bar that scrolls sideways when needed in either orientation.
+gesture into one finger, and an older hosted worker refuses it. The toolbar under the
+screen is a compact icon bar that scrolls sideways when needed in either orientation.
 Each button has a spoken label and a 44-point touch target. It has **Keyboard**,
 which opens the phone's keyboard and types what you type (printable ASCII;
 Return and Delete included), **Home**, **Lock**, and on Android **Back** and

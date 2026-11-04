@@ -427,6 +427,7 @@ export function DeviceView({
     clearSettle();
     fingers.cancel();
   }, [controlling, fingers]);
+  useEffect(() => clearSettle, []);
   const fingerDown = (changed: readonly NativeTouchEvent[]) => {
     for (const finger of changed) {
       const at = point(finger.locationX, finger.locationY, false);

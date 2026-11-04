@@ -1,6 +1,6 @@
 import 'react-native-unistyles/mocks';
 
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 import { Alert, Dimensions } from 'react-native';
 import { I18nProvider } from '@lingui/react';
 import { i18n } from '@lingui/core';
@@ -436,6 +436,26 @@ it('sends a single Android finger as a tap without a second finger', async () =>
     ['down', 0.5, 0.5, undefined, undefined],
     ['up', 0.5, 0.5, undefined, undefined],
   ]);
+});
+
+it('sends a held Android finger as a one-finger touch once the second-finger wait passes', async () => {
+  jest.useFakeTimers();
+  mockArtwork = true;
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="android" slot="default" />
+    </I18nProvider>,
+  );
+  await fireEvent.press(screen.getByLabelText('More'));
+  await fireEvent.press(screen.getByLabelText('Device Frame'));
+  const aperture = responder(screen);
+  await fireEvent(aperture, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 800 } } });
+  const finger = touchAt(1, 200, 400);
+  await fireEvent(aperture, 'responderGrant', { nativeEvent: { changedTouches: [finger], touches: [finger] } });
+  expect(mockTouch).not.toHaveBeenCalled();
+  await act(() => jest.advanceTimersByTime(40));
+  expect(mockTouch.mock.calls).toEqual([['down', 0.5, 0.5, undefined, undefined]]);
+  jest.useRealTimers();
 });
 
 it('keeps the frame presentation toggle available without a control lease or control permission', async () => {

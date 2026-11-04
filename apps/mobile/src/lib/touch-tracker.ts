@@ -34,7 +34,6 @@ export function createTouchTracker() {
   const isPaired = (id: number) => [...fingers.keys()].indexOf(id) < 2;
 
   return {
-    /** Whether the first finger is still waiting for a second one. */
     get pending() {
       return state === 'pending';
     },
@@ -56,7 +55,6 @@ export function createTouchTracker() {
       const both = pair();
       return both ? [...lifted, message('down', both.first, both.second)] : lifted;
     },
-    /** Every finger that moved in one touch event, so that two moving fingers send one message. */
     move(updates: readonly (readonly [number, FingerPoint])[]): TouchMessage[] {
       const before = pair();
       let moved = false;
@@ -89,14 +87,12 @@ export function createTouchTracker() {
       if (fingers.size === 0) state = 'idle';
       return messages;
     },
-    /** The first finger has stayed down alone for the settle time: it is a single touch. */
     settle(): TouchMessage[] {
       const held = pair();
       if (state !== 'pending' || !held) return [];
       state = 'single';
       return [message('down', held.first)];
     },
-    /** The responder was taken away or the control session ended: lifts what is down and forgets every finger. */
     cancel(): TouchMessage[] {
       const both = pair();
       const messages =
