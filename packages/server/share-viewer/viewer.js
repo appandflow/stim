@@ -189,7 +189,9 @@ function askForKeyframe() {
   send({ type: 'keyframe' });
 }
 
-let undrawn = null;
+/** Decoded frames waiting for a refresh. ?queue=2 keeps two and draws the oldest; otherwise the newest wins. */
+const QUEUE_LIMIT = new URLSearchParams(location.search).get('queue') === '2' ? 2 : 1;
+const undrawn = [];
 let drawScheduled = 0;
 
 function closeDecoder() {
@@ -200,15 +202,14 @@ function closeDecoder() {
 }
 
 function dropUndrawn() {
-  undrawn?.close();
-  undrawn = null;
+  for (const frame of undrawn.splice(0)) frame.close();
 }
 
 function drawUndrawn() {
   drawScheduled = 0;
-  const frame = undrawn;
-  undrawn = null;
+  const frame = undrawn.shift();
   if (!frame) return;
+  if (undrawn.length) drawScheduled = requestAnimationFrame(drawUndrawn);
   renderFrame(frame, frame.displayWidth, frame.displayHeight);
   rtc.drawn(frame.timestamp / 1000);
   frame.close();
@@ -280,8 +281,8 @@ function configure(sps, pps) {
   decoder = new VideoDecoder({
     output: (frame) => {
       decoded = true;
-      undrawn?.close();
-      undrawn = frame;
+      while (undrawn.length >= QUEUE_LIMIT) undrawn.shift().close();
+      undrawn.push(frame);
       drawScheduled ||= requestAnimationFrame(drawUndrawn);
     },
     error: decoderFailed,
