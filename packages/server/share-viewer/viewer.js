@@ -1228,20 +1228,12 @@ if (control) {
     if (request && request.message) send(request.message);
     else if (request) showNote(request.note);
   });
-  const keys = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Escape: 'escape' };
-  const typed = { Enter: '\n', Tab: '\t', Backspace: '\b' };
+  const apple = /Mac|iPhone|iPad/.test(navigator.userAgent);
   screen.addEventListener('keydown', (event) => {
-    if (!live || event.metaKey || event.ctrlKey || event.altKey) return;
-    const key = keys[event.key];
-    if (key && !event.shiftKey) {
-      send({ type: 'key', key });
-      event.preventDefault();
-      return;
-    }
-    const text =
-      typed[event.key] ?? (event.key.length === 1 && event.key >= ' ' && event.key <= '~' ? event.key : null);
-    if (text === null) return;
-    send({ type: 'text', text });
+    if (!live) return;
+    const message = globalThis.stimKeys.keyMessage(event, apple);
+    if (!message) return;
+    send(message);
     event.preventDefault();
   });
 }
