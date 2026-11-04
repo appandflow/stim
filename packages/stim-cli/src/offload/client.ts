@@ -1321,7 +1321,6 @@ async function resumeJob(
   return `no connection to it within ${RESUME_WINDOW_MS / 60_000} min (${last})`;
 }
 
-/** Mirrors the checkout on the machine: the manifest in pages, then every blob it lacks. */
 function unsupportedBuild(connection: BuildConnection, request: BuildRequest): string | null {
   const native = request.platform !== 'macos' ? request.native : undefined;
   if (native)
@@ -1339,6 +1338,7 @@ function omittedFromSync(platform: BuildRequest['platform']): ((path: string) =>
 
 type SyncRefusal = (repoRoot: string, paths: readonly string[]) => Promise<string | null>;
 
+/** Mirrors the checkout on the machine: the manifest in pages, then every blob it lacks. */
 async function syncSource(
   connection: BuildConnection,
   identity: RepoIdentity,
