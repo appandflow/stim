@@ -1096,7 +1096,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: false,
     description:
-      'Whether web shares from this machine offer viewers a WebRTC data channel for video. A viewer opts in with ?transport=webrtc and falls back to WebSocket when WebRTC fails; off, shares neither advertise nor accept it. Needs the optional node-datachannel package, and for a hosted device the worker must also support it. Experimental',
+      'Whether web shares from this machine offer viewers a WebRTC data channel for video. Every viewer starts on WebSocket, tries WebRTC in the background and switches only once the channel delivers a keyframe; it returns to WebSocket when the channel fails or loses too much video, and tries again later. Off, shares neither advertise nor accept it. Needs the optional node-datachannel package, and for a hosted device the worker must also support it. Experimental',
   },
   {
     key: 'server.lanAddresses',

@@ -236,6 +236,32 @@ through Funnel on the same Mac:
 A video viewer that joins while capture already runs sees its first frame in
 about 50 ms; when it starts capture, the first frame takes several seconds.
 
+### WebRTC video
+
+With `share.webrtc` on (see [Settings](./settings.md)), a viewer that can use WebRTC still
+starts on the WebSocket, so the first frame never waits for a connection. In the
+background the page opens a WebRTC data channel to the machine that owns the
+device, which for a hosted device is the worker, and takes its video from the
+channel only after the channel delivers a keyframe the decoder can start from.
+When the channel fails, or loses more than a few packets in a few seconds, the
+video goes back to the WebSocket without a reload. The page tries again after 30
+seconds, then 60, doubling up to 10 minutes, and stops after three attempts that
+never connected. Input stays on the WebSocket.
+
+The sending machine offers only addresses on a private network, a link-local
+address or a Tailscale address, uses no STUN server, and ignores a viewer's
+candidates at any other address. A viewer on the same network or tailnet gets a
+direct channel. A viewer on the internet never learns the machine's public
+address and stays on the WebSocket. There is no TURN relay. Setting
+`STIM_WEBRTC_STUN` to a `stun:` URL on the sending machine, and on the machine
+that serves the share when they differ, lets viewers connect over public
+addresses and shows the sending machine's public address to every viewer.
+
+Add `?transport=ws` to the link to keep one page on the WebSocket, or
+`?transport=webrtc` to force the channel without the fallback; the page remembers
+the choice in a cookie for a day. `?stats` shows a panel with the transport, round-trip
+time, frame rate and lost packets.
+
 ## Start a stopped share again
 
 `stim share stop` ends a share: its link stops working at once. Stim saves the

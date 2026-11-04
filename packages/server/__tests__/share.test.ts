@@ -84,6 +84,7 @@ interface Fixture {
     keyframes: number;
     offers: string[];
     peersClosed: number;
+    peerEnded: ((reason: string) => void)[];
   }[];
 }
 
@@ -218,6 +219,7 @@ function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {
         keyframes: 0,
         offers: [] as string[],
         peersClosed: 0,
+        peerEnded: [] as ((reason: string) => void)[],
       };
       f.hostedSources.push(record);
       const source: ShareSource = {
@@ -229,8 +231,9 @@ function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {
         },
         keyframe: () => record.keyframes++,
         congested: () => {},
-        webrtc: async (offer) => {
+        webrtc: async (offer, closed) => {
           record.offers.push(offer);
+          record.peerEnded.push(closed);
           return { answer: 'answer-sdp', close: () => record.peersClosed++ };
         },
         begin: async () => ({ session: 'h1', platform: 'ios', lease: { grantedAt: 'l', expiresAt: '' }, postures: [] }),
@@ -1882,26 +1885,68 @@ describe('a web share', () => {
       ],
     });
 
-    it('answers a WebRTC offer from the source and leaves the video off the share socket', async () => {
+    const useHosted = (target: Fixture): void => target.status(hostedPayload() as never);
+
+    it('keeps a viewer on socket video until it reports a keyframe from its WebRTC peer, and takes it back after', async () => {
       f = fixture({}, { webrtc: () => true });
-      f.status(hostedPayload() as never);
+      useHosted(f);
       const share = await started(f);
       const url = local(share, f.hub.port ?? 0);
-      const cookie = await login(url, share.password!);
-      const record = f.hostedSources[0]!;
-      const plain = await connect(url, { origin: origin(url), cookie }, '?codec=h264');
-      plain.socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp' }));
-      await vi.waitFor(() => expect(plain.messages.some((m) => m.type === 'webrtc-failed')).toBe(true));
-      expect(record.offers).toEqual([]);
-      plain.socket.close();
+      const cookie = await login(url, share.password ?? '');
+      const [record] = f.hostedSources;
+      if (!record) throw new Error('no hosted source');
+      const { socket, messages } = await connect(url, { origin: origin(url), cookie }, '?codec=h264');
+      expect(record.subscribed.at(-1)?.video).toBeDefined();
 
-      const { socket, messages } = await connect(url, { origin: origin(url), cookie }, '?codec=h264&transport=webrtc');
-      expect(record.subscribed.at(-1)!.video).toBeUndefined();
-      socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp' }));
-      await vi.waitFor(() => expect(messages).toContainEqual({ type: 'webrtc-answer', sdp: 'answer-sdp' }));
+      socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp', attempt: 3 }));
+      await vi.waitFor(() => expect(messages).toContainEqual({ type: 'webrtc-answer', sdp: 'answer-sdp', attempt: 3 }));
       expect(record.offers).toEqual(['offer-sdp']);
+      expect(record.subscribed).toHaveLength(1);
+
+      socket.send(JSON.stringify({ type: 'transport', via: 'webrtc', attempt: 3 }));
+      await vi.waitFor(() => expect(record.subscribed).toHaveLength(2));
+      expect(record.subscribed.at(-1)?.video).toBeUndefined();
+      expect(record.unsubscribed).toBe(1);
+
+      socket.send(JSON.stringify({ type: 'transport', via: 'ws' }));
+      await vi.waitFor(() => expect(record.subscribed).toHaveLength(3));
+      expect(record.subscribed.at(-1)?.video).toBeDefined();
+      expect(record.unsubscribed).toBe(2);
+      expect(record.peersClosed).toBe(0);
+
       socket.close();
       await vi.waitFor(() => expect(record.peersClosed).toBe(1));
+    });
+
+    it('puts the video back on the socket when the peer carrying it ends, and refuses a switch with no peer', async () => {
+      f = fixture({}, { webrtc: () => true });
+      useHosted(f);
+      const share = await started(f);
+      const url = local(share, f.hub.port ?? 0);
+      const cookie = await login(url, share.password ?? '');
+      const [record] = f.hostedSources;
+      if (!record) throw new Error('no hosted source');
+      const { socket, messages } = await connect(url, { origin: origin(url), cookie }, '?codec=h264');
+
+      socket.send(JSON.stringify({ type: 'transport', via: 'webrtc', attempt: 1 }));
+      await vi.waitFor(() =>
+        expect(messages).toContainEqual({ type: 'webrtc-failed', message: 'The WebRTC peer is gone.', attempt: 1 }),
+      );
+      expect(record.subscribed).toHaveLength(1);
+
+      socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp', attempt: 2 }));
+      await vi.waitFor(() => expect(record.peerEnded).toHaveLength(1));
+      socket.send(JSON.stringify({ type: 'transport', via: 'webrtc', attempt: 2 }));
+      await vi.waitFor(() => expect(record.subscribed).toHaveLength(2));
+      expect(record.subscribed.at(-1)?.video).toBeUndefined();
+
+      record.peerEnded[0]?.('WebRTC failed');
+      await vi.waitFor(() => expect(record.subscribed).toHaveLength(3));
+      expect(record.subscribed.at(-1)?.video).toBeDefined();
+      await vi.waitFor(() =>
+        expect(messages).toContainEqual({ type: 'webrtc-failed', message: 'WebRTC failed', attempt: 2 }),
+      );
+      socket.close();
     });
 
     it('keeps the video on the share socket and refuses offers while share.webrtc is off', async () => {
@@ -1913,7 +1958,7 @@ describe('a web share', () => {
       expect(viewer.body).toContain('data-webrtc="false"');
       expect(viewer.headers['set-cookie']).toBeUndefined();
       const record = f.hostedSources[0]!;
-      const { socket, messages } = await connect(url, { origin: origin(url), cookie }, '?codec=h264&transport=webrtc');
+      const { socket, messages } = await connect(url, { origin: origin(url), cookie }, '?codec=h264');
       expect(record.subscribed.at(-1)!.video).toBeDefined();
       socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp' }));
       await vi.waitFor(() => expect(messages.some((m) => m.type === 'webrtc-failed')).toBe(true));
