@@ -101,6 +101,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
  * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
+ * `share-reuse` is `share.start`'s `token` and `expiresAt`, which start a share under a URL token a stopped share had.
  * `share-waiting` is the rows' `state` (a share waits for its device instead of ending) and `share.stop`'s `slot`.
  * `share-slug` is `share.start`'s `slug` parameter and the rows' `slug`.
  * `hosted-presence` is `device-host.presence.subscribe`: the `presence` events of a hosted session, which carry what the
@@ -180,6 +181,7 @@ export const FEATURES = [
   'share-waiting',
   'hosted-presence',
   'share-slug',
+  'share-reuse',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -1752,6 +1754,10 @@ export interface WebShareStartParams {
   physical?: boolean;
   control?: boolean;
   expiresMinutes?: number;
+  /** The URL token to register instead of a generated one, as `stim share --reuse` restarts a stopped share. */
+  token?: string;
+  /** The share's exact expiry (an ISO time within the next 480 minutes) instead of `expiresMinutes`. */
+  expiresAt?: string;
   /** 8 to 128 characters; never sent back. Without it, and without `passwordless`, the server generates one. */
   password?: string;
   passwordless?: boolean;
