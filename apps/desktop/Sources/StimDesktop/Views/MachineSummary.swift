@@ -9,7 +9,12 @@ struct MachineSummary: View {
   var width: CGFloat
   var measuresNarrowest = false
   var openMachine: () -> Void
-  @State private var expandedResource: ResourceKind?
+  @State private var activeResource: ResourceKind = .cpu
+  @State private var displayedResource: ResourceKind = .cpu
+  @State private var isPanelOpen = false
+  @State private var pointerInStrip = false
+  @State private var pointerInPanel = false
+  @State private var pendingClose: Task<Void, Never>?
 
   @State private var hoveredResource: ResourceKind?
   @Namespace private var hoverNamespace
@@ -19,18 +24,28 @@ struct MachineSummary: View {
     withAnimation(reduceMotion || hoveredResource == nil ? nil : .spring(response: 0.25, dampingFraction: 0.87)) {
       hoveredResource = resource
     }
-    if expandedResource != nil {
-      var transaction = Transaction()
-      transaction.disablesAnimations = true
-      withTransaction(transaction) { expandedResource = resource }
-    }
+    showDetails(resource)
   }
 
-  private func shows(_ resource: ResourceKind) -> Binding<Bool> {
-    Binding(
-      get: { expandedResource == resource },
-      set: { if !$0, expandedResource == resource { expandedResource = nil } }
-    )
+  private func showDetails(_ resource: ResourceKind) {
+    pendingClose?.cancel()
+    if !isPanelOpen {
+      displayedResource = resource
+    }
+    activeResource = resource
+    isPanelOpen = true
+  }
+
+  private func updateDismissal() {
+    pendingClose?.cancel()
+    guard isPanelOpen, !pointerInStrip, !pointerInPanel else { return }
+    // Allow the pointer to cross the gap between the toolbar and the popover.
+    pendingClose = Task { @MainActor in
+      do {
+        try await Task.sleep(for: .milliseconds(220))
+        isPanelOpen = false
+      } catch {}
+    }
   }
 
   @ViewBuilder private func popover(_ resource: ResourceKind) -> some View {
@@ -71,7 +86,44 @@ struct MachineSummary: View {
         }
       }
     }
+    .backgroundPreferenceValue(ResourcePillBounds.self) { bounds in
+      GeometryReader { geometry in
+        if let anchor = bounds[displayedResource] {
+          let pill = geometry[anchor]
+          Color.clear
+            .frame(width: pill.width, height: pill.height)
+            .popover(isPresented: $isPanelOpen, attachmentAnchor: .point(.bottom), arrowEdge: .bottom) {
+              panelContent
+            }
+            .position(x: pill.midX, y: pill.midY)
+        }
+      }
+    }
+    .onChange(of: isPanelOpen) {
+      if !isPanelOpen {
+        pendingClose?.cancel()
+        pointerInPanel = false
+      }
+    }
+    .onDisappear { pendingClose?.cancel() }
     .font(.stim(.callout))
+  }
+
+  private var panelContent: some View {
+    popover(displayedResource)
+      .task(id: activeResource) { [target = activeResource] in
+        guard target != displayedResource else { return }
+        do {
+          try await Task.sleep(for: .milliseconds(120))
+        } catch { return }
+        guard !Task.isCancelled, activeResource == target else { return }
+        displayedResource = target
+      }
+      .presentationBackground(Palette.surface)
+      .onHover { inside in
+        pointerInPanel = inside
+        updateDismissal()
+      }
   }
 
   private var narrowestRow: some View {
@@ -127,7 +179,9 @@ struct MachineSummary: View {
     .padding(.vertical, Space.xs)
     .contentShape(Rectangle())
     .onHover { inside in
+      pointerInStrip = inside
       if !inside { hoveredResource = nil }
+      updateDismissal()
     }
   }
 
@@ -150,7 +204,7 @@ struct MachineSummary: View {
       help += " Stim's share of CPU: active workspaces' processes, simulators and emulators use \(workspacesCpu)."
     }
     return Button {
-      expandedResource = .cpu
+      showDetails(.cpu)
     } label: {
       statItem(icon: ResourceKind.cpu.icon, label: "CPU", value: value, tone: tone)
         .padding(Space.sm)
@@ -159,13 +213,13 @@ struct MachineSummary: View {
     .accessibilityLabel(accessibilityLabel)
     .accessibilityValue(accessibilityValue)
     .help(help)
-    .popover(isPresented: shows(.cpu), arrowEdge: .bottom) { popover(.cpu) }
     .onHover { if $0 { hover(.cpu) } }
+    .anchorPreference(key: ResourcePillBounds.self, value: .bounds) { [.cpu: $0] }
   }
 
   private func loadItem(_ load: CapacityLoad) -> some View {
     Button {
-      expandedResource = .load
+      showDetails(.load)
     } label: {
       statItem(icon: ResourceKind.load.icon, label: "Load", value: load.text, tone: load.tone)
         .padding(Space.sm)
@@ -174,13 +228,13 @@ struct MachineSummary: View {
     .accessibilityLabel("Load details")
     .accessibilityValue(load.text)
     .help("Load is the 5-minute average of tasks running or waiting, per core. \(load.busySentence)")
-    .popover(isPresented: shows(.load), arrowEdge: .bottom) { popover(.load) }
     .onHover { if $0 { hover(.load) } }
+    .anchorPreference(key: ResourcePillBounds.self, value: .bounds) { [.load: $0] }
   }
 
   private func memoryItem(_ memory: MachineMemory, cap: Capacity, showsBar: Bool) -> some View {
     Button {
-      expandedResource = .memory
+      showDetails(.memory)
     } label: {
       HStack(spacing: Space.sm) {
         statItem(
@@ -200,8 +254,8 @@ struct MachineSummary: View {
     .buttonStyle(ResourceHoverStyle(highlighted: hoveredResource == .memory, namespace: hoverNamespace))
     .accessibilityLabel("Memory details")
     .accessibilityValue(Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes))
-    .popover(isPresented: shows(.memory), arrowEdge: .bottom) { popover(.memory) }
     .onHover { if $0 { hover(.memory) } }
+    .anchorPreference(key: ResourcePillBounds.self, value: .bounds) { [.memory: $0] }
     .help(
       "Memory used on this Mac, as Activity Monitor counts it. Stim's share: active workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb)) of \(Format.gigabytes(mb: cap.totalMemoryMb))."
     )
@@ -209,7 +263,7 @@ struct MachineSummary: View {
 
   private func diskItem(_ lowest: DiskVolume, showsReclaimable: Bool) -> some View {
     Button {
-      expandedResource = .disk
+      showDetails(.disk)
     } label: {
       HStack(spacing: Space.sm) {
         statItem(
@@ -225,8 +279,8 @@ struct MachineSummary: View {
     .accessibilityLabel("Disk details")
     .accessibilityValue("\(Format.fileSize(lowest.freeBytes)) free")
     .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
-    .popover(isPresented: shows(.disk), arrowEdge: .bottom) { popover(.disk) }
     .onHover { if $0 { hover(.disk) } }
+    .anchorPreference(key: ResourcePillBounds.self, value: .bounds) { [.disk: $0] }
   }
 
   private var cpuPopover: some View {
@@ -413,5 +467,13 @@ private struct ResourceHoverStyle: ButtonStyle {
           Capsule().fill(HoverTint.color(hovering: false, pressed: true, dark: scheme == .dark))
         }
       }
+  }
+}
+
+private struct ResourcePillBounds: PreferenceKey {
+  static var defaultValue: [ResourceKind: Anchor<CGRect>] { [:] }
+
+  static func reduce(value: inout [ResourceKind: Anchor<CGRect>], nextValue: () -> [ResourceKind: Anchor<CGRect>]) {
+    value.merge(nextValue(), uniquingKeysWith: { _, next in next })
   }
 }
