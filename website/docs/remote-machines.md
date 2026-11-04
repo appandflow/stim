@@ -452,7 +452,8 @@ machine synced, including gitignored `.env.production` files. An
 `.env` file.
 
 An Android offload leaves out keystores (`*.keystore`, `*.jks`, `*.p12`, `*.pfx`)
-other than `debug.keystore`, and `keystore.properties`, and the machine builds with
+other than `debug.keystore` and those under an APK's `src/*/assets` or `src/*/res`,
+and `keystore.properties`, and the machine builds with
 its own private Gradle home, so `~/.gradle/gradle.properties` is not read on either
 machine. Builds on a worker run as one macOS or Linux user with no sandbox, which is
 why the key stays here. Stim recognizes signing material only by these names and

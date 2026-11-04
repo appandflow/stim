@@ -4,19 +4,24 @@ import { basename, join } from 'node:path';
 const KEYSTORE_FILE = /(?:\.(?:keystore|jks|p12|pfx)|(?:^|\/)keystore\.properties)$/i;
 const VALUE_FILE = /(?:\.properties|(?:^|\/)credentials\.json|(?:^|\/)\.env(?!\.(?:example|sample|template))[^/]*)$/i;
 const VALUE_PASSWORD =
-  /^[^#!\n]*?(?<!api[._-])(?:store|(?<![a-z])key)[._-]?pass(?:word)?["']?[ \t]*[=:][ \t]*["']?([^\s"',}]+)/gim;
+  /(?<!api[._-])(?:(?<!trust)store|(?<![a-z])key)[._-]?pass(?:word)?["']?[ \t]*[=:][ \t]*["']?([^\s"',}]+)/gi;
+const COMMENT_LINE = /^[ \t]*[#!].*$/gm;
+const APK_CONTENT = /(?:^|\/)src\/[^/]+\/(?:assets|res)\//;
 const GRADLE_FILE = /\.gradle(?:\.kts)?$/i;
 const GRADLE_PASSWORD = /(?<!['"[])(?:store|key)Password\s*[=(]?\s*["']([^"'\n]+)["']/gi;
-const NOT_A_PASSWORD = /^(?:android|null|\*+)$|\$/;
+const NOT_A_PASSWORD = /^(?:android|null|\*+)$|^\$/;
 const DEBUG_KEYSTORE = 'debug.keystore';
 
-/** A file an Android offload leaves out of the sync: a keystore other than the template's, or `keystore.properties`. */
+/**
+ * A file an Android offload leaves out of the sync: a keystore other than the template's or one the APK carries as an
+ * asset, or `keystore.properties`.
+ */
 export function isSigningKeystore(path: string): boolean {
-  return KEYSTORE_FILE.test(path) && basename(path) !== DEBUG_KEYSTORE;
+  return KEYSTORE_FILE.test(path) && basename(path) !== DEBUG_KEYSTORE && !APK_CONTENT.test(path);
 }
 
 function literalPassword(text: string, pattern: RegExp): boolean {
-  for (const match of text.matchAll(pattern)) {
+  for (const match of text.replace(COMMENT_LINE, '').matchAll(pattern)) {
     if (!NOT_A_PASSWORD.test(match[1]!)) return true;
   }
   return false;

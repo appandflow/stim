@@ -1191,7 +1191,8 @@ and refuse on a cache miss, with a remedy to rerun with --remote-build local or
 auto. An iOS simulator Release or other non-Debug build can: the remote machine
 bundles the JS of the synced checkout into the app.
 An Android release variant can too. An Android offload leaves out keystores
-(*.keystore, *.jks, *.p12, *.pfx) other than debug.keystore, and keystore.properties.
+(*.keystore, *.jks, *.p12, *.pfx) other than debug.keystore and those under an APK's
+src/*/assets or src/*/res, and keystore.properties.
 A release build type signed with debug.keystore, as the React Native and Expo
 templates are, is signed there. Any other signing config builds as an unsigned APK,
 which this machine zipaligns and signs with android.keystore, or

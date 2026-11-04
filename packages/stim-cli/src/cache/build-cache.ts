@@ -56,12 +56,18 @@ export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
   '**/.git/**',
   // Metro and the Expo CLI write logs and caches here; reached through a `..` dir source it is not ignored by default.
   '**/.expo/**',
+];
+
+/** What an Android offload does not send, so both machines leave it out of the fingerprint. An APK's own assets stay in. */
+const ANDROID_SIGNING_FINGERPRINT_IGNORES: string[] = [
   '**/*.keystore',
   '**/*.jks',
   '**/*.p12',
   '**/*.pfx',
   '**/keystore.properties',
   '!**/debug.keystore',
+  '!**/src/*/assets/**',
+  '!**/src/*/res/**',
 ];
 
 /**
@@ -315,7 +321,12 @@ export async function fingerprintOptions(
     ...platforms,
     ...(fileHookTransform ? { fileHookTransform } : {}),
     ...(ios.extraSources ? { extraSources: ios.extraSources } : {}),
-    ignorePaths: [...DEFAULT_FINGERPRINT_IGNORES, ...bundleOutput, ...(ios.ignorePaths ?? [])],
+    ignorePaths: [
+      ...DEFAULT_FINGERPRINT_IGNORES,
+      ...bundleOutput,
+      ...(ios.ignorePaths ?? []),
+      ...(platform === 'android' ? ANDROID_SIGNING_FINGERPRINT_IGNORES : []),
+    ],
     silent: true,
   };
 }
