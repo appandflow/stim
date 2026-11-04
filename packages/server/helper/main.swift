@@ -42,7 +42,9 @@ import ImageIO
 // ({"error": message} before a failed exit, {"inputError": message}, on a simulator
 // with several displays {"display": n} when display n is the one lit and streamed, or
 // on an emulator {"keyboard": "yes|no"} once it reports its hardware, or on an iPhone
-// {"stalled": message} while frames cannot arrive and {"stalled": null} once they can), 3 is an H.264 access unit (1-byte
+// {"stalled": message} while frames cannot arrive and {"stalled": null} once they can, or
+// {"videoDropped": n}, the count of frames the video encoder's rate control dropped, at most once a second
+// while it drops), 3 is an H.264 access unit (1-byte
 // flags with bit 0 set on a keyframe, 8-byte big-endian float capture time in
 // milliseconds since the epoch, 2-byte width, 2-byte height, Annex-B bytes), and 4 is an
 // access unit of the recording encoder, laid out like 3. Kind 5 adds a clockwise artwork

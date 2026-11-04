@@ -150,7 +150,8 @@ final class VideoEncoder {
       timestamp = CMTimeAdd(lastTimestamp, CMTime(value: 1, timescale: 1_000_000))
     }
     lastTimestamp = timestamp
-    let properties = forceKeyframe ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil
+    let forced = forceKeyframe
+    let properties = forced ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil
     forceKeyframe = false
     VTCompressionSessionEncodeFrame(
       session, imageBuffer: buffer, presentationTimeStamp: timestamp, duration: .invalid,
@@ -158,6 +159,7 @@ final class VideoEncoder {
     ) { [output, weak self] status, flags, sample in
       if status == noErr, sample == nil, flags.contains(.frameDropped) {
         self?.countDrop()
+        if forced { self?.requestKeyframe() }
         return
       }
       guard status == noErr, let sample, let unit = Self.annexB(sample) else {
@@ -223,10 +225,6 @@ final class VideoEncoder {
 
   private static func applyBitrate(_ session: VTCompressionSession, _ bitrate: Int) {
     VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFNumber)
-    let window = 0.5
-    let bytes = Int(Double(bitrate) / 8 * window * 1.5)
-    VTSessionSetProperty(
-      session, key: kVTCompressionPropertyKey_DataRateLimits, value: [bytes, window] as CFArray)
   }
 
   private func transferSession() -> VTPixelTransferSession? {
