@@ -358,8 +358,12 @@ struct AddMachineSheet: View {
       VStack(alignment: .leading, spacing: Space.lg) {
         Text(wizard.phase == .cancelled ? "Setup cancelled" : "Set up \(name)").font(.stim(.title))
         if wizard.phase != .cancelled {
-          Text("Run this on \(name), then approve each request there (y) in \(shell).")
-            .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+          Text(
+            model.os == .macOS
+              ? "Run this on \(name), then approve each request there (y) in Terminal. With Stim Desktop on \(name), you can instead paste it there in Settings > Connections > Using this machine > Add > Machine to Build or Run Simulators Here, and choose Allow."
+              : "Run this on \(name), then approve each request there (y) in \(shell)."
+          )
+          .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
         }
         if wizard.phase == .cancelled {
           Text(statusText).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)

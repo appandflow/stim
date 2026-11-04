@@ -119,8 +119,8 @@ struct PairMachineSheet: View {
     VStack(alignment: .leading, spacing: Space.lg) {
       Label("Paired with \(pairing.name.isEmpty ? "the machine" : pairing.name)", systemImage: "checkmark.circle.fill")
         .font(.stim(.headline)).foregroundStyle(Palette.success)
+      ConnectionConfirmationView(confirmation: .paired(pairing))
       VStack(alignment: .leading, spacing: Space.sm) {
-        fact("Access", PairedServerWording.access(pairing.capabilities))
         fact("Endpoint", pairing.endpoint.absoluteString, mono: true)
         fact("Fingerprint", pairing.id, mono: true)
       }

@@ -108,7 +108,7 @@
       IncomingConnectionsContent(
         allowsConnections: $allows, problem: nil, phoneApp: true,
         connections: Connections.incoming(devices), keepsAwake: $awake, shares: shares,
-        workspaceTitle: { _ in "checkout" }, sessions: sessions, addPhone: {}, explain: { _ in }, fix: { _ in },
+        workspaceTitle: { _ in "checkout" }, sessions: sessions, addPhone: {}, addMachine: {}, explain: { _ in }, fix: { _ in },
         setAccess: { _, _ in }, rename: { _ in }, revoke: { _ in }, stopShare: { _ in }, stopWorkspaceShares: { _ in },
         stopSession: { _ in },
         server: Text("stim-server 1.40.0 on port 7787").font(.stim(.footnote)).foregroundStyle(Palette.secondary))

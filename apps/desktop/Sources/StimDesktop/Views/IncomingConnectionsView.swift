@@ -22,6 +22,7 @@ struct IncomingConnectionsView: View {
   @State private var newName = ""
   @State private var stoppingSession: HostedSession?
   @State private var explaining: AddExplanation?
+  @State private var approving: ApproveMachineModel?
 
   var body: some View {
     IncomingConnectionsContent(
@@ -30,7 +31,8 @@ struct IncomingConnectionsView: View {
       changing: Set(server.pendingGrants.keys), errors: [server.devicesError, server.changeError].compactMap { $0 },
       keepsAwake: keepsAwake, shares: shares.shares, stopsOneShare: shares.stopsOneShare, stoppingShares: shares.stopping,
       workspaceTitle: { store.names(ofPath: $0).title }, sessions: hosted.sessions ?? [], stoppingSessions: hosted.stopping,
-      addPhone: { pair(fixing: false) }, explain: { explaining = $0 }, fix: fix,
+      addPhone: { pair(fixing: false) }, addMachine: { approving = ApproveMachineModel() },
+      explain: { explaining = $0 }, fix: fix,
       setAccess: { record, control in server.grant(record, control: control) },
       rename: { connection in
         newName = connection.name
@@ -53,6 +55,12 @@ struct IncomingConnectionsView: View {
     }
     .sheet(isPresented: $pairing, onDismiss: server.reloadDevices) {
       if let pairingModel { PairPhoneSheet(model: pairingModel) }
+    }
+    .sheet(
+      isPresented: .init(get: { approving != nil }, set: { if !$0 { approving = nil } }),
+      onDismiss: server.reloadDevices
+    ) {
+      if let approving { ApproveMachineSheet(model: approving, machineEntry: machineEntry) }
     }
     .onQuitRequested { pairing = false }
     .onReceive(OpenRequests.shared.$pairsPhone) { pairs in
@@ -109,6 +117,13 @@ struct IncomingConnectionsView: View {
 
   private static let keepAwakeKey = "server.keepAwake"
 
+  private var machineEntry: String? {
+    guard case .running(let health, _) = server.state, let name = health.tailscale.dnsName?.split(separator: ".").first
+    else { return nil }
+    return SetupPortProbe.entry(
+      machine: String(name), port: health.route?.state == "routed" ? health.route?.port ?? 7443 : 7443)
+  }
+
   private var keepsAwake: Binding<Bool>? {
     guard let entry = machine.entry(Self.keepAwakeKey) else { return nil }
     return Binding(
@@ -161,22 +176,18 @@ enum ConnectionProblem: Equatable {
 
 /// What Add explains for a connection this tab cannot create itself.
 enum AddExplanation: Identifiable {
-  case machine, shareLink
+  case shareLink
 
   var id: Self { self }
 
   var title: String {
     switch self {
-    case .machine: return "Let Another Machine Build or Run Simulators Here"
     case .shareLink: return "Share a Device"
     }
   }
 
   var message: String {
     switch self {
-    case .machine:
-      return
-        "On the other machine, add this one in Settings > Connections > This machine uses, or run stim remote add with this machine's name. It prints a stim-server setup command; run that here in a terminal to approve it."
     case .shareLink:
       return "Choose Share\u{2026} in a running simulator or emulator's menu to give someone a link to it."
     }
@@ -199,6 +210,7 @@ struct IncomingConnectionsContent<Server: View>: View {
   var sessions: [HostedSession]
   var stoppingSessions: Set<String> = []
   var addPhone: () -> Void
+  var addMachine: () -> Void
   var explain: (AddExplanation) -> Void
   var fix: (ConnectionProblem) -> Void
   var setAccess: (PairedDevice, Bool) -> Void
@@ -269,7 +281,7 @@ struct IncomingConnectionsContent<Server: View>: View {
   private var addMenu: some View {
     Menu("Add\u{2026}") {
       if phoneApp { Button("Pair a Phone\u{2026}", action: addPhone) }
-      Button("Machine to Build or Run Simulators Here\u{2026}") { explain(.machine) }
+      Button("Machine to Build or Run Simulators Here\u{2026}", action: addMachine)
       Button("Share Link\u{2026}") { explain(.shareLink) }
     }
     .menuStyle(.button)
