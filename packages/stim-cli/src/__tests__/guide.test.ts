@@ -849,6 +849,7 @@ test('ports guidance documents reverse and its cap', () => {
   expect(guide).toContain('stim ports reverse --remove');
   expect(guide).toContain(`at most ${MAX_REVERSE_PORTS}`);
   expect(guide).toContain('android-reverse-missing');
+  expect(guide).toContain('hosted-reverse-ports');
 });
 
 test('guide prints the status block before the index and the agent topic, and never before a section', async () => {

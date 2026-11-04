@@ -25,6 +25,7 @@ import {
   parseHostedNativePlacement,
   unreadableHostedNative,
   hostedMemoryRefusal,
+  reversePorts,
 } from '@stim-cli/core/state';
 import {
   call,
@@ -51,6 +52,7 @@ import {
 } from './hosted-client.ts';
 import { requestHostedMetro, closeHostedMetro, hostedAgentPort, requireHostedMetro } from './metro-request.ts';
 import { writeHostedNative } from './ios-state.ts';
+import { requireReverseLinks, syncHostedReverses } from './reverse.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { cancellableSleep } from '../cancellation.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
@@ -396,6 +398,16 @@ async function placeHostedNativeOnce(
     } else {
       await call(host, 'device-host.metro.close', { session: session.id });
       await closeHostedMetro(root, session.id);
+    }
+    if (reversePorts(readWorkspaceState(root)).length > 0) {
+      try {
+        requireReverseLinks(root);
+        await syncHostedReverses(root, host, session.id);
+      } catch (error) {
+        note(
+          `reverse ports were not set up on ${host.machine}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
     const { files, content } =
       platform === 'ios'

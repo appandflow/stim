@@ -4932,7 +4932,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                                 ? await hostedDevices.metroOpen(session.id, raw)
                                 : method === 'device-host.metro.ports'
                                   ? await hostedDevices.metroPorts(session.id, raw)
-                                  : await hostedDevices.metroClose(session.id, raw);
+                                  : method === 'device-host.reverse.set'
+                                    ? await hostedDevices.reverseSet(session.id, raw)
+                                    : await hostedDevices.metroClose(session.id, raw);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 

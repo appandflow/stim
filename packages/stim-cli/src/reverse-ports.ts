@@ -5,6 +5,8 @@ import { projectDeviceSlots } from './devices/device-slots.ts';
 import { forgetPhoneReverse, readPhoneReverseSerials, recordPhoneReverse } from './devices/phone-reverses.ts';
 import { reverseMetroPorts } from './engine/app-install.ts';
 import { leaseIsExpired, listLeaseFiles } from './engine/device-lease.ts';
+import { readHostedNative } from './device-host/ios-state.ts';
+import { requireReverseLinks, syncHostedReversesTo } from './device-host/reverse.ts';
 import { getProject } from './workspace/config.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from './workspace/workspace-state.ts';
 
@@ -55,6 +57,8 @@ export interface ReverseDeps {
   applyReverse: (serial: string, port: number) => Promise<{ failed?: boolean; reason?: string }>;
   removeReverse: (serial: string, port: number, operation?: StimContext) => Promise<void>;
   leases: typeof listLeaseFiles;
+  syncHosted: typeof syncHostedReversesTo;
+  requireLinks: typeof requireReverseLinks;
 }
 
 const DEFAULT_DEPS: ReverseDeps = {
@@ -62,6 +66,8 @@ const DEFAULT_DEPS: ReverseDeps = {
   applyReverse: (serial, port) => reverseMetroPorts({ serial, metroPort: port }),
   removeReverse: (serial, port, operation) => removeMetroReverses(serial, [port], operation),
   leases: listLeaseFiles,
+  syncHosted: syncHostedReversesTo,
+  requireLinks: requireReverseLinks,
 };
 
 const PHYSICAL_IOS_REASON =
@@ -75,19 +81,12 @@ export async function reverseOnDevices(
 ): Promise<ReverseDeviceReport[]> {
   const d = { ...DEFAULT_DEPS, ...deps };
   const state = readWorkspaceState(root);
-  const hosted = new Set([
-    ...Object.keys(hostedNativeRecords(state, 'ios')),
-    ...Object.keys(hostedNativeRecords(state, 'android')),
-  ]);
+  const hosted = new Set(
+    (['ios', 'android'] as const).flatMap((platform) =>
+      Object.keys(hostedNativeRecords(state, platform)).map((slot) => `${platform}:${slot}`),
+    ),
+  );
   const reports: ReverseDeviceReport[] = [];
-  for (const platform of ['ios', 'android'] as const)
-    for (const slot of Object.keys(hostedNativeRecords(state, platform)))
-      reports.push({
-        platform,
-        device: `hosted session${slot === 'default' ? '' : ` [${slot}]`}`,
-        status: 'unsupported',
-        detail: 'this Stim does not bridge reverse ports to hosted devices',
-      });
   const act = async (platform: 'android', device: string, serial: string) => {
     if (action === 'remove') {
       try {
@@ -115,11 +114,47 @@ export async function reverseOnDevices(
         : { platform, device, status: 'applied', detail: `adb reverse tcp:${port} tcp:${port}` },
     );
   };
+  for (const platform of ['ios', 'android'] as const)
+    for (const [slot, placement] of Object.entries(readHostedNative(root, platform))) {
+      const device = `hosted ${platform} session${slot === 'default' ? '' : ` [${slot}]`} on ${placement.machine}`;
+      try {
+        if (action === 'add') d.requireLinks(root);
+        const bound = await d.syncHosted(root, placement.machine, placement.session);
+        const worker = bound.find((each) => each.port === port);
+        if (action === 'remove' || !worker) {
+          reports.push({ platform, device, status: 'removed', detail: `localhost:${port} is no longer bridged` });
+        } else {
+          reports.push({
+            platform,
+            device,
+            status: 'applied',
+            detail:
+              platform === 'ios'
+                ? `${placement.machine} listens on its loopback port ${port} and forwards to this machine`
+                : `adb reverse tcp:${port} tcp:${worker.workerPort} on the hosted emulator, forwarded to this machine`,
+          });
+        }
+      } catch (error) {
+        reports.push({
+          platform,
+          device,
+          status:
+            error instanceof Error && 'code' in error && error.code === 'STIM_HOSTING_REFUSED'
+              ? 'unsupported'
+              : 'failed',
+          detail: [
+            error instanceof Error ? error.message : String(error),
+            error instanceof Error && 'remedy' in error ? String(error.remedy) : '',
+          ]
+            .filter(Boolean)
+            .join(' '),
+        });
+      }
+    }
   const project = getProject(root);
   for (const { slot, platforms } of projectDeviceSlots(project)) {
-    if (hosted.has(slot)) continue;
     const label = slot === 'default' ? '' : ` [${slot}]`;
-    if (platforms.ios?.owned && platforms.ios.deviceUdid) {
+    if (platforms.ios?.owned && platforms.ios.deviceUdid && !hosted.has(`ios:${slot}`)) {
       reports.push({
         platform: 'ios',
         device: `${platforms.ios.deviceName ?? platforms.ios.deviceUdid}${label}`,
@@ -128,7 +163,7 @@ export async function reverseOnDevices(
       });
     }
     const android = platforms.android;
-    if (android?.owned && android.avdName) {
+    if (android?.owned && android.avdName && !hosted.has(`android:${slot}`)) {
       const device = `${android.avdName}${label}`;
       const resolved = await d.resolveAvd(android.avdName, {
         preferredSerial: android.consolePort ? `emulator-${android.consolePort}` : undefined,

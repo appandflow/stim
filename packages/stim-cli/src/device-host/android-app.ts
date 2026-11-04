@@ -12,7 +12,12 @@ import {
 import { getExecutor } from '../exec.ts';
 import { RELEASE_VERIFY_WAIT_MS } from '../engine/launch-verify.ts';
 import { findAapt } from '../commands/android/support.ts';
-import { getAvdNameForSerialAsync, androidDeviceAbi, androidToolPath } from '../devices/android.ts';
+import {
+  getAvdNameForSerialAsync,
+  androidDeviceAbi,
+  androidToolPath,
+  removeMetroReverses,
+} from '../devices/android.ts';
 import {
   androidAppProcess,
   installAndroidApp,
@@ -151,4 +156,27 @@ export async function restoreHostedAndroidMetro(
     { serial: device.serial, packageName: record.bundleId, metroPort: metro.devicePort, physical: true },
     { exec },
   );
+}
+
+export interface HostedAndroidReverses {
+  add: { devicePort: number; bridgePort: number }[];
+  removed: number[];
+}
+
+export async function applyHostedAndroidReverses(
+  home: string,
+  device: HostedAndroidDevice,
+  { add, removed }: HostedAndroidReverses,
+): Promise<void> {
+  await assertHostedAndroidTarget(home, device);
+  const exec = hostedAndroidExecutor();
+  if (removed.length > 0) await removeMetroReverses(device.serial, removed);
+  for (const { devicePort, bridgePort } of add) {
+    const reversed = await reverseMetroPorts(
+      { serial: device.serial, metroPort: bridgePort, devicePorts: [devicePort] },
+      { exec },
+    );
+    if (reversed.failed) throw new Error(reversed.reason);
+  }
+  await assertHostedAndroidTarget(home, device);
 }

@@ -103,8 +103,20 @@ exit 1 after the port is recorded.
   worktree remove together with the Metro reverse. Only the recorded ports are
   removed.
 - iPhone (ios --device): refused. USB carries no reverse forward.
-- Hosted devices (--remote <machine>) and EAS Simulator sessions: not
-  reversed by this Stim.
+- Hosted iOS and Android (--remote <machine>): reversed through the client's
+  links to the host. stim start must be running, because its Metro supervisor
+  opens those links, and the host needs hosted-reverse-ports (update
+  stim-server there otherwise). A hosted simulator shares the host's loopback,
+  so the host listens on the same port number; a port another process holds
+  on the host is refused. A hosted emulator gets adb reverse to a private
+  loopback port of the host. The host listens only on its own loopback, so any
+  process on that Mac can reach the port while the session lasts; it never
+  connects to this machine, and this machine forwards only the ports recorded
+  here. stim ios and stim android with --remote set the ports up again when
+  they place the app, stim reload android restores them, and a host restart
+  resumes them. Stopping the session ends them.
+- EAS Simulator sessions (--remote eas): not reversed; Stim has no route into
+  the session.
 stim stop removes the device-side reverses and keeps the recorded ports, so the
 next launch applies them again. worktree remove, gc --delete and automatic
 maintenance forget them with the workspace.

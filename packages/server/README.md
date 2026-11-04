@@ -1408,6 +1408,30 @@ Metro port, never to a client supplied URL, and opens a replacement link for
 each one the server opens. Client frames stay within the 64 KiB client message
 limit.
 
+### Reverse ports
+
+`device-host.reverse.set` with `{session, ports}` (at most 16 integers from 1
+through 65535) replaces the set of client loopback ports reachable from the
+session's device at the same `localhost` ports, and answers
+`{ports: [{port, workerPort}]}` for the bridge that carries each one. The
+approved client's ready, attached iOS or Android session only. Each port has its
+own bridge on the worker's loopback, fed by idle links the client registers
+with `device-host.metro.link` and `{session, port}`; a link for a port the
+session does not reverse is refused, and a link without `port` is Metro's. The
+worker never connects to the client, and the client forwards a link only to its
+own loopback on the port it registered it for.
+
+A simulator shares the worker's loopback, so its bridge listens on `port`
+itself and a port another process holds answers `device-busy`. An emulator has
+its own loopback: the bridge listens on a loopback port the worker chooses, and a
+fixed worker, under the session's child-aware claim, points the exact
+ledger-owned emulator's `adb reverse tcp:<port> tcp:<workerPort>` at it. Android
+refuses the session's own Metro port. If any port cannot be bound or reversed,
+the ones opened by that call are closed again. The session record keeps the
+bound ports in `reverses`, so a resumed session listens on them again; stop,
+revocation and server close close their listeners, and adopting a parked device clears them. The feature
+`hosted-reverse-ports` advertises it.
+
 `clientMetroPort` is required for Android and validated as an integer
 from 1 through 65535. The session records it alongside the bridge port. Android
 development installation reverses `tcp:<clientMetroPort>` to `tcp:<port>` on

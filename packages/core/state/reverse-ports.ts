@@ -10,3 +10,6 @@ export function reversePorts(state: WorkspaceState | null | undefined): number[]
   const ports = raw.filter((port): port is number => Number.isInteger(port) && port > 0 && port < 65536);
   return [...new Set(ports)].toSorted((a, b) => a - b).slice(0, MAX_REVERSE_PORTS);
 }
+
+export const isTcpPort = (port: unknown): port is number =>
+  typeof port === 'number' && Number.isInteger(port) && port >= 1 && port <= 65535;

@@ -491,7 +491,19 @@ outside it moves to its own issue and pull request.
   `device-host.metro.link` connection the session's own client opened and
   authenticated, and the client forwards it only to its verified loopback Metro.
   Stop and revocation close the bridge, idle links and active streams. Keep the
-  recorded worker port on reconnect; refuse an occupied port. Agent control of a
+  recorded worker port on reconnect; refuse an occupied port. Reverse ports
+  (`stim ports reverse`, `device-host.reverse.set`) use the same transport and
+  rules for the workspace's own servers: one worker bridge per reversed client
+  port, listening only on worker loopback, never connecting to the client. A
+  simulator shares the host's loopback, so its bridge listens on the same port
+  number and an occupied port is refused; an emulator's bridge listens on a
+  loopback port of the host's choosing and the exact owned emulator's
+  `adb reverse` targets it. The client's Metro supervisor opens the links, each
+  registered for one port taken from the workspace's record; the host pairs a
+  link only with that port's bridge, and the client forwards it only to its own
+  loopback on that port, so the host cannot name a client port. The session
+  record keeps the bridge ports for resume, and parking, stop and revocation
+  drop them. `device-host` approval is enough; it widens nothing else. Agent control of a
   session on a `local:` machine rides `device-host.agent.link` connections its
   own client opened and authenticated, which the client's supervisor feeds from
   a loopback port; the host serves only that client's session and still checks
