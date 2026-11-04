@@ -164,7 +164,6 @@ const VIDEO_KEYFRAME = 1;
 const PROBE_CODEC = 'avc1.4d0028';
 const MAX_DECODE_QUEUE = 3;
 const KEYFRAME_ASK_MS = 500;
-/** The least time between two keyframe requests after a loss on the data channel; the sender's own limit is 250 ms. */
 const RTC_KEYFRAME_ASK_MS = 250;
 
 let decoder = null;

@@ -1520,6 +1520,9 @@ export class ShareHub {
     }
     if (!source?.webrtc || !viewer.detach) return failed('This share cannot send WebRTC.');
     if (viewer.offering) return failed('A WebRTC offer is already being answered.');
+    if (!take(viewer.inputs, ROTATE_COST, this.limits.inputPerSecond, this.limits.inputPerSecond)) {
+      return failed('Too many WebRTC offers.');
+    }
     viewer.offering = true;
     this.dropPeer(viewer);
     let ended = false;
@@ -1537,7 +1540,7 @@ export class ShareHub {
         if (viewer.peer === handle) this.dropPeer(viewer);
         failed(reason);
       });
-      if (share.ended || share.source !== source || !share.viewers.has(viewer) || !viewer.detach) {
+      if (ended || share.ended || share.source !== source || !share.viewers.has(viewer) || !viewer.detach) {
         return handle.close();
       }
       viewer.peer = handle;
@@ -1565,10 +1568,12 @@ export class ShareHub {
   private transport(viewer: Viewer, via: unknown, attempt: unknown): void {
     if (via === 'ws') return this.carry(viewer, false);
     if (via !== 'webrtc') return;
-    if (viewer.peer && viewer.video) return this.carry(viewer, true);
+    const limited = !take(viewer.inputs, ROTATE_COST, this.limits.inputPerSecond, this.limits.inputPerSecond);
+    if (viewer.peer && viewer.video && !limited) return this.carry(viewer, true);
     if (viewer.socket.readyState === viewer.socket.OPEN) {
       const tag = Number.isSafeInteger(attempt) ? { attempt } : {};
-      viewer.socket.send(JSON.stringify({ type: 'webrtc-failed', message: 'The WebRTC peer is gone.', ...tag }));
+      const message = limited ? 'Too many transport changes.' : 'The WebRTC peer is gone.';
+      viewer.socket.send(JSON.stringify({ type: 'webrtc-failed', message, ...tag }));
     }
   }
 

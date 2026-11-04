@@ -258,7 +258,7 @@ that serves the share when they differ, lets viewers connect over public
 addresses and shows the sending machine's public address to every viewer.
 
 Add `?transport=ws` to the link to keep one page on the WebSocket, or
-`?transport=webrtc` to force the channel without the fallback; the page remembers
+`?transport=webrtc` to force the channel without the loss fallback; the page remembers
 the choice in a cookie for a day. `?stats` shows a panel with the transport, round-trip
 time, frame rate and lost packets.
 

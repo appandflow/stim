@@ -19,7 +19,7 @@
     cookieMatch && cookieMatch[1],
   );
   const wanted = mode !== 'off';
-  const visible = wanted || query.has('stats');
+  const visible = query.has('stats') || mode === 'force';
   const basePath = location.pathname.replace(/[^/]*$/, '');
   const iceServers = (document.body.dataset.stun || '')
     .split(',')

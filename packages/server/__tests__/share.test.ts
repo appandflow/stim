@@ -1949,6 +1949,27 @@ describe('a web share', () => {
       socket.close();
     });
 
+    it('answers a viewer that offers faster than a few a second with a refusal, not a peer', async () => {
+      f = fixture({}, { webrtc: () => true });
+      useHosted(f);
+      const share = await started(f);
+      const url = local(share, f.hub.port ?? 0);
+      const [record] = f.hostedSources;
+      if (!record) throw new Error('no hosted source');
+      const { socket, messages } = await connect(
+        url,
+        { origin: origin(url), cookie: await login(url, share.password ?? '') },
+        '?codec=h264',
+      );
+      for (let attempt = 1; attempt <= 6; attempt++) {
+        socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp', attempt }));
+        while (!messages.some((m) => m.attempt === attempt)) await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(messages).toContainEqual({ type: 'webrtc-failed', message: 'Too many WebRTC offers.', attempt: 6 });
+      expect(record.offers).toHaveLength(4);
+      socket.close();
+    });
+
     it('keeps the video on the share socket and refuses offers while share.webrtc is off', async () => {
       f.status(hostedPayload() as never);
       const share = await started(f);
