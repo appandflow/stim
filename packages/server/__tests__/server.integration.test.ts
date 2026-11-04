@@ -1482,6 +1482,7 @@ describe('pairing', () => {
           'workspace-diff',
           'hosted-congestion',
           'hosted-webrtc',
+          'hosted-webrtc-private',
           'hosted-ios-data',
           'hosted-ios-process',
           'hosted-app-state',

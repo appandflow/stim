@@ -128,8 +128,11 @@ export interface ShareDeps {
     /** Retries removing the route `stranded` reports. */
     removeStranded: () => Promise<void>;
   };
-  /** Whether `share.webrtc` is on; without it viewers get WebSocket video only and WebRTC offers are refused. */
-  webrtc?: () => boolean;
+  /**
+   * Whether viewers of a share may take video over WebRTC: `share.webrtc` is on and, for a device on this machine,
+   * node-datachannel loads here. Without it viewers get WebSocket video only and WebRTC offers are refused.
+   */
+  webrtc?: (hosted: boolean) => boolean;
   /** Frames and input for a device a host Mac runs for this machine; without it such a share is refused. */
   hosted?: (host: HostedTarget, request: ShareTarget) => ShareSource;
   /** The display name of an app on a simulator, for the page titles; defaults to reading its Info.plist. */
@@ -295,9 +298,9 @@ interface Viewer {
   socket: WebSocket;
   /** Whether the page asked for H.264 access units over this socket. */
   video: boolean;
-  /** Whether the page takes its video over a WebRTC data channel instead of this socket. */
+  /** Whether the page's video comes over its WebRTC peer instead of this socket, which then sends artwork and delay events only. */
   rtc: boolean;
-  /** The WebRTC peer sending this viewer's video, or null. */
+  /** The WebRTC peer that may send this viewer's video, or null. */
   peer: { close: () => void } | null;
   /** Whether a WebRTC offer is being answered, so a second one waits for the first to end. */
   offering: boolean;
@@ -308,6 +311,8 @@ interface Viewer {
   detach: (() => void) | null;
   /** Gates the viewer's video while it is fed by a source. */
   gate: VideoGate | null;
+  /** Feeds the viewer from its source again after `rtc` changed; null while it is fed by none. */
+  refeed: (() => void) | null;
   stopPresence: (() => void) | null;
 }
 
@@ -586,6 +591,7 @@ export class ShareHub {
     };
     share.timer.unref?.();
     this.shares.set(share.key, share);
+    this.preloadWebrtc(share);
     void this.readApp(share);
     share.unwatch = this.deps.subscribeStatus({
       item: (payload) => this.reconcile(share, payload),
@@ -961,6 +967,7 @@ export class ShareHub {
     share.bound = bound.key;
     share.hosted = bound.hosted;
     share.device = bound.device;
+    this.preloadWebrtc(share);
     void this.readApp(share);
     console.error(`stim-server: web share ${share.id} resumed on ${bound.key}`);
     for (const viewer of share.viewers) {
@@ -1126,8 +1133,7 @@ export class ShareHub {
     if (rest === '' && request.method === 'GET') {
       const [path = '', query = ''] = (request.url ?? '').split('?');
       const transport = new URLSearchParams(query).get('transport');
-      const remember =
-        this.deps.webrtc?.() === true && (transport === 'webrtc' || transport === 'ws') ? transport : null;
+      const remember = this.rtcOffered(share) && (transport === 'webrtc' || transport === 'ws') ? transport : null;
       const extra = remember
         ? { 'set-cookie': `stim_transport=${remember}; Secure; SameSite=Strict; Path=${path}; Max-Age=86400` }
         : {};
@@ -1148,7 +1154,8 @@ export class ShareHub {
             platform,
             buttons: BUTTONS[platform],
             rotate,
-            webrtc: this.deps.webrtc?.() === true,
+            webrtc: this.rtcOffered(share),
+            stun: process.env.STIM_WEBRTC_STUN ?? '',
           }),
           extra,
         );
@@ -1245,27 +1252,19 @@ export class ShareHub {
     const admitted = this.admit(share, request);
     if (!admitted) return refuse(401, 'Unauthorized');
     const query = new URL(request.url ?? '', 'http://share.invalid').searchParams;
-    const rtc = this.deps.webrtc?.() === true && query.get('codec') === 'h264' && query.get('transport') === 'webrtc';
-    const video = query.get('codec') === 'h264' && !rtc;
+    const video = query.get('codec') === 'h264';
     const id = query.get('id');
     const pageId = id !== null && PAGE_ID.test(id) ? id : null;
     const replaced = pageId === null ? 0 : this.pageViewers(share, pageId, admitted.login).length;
     if (share.viewers.size - replaced >= this.limits.maxViewers) return refuse(503, 'Service Unavailable');
-    this.wss.handleUpgrade(request, socket, head, (ws) => this.watch(share, ws, video, rtc, admitted.login, pageId));
+    this.wss.handleUpgrade(request, socket, head, (ws) => this.watch(share, ws, video, admitted.login, pageId));
   }
 
   private pageViewers(share: Share, pageId: string, login: Login | null): Viewer[] {
     return [...share.viewers].filter((viewer) => viewer.pageId === pageId && viewer.login === login);
   }
 
-  private watch(
-    share: Share,
-    socket: WebSocket,
-    video: boolean,
-    rtc: boolean,
-    login: Login | null,
-    pageId: string | null,
-  ): void {
+  private watch(share: Share, socket: WebSocket, video: boolean, login: Login | null, pageId: string | null): void {
     if (share.ended) {
       socket.close(1000, 'share ended');
       return;
@@ -1278,7 +1277,7 @@ export class ShareHub {
       pageId,
       socket,
       video,
-      rtc,
+      rtc: false,
       peer: null,
       offering: false,
       clockAt: 0,
@@ -1286,6 +1285,7 @@ export class ShareHub {
       characters: { tokens: this.limits.textCharsPerSecond, at: Date.now() },
       detach: null,
       gate: null,
+      refeed: null,
       stopPresence: null,
     };
     if (pageId !== null) {
@@ -1370,43 +1370,54 @@ export class ShareHub {
       source.congested();
       draining = setTimeout(drain, FRAME_RETRY_MS);
     };
-    const unsubscribe = source.subscribe(
-      {
-        frame: (frame) => {
-          share.backoff = RESUME_MIN_MS;
-          if (!viewer.rtc) delivery.push(frame);
+    const subscribe = () =>
+      source.subscribe(
+        {
+          frame: (frame) => {
+            share.backoff = RESUME_MIN_MS;
+            if (!viewer.rtc) delivery.push(frame);
+          },
+          ...(viewer.video && !viewer.rtc
+            ? {
+                video: (unit: AccessUnit) => {
+                  if (socket.readyState !== socket.OPEN) return;
+                  share.backoff = RESUME_MIN_MS;
+                  const verdict = gate.admit(unit, socket.bufferedAmount);
+                  if (verdict === 'send')
+                    socket.send(videoPacket(VIDEO_SUBSCRIPTION, sequence++, unit), { binary: true });
+                  else if (verdict === 'congested' && !draining) drain();
+                },
+              }
+            : {}),
+          delayed: (delayed) => json({ type: 'delayed', delayed }),
+          artwork: (artwork) => json({ type: 'artwork', artwork: artwork && viewerArtwork(artwork) }),
+          failed: (message) =>
+            queueMicrotask(() => {
+              if (share.source !== source) return;
+              share.resumeAt = Date.now() + share.backoff;
+              share.backoff = Math.min(share.backoff * 2, RESUME_MAX_MS);
+              this.suspend(share, message);
+            }),
         },
-        ...(viewer.video
-          ? {
-              video: (unit: AccessUnit) => {
-                if (socket.readyState !== socket.OPEN) return;
-                share.backoff = RESUME_MIN_MS;
-                const verdict = gate.admit(unit, socket.bufferedAmount);
-                if (verdict === 'send')
-                  socket.send(videoPacket(VIDEO_SUBSCRIPTION, sequence++, unit), { binary: true });
-                else if (verdict === 'congested' && !draining) drain();
-              },
-            }
-          : {}),
-        delayed: (delayed) => json({ type: 'delayed', delayed }),
-        artwork: (artwork) => json({ type: 'artwork', artwork: artwork && viewerArtwork(artwork) }),
-        failed: (message) =>
-          queueMicrotask(() => {
-            if (share.source !== source) return;
-            share.resumeAt = Date.now() + share.backoff;
-            share.backoff = Math.min(share.backoff * 2, RESUME_MAX_MS);
-            this.suspend(share, message);
-          }),
-      },
-      viewer.video ? VIDEO_HINT : viewer.rtc ? RTC_META_HINT : VIEW_HINT,
-    );
+        viewer.rtc ? RTC_META_HINT : viewer.video ? VIDEO_HINT : VIEW_HINT,
+      );
+    let unsubscribe = subscribe();
     if (viewer.video) source.keyframe();
     viewer.gate = gate;
+    viewer.refeed = () => {
+      if (stopped) return;
+      const previous = unsubscribe;
+      gate.reset();
+      unsubscribe = subscribe();
+      previous();
+      if (viewer.video && !viewer.rtc) source.keyframe();
+    };
     viewer.detach = () => {
       if (stopped) return;
       stopped = true;
       viewer.peer?.close();
       viewer.peer = null;
+      viewer.rtc = false;
       if (draining) clearTimeout(draining);
       delivery.stop();
       unsubscribe();
@@ -1414,6 +1425,7 @@ export class ShareHub {
       viewer.stopPresence = null;
       viewer.detach = null;
       viewer.gate = null;
+      viewer.refeed = null;
     };
   }
 
@@ -1485,25 +1497,43 @@ export class ShareHub {
       }
       return;
     }
-    if (message.type === 'webrtc-offer') return this.offer(share, viewer, message.sdp);
+    if (message.type === 'webrtc-offer') return this.offer(share, viewer, message.sdp, message.attempt);
+    if (message.type === 'transport') return this.transport(viewer, message.via, message.attempt);
     if (!share.request.control) return;
     await this.input(share, viewer, message);
   }
 
-  /** Answers the viewer's WebRTC offer with a peer on the machine that owns the device. */
-  private async offer(share: Share, viewer: Viewer, sdp: unknown): Promise<void> {
+  private preloadWebrtc(share: Share): void {
+    this.rtcOffered(share);
+  }
+
+  private rtcOffered(share: Share): boolean {
+    return this.deps.webrtc?.(share.hosted) === true;
+  }
+
+  /**
+   * Answers the viewer's WebRTC offer with a peer on the machine that owns the device. The viewer keeps its video on
+   * this socket until it reports with `transport` that the peer delivered a keyframe; `attempt` is echoed so the page
+   * can tell the reply from one to an earlier offer.
+   */
+  private async offer(share: Share, viewer: Viewer, sdp: unknown, attempt: unknown): Promise<void> {
+    const tag = Number.isSafeInteger(attempt) ? { attempt } : {};
     const failed = (message: string) => {
       if (viewer.socket.readyState === viewer.socket.OPEN) {
-        viewer.socket.send(JSON.stringify({ type: 'webrtc-failed', message }));
+        viewer.socket.send(JSON.stringify({ type: 'webrtc-failed', message, ...tag }));
       }
     };
     const { source } = share;
-    if (!viewer.rtc || typeof sdp !== 'string' || sdp.length > 65536) return failed('WebRTC was not requested.');
+    if (!viewer.video || !this.rtcOffered(share) || typeof sdp !== 'string' || sdp.length > 65536) {
+      return failed('WebRTC was not requested.');
+    }
     if (!source?.webrtc || !viewer.detach) return failed('This share cannot send WebRTC.');
     if (viewer.offering) return failed('A WebRTC offer is already being answered.');
+    if (!take(viewer.inputs, ROTATE_COST, this.limits.inputPerSecond, this.limits.inputPerSecond)) {
+      return failed('Too many WebRTC offers.');
+    }
     viewer.offering = true;
-    viewer.peer?.close();
-    viewer.peer = null;
+    this.dropPeer(viewer);
     let ended = false;
     try {
       const handle: { close: () => void } = {
@@ -1516,19 +1546,43 @@ export class ShareHub {
       peer = await source.webrtc(sdp, (reason) => {
         if (ended) return;
         ended = true;
-        if (viewer.peer === handle) viewer.peer = null;
+        if (viewer.peer === handle) this.dropPeer(viewer);
         failed(reason);
       });
-      if (share.ended || share.source !== source || !share.viewers.has(viewer) || !viewer.detach) {
+      if (ended || share.ended || share.source !== source || !share.viewers.has(viewer) || !viewer.detach) {
         return handle.close();
       }
       viewer.peer = handle;
-      viewer.socket.send(JSON.stringify({ type: 'webrtc-answer', sdp: peer.answer }));
+      viewer.socket.send(JSON.stringify({ type: 'webrtc-answer', sdp: peer.answer, ...tag }));
     } catch (cause) {
       console.error(`stim-server: web share ${share.id} WebRTC refused: ${String(cause)}`);
       if (!ended) failed(cause instanceof Error ? cause.message : String(cause));
     } finally {
       viewer.offering = false;
+    }
+  }
+
+  private dropPeer(viewer: Viewer): void {
+    viewer.peer?.close();
+    viewer.peer = null;
+    this.carry(viewer, false);
+  }
+
+  private carry(viewer: Viewer, rtc: boolean): void {
+    if (viewer.rtc === rtc) return;
+    viewer.rtc = rtc;
+    viewer.refeed?.();
+  }
+
+  private transport(viewer: Viewer, via: unknown, attempt: unknown): void {
+    if (via === 'ws') return this.carry(viewer, false);
+    if (via !== 'webrtc') return;
+    const limited = !take(viewer.inputs, ROTATE_COST, this.limits.inputPerSecond, this.limits.inputPerSecond);
+    if (viewer.peer && viewer.video && !limited) return this.carry(viewer, true);
+    if (viewer.socket.readyState === viewer.socket.OPEN) {
+      const tag = Number.isSafeInteger(attempt) ? { attempt } : {};
+      const message = limited ? 'Too many transport changes.' : 'The WebRTC peer is gone.';
+      viewer.socket.send(JSON.stringify({ type: 'webrtc-failed', message, ...tag }));
     }
   }
 

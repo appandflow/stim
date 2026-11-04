@@ -12,7 +12,7 @@ const darwinGated = [
 
 const files = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
   .split('\0')
-  .filter((file) => unit.test(file) && !file.endsWith('.compat.test.ts'))
+  .filter((file) => unit.test(file) && !/\.(?:compat|browser)\.test\.ts$/.test(file))
   .filter((file) => {
     const source = readFileSync(file, 'utf8');
     return darwinGated.some((pattern) => pattern.test(source));

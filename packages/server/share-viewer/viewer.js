@@ -164,6 +164,7 @@ const VIDEO_KEYFRAME = 1;
 const PROBE_CODEC = 'avc1.4d0028';
 const MAX_DECODE_QUEUE = 3;
 const KEYFRAME_ASK_MS = 500;
+const RTC_KEYFRAME_ASK_MS = 250;
 
 let decoder = null;
 let decoderKey = '';
@@ -180,11 +181,11 @@ function canDecodeVideo() {
   );
 }
 
-function askForKeyframe() {
+function askForKeyframe(minMs = KEYFRAME_ASK_MS) {
   waitingForKeyframe = true;
-  if (Date.now() - keyframeAskedAt < KEYFRAME_ASK_MS) return;
+  if (Date.now() - keyframeAskedAt < minMs) return;
   keyframeAskedAt = Date.now();
-  if (rtc.active === 'webrtc' && rtc.keyframe()) return;
+  if (rtc.keyframe()) return;
   rtc.countKeyframe();
   send({ type: 'keyframe' });
 }
@@ -313,7 +314,8 @@ function playSequenced(buffer, gap) {
   lastSequence = view.getUint32(4);
   if (gap) {
     rtc.gap();
-    if ((view.getUint8(1) & VIDEO_KEYFRAME) === 0) return askForKeyframe();
+    if (rtc.active !== 'webrtc') return;
+    if ((view.getUint8(1) & VIDEO_KEYFRAME) === 0) return askForKeyframe(RTC_KEYFRAME_ASK_MS);
   }
   showVideo(buffer);
 }
@@ -371,7 +373,10 @@ function showVideo(buffer) {
     if (!sps || !pps) return askForKeyframe();
     configure(sps, pps);
     waitingForKeyframe = false;
-  } else if (waitingForKeyframe || !decoder) return;
+  } else if (waitingForKeyframe || !decoder) {
+    if (rtc.active === 'webrtc') askForKeyframe(RTC_KEYFRAME_ASK_MS);
+    return;
+  }
   if (decoder.decodeQueueSize > MAX_DECODE_QUEUE) return askForKeyframe();
   try {
     decoder.decode(
@@ -637,17 +642,13 @@ function connect(codec) {
   me = null;
   overlay.clear();
   renderRoster();
-  const viaRtc = codec === 'h264' && rtc.wanted && !rtcFailed;
-  const current = new WebSocket(
-    `${socketUrl}?id=${pageId}${codec === 'h264' ? '&codec=h264' : ''}${viaRtc ? '&transport=webrtc' : ''}`,
-  );
+  const current = new WebSocket(`${socketUrl}?id=${pageId}${codec === 'h264' ? '&codec=h264' : ''}`);
   const previous = socket;
   socket = current;
   if (previous && previous.readyState <= WebSocket.OPEN) previous.close();
   body.dataset.codec = codec;
-  body.dataset.transport = viaRtc ? 'webrtc' : 'ws';
   resetSequence();
-  if (!viaRtc) rtc.stop();
+  rtc.stop();
   current.binaryType = 'arraybuffer';
   current.addEventListener('open', () => {
     if (rtc.visible) {
@@ -658,7 +659,6 @@ function connect(codec) {
         2000,
       );
     }
-    if (viaRtc) startRtc();
     kickClipboard();
     if (chosenName) sendName(chosenName);
   });
@@ -668,7 +668,7 @@ function connect(codec) {
       if (new Uint8Array(event.data, 0, 1)[0] === 0xff) {
         const blob = new Blob([event.data], { type: 'image/jpeg' });
         pending = pending.then(() => showJpeg(blob)).catch(() => {});
-      } else if (codec === 'h264') showVideo(event.data);
+      } else if (codec === 'h264' && rtc.active !== 'webrtc') showVideo(event.data);
       return;
     }
     const message = JSON.parse(event.data);
@@ -681,6 +681,7 @@ function connect(codec) {
       if (typeof message.title === 'string') document.title = message.title;
       expiresAt = Date.parse(message.expiresAt);
       refreshStatus();
+      if (codec === 'h264') rtc.schedule();
     } else if (message.type === 'title') {
       if (typeof message.title === 'string') document.title = message.title;
     } else if (message.type === 'clipboard') {
@@ -689,8 +690,8 @@ function connect(codec) {
       if (waiting && typeof message.text === 'string') waiting.resolve(message.text);
       else if (waiting) waiting.reject(new Error(message.error || 'The device did not return its clipboard.'));
     } else if (message.type === 'clock') rtc.clock(message);
-    else if (message.type === 'webrtc-answer') void rtc.answer(message.sdp).catch((error) => rtc.failed(String(error)));
-    else if (message.type === 'webrtc-failed') rtc.failed(message.message || 'WebRTC failed');
+    else if (message.type === 'webrtc-answer') rtc.answer(message);
+    else if (message.type === 'webrtc-failed') rtc.refused(message);
     else if (message.type === 'artwork') void setArtwork(message.artwork);
     else if (message.type === 'delayed') {
       if (away) return;
@@ -711,8 +712,10 @@ function connect(codec) {
       waitingForKeyframe = true;
       refreshStatus();
       resetSequence();
-      if (viaRtc && !rtcFailed) startRtc();
-      else if (codec === 'h264') askForKeyframe();
+      if (codec === 'h264') {
+        askForKeyframe();
+        rtc.schedule();
+      }
     } else if (message.type === 'you') {
       me = { id: message.id, name: message.name, color: message.color };
       roster.set(me.id, { ...me, self: true, viewOnly });
@@ -731,35 +734,13 @@ function connect(codec) {
   });
 }
 
-let rtcFailed = false;
-
-function startRtc() {
-  void rtc
-    .start({
-      send,
-      video: receiveRtc,
-      opened: () => {
-        waitingForKeyframe = true;
-        resetSequence();
-      },
-      failed: () => {
-        rtcFailed = true;
-        const previous = socket;
-        socket = null;
-        if (!previous || previous.readyState === 3) return connect('h264');
-        previous.addEventListener('close', () => connect('h264'));
-        previous.close();
-      },
-    })
-    .catch((error) => rtc.failed(String(error)));
-}
-
 function retryIn(delay) {
   clearTimeout(retryTimer);
   retryTimer = setTimeout(probe, delay);
 }
 
 function lostConnection() {
+  rtc.stop();
   live = false;
   away = false;
   resuming = false;
@@ -847,6 +828,25 @@ const send = (message) => {
 for (const surface of [device, document.getElementById('toolbar')]) {
   surface.addEventListener('contextmenu', (event) => event.preventDefault());
 }
+
+rtc.attach({
+  ready: () => socket !== null && socket.readyState === 1 && body.dataset.codec === 'h264' && !away,
+  send,
+  video: receiveRtc,
+  commit: (rtcAttempt) => {
+    waitingForKeyframe = true;
+    keyframeAskedAt = 0;
+    resetSequence();
+    send({ type: 'transport', via: 'webrtc', attempt: rtcAttempt });
+  },
+  fallback: () => {
+    waitingForKeyframe = true;
+    keyframeAskedAt = 0;
+    resetSequence();
+    send({ type: 'transport', via: 'ws' });
+    askForKeyframe();
+  },
+});
 
 void canDecodeVideo().then((supported) => connect(supported ? 'h264' : 'jpeg'));
 

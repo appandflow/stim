@@ -14,7 +14,7 @@ if (process.env.GITHUB_EVENT_NAME === 'pull_request') {
       entries.every((entry, index) =>
         index % 2 === 0
           ? entry === 'M'
-          : unit.test(entry) && !entry.endsWith('.compat.test.ts') && lstatSync(entry).isFile(),
+          : unit.test(entry) && !/\.(?:compat|browser)\.test\.ts$/.test(entry) && lstatSync(entry).isFile(),
       )
     )
       files = entries.filter((_, index) => index % 2 === 1);

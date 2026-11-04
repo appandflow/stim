@@ -5,6 +5,7 @@ vi.hoisted(() => {
   process.env.STIM_WEBRTC_STUN = '';
 });
 import { accessUnitOf, type AccessUnit } from '../src/video.ts';
+import { privateAddress } from '../src/webrtc-candidates.ts';
 import { cleanupRtc, openRtc } from '../src/webrtc-sender.ts';
 
 afterAll(async () => {
@@ -88,3 +89,33 @@ it('reports the peer closed once when the viewer goes away', async () => {
   session.close();
   expect(closed).toHaveBeenCalledTimes(1);
 }, 30_000);
+
+it('answers with local addresses only, and refuses a viewer that offers none', async () => {
+  const feed = { subscribe: () => () => {}, keyframe: () => {}, congested: () => {} };
+  const browser = await viewer();
+  const session = await openRtc(browser.offer, feed, () => {});
+  const candidates = session.answer.split('\r\n').filter((line) => line.startsWith('a=candidate:'));
+  expect(candidates.length).toBeGreaterThan(0);
+  for (const line of candidates) expect(privateAddress(line.split(' ')[4] ?? '')).toBe(true);
+  session.close();
+  browser.pc.close();
+
+  const publicOnly = [
+    'v=0',
+    'o=- 1 2 IN IP4 127.0.0.1',
+    's=-',
+    't=0 0',
+    'a=group:BUNDLE 0',
+    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
+    'c=IN IP4 0.0.0.0',
+    'a=candidate:1 1 udp 1677729535 198.51.100.7 5000 typ srflx raddr 0.0.0.0 rport 0',
+    'a=ice-ufrag:abcd',
+    'a=ice-pwd:0123456789abcdefghijklmn',
+    'a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF',
+    'a=setup:actpass',
+    'a=mid:0',
+    'a=sctp-port:5000',
+    '',
+  ].join('\r\n');
+  await expect(openRtc(publicOnly, feed, () => {})).rejects.toThrow(/no address on a local network or tailnet/);
+});
