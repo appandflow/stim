@@ -43,6 +43,7 @@ import {
   type ServerSetup,
   type SocketReading,
 } from './server-setup.ts';
+import { volumeDenialSinceStart } from './server-permissions.ts';
 import { servicePaths } from './server-toolchain.ts';
 
 const PROBE_TIMEOUT_MS = 5000;
@@ -167,6 +168,7 @@ async function readHealth(port: number): Promise<ServerHealthReading | null> {
             },
           }
         : {}),
+      ...(isJsonObject(body.lan) ? { lan: true } : {}),
       ...(keep && typeof keep.setting === 'boolean' && typeof keep.held === 'boolean'
         ? {
             keepAwake: {
@@ -236,11 +238,12 @@ function readSocket(): SocketReading | null {
   return {
     path,
     dir: dir && { isDirectory: dir.isDirectory(), mode: dir.mode, uid: dir.uid },
-    socket: socket && { isSocket: socket.isSocket(), mode: socket.mode, uid: socket.uid },
+    socket: socket && { mode: socket.mode, uid: socket.uid },
     uid: process.getuid?.() ?? -1,
   };
 }
 
+const CURRENT_MACOS_MAJOR = 27;
 const LOG_TAIL_BYTES = 64 * 1024;
 
 function logTail(path: string): string {
@@ -281,13 +284,12 @@ async function readPermissions(services: InstalledServerService[]): Promise<Perm
     }
   }
   return {
-    macosMajor: Number(version?.trim().split('.')[0]) || 0,
+    macosMajor: Number(version?.trim().split('.')[0]) || CURRENT_MACOS_MAJOR,
+    doctorApp: process.env.STIM_DESKTOP_APP ? 'Stim Desktop' : null,
     external,
     logDenials: services.flatMap(({ label, installed }) => {
-      const line = logTail(installed.logPath ?? '')
-        .split('\n')
-        .findLast((each) => /EPERM|Operation not permitted/i.test(each) && each.includes('/Volumes/'));
-      return line ? [{ label, line: line.trim().slice(0, 300) }] : [];
+      const line = volumeDenialSinceStart(logTail(installed.logPath ?? ''));
+      return line ? [{ label, line }] : [];
     }),
   };
 }

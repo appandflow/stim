@@ -4,6 +4,15 @@ import type { Finding } from './doctor.ts';
 import type { InstalledServerService, ServerReading, ServerSetup } from './server-setup.ts';
 
 const OWNER_ONLY = 0o077;
+const SERVER_START_LINE = /^stim-server \S+ \(stim /;
+
+export function volumeDenialSinceStart(log: string): string | null {
+  const lines = log.split('\n');
+  const line = lines
+    .slice(lines.findLastIndex((each) => SERVER_START_LINE.test(each)) + 1)
+    .findLast((each) => /EPERM|Operation not permitted/i.test(each) && each.includes('/Volumes/'));
+  return line ? line.trim().slice(0, 300) : null;
+}
 
 const octal = (mode: number): string => (mode & 0o777).toString(8).padStart(3, '0');
 
@@ -52,11 +61,11 @@ function socketFindings(setup: ServerSetup): Finding[] {
 
 const appName = (host: string): string => basename(dirname(dirname(dirname(host))), '.app');
 
-function responsibleApp(server: ServerReading | undefined, services: readonly InstalledServerService[]): string {
-  if (server?.kind === 'desktop') return 'Stim Desktop';
-  const service = services.find((each) => each.label === server?.label) ?? services[0];
-  return service?.installed.host ? appName(service.installed.host) : 'the node binary that runs stim-server';
-}
+const serviceApp = (service: InstalledServerService | undefined): string =>
+  service?.installed.host ? appName(service.installed.host) : 'the node binary that runs stim-server';
+
+const grant = (app: string) =>
+  `Open System Settings > Privacy & Security > Files & Folders, turn on Removable Volumes for ${app} (or give it Full Disk Access), then restart it. Doctor does not change macOS permissions.`;
 
 function macosFindings(setup: ServerSetup): Finding[] {
   const { permissions } = setup;
@@ -82,21 +91,26 @@ function macosFindings(setup: ServerSetup): Finding[] {
     }
   }
   const blocked = permissions.external.filter((each) => each.blocked);
-  if (blocked.length > 0 || permissions.logDenials.length > 0) {
-    const app = responsibleApp(
-      setup.servers.find((server) => server.kind !== 'share'),
-      setup.services,
-    );
-    const where =
-      blocked.length > 0
-        ? `listing ${blocked.map((each) => each.path).join(', ')} failed with a macOS privacy denial for the app running doctor`
-        : `${permissions.logDenials[0]?.label ?? 'the service'}'s log reports a denied read under /Volumes: ${permissions.logDenials[0]?.line}`;
+  const title = 'macOS blocks the Android SDK or AVDs on an external volume';
+  if (blocked.length > 0) {
     findings.push({
       code: 'server-macos-permission',
       level: 'cost',
-      title: 'macOS blocks the Android SDK or AVDs on an external volume',
-      detail: `${where}. The server reads the SDK and AVDs on that volume for Android builds and emulators, and a denial fails them with a permission error.`,
-      fix: `Open System Settings > Privacy & Security > Files & Folders, turn on Removable Volumes for ${app} (or give it Full Disk Access), then restart the app or service. Doctor does not change macOS permissions.`,
+      title,
+      detail: `Listing ${blocked.map((each) => each.path).join(', ')} failed with a macOS privacy denial for the process running doctor. A server needs the same permission for its own app, or Android builds and emulators on that volume fail.`,
+      fix: grant(
+        permissions.doctorApp ??
+          'the app that runs stim (your terminal or agent app) and the app each stim-server runs under',
+      ),
+    });
+  }
+  for (const denial of permissions.logDenials) {
+    findings.push({
+      code: 'server-macos-permission',
+      level: 'cost',
+      title,
+      detail: `The ${denial.label} service's log reports a denied read under /Volumes since it last started: ${denial.line}. The server reads the SDK and AVDs on that volume for Android builds and emulators.`,
+      fix: grant(serviceApp(setup.services.find((service) => service.label === denial.label))),
     });
   }
   return findings;

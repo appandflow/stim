@@ -14,8 +14,6 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isJsonObject, permissionPanes } from '@stim-cli/core/state';
-
-export { permissionPanes };
 import { ServiceError } from './service-plist.ts';
 
 const FLAVORS = {

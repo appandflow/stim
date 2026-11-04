@@ -52,10 +52,9 @@ export interface ServerHealthReading {
   stimHome: string;
   startup?: { state: string };
   keepAwake?: { setting: boolean; held: boolean; reason?: string };
-  /** Whether the server serves this machine only. */
   loopbackOnly?: boolean;
-  /** The grants macOS gives the app the server runs under (Stim Host), when it reports them. */
   host?: { name: string; screenRecording: boolean; accessibility: boolean };
+  lan?: boolean;
 }
 
 export interface InstalledServerService {
@@ -101,13 +100,14 @@ export interface ServerSetup {
 export interface SocketReading {
   path: string;
   dir: { isDirectory: boolean; mode: number; uid: number } | null;
-  socket: { isSocket: boolean; mode: number; uid: number } | null;
+  socket: { mode: number; uid: number } | null;
   /** The uid doctor runs as. */
   uid: number;
 }
 
 export interface PermissionReading {
   macosMajor: number;
+  doctorApp: string | null;
   /** Android SDK and AVD roots on an external volume, and whether listing one failed with a privacy denial. */
   external: Array<{ path: string; blocked: boolean }>;
   /** Lines of a service's log in which macOS denied a path under /Volumes. */
@@ -121,7 +121,6 @@ export interface NetworkReading {
   tailscaleStatus: unknown;
   /** `tailscale serve status --json`; null when Tailscale is not running or the config could not be read. */
   serve: unknown;
-  /** `share.exposure` and `share.publicUrl` as settings resolve them. */
   share: { exposure: 'auto' | 'tailscale' | 'proxy'; publicUrl: string | null };
   /** The web shares this Stim home's server lists; null when none is reachable or none was read. */
   shares: Array<{ id: string; workspace: string; auth: 'generated' | 'set' | 'none' }> | null;
@@ -204,7 +203,7 @@ export const describeServer = (server: ServerReading): string => {
 
 export const labelFlag = (label: string): string => (label === 'dev.stim.server' ? '' : ` --label ${label}`);
 
-const sameHome = (a: string, b: string): boolean => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
+export const sameHome = (a: string, b: string): boolean => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
 
 function updateRemedy(server: ServerReading, version: string): string {
   if (server.kind === 'service')

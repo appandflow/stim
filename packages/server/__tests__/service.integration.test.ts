@@ -19,7 +19,8 @@ import {
 import { statusLines, updateService, type ServiceStatus } from '../src/service.ts';
 import type { KeepAwakeStatus } from '../src/keep-awake.ts';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { installHostApp, permissionPanes, unpackRelease } from '../src/stim-host.ts';
+import { permissionPanes } from '@stim-cli/core/state';
+import { installHostApp, unpackRelease } from '../src/stim-host.ts';
 
 const SPEC: ServiceSpec = {
   label: 'dev.stim.server',

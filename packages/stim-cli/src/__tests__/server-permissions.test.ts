@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { serverPermissionFindings } from '../diagnostics/server-permissions.ts';
+import { serverPermissionFindings, volumeDenialSinceStart } from '../diagnostics/server-permissions.ts';
 import type { PermissionReading, SocketReading } from '../diagnostics/server-setup.ts';
 import { health, reading, service, setup } from './_server-setup.ts';
 
@@ -34,6 +34,12 @@ describe('socket permissions', () => {
       'chmod 600 /Users/me/.stim/server/local.sock',
     ],
     [
+      'a socket owned by another user',
+      { socket: { ...SOCKET_OK, uid: 0 } },
+      'belongs to uid 0',
+      'sudo chown $USER /Users/me/.stim/server/local.sock',
+    ],
+    [
       'a directory owned by another user',
       { dir: { ...DIR_OK, uid: 0 } },
       'uid 0',
@@ -55,6 +61,7 @@ describe('socket permissions', () => {
 
 const permissions = (over: Partial<PermissionReading> = {}): PermissionReading => ({
   macosMajor: 27,
+  doctorApp: null,
   external: [],
   logDenials: [],
   ...over,
@@ -92,27 +99,31 @@ describe('macOS permissions', () => {
     installed: { ...service().installed, host: '/Users/me/Applications/Stim Host.app/Contents/MacOS/stim-host' },
   });
 
-  it('asks for Removable Volumes for the service launcher when listing the SDK volume is denied', () => {
-    const [finding] = serverPermissionFindings(
-      setup({
-        services: [hostService],
-        permissions: permissions({ external: [{ path: '/Volumes/ExternalSSD/Android/sdk', blocked: true }] }),
-      }),
+  it('blames the process running doctor, not the service, when listing the SDK volume is denied', () => {
+    const external = [{ path: '/Volumes/ExternalSSD/Android/sdk', blocked: true }];
+    const [terminal] = serverPermissionFindings(
+      setup({ services: [hostService], permissions: permissions({ external }) }),
     );
-    expect(finding?.title).toContain('external volume');
-    expect(finding?.detail).toContain('/Volumes/ExternalSSD/Android/sdk');
-    expect(finding?.fix).toContain('Removable Volumes for Stim Host');
+    expect(terminal?.title).toContain('external volume');
+    expect(terminal?.detail).toContain('/Volumes/ExternalSSD/Android/sdk');
+    expect(terminal?.fix).toContain('Removable Volumes for the app that runs stim');
+    const [desktop] = serverPermissionFindings(
+      setup({ services: [hostService], permissions: permissions({ external, doctorApp: 'Stim Desktop' }) }),
+    );
+    expect(desktop?.fix).toContain('Removable Volumes for Stim Desktop');
   });
 
-  it('takes a denial recorded in the service log as evidence, and names Stim Desktop for its own server', () => {
+  it('takes a denial in the service log since it last started as evidence and names the launcher it runs under', () => {
     const logDenials = [
       { label: 'dev.stim.server', line: "Error: EPERM: operation not permitted, scandir '/Volumes/ExternalSSD/avd'" },
     ];
     const [finding] = serverPermissionFindings(
-      setup({ servers: [reading({ kind: 'desktop', label: undefined })], permissions: permissions({ logDenials }) }),
+      setup({ services: [hostService], permissions: permissions({ logDenials }) }),
     );
     expect(finding?.detail).toContain('/Volumes/ExternalSSD/avd');
-    expect(finding?.fix).toContain('Removable Volumes for Stim Desktop');
+    expect(finding?.fix).toContain('Removable Volumes for Stim Host');
+    const [bare] = serverPermissionFindings(setup({ permissions: permissions({ logDenials }) }));
+    expect(bare?.fix).toContain('the node binary that runs stim-server');
   });
 
   it('is quiet when an external volume lists fine', () => {
@@ -121,6 +132,23 @@ describe('macOS permissions', () => {
         setup({ permissions: permissions({ external: [{ path: '/Volumes/X/sdk', blocked: false }] }) }),
       ),
     ).toEqual([]);
+  });
+});
+
+describe('volumeDenialSinceStart', () => {
+  const START = 'stim-server 1.41.0 (stim 1.41.0, protocol 2)';
+  const DENIED = "Error: EPERM: operation not permitted, scandir '/Volumes/ExternalSSD/avd'";
+
+  it('reads a denial the current run logged', () => {
+    expect(volumeDenialSinceStart(`${START}\nlistening on ws://127.0.0.1:7787\n${DENIED}\n`)).toBe(DENIED);
+  });
+
+  it('ignores a denial from before the last start, which a granted permission has since fixed', () => {
+    expect(volumeDenialSinceStart(`${START}\n${DENIED}\n${START}\nlistening on ws://127.0.0.1:7787\n`)).toBeNull();
+  });
+
+  it('ignores a denial for a path outside /Volumes', () => {
+    expect(volumeDenialSinceStart(`${START}\nEPERM: operation not permitted, open '/Users/me/x'\n`)).toBeNull();
   });
 });
 
