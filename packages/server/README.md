@@ -1601,10 +1601,13 @@ socket does.
 `{ "session": "<hosted-session-id>", "sdp": "<offer>" }` and answers with a
 subscription ID and the SDP answer. The host then sends the session's H.264
 access units to the browser that made the offer over a WebRTC data channel,
-loading the optional `node-datachannel` package on first use and gathering ICE
-candidates with a public STUN server (`STIM_WEBRTC_STUN` replaces it). It is
-not gated by a setting on the host: the client's `share.webrtc` decides whether
-a viewer may ask. The host sends `webrtc-closed` when the peer ends on its own;
+loading the optional `node-datachannel` package on first use. The host offers
+only host candidates on private, link-local and tailnet (100.64.0.0/10)
+addresses, does no STUN, and drops the offer's candidates at any other address;
+an offer with none left is refused. `STIM_WEBRTC_STUN` (a comma separated list of
+`stun:` URLs) turns that filter off and gathers with those servers, which shows
+the host's public address to the viewer. It is not gated by a setting on the
+host: the client's `share.webrtc` decides whether a viewer may ask. The host sends `webrtc-closed` when the peer ends on its own;
 `device-host.unsubscribe` ends it. A host that cannot load the package answers
 with `action-failed`.
 `device-host.presence.subscribe` (feature `hosted-presence`, with `presence`)

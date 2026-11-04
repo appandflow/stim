@@ -324,6 +324,16 @@ does not cross this machine, and ?stats shows a stats panel. A missing
 node-datachannel package, an older worker without hosted-webrtc, or any WebRTC
 failure drops the viewer back to WebSocket. Input stays on the share socket.
 
+The machine that sends the video offers only host candidates on private,
+link-local and Tailscale (100.64.0.0/10) addresses, does no STUN, and ignores a
+viewer's candidates at any other address. A viewer on the same LAN or tailnet
+gets a direct channel; a viewer on the public internet never learns this
+machine's public address, and falls back to WebSocket. There is no TURN relay.
+STIM_WEBRTC_STUN=stun:host:port (comma separated) on the sending machine, and on
+the machine serving the share page when they differ, switches the filter off and
+lets viewers connect over public addresses; this machine's public address is
+then visible to every viewer.
+
 SECURITY MODEL
 
 - stim-server serves shares on its own listener, on a loopback port separate
