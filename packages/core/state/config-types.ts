@@ -116,7 +116,7 @@ export interface StimConfig {
     maxOffloadedBuilds?: unknown;
     workerRoot?: unknown;
   };
-  share?: { exposure?: unknown; publicUrl?: unknown; port?: unknown };
+  share?: { exposure?: unknown; publicUrl?: unknown; port?: unknown; webrtc?: unknown };
   remote?: {
     machines?: unknown;
     easMaxDurationMinutes?: unknown;

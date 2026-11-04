@@ -840,6 +840,12 @@ stim settings set share.port 7790                           # loopback port the 
 
 See [Share a running app](./share.md#custom-domain) for the Caddyfile.
 
+`share.webrtc` is an experimental machine setting, off by default. Set it to
+`true` and a viewer that opens a share link with `?transport=webrtc` takes video
+over a WebRTC data channel from the machine that owns the device, and falls back
+to WebSocket when WebRTC fails. It needs the optional `node-datachannel` package
+on that machine.
+
 ## Device recordings
 
 `stim-server` records the screens of owned simulators, emulators and the

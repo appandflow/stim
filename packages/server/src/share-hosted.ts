@@ -41,6 +41,11 @@ export interface ShareSource {
   keyframe: () => void;
   /** A video listener is behind; called until its socket drains, it lowers the bitrate. */
   congested: () => void;
+  /**
+   * Answers a viewer's WebRTC offer with a peer on the machine that owns the device, which sends the video
+   * straight to the viewer. `closed` runs once when the peer ends on its own; rejects when the source cannot offer one.
+   */
+  webrtc?: (offer: string, closed: (reason: string) => void) => Promise<{ answer: string; close: () => void }>;
   begin: (
     owner: Controller,
     target: ControlBeginParams,
@@ -188,6 +193,49 @@ export class HostedShareSource implements ShareSource {
     void open.lease.connection
       .request('device-host.frames.congested', { subscription: open.subscription })
       .catch(() => {});
+  }
+
+  async webrtc(offer: string, closed: (reason: string) => void): Promise<{ answer: string; close: () => void }> {
+    const lease = await this.hosts.acquire(this.host);
+    let subscription: string;
+    let answer: string;
+    try {
+      if (!lease.connection.supports('hosted-webrtc')) {
+        throw new Error(`${this.host.machine} cannot send WebRTC: update its Stim.`);
+      }
+      const reply = await lease.connection.request('device-host.webrtc.offer', {
+        session: this.host.session,
+        sdp: offer,
+      });
+      if ('error' in reply) throw new Error(reply.error.message);
+      if (
+        !isJsonObject(reply.result) ||
+        typeof reply.result.subscription !== 'string' ||
+        typeof reply.result.sdp !== 'string'
+      )
+        throw new Error('the host sent no WebRTC answer');
+      subscription = reply.result.subscription;
+      answer = reply.result.sdp;
+    } catch (cause) {
+      lease.release();
+      throw cause;
+    }
+    const unroute = lease.connection.route(`s:${subscription}`, {
+      event: (event) => {
+        if (!Buffer.isBuffer(event) && event.event === 'webrtc-closed') closed(String(event.message));
+      },
+      closed: (error) => closed(error.message),
+    });
+    let done = false;
+    return {
+      answer,
+      close: () => {
+        if (done) return;
+        done = true;
+        unroute();
+        release(lease, 'device-host.unsubscribe', { subscription });
+      },
+    };
   }
 
   private async openFrames(stream: Stream, hint: FrameHint, video: boolean): Promise<void> {

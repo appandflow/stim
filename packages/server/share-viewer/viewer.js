@@ -1,6 +1,7 @@
 'use strict';
 
 const body = document.body;
+const rtc = window.stimRtc;
 const control = body.dataset.control === 'true';
 const allowedButtons = (body.dataset.buttons || '').split(' ').filter(Boolean);
 const canRotate = control && body.dataset.canRotate === 'true';
@@ -183,6 +184,8 @@ function askForKeyframe() {
   waitingForKeyframe = true;
   if (Date.now() - keyframeAskedAt < KEYFRAME_ASK_MS) return;
   keyframeAskedAt = Date.now();
+  if (rtc.active === 'webrtc' && rtc.keyframe()) return;
+  rtc.countKeyframe();
   send({ type: 'keyframe' });
 }
 
@@ -207,6 +210,7 @@ function drawUndrawn() {
   undrawn = null;
   if (!frame) return;
   renderFrame(frame, frame.displayWidth, frame.displayHeight);
+  rtc.drawn(frame.timestamp / 1000);
   frame.close();
   if (!live && !finished) {
     live = true;
@@ -290,11 +294,75 @@ function configure(sps, pps) {
   decoderKey = key;
 }
 
+let lastSequence = -1;
+const REORDER_MS = Number(new URLSearchParams(location.search).get('reorder')) || 40;
+const reordered = new Map();
+let reorderTimer = null;
+
+function resetSequence() {
+  lastSequence = -1;
+  reordered.clear();
+  clearTimeout(reorderTimer);
+  reorderTimer = null;
+}
+
+/** Plays a packet of the unordered channel; one after a missing packet cannot decode unless it is a keyframe. */
+function playSequenced(buffer, gap) {
+  const view = new DataView(buffer);
+  lastSequence = view.getUint32(4);
+  if (gap) {
+    rtc.gap();
+    if ((view.getUint8(1) & VIDEO_KEYFRAME) === 0) return askForKeyframe();
+  }
+  showVideo(buffer);
+}
+
+function drainReordered() {
+  while (reordered.has(lastSequence + 1)) {
+    const next = reordered.get(lastSequence + 1);
+    reordered.delete(lastSequence + 1);
+    playSequenced(next, false);
+  }
+  if (!reordered.size) {
+    clearTimeout(reorderTimer);
+    reorderTimer = null;
+  }
+}
+
+function giveUpOnMissing() {
+  reorderTimer = null;
+  if (!reordered.size) return;
+  const next = Math.min(...reordered.keys());
+  const buffer = reordered.get(next);
+  reordered.delete(next);
+  playSequenced(buffer, true);
+  drainReordered();
+  if (reordered.size) reorderTimer = setTimeout(giveUpOnMissing, REORDER_MS);
+}
+
+/** An unordered, lossy channel delivers packets late and out of order; waits briefly for a missing one. */
+function receiveRtc(buffer) {
+  if (buffer.byteLength < 21) return;
+  const sequence = new DataView(buffer).getUint32(4);
+  if (lastSequence >= 0 && sequence <= lastSequence) {
+    rtc.late();
+    return;
+  }
+  if (lastSequence < 0 || sequence === lastSequence + 1) {
+    playSequenced(buffer, false);
+    drainReordered();
+    return;
+  }
+  reordered.set(sequence, buffer);
+  reorderTimer ??= setTimeout(giveUpOnMissing, REORDER_MS);
+}
+
 /** Decodes one video packet: the header the server's videoPacket writes, then an Annex-B access unit. */
 function showVideo(buffer) {
   const view = new DataView(buffer);
   if (buffer.byteLength < 21 || view.getUint8(0) !== 1) return;
   const keyframe = (view.getUint8(1) & VIDEO_KEYFRAME) !== 0;
+  rtc.received(buffer.byteLength);
   const units = nalUnits(new Uint8Array(buffer, view.getUint16(2)));
   if (keyframe) {
     const sps = units.find((unit) => nalType(unit) === 7);
@@ -568,13 +636,28 @@ function connect(codec) {
   me = null;
   overlay.clear();
   renderRoster();
-  const current = new WebSocket(`${socketUrl}?id=${pageId}${codec === 'h264' ? '&codec=h264' : ''}`);
+  const viaRtc = codec === 'h264' && rtc.wanted && !rtcFailed;
+  const current = new WebSocket(
+    `${socketUrl}?id=${pageId}${codec === 'h264' ? '&codec=h264' : ''}${viaRtc ? '&transport=webrtc' : ''}`,
+  );
   const previous = socket;
   socket = current;
   if (previous && previous.readyState <= WebSocket.OPEN) previous.close();
   body.dataset.codec = codec;
+  body.dataset.transport = viaRtc ? 'webrtc' : 'ws';
+  resetSequence();
+  if (!viaRtc) rtc.stop();
   current.binaryType = 'arraybuffer';
   current.addEventListener('open', () => {
+    if (rtc.visible) {
+      const clock = () => send({ type: 'clock', c: Date.now() });
+      clock();
+      const clockTimer = setInterval(
+        () => (current === socket && current.readyState === 1 ? clock() : clearInterval(clockTimer)),
+        2000,
+      );
+    }
+    if (viaRtc) startRtc();
     kickClipboard();
     if (chosenName) sendName(chosenName);
   });
@@ -604,12 +687,16 @@ function connect(codec) {
       copies.delete(message.id);
       if (waiting && typeof message.text === 'string') waiting.resolve(message.text);
       else if (waiting) waiting.reject(new Error(message.error || 'The device did not return its clipboard.'));
-    } else if (message.type === 'artwork') void setArtwork(message.artwork);
+    } else if (message.type === 'clock') rtc.clock(message);
+    else if (message.type === 'webrtc-answer') void rtc.answer(message.sdp).catch((error) => rtc.failed(String(error)));
+    else if (message.type === 'webrtc-failed') rtc.failed(message.message || 'WebRTC failed');
+    else if (message.type === 'artwork') void setArtwork(message.artwork);
     else if (message.type === 'delayed') {
       if (away) return;
       live = !message.delayed && hasFrame;
       refreshStatus();
     } else if (message.type === 'waiting') {
+      rtc.stop();
       dropUndrawn();
       away = true;
       resuming = false;
@@ -622,7 +709,9 @@ function connect(codec) {
       live = false;
       waitingForKeyframe = true;
       refreshStatus();
-      if (codec === 'h264') askForKeyframe();
+      resetSequence();
+      if (viaRtc && !rtcFailed) startRtc();
+      else if (codec === 'h264') askForKeyframe();
     } else if (message.type === 'you') {
       me = { id: message.id, name: message.name, color: message.color };
       roster.set(me.id, { ...me, self: true, viewOnly });
@@ -639,6 +728,29 @@ function connect(codec) {
     if (finished || current !== socket) return;
     lostConnection();
   });
+}
+
+let rtcFailed = false;
+
+function startRtc() {
+  void rtc
+    .start({
+      send,
+      video: receiveRtc,
+      opened: () => {
+        waitingForKeyframe = true;
+        resetSequence();
+      },
+      failed: () => {
+        rtcFailed = true;
+        const previous = socket;
+        socket = null;
+        if (!previous || previous.readyState === 3) return connect('h264');
+        previous.addEventListener('close', () => connect('h264'));
+        previous.close();
+      },
+    })
+    .catch((error) => rtc.failed(String(error)));
 }
 
 function retryIn(delay) {
