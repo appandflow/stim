@@ -103,9 +103,8 @@ import StimKit
   }
 
   var localActionConnection: (client: ServerClient, home: String)? {
-    guard let feed = statsConnection, feed.client.hasDesktopAuthority, controller?.desktopBootstrap != nil else {
-      return nil
-    }
+    guard let feed = statsConnection else { return nil }
+    if feed.client.hasDesktopAuthority, controller?.desktopBootstrap == nil { return nil }
     return feed
   }
 
