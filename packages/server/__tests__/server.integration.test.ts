@@ -1255,29 +1255,56 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     ).toHaveProperty('result.authorized', true);
   });
 
-  it('a server Desktop did not start offers no challenge and keeps the local socket permissions it had', async () => {
+  it('a server Desktop did not start offers no challenge and grants its local socket, not its network clients, the Desktop methods', async () => {
     await start({ desktopBootstrap: null });
     const client = await localConnect(server!.localSocket!);
     const hello = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
     expect(hello).toMatchObject({ result: { capabilities: ['read', 'control'] } });
     expect(hello).not.toHaveProperty('result.desktopBootstrap');
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-device-tools']) } });
-    expect(
-      await client.request('desktop.remedy.subscribe', {
-        cwd: workspace,
-        action: 'device-tool',
-        request: { tool: 'location', platform: 'ios', clear: true },
-      }),
-    ).toHaveProperty('error.code', 'forbidden');
+    expect(hello).toMatchObject({
+      result: { features: expect.arrayContaining(['desktop-settings-write', 'desktop-gc', 'desktop-local-authority']) },
+    });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-setup']) } });
+    for (const method of ['desktop.gc.subscribe', 'desktop.start.subscribe', 'desktop.worktree.remove.subscribe'])
+      expect(await client.request(method, {})).toHaveProperty('error.code', 'bad-request');
+    const write = { cwd: root, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
+    expect(await client.request('desktop.settings.write', write)).toHaveProperty('result.changed', true);
+    expect(loadConfig()?.concurrency?.maxBuilds).toBe(3);
+    expect(await client.request('device-host.sessions')).toHaveProperty('result');
     expect(await client.request('desktop.authenticate', { proof: DESKTOP_KEY })).toHaveProperty(
       'error.code',
       'forbidden',
     );
-    expect(await client.request('device-host.sessions')).toHaveProperty('result');
+
     const port = server!.addresses[0]!.port;
     const { keyPair } = await pair(port, undefined, true);
-    const network = await returning(port, keyPair);
+    const network = await connect(port, undefined, { keyPair });
+    expect(await network.request('hello', { client: CLIENT })).toMatchObject({
+      result: {
+        features: expect.not.arrayContaining(['desktop-settings-write', 'desktop-gc', 'desktop-local-authority']),
+      },
+    });
     expect(await network.request('device-host.sessions')).toHaveProperty('error.code', 'forbidden');
+    expect(await network.request('desktop.settings.write', { ...write, value: '5' })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+    expect(loadConfig()?.concurrency?.maxBuilds).toBe(3);
+  });
+
+  it('keeps a Desktop-started server closed to a local client that does not prove its key', async () => {
+    await start();
+    const { client, hello } = await asking();
+    expect(hello.features).toContain('desktop-settings-write');
+    expect(hello.features).not.toContain('desktop-local-authority');
+    const write = { cwd: root, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
+    expect(await client.request('desktop.settings.write', write)).toHaveProperty('error.code', 'forbidden');
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    const unproved = await plain.request('hello', { client: CLIENT });
+    expect(unproved).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings-write']) } });
+    expect(await plain.request('desktop.settings.write', write)).toHaveProperty('error.code', 'forbidden');
+    expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
   });
 
   it('tells a local client the TCP port of the server behind the socket, and network clients nothing', async () => {
@@ -3244,7 +3271,7 @@ describe('hosted device sessions', () => {
           ['device-host.sessions.stop', { session: id }],
         ] as const) {
           expect(await client.request(method, requestParams)).toMatchObject({
-            error: { code: 'forbidden', message: expect.stringContaining('the Stim Desktop that started this server') },
+            error: { code: 'forbidden', message: expect.stringContaining('local Unix socket') },
           });
         }
       }
@@ -7208,7 +7235,7 @@ describe('build.plan', () => {
       assert(server?.localSocket);
       const plain = await localConnect(server.localSocket);
       const hello = await plain.request('hello', { client: CLIENT });
-      expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-plan']) } });
+      expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-plan']) } });
       for (const client of [phone, plain])
         expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
           'error.code',
@@ -7267,23 +7294,6 @@ describe('build.plan', () => {
       expect(stimCalls()).toEqual([]);
     });
   });
-
-  test.skipIf(process.platform === 'win32')(
-    'does not advertise or grant private selected-folder plans on an adopted server',
-    async () => {
-      await start({ desktopBootstrap: null });
-      assert(server?.localSocket);
-      const client = await localConnect(server.localSocket);
-      const hello = await client.request('hello', { client: CLIENT });
-      const result: unknown = 'result' in hello ? hello.result : null;
-      assert(isJsonObject(result));
-      expect(result.features).not.toContain('desktop-plan');
-      expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
-        'error.code',
-        'forbidden',
-      );
-    },
-  );
 
   it('reports a real planner refusal with its code, message and remedy without a CLI', async () => {
     writeFileSync(join(workspace, 'package.json'), '{}');
@@ -7348,7 +7358,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.arrayContaining(['desktop-settings-write']) },
+      result: { features: expect.not.arrayContaining(['desktop-settings-write']) },
     });
     const request = { cwd: workspace, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     for (const client of [remote, plain]) {
@@ -7401,24 +7411,6 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
     ).toMatchObject({ result: { code: 'STIM_BAD_ARG', message: expect.any(String) } });
     expect(loadConfig()?.concurrency?.maxBuilds).toBe(3);
   });
-  it('does not advertise or grant writes on a server Desktop did not start', async () => {
-    await start({ desktopBootstrap: null });
-    assert(server?.localSocket);
-    const client = await localConnect(server.localSocket);
-    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-settings-write']) },
-    });
-    expect(
-      await client.request('desktop.settings.write', {
-        cwd: root,
-        action: 'set',
-        key: 'concurrency.maxBuilds',
-        value: '3',
-      }),
-    ).toHaveProperty('error.code', 'forbidden');
-    expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
-  });
-
   it('keeps a canonical folder busy while yielding and cancels a timed-out pending write', async () => {
     await start({ actionLimits: { timeoutMs: 1000 } });
     const client = await desktop();
@@ -8148,21 +8140,6 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     expect(readWorkspaceState(workspace)?.supervisor).toBeUndefined();
   });
 
-  it('does not offer startup on an adopted server or grant it to local control', async () => {
-    await start({ desktopBootstrap: null });
-    assert(server?.localSocket);
-    const client = await localConnect(server.localSocket);
-    const hello = await client.request('hello', { client: CLIENT });
-    const result: unknown = 'result' in hello ? hello.result : undefined;
-    assert(isJsonObject(result));
-    expect(result.features).not.toContain('desktop-start');
-    expect(await client.request('desktop.start.subscribe', { cwd: workspace })).toHaveProperty(
-      'error.code',
-      'forbidden',
-    );
-    expect(stimCalls()).toEqual([]);
-  });
-
   it.each(['unsubscribe', 'disconnect', 'deadline', 'server close'])(
     'reserves the resolved app and drains %s while its metadata lock is held',
     async (mode) => {
@@ -8304,7 +8281,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     const hello = await plain.request('hello', { client: CLIENT });
-    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-reload']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reload']) } });
     for (const client of [remote, plain])
       expect(await client.request('desktop.reload.subscribe', { cwd: workspace })).toHaveProperty(
         'error.code',
@@ -8323,21 +8300,6 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
     ])
       expect(await client.request('desktop.reload.subscribe', params)).toHaveProperty('error.code', 'bad-request');
     expect(browser.methods).toEqual([]);
-  });
-
-  it('does not offer private reload on an adopted server or grant it to local control', async () => {
-    await start({ desktopBootstrap: null });
-    assert(server?.localSocket);
-    const client = await localConnect(server.localSocket);
-    const hello = await client.request('hello', { client: CLIENT });
-    const result: unknown = 'result' in hello ? hello.result : undefined;
-    assert(isJsonObject(result));
-    expect(result.features).not.toContain('desktop-reload');
-    expect(await client.request('desktop.reload.subscribe', { cwd: workspace })).toHaveProperty(
-      'error.code',
-      'forbidden',
-    );
-    expect(stimCalls()).toEqual([]);
   });
 
   it('reserves the actual workspace for stop, settings and phone actions when selected from a child directory', async () => {
@@ -12587,18 +12549,6 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
     expect(stimCalls()).toEqual([]);
   });
 
-  it('does not advertise or grant the operation on an adopted local server', async () => {
-    await start({ desktopBootstrap: null });
-    assert(server?.localSocket);
-    const client = await localConnect(server.localSocket);
-    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining([`desktop-${kind}`]) },
-    });
-    expect(
-      await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options: { platform: 'ios' } }),
-    ).toHaveProperty('error.code', 'forbidden');
-  });
-
   it.each(
     kind === 'run'
       ? [{ platform: 'ios' }, { platform: 'macos', remote: 'eas' }]
@@ -12784,18 +12734,16 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
     expect(stimCalls()).toEqual([]);
   });
 
-  it.each(['plain local', 'phone control', 'adopted local'])('denies warming from %s', async (mode) => {
-    const port = await start(mode === 'adopted local' ? { desktopBootstrap: null } : {});
+  it.each(['plain local', 'phone control'])('denies warming from %s', async (mode) => {
+    const port = await start();
     assert(server?.localSocket);
     const client =
       mode === 'phone control'
         ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
         : await localConnect(server.localSocket);
-    const hello = await client.request('hello', { client: CLIENT });
-    const offered = expect.arrayContaining(['desktop-worktree-warm']);
-    const hidden = expect.not.arrayContaining(['desktop-worktree-warm']);
-    const features = mode === 'plain local' ? offered : hidden;
-    expect(hello).toMatchObject({ result: { features } });
+    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-worktree-warm']) },
+    });
     expect(await client.request('desktop.worktree.warm.subscribe', { cwd: workspace })).toHaveProperty(
       'error.code',
       'forbidden',
@@ -13171,24 +13119,21 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
     expect(stimCalls()).toEqual([]);
   });
 
-  it.each(['plain local', 'phone control', 'adopted local'])(
-    'denies removal from %s without deleting the target',
-    async (mode) => {
-      const fixture = removalFixture();
-      const port = await start({ env: fixture.env, ...(mode === 'adopted local' ? { desktopBootstrap: null } : {}) });
-      assert(server?.localSocket);
-      const client =
-        mode === 'phone control'
-          ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
-          : await localConnect(server.localSocket);
-      await client.request('hello', { client: CLIENT });
-      expect(
-        await client.request('desktop.worktree.remove.subscribe', { cwd: workspace, target: fixture.linked }),
-      ).toHaveProperty('error.code', 'forbidden');
-      expect(existsSync(fixture.linked)).toBe(true);
-      expect(stimCalls()).toEqual([]);
-    },
-  );
+  it.each(['plain local', 'phone control'])('denies removal from %s without deleting the target', async (mode) => {
+    const fixture = removalFixture();
+    const port = await start({ env: fixture.env });
+    assert(server?.localSocket);
+    const client =
+      mode === 'phone control'
+        ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
+        : await localConnect(server.localSocket);
+    await client.request('hello', { client: CLIENT });
+    expect(
+      await client.request('desktop.worktree.remove.subscribe', { cwd: workspace, target: fixture.linked }),
+    ).toHaveProperty('error.code', 'forbidden');
+    expect(existsSync(fixture.linked)).toBe(true);
+    expect(stimCalls()).toEqual([]);
+  });
 
   it('rejects malformed effects before removing a worktree', async () => {
     const fixture = removalFixture();
@@ -13280,7 +13225,7 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.arrayContaining(['desktop-gc']) },
+      result: { features: expect.not.arrayContaining(['desktop-gc']) },
     });
     expect(await peer.request('hello', { client: CLIENT })).toMatchObject({
       result: { features: expect.not.arrayContaining(['desktop-gc']) },
@@ -13305,20 +13250,6 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
       expect(await client.request('desktop.gc.subscribe', params)).toHaveProperty('error.code', 'bad-request');
     expect(readFileSync(fixture.artifact, 'utf8')).toBe('keep until requested cleanup');
     expect(stimCalls()).toEqual([]);
-  });
-
-  it('denies GC on an adopted server without the private Desktop bootstrap', async () => {
-    const fixture = cacheFixture();
-    await start({ env: fixture.env, desktopBootstrap: null });
-    assert(server?.localSocket);
-    const client = await localConnect(server.localSocket);
-    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-gc']) },
-    });
-    expect(
-      await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
-    ).toHaveProperty('error.code', 'forbidden');
-    expect(existsSync(fixture.artifact)).toBe(true);
   });
 
   it.each(['unsubscribe', 'disconnect', 'shutdown', 'timeout'] as const)(
@@ -13472,21 +13403,16 @@ describe.skipIf(process.platform === 'win32')('Desktop machine access requests',
     expect(stimCalls()).toEqual([]);
   });
 
-  it.each(['plain local', 'phone control', 'adopted local'])('denies access requests from %s', async (mode) => {
-    const port = await start(mode === 'adopted local' ? { desktopBootstrap: null } : {});
+  it.each(['plain local', 'phone control'])('denies access requests from %s', async (mode) => {
+    const port = await start();
     assert(server?.localSocket);
     const client =
       mode === 'phone control'
         ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
         : await localConnect(server.localSocket);
-    const hello = await client.request('hello', { client: CLIENT });
-    assert(
-      'result' in hello &&
-        isJsonObject(hello.result) &&
-        'features' in hello.result &&
-        Array.isArray(hello.result.features),
-    );
-    expect(hello.result.features.includes('desktop-machine-access')).toBe(mode === 'plain local');
+    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-machine-access']) },
+    });
     expect(await client.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
       'error.code',
       'forbidden',

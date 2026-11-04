@@ -16,7 +16,7 @@ public struct ServerReloadResult: Sendable {
   try Task.checkCancellation()
   let client = try desktopActionServer(connection, stimHome: stimHome, action: "reload this workspace for this Stim home")
   guard case .open(let hello) = client.state, hello.features?.contains("desktop-reload") == true else {
-    throw ServerError(code: "unsupported", message: "Update the bundled stim-server to reload workspaces from Desktop.")
+    throw ServerError(code: "unsupported", message: "Update stim-server to reload workspaces from Desktop.")
   }
   let json = command.arguments.last == "--json"
   let arguments = json ? Array(command.arguments.dropLast()) : command.arguments

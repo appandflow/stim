@@ -207,13 +207,13 @@ final class TutorialModel: ObservableObject {
       stop: { path in
         let result = try await runServerStop(
           StimCommand(["stop"], cwd: path), stimHome: StimHome.path(environment: environment),
-          connection: await ServerSession.shared.localActionConnection)
+          connection: await ServerSession.shared.statsConnection)
         guard result.exitStatus == 0 else { throw CommandFailure.exited(result.exitStatus, stderr: result.message) }
       },
       removeWorktree: { path, base in
         let result = try await runServerWorktreeRemove(
           StimCommand(["worktree", "remove", path], cwd: base), stimHome: StimHome.path(environment: environment),
-          connection: await ServerSession.shared.localActionConnection)
+          connection: await ServerSession.shared.statsConnection)
         guard result.exitStatus == 0 else { throw CommandFailure.exited(result.exitStatus, stderr: result.message) }
       })
   }

@@ -12,23 +12,27 @@ import Foundation
   return connection.client
 }
 
-/// The server `connection` names when Desktop may also run its private actions on it. A server Desktop did not start,
-/// one it adopted or one set as the stim-server executable, holds no private key and so gives no authority; the refusal
-/// says that instead of calling the server not ready. `action` completes "to ...", such as `clean up this Stim home`.
+/// The server `connection` names when Desktop may also run its private actions on it. A server on this Stim home's
+/// local socket grants them to its local clients unless it holds a private key Desktop did not prove; an older server
+/// or another Desktop's server grants none, and the refusal says so instead of calling the server not ready. `action`
+/// completes "to ...", such as `clean up this Stim home`.
 @MainActor public func desktopActionServer(
   _ connection: (client: ServerClient, home: String)?, stimHome: String, action: String
 ) throws -> ServerClient {
   guard let client = readCapableServer(connection, stimHome: stimHome) else {
     throw ServerError(code: "not-connected", message: "The local stim-server is not ready to \(action).")
   }
-  guard client.hasDesktopAuthority else {
-    throw ServerError(
-      code: "not-connected",
-      message:
-        "Stim Desktop cannot \(action) because it did not start this stim-server: it was started outside Desktop or is set as the stim-server executable in Settings > Advanced. Stop it (a LaunchAgent restarts it until `stim-server service uninstall`), or clear the executable, so Desktop runs its own."
-    )
-  }
+  guard client.hasDesktopAuthority else { throw desktopAuthorityRefusal(action: action) }
   return client
+}
+
+/// The refusal for a connection to a stim-server that does not offer Desktop its actions.
+public func desktopAuthorityRefusal(action: String) -> ServerError {
+  ServerError(
+    code: "not-connected",
+    message:
+      "Stim Desktop cannot \(action) on this stim-server: it is older than this Stim Desktop, or another Stim Desktop started it. Update it, or stop it and reopen Stim Desktop so Desktop runs its own."
+  )
 }
 
 /// Follows stim-server's status views: `workspaces.subscribe` for the workspace list, `machine.subscribe` for the

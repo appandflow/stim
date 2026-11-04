@@ -16,7 +16,7 @@ public struct ServerStopResult: Sendable {
   try Task.checkCancellation()
   let client = try desktopActionServer(connection, stimHome: stimHome, action: "stop this workspace for this Stim home")
   guard case .open(let hello) = client.state, hello.features?.contains("desktop-stop") == true else {
-    throw ServerError(code: "unsupported", message: "Update the bundled stim-server to stop workspaces from Desktop.")
+    throw ServerError(code: "unsupported", message: "Update stim-server to stop workspaces from Desktop.")
   }
   let json = command.arguments.contains("--json")
   let arguments = command.arguments.filter { $0 != "--json" }

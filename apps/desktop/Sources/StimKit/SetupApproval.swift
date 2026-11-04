@@ -137,15 +137,12 @@ public enum SetupAnswer: Equatable, Sendable {
   guard let client, case .open(let hello) = client.state else {
     throw ServerError(code: "not-connected", message: "Stim Desktop's stim-server is not ready. Try again.")
   }
-  guard client.hasDesktopAuthority else {
+  guard client.hasDesktopAuthority, hello.features?.contains("desktop-setup") == true else {
     throw ServerError(
       code: "forbidden",
       message:
-        "Stim Desktop uses a stim-server it did not start here, such as a stim-server service, so it cannot approve requests. Run the setup command in Terminal on this machine instead."
+        "Stim Desktop approves other machines only on the stim-server it started. Run the setup command in Terminal on this machine instead."
     )
-  }
-  guard hello.features?.contains("desktop-setup") == true else {
-    throw ServerError(code: "unsupported", message: "Update Stim Desktop to approve other machines here.")
   }
   let (events, continuation) = AsyncThrowingStream<ServerEvent, Error>.makeStream()
   let unsubscribe = try client.subscribeAction(

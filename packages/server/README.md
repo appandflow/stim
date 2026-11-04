@@ -167,17 +167,30 @@ which run Noise, never get a challenge.
 
 On a server Desktop started, only a socket that passed this proof can call the
 Desktop-only methods (`route.setup`, `machines.update.*`, `device-host.sessions`
-and `device-host.sessions.stop`, plus `desktop.reports.*`, `desktop.settings.get`,
-`desktop.logs.subscribe`, `desktop.doctor.run` and `desktop.stop.subscribe`); another client of this user on the socket, such
+and `device-host.sessions.stop`, plus `desktop.reports.*`, `desktop.settings.*`,
+`desktop.logs.subscribe`, `desktop.doctor.run` and the `desktop.*` actions); another client of this user on the socket, such
 as the CLI, keeps read and control without them. A server Desktop adopted or that
 runs on its own, such as a `stim-server service`, has no private key: it offers no
-challenge and keeps serving those methods to this user's socket. Starting a fresh
-bundled child establishes a new private key. Desktop also refuses a socket whose
+challenge and serves those methods, the actions included, to every client of this
+user on its local socket, and it advertises their `desktop-*` features to that
+socket only, with the `desktop-local-authority` feature that tells Desktop its
+connection is authorized. The socket's 0600 mode in a 0700 directory owned by this user is
+the proof, the same trust the `stim` CLI has: it runs the same actions for this
+user. A network connection, even one from this machine's own loopback address,
+never gets them and does not see the features. The exception is
+`desktop.setup.subscribe` and `desktop.setup.answer`, which approve another
+machine's build or device-host access: they need the private proof on every
+server, so a key-less server never advertises `desktop-setup`. Starting a fresh
+bundled child establishes a new private key, and that server advertises the
+`desktop-*` write features only to a connection that asked for the challenge, so
+a client without the key reads the missing features as no Desktop authority.
+Desktop also refuses a socket whose
 server reports another TCP port than the server it adopted, before it sends any
 proof.
 
-`desktop.settings.write` requires the private proof even on an adopted or
-standalone server. Only a server started by Desktop advertises the local-only
+`desktop.settings.write` follows the same rule: a server started by Desktop
+requires the private proof; a key-less server serves it to its local socket. The
+server advertises the local-only
 `desktop-settings-write` feature. The method accepts an absolute existing `cwd`,
 setting `key`, optional `scope`, and either `"action": "set"` with a text `value`,
 or `"action": "unset"` without `value`. It runs the shared settings API in process
@@ -204,8 +217,9 @@ record checks.
 The local-only `desktop-run` feature provides `desktop.run.subscribe` with an
 absolute `cwd` and `options` matching the typed `stim.run` selectors. For example,
 `{ "cwd": "/absolute/app", "options": { "platform": "ios", "slot": "fold", "remote": "mini" } }`
-builds, installs and launches through the in-process API. Only a proved private
-Desktop session can call it; adopted servers and local control alone cannot.
+builds, installs and launches through the in-process API. Only a Desktop session
+can call it: one that proved the private key on a server Desktop started, or any
+local-socket connection on a server without that key. Network connections cannot.
 `desktop-run-progress` carries ordered `stream`/`message` chunks, followed by
 `desktop-run-ended` with `exitCode`, a human `message`, and `stdout` containing
 the serialized `{ platform, facts }` API result or typed refusal. The default
@@ -232,9 +246,9 @@ Desktop buttons do not use it yet.
 The private `desktop-gc` feature provides `desktop.gc.subscribe` with an absolute
 existing `cwd` and optional `cache`, `olderThan` (whole days), `worktrees` and
 `delete`. It invokes `createStim.collectGarbage`
-with the same scoped cleanup and ownership rules as the CLI. Only the proved
-Desktop connection can call it; phone, network and adopted-server connections
-cannot. Ordered `desktop-gc-progress` events end with `desktop-gc-ended`, whose
+with the same scoped cleanup and ownership rules as the CLI. Only a Desktop
+connection (proved, or on a key-less server's local socket) can call it; phone and
+network connections cannot. Ordered `desktop-gc-progress` events end with `desktop-gc-ended`, whose
 `stdout` contains the GC JSON report or typed refusal and whose `exitCode` preserves
 partial cleanup failures. It preserves the API's 60-second execution and 35-second
 cleanup budgets. The server's request deadline can cancel execution earlier; its
@@ -248,9 +262,9 @@ The private `desktop-worktree-remove` feature provides
 `desktop.worktree.remove.subscribe` with an absolute existing `cwd`, an optional
 absolute `target`, and optional boolean `force`. It calls `createStim.removeWorktree`
 with the CLI's safety checks and ownership rules. A separate target can be absent
-on disk when retrying pending branch cleanup. Only the proved connection of the
-Desktop that started this server can call it; paired phones and adopted local
-connections cannot.
+on disk when retrying pending branch cleanup. Only a Desktop connection
+(proved, or on a key-less server's local socket) can call it; paired phones and
+network connections cannot.
 
 Ordered `desktop-worktree-remove-progress` events end with
 `desktop-worktree-remove-ended`. Its `stdout` contains `{ removed, exitCode }` or
@@ -268,8 +282,8 @@ separately.
 The private `desktop-worktree-warm` feature provides
 `desktop.worktree.warm.subscribe` with only an absolute existing `cwd`. It calls
 `createStim.warmWorktree` for plain copying; refresh and dependency installation
-remain CLI-only. Only the proved connection of the Desktop that started this
-server can call it. Phones, network clients and adopted local connections cannot.
+remain CLI-only. Only a Desktop connection (proved, or on a key-less server's local socket) can
+call it. Phones and network clients cannot.
 
 Ordered `desktop-worktree-warm-progress` events end with
 `desktop-worktree-warm-ended`, whose `stdout` contains `{ exitCode }` or a typed
@@ -694,7 +708,8 @@ socket is mode 0600 in a mode 0700 directory owned by this user and needs no han
 That connection gets read and control. The Desktop-only methods (`route.setup`,
 `machines.update.*`, `device-host.sessions` and `device-host.sessions.stop`)
 work only there; on a server Desktop started, only after the private Desktop
-bootstrap proof (see [Private Desktop bootstrap](#private-desktop-bootstrap)).
+bootstrap proof (see [Private Desktop bootstrap](#private-desktop-bootstrap)),
+which a key-less server does not ask for.
 Windows has no socket.
 
 The network address, `tailscale whois` and the `X-Forwarded-For` header that
@@ -818,7 +833,8 @@ clients' checkouts and blobs, and persist through LaunchAgents or shell startup
 files. `devices grant` never turns a paired device into a build client, and the
 protocol does not list `read` or `control` among a build client's capabilities,
 but do not rely on that as a boundary. Grant it only to machines you trust with
-that. Revoking the grant stops future builds and kills the running job's
+that. That code can also open the server's local Unix socket, which a server
+without Desktop's private key trusts for Desktop's actions. Revoking the grant stops future builds and kills the running job's
 process group. It does not undo anything project code already did. Approve a
 machine only when you expect it.
 
