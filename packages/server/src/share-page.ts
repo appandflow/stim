@@ -22,6 +22,7 @@ export const SHARE_ASSETS: Record<string, { body: string; type: string }> = {
   'gestures.js': { body: read('gestures.js'), type: 'text/javascript; charset=utf-8' },
   'people.js': { body: read('people.js'), type: 'text/javascript; charset=utf-8' },
   'viewer.js': { body: read('viewer.js'), type: 'text/javascript; charset=utf-8' },
+  'webrtc.js': { body: read('webrtc.js'), type: 'text/javascript; charset=utf-8' },
 };
 
 function escape(text: string): string {
