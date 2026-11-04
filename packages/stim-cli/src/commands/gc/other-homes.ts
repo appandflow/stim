@@ -8,6 +8,7 @@ import type { IosSimRecord } from '../../devices/ios.ts';
 import { forgetStimHomes, isTrackedStimHome, stimHomesRoot } from '../../engine/stim-home-registry.ts';
 import { formatBytes, isAbsentPath, isOnMountedVolume } from '../../fs-util.ts';
 import { measureTree } from '../../private-size.ts';
+import { nativeCanonicalPath, repoRootAsync, resolveSourceCheckoutAsync } from '../../workspace/worktree.ts';
 import { unverifiedDeviceCommand } from './devices.ts';
 import { describeError } from './eas-sessions.ts';
 import { mapLimited, sizeConcurrency } from './limited.ts';
@@ -96,11 +97,26 @@ function homeDevices(
   return devices;
 }
 
-function teardownCommands(home: string, roots: readonly (string | null)[]): string[] {
+async function removalFolder(root: string, operation?: StimContext): Promise<string> {
+  const options = { env: operation?.env, signal: operation?.signal, declareFor: operation };
+  const top = await repoRootAsync(root, options);
+  if (!top) return root;
+  const source = await resolveSourceCheckoutAsync(top, options);
+  if ('refusal' in source || nativeCanonicalPath(source.path) === nativeCanonicalPath(top)) return root;
+  return top;
+}
+
+async function teardownCommands(
+  home: string,
+  roots: readonly (string | null)[],
+  operation?: StimContext,
+): Promise<string[]> {
   const env = `STIM_HOME=${quotedPath(home)}`;
   const live = [...new Set(roots)].filter((root): root is string => root !== null && existsSync(root));
+  const folders = new Set<string>();
+  for (const root of live) folders.add(await removalFolder(root, operation));
   return [
-    ...live.map((root) => `cd ${quotedPath(root)} && ${env} stim worktree remove`),
+    ...[...folders].map((folder) => `cd ${quotedPath(folder)} && ${env} stim worktree remove`),
     `${env} stim gc --delete`,
     `rm -rf ${quotedPath(home)}`,
   ];
@@ -141,7 +157,7 @@ async function describeHome(
       listing,
       false,
     ),
-    teardown: teardownCommands(entry.path, roots),
+    teardown: await teardownCommands(entry.path, roots, operation),
     forgettable: false,
   };
 }

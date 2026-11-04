@@ -2488,7 +2488,8 @@ creation and last-seen times, and the simulators and emulators its created-devic
 ledger names. Homes inside `~/.stim`, such as hosted session homes, are not listed.
 For each listed home that still exists, gc reports its private size, workspace count,
 last-seen time, devices and the exact teardown commands:
-`STIM_HOME=<home> stim worktree remove` from each workspace root, then
+`STIM_HOME=<home> stim worktree remove` from the root of each linked worktree, or from the
+project folder in a source checkout, then
 `STIM_HOME=<home> stim gc --delete`, then removing the directory. A home whose
 directory is gone from a mounted volume is listed as gone, and any of its devices
 still on the machine appear as orphaned from that home with the command that deletes

@@ -419,8 +419,9 @@ inside ~/.stim, such as the private homes of hosted sessions, are not listed.
 A list that cannot be read or written never fails the command that tried.
 Unscoped gc lists the other homes that still exist: their private size, workspace
 count, last-seen time, the devices their ledgers name (owned by that home,
-never this one) and the exact commands that tear each down, from each
-workspace root: \`STIM_HOME=<home> stim worktree remove\`, then
+never this one) and the exact commands that tear each down, from the root of
+each linked worktree, or from the project folder in a source checkout:
+\`STIM_HOME=<home> stim worktree remove\`, then
 \`STIM_HOME=<home> stim gc --delete\`, then removing the directory. A scoped
 STIM_HOME lists nothing: it owns only its own ledger.
 A home whose directory is gone from a mounted volume is listed as gone, and
