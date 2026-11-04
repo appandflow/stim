@@ -29,13 +29,15 @@ public struct SimulatorDisplayView: NSViewRepresentable {
   public var artworkScale: CGFloat?
   public var accurateScreenSize: CGSize?
   public var onInput: (() -> Void)?
+  public var hardwareKeyboard: Bool
 
   public init(
     udid: String, screenID: UInt32 = 1, interactive: Bool = false,
     onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, onLitChange: ((Bool) -> Void)? = nil,
     buttons: SimulatorButtons? = nil, hingeAngle: Double? = nil, showsDeviceFrame: Bool = false,
     onFrameSizeChange: ((CGSize?) -> Void)? = nil, duoFrame: SimulatorDuoFrame? = nil, activeScreenID: UInt32? = nil,
-    duoHingeAngle: Double? = nil, artworkScale: CGFloat? = nil, accurateScreenSize: CGSize? = nil, onInput: (() -> Void)? = nil
+    duoHingeAngle: Double? = nil, artworkScale: CGFloat? = nil, accurateScreenSize: CGSize? = nil, onInput: (() -> Void)? = nil,
+    hardwareKeyboard: Bool = false
   ) {
     self.udid = udid
     self.screenID = screenID
@@ -52,6 +54,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     self.artworkScale = artworkScale
     self.accurateScreenSize = accurateScreenSize
     self.onInput = onInput
+    self.hardwareKeyboard = hardwareKeyboard
   }
 
   @MainActor public static func frameSize(udid: String) -> CGSize? {
@@ -78,6 +81,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
       canvas?.quarterTurns = orientation == 3 ? 1 : orientation == 4 ? 3 : orientation == 2 ? 2 : 0
     }
     view.onInput = onInput
+    view.hardwareKeyboard = hardwareKeyboard
     view.onPixelSizeChange = onPixelSizeChange
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
@@ -102,6 +106,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     canvas.artworkScale = artworkScale
     canvas.accurateScreenSize = accurateScreenSize
     view.onInput = onInput
+    view.hardwareKeyboard = hardwareKeyboard
     view.onPixelSizeChange = onPixelSizeChange
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
@@ -147,6 +152,7 @@ private final class SimulatorInputStatusLabel: NSTextField {
 
 public final class SimulatorDisplayNSView: NSView {
   var onInput: (() -> Void)?
+  var hardwareKeyboard = false
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
   var onOrientationChange: (UInt32) -> Void = { _ in }
   var onLitChange: ((Bool) -> Void)? {
@@ -447,10 +453,11 @@ public final class SimulatorDisplayNSView: NSView {
     }
     guard inputTask == nil, Date() >= nextInputAttempt else { return }
     if !acceptsInput { showInputStatus("Connecting input...") }
+    let keyboard = hardwareKeyboard
     inputTask = Task { [weak self] in
       do {
         let hid = try await SimulatorLookup.run(udid: udid) {
-          guard let hid = SimulatorHID(udid: udid) else { throw SimulatorLookup.Failure.unavailable }
+          guard let hid = SimulatorHID(udid: udid, hardwareKeyboard: keyboard) else { throw SimulatorLookup.Failure.unavailable }
           while !hid.isReady, hid.isConnected { Thread.sleep(forTimeInterval: 0.05) }
           guard hid.isReady else { throw SimulatorLookup.Failure.unavailable }
           return hid

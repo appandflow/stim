@@ -1606,6 +1606,53 @@ describe('a web share', () => {
     });
   });
 
+  describe('started again under the link of a share that was stopped', () => {
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+
+    it('serves the same link and password to a viewer, until the exact expiry it was given', async () => {
+      const expiresAt = Date.now() + 25 * 60_000;
+      const again = shareRequest({ token: TOKEN, expiresAt, password: 'saved-password', expiresMinutes: 25 });
+      const first = await started(f, again);
+      expect(first.url.endsWith(`/s/${TOKEN}/`)).toBe(true);
+      expect(first.expiresAt).toBe(new Date(expiresAt).toISOString());
+      const url = local(first, f.hub.port ?? 0);
+      expect((await http(url)).body).toContain('name="password"');
+      expect(await login(url, 'saved-password')).toContain('stim_share=');
+
+      await f.hub.stop(WORKSPACE);
+      const second = await started(f, again);
+      expect(second.url).toBe(first.url);
+      const restarted = local(second, f.hub.port ?? 0);
+      expect((await http(`${restarted}login`, { method: 'POST', body: 'password=wrong-password' })).status).toBe(401);
+      expect(await login(restarted, 'saved-password')).toContain('stim_share=');
+      expect(f.hub.list()[0]?.expiresAt).toBe(new Date(expiresAt).toISOString());
+
+      vi.advanceTimersByTime(25 * 60_000);
+      await vi.waitFor(() => expect(f.hub.list()).toEqual([]));
+    });
+
+    it('refuses a link that is live or waiting now, and one whose expiry has passed, without opening a listener', async () => {
+      const again = shareRequest({ token: TOKEN, expiresAt: Date.now() + 60_000, expiresMinutes: 1 });
+      await started(f, again);
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      expect(await f.hub.start(again)).toMatchObject({ code: 'bad-request', message: 'That link is live now.' });
+      await f.hub.stop(WORKSPACE);
+      expect(f.routeCloses).toBe(1);
+      const opens = f.routeOpens.length;
+      expect(await f.hub.start({ ...again, expiresAt: Date.now() - 1 })).toMatchObject({
+        code: 'bad-request',
+        message: 'That link has expired.',
+      });
+      expect(f.routeOpens).toHaveLength(opens);
+    });
+
+    it('does not keep the token it was given: it appears in no row', async () => {
+      await started(f, shareRequest({ token: TOKEN }));
+      expect(JSON.stringify(f.hub.list())).not.toContain(TOKEN);
+    });
+  });
+
   it('stops only the shares of one slot when asked', async () => {
     const other = payload();
     (other.environments[0] as Record<string, unknown>).slots = [

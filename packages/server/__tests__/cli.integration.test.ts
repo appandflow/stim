@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
@@ -130,6 +130,34 @@ describe('--json', () => {
     ]);
   });
 
+  it('devices lists the entries it cannot read beside the records, and an empty list when there are none', () => {
+    spend(createPairingToken().token, 'Phone');
+    expect(run('devices', '--json')).toMatchObject({ unreadable: [] });
+    const file = join(home, 'server', 'devices.json');
+    const [phone] = readDevices();
+    assert(phone);
+    writeFileSync(file, JSON.stringify({ version: 2, devices: [{ id: 'bad', name: 5 }, phone, 'opaque'] }));
+    expect(run('devices', '--json')).toMatchObject({
+      devices: [{ id: phone.id }],
+      unreadable: [
+        { file: 'devices.json', index: 0, id: 'bad' },
+        { file: 'devices.json', index: 2 },
+      ],
+    });
+  });
+
+  it('devices lists a registry file that a newer Stim wrote as a whole, without reading its records', () => {
+    spend(createPairingToken().token, 'Phone');
+    writeFileSync(join(home, 'server', 'devices.json'), JSON.stringify({ version: 3, devices: [{ id: 'future' }] }));
+    expect(run('devices', '--json')).toMatchObject({ devices: [], unreadable: [{ file: 'devices.json', version: 3 }] });
+    const refused = spawnSync(process.execPath, [BIN, 'devices', 'revoke', 'nope'], {
+      env: { ...process.env, STIM_HOME: home, PATH: '' },
+      encoding: 'utf8',
+    });
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain('devices.json is registry version 3, written by a newer Stim');
+  });
+
   it('devices reports Stim Desktop as desktop, any other or unrecorded app as phone, and the recorded app additively', () => {
     const desktop = spend(createPairingToken().token, 'Studio Mac')?.device;
     const phone = spend(createPairingToken().token, 'Phone')?.device;
@@ -197,6 +225,36 @@ describe('control', () => {
     expect(plain('devices', 'rename', phone.id, 'two\nlines').status).toBe(1);
     expect(plain('devices', 'rename', phone.id).status).toBe(1);
     expect(readDevices()).toEqual([{ ...phone, name: 'Kitchen iPad' }]);
+  }, 20_000);
+});
+
+describe('entries it cannot read', () => {
+  it('stay as they are through a rename, and a rename, grant or revoke that names one is refused', () => {
+    const phone = spend(createPairingToken().token, 'Phone')?.device;
+    assert(phone);
+    const file = join(home, 'server', 'devices.json');
+    const bad = '{"id":"bad","name":5}';
+    writeFileSync(file, `{"version":2,"devices":[${bad},${JSON.stringify(phone)}]}`);
+    const plain = (...args: string[]) =>
+      spawnSync(process.execPath, [BIN, ...args], {
+        env: { ...process.env, STIM_HOME: home, PATH: '' },
+        encoding: 'utf8',
+      });
+
+    expect(plain('devices', 'rename', phone.id, 'Kitchen').status).toBe(0);
+    expect(readFileSync(file, 'utf8')).toContain(bad);
+    const before = readFileSync(file, 'utf8');
+    for (const args of [
+      ['devices', 'rename', 'bad', 'Name'],
+      ['devices', 'grant', 'bad', '--control'],
+      ['devices', 'revoke', 'bad'],
+    ]) {
+      const refused = plain(...args);
+      expect(refused.status).toBe(1);
+      expect(refused.stderr).toContain('bad is an entry of devices.json that this stim-server cannot read');
+    }
+    expect(readFileSync(file, 'utf8')).toBe(before);
+    expect(plain('devices').stdout).toContain('unreadable  devices.json entry 0  bad');
   }, 20_000);
 });
 

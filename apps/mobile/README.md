@@ -735,7 +735,8 @@ into the focused field; text over 8 KiB is not sent, and a note says so. An iOS
 simulator types printable ASCII, line breaks and tabs into the field (the server answers
 `typed`), so no paste prompt is involved. Only when the text has other characters does the
 note after a paste on iOS add that the device may show a paste suggestion to tap, which
-simulators slimmed by `simslimProfile` cannot show. Copy reads the device clipboard
+simulators slimmed by `simslimProfile` cannot show. An app Stim installed on an owned simulator
+has its paste permission allowed and takes that text without a prompt. Copy reads the device clipboard
 into the phone's and a note confirms it. Text only; nothing syncs by itself, and the
 app never logs the text. A web page, a Mac app and a physical iPhone have neither action.
 

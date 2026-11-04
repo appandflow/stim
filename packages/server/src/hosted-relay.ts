@@ -31,6 +31,17 @@ import { DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, videoSubscription, Vide
 const TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 20_000;
 const KEYFRAME_RETRY_MS = 400;
+const RECONNECT_FIRST_MS = 1000;
+const RECONNECT_MAX_MS = 15_000;
+const RECONNECT_WINDOW_MS = 3 * 60_000;
+const FATAL_HOST_ERRORS = new Set<string>(['forbidden', 'unauthorized', 'unknown-session', 'protocol-unsupported']);
+
+/** A host answer a retry cannot change: the approval ended, or the session is gone. */
+class FatalHostError extends Error {}
+
+const hostError = (error: ProtocolError): Error =>
+  FATAL_HOST_ERRORS.has(error.code) ? new FatalHostError(error.message) : new Error(error.message);
+
 export const CONGESTION_NOTICE_MS = 250;
 type Placement = { machine: string; session: string };
 type RelayTarget = { platform: 'ios' | 'android' | 'macos'; slot: string };
@@ -175,7 +186,7 @@ export class Upstream {
     this.connectMs = Date.now() - started;
     const reply = await this.request('hello', { client: { name: 'stim-server', version }, access: capability });
     this.helloMs = Date.now() - started - this.connectMs;
-    if ('error' in reply) throw new Error(reply.error.message);
+    if ('error' in reply) throw hostError(reply.error);
     if (
       !isJsonObject(reply.result) ||
       !Array.isArray(reply.result.capabilities) ||
@@ -282,7 +293,7 @@ export class HostConnections {
     try {
       const credential = readDeviceHostMachines().find((entry) => entry.machine === host.machine);
       if (!credential || credential.state !== 'approved' || !credential.serverKey)
-        throw new Error('no approved device-host credential');
+        throw new FatalHostError('no approved device-host credential');
       const found = machineEndpoint(
         credential.machine,
         parseMachine(credential.machine)?.transport === 'tailscale' ? await this.options.status() : null,
@@ -328,7 +339,7 @@ export class HostConnections {
         { host: host.machine, ms: Date.now() - started, error: reason.slice(0, 200) },
         true,
       );
-      throw new Error(reason, { cause });
+      throw cause instanceof FatalHostError ? new FatalHostError(reason, { cause }) : new Error(reason, { cause });
     }
   }
 
@@ -417,14 +428,15 @@ export class HostedRelay {
     let local: string | null = null;
     try {
       lease = await this.connect(host);
-      const connection = lease.connection;
-      const reply = await connection.request('device-host.frames.subscribe', {
+      let connection = lease.connection;
+      const subscribeParams = {
         session: host.session,
         fps: params.fps,
         maxEdge: params.maxEdge,
         video: params.video,
         ...(platform === 'ios' && params.deviceFrame !== undefined ? { deviceFrame: params.deviceFrame } : {}),
-      });
+      };
+      const reply = await connection.request('device-host.frames.subscribe', subscribeParams);
       if ('error' in reply) throw new Error(reply.error.message);
       if (!isJsonObject(reply.result) || typeof reply.result.subscription !== 'string')
         throw new Error('the host sent no subscription');
@@ -433,8 +445,10 @@ export class HostedRelay {
       local = this.openSubscription(id, reply.result.video === 'h264' ? { video: 'h264' } : {});
       if (!local) return this.releaseAfter(lease, 'device-host.unsubscribe', { subscription: upstream });
       const subscription = local;
-      const hostSubscription = upstream;
-      const leased = lease;
+      let hostSubscription = upstream;
+      const videoMode = reply.result.video;
+      let leased = lease;
+      let reconnecting = false;
       const gate = new VideoGate(DEFAULT_VIDEO_LIMITS.congestedBytes);
       let askedAt = -Infinity;
       let congestedAt = -Infinity;
@@ -499,36 +513,81 @@ export class HostedRelay {
       });
       register(subscription, stop);
       stopPresence = presence?.(subscription);
-      unroute = connection.route(`s:${hostSubscription}`, {
-        event: (event) => {
-          if (!this.frames.has(subscription)) return;
-          if (Buffer.isBuffer(event)) {
-            const packet = rewriteVideoSubscription(event, hostSubscription, subscription);
-            if (!packet) return;
-            const keyframe = (packet[1]! & VIDEO_KEYFRAME) !== 0;
-            if (gate.admit({ keyframe }, this.buffered()) === 'send') return this.send(packet);
-            if (!keyframeRetry) requestKeyframe();
-          } else if (
-            ['frame', 'frame-delayed', 'device-frame', 'macos-windows', 'error'].includes(String(event.event))
-          ) {
-            if (event.event === 'error')
-              return failed(isJsonObject(event.error) ? String(event.error.message) : 'host frames failed');
-            if (event.event === 'macos-windows')
-              return this.send({ ...event, subscription, pinned: event.pinned === true } as unknown as ServerMessage);
-            if (event.event === 'device-frame') {
-              if (platform === 'ios') this.send({ ...event, subscription, platform, slot } as unknown as ServerMessage);
-              return;
-            }
-            const forwarded = { ...event, subscription, platform, slot };
-            if (event.event === 'frame') {
-              if (typeof event.data !== 'string') return failed('the host sent an invalid JPEG frame');
-              delivery.push({ ...forwarded, data: event.data });
-            } else this.send(forwarded as unknown as ServerMessage);
+      const onEvent = (event: Event) => {
+        if (!this.frames.has(subscription)) return;
+        if (Buffer.isBuffer(event)) {
+          const packet = rewriteVideoSubscription(event, hostSubscription, subscription);
+          if (!packet) return;
+          const keyframe = (packet[1]! & VIDEO_KEYFRAME) !== 0;
+          if (gate.admit({ keyframe }, this.buffered()) === 'send') return this.send(packet);
+          if (!keyframeRetry) requestKeyframe();
+        } else if (['frame', 'frame-delayed', 'device-frame', 'macos-windows', 'error'].includes(String(event.event))) {
+          if (event.event === 'error')
+            return failed(isJsonObject(event.error) ? String(event.error.message) : 'host frames failed');
+          if (event.event === 'macos-windows')
+            return this.send({ ...event, subscription, pinned: event.pinned === true } as unknown as ServerMessage);
+          if (event.event === 'device-frame') {
+            if (platform === 'ios') this.send({ ...event, subscription, platform, slot } as unknown as ServerMessage);
+            return;
           }
-        },
-        closed: (error) => failed(error.message),
-      });
-      if (!this.frames.has(subscription)) unroute();
+          const forwarded = { ...event, subscription, platform, slot };
+          if (event.event === 'frame') {
+            if (typeof event.data !== 'string') return failed('the host sent an invalid JPEG frame');
+            delivery.push({ ...forwarded, data: event.data });
+          } else this.send(forwarded as unknown as ServerMessage);
+        }
+      };
+      const reconnect = async (reason: string) => {
+        if (!this.frames.has(subscription) || reconnecting) return;
+        reconnecting = true;
+        unroute = null;
+        leased.release();
+        gate.reset();
+        if (keyframeRetry) clearTimeout(keyframeRetry);
+        keyframeRetry = null;
+        const deadline = Date.now() + RECONNECT_WINDOW_MS;
+        for (let delay = RECONNECT_FIRST_MS; ; delay = Math.min(delay * 2, RECONNECT_MAX_MS)) {
+          await new Promise((resolve) => setTimeout(resolve, delay).unref());
+          if (!this.frames.has(subscription) || this.closed) return;
+          let next: Lease | undefined;
+          try {
+            next = await this.connect(host);
+            const state = await next.connection.request('device-host.attach', { session: host.session });
+            if (!this.frames.has(subscription) || this.closed) return next.release();
+            if ('error' in state) throw hostError(state.error);
+            if (isJsonObject(state.result) && state.result.state === 'stopped')
+              throw new FatalHostError('the hosted session stopped');
+            if (!isJsonObject(state.result) || state.result.state !== 'ready')
+              throw new Error('the hosted session is not ready');
+            const again = await next.connection.request('device-host.frames.subscribe', subscribeParams);
+            if ('error' in again) throw hostError(again.error);
+            if (!isJsonObject(again.result) || typeof again.result.subscription !== 'string')
+              throw new Error('the host sent no subscription');
+            if ((again.result.video === 'h264') !== (videoMode === 'h264')) {
+              this.releaseAfter(next, 'device-host.unsubscribe', { subscription: again.result.subscription });
+              throw new FatalHostError('the host streams another video format now');
+            }
+            if (!this.frames.has(subscription) || this.closed)
+              return this.releaseAfter(next, 'device-host.unsubscribe', { subscription: again.result.subscription });
+            leased = next;
+            connection = next.connection;
+            hostSubscription = again.result.subscription;
+            const entry = this.frames.get(subscription)!;
+            entry.lease = next;
+            entry.subscription = hostSubscription;
+            unroute = connection.route(`s:${hostSubscription}`, { event: onEvent, closed: onClosed });
+            reconnecting = false;
+            return;
+          } catch (cause) {
+            next?.release();
+            if (cause instanceof FatalHostError || Date.now() + delay >= deadline)
+              return failed(`${reason}; ${(cause as Error).message}`);
+          }
+        }
+      };
+      const onClosed = (error: Error) => void reconnect(error.message);
+      unroute = connection.route(`s:${hostSubscription}`, { event: onEvent, closed: onClosed });
+      if (!this.frames.has(subscription)) unroute?.();
     } catch (cause) {
       const message = `${host.machine}: ${(cause as Error).message}`;
       if (local && this.frames.has(local)) {

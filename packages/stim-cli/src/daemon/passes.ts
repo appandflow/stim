@@ -25,9 +25,7 @@ interface HomePassPhases {
   measureMs: number;
   idleMs: number;
   dormantMs: number;
-  dependenciesMs: number;
   ladderMs: number;
-  maintenanceMs: number;
 }
 
 export interface HomePasses {
@@ -43,18 +41,16 @@ export interface HomePasses {
 
 /**
  * One measurement, the activity pass (the idle stage, taking every workspace idle 2 minutes while the level is high
- * or critical, then the dormant stage), the pressure ladder while the level stays above normal, and an automatic
- * maintenance pass, in this process, as the daemon runs them each tick. `act: false` decides and logs without
- * acting. `memoryWarningSince` carries the memory warning clock from the last tick.
+ * or critical, then the dormant stage) and the pressure ladder while the level stays above normal, in this process, as
+ * the daemon runs them each tick. `act: false` decides and logs without acting. `memoryWarningSince` carries the
+ * memory warning clock from the last tick.
  */
 export async function runHomePasses({
   act,
-  trigger,
   log,
   memoryWarningSince = null,
 }: {
   act: boolean;
-  trigger: string;
   log: IdlePassInput['log'];
   memoryWarningSince?: string | null;
 }): Promise<HomePasses> {
@@ -118,8 +114,6 @@ export async function runHomePasses({
   const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
   const dormantMs = lap();
-  actions.push(...(await runDormantDependencies({ config, act, log, ...reading })));
-  const dependenciesMs = lap();
   if (config && pressure.level !== 'normal') {
     const ladder = await runLadder(
       {
@@ -138,8 +132,6 @@ export async function runHomePasses({
     pressure = ladder.pressure;
   }
   const ladderMs = lap();
-  await runMaintenance(trigger, { report: !act, tick: { operation, measured } });
-  const maintenanceMs = lap();
   return {
     config,
     now,
@@ -147,8 +139,78 @@ export async function runHomePasses({
     workspaces,
     pressure,
     actions,
-    phases: { measureMs, idleMs, dormantMs, dependenciesMs, ladderMs, maintenanceMs },
+    phases: { measureMs, idleMs, dormantMs, ladderMs },
     operation,
+  };
+}
+
+export interface MaintenanceLane {
+  /** Starts the slow passes from this tick's passes, unless the last ones still run. */
+  start(passes: HomePasses, act: boolean): void;
+  running(): boolean;
+  /** The actions the slow passes took since the last call. */
+  take(): DaemonLadderAction[];
+  /** Resolves once no slow pass runs. */
+  settled(): Promise<void>;
+}
+
+/**
+ * The daemon's slow passes, beside its tick instead of in it: the dormant stage's dependency step and an automatic
+ * maintenance pass, from the measurement of the tick that started them, one at a time, so a slow git fetch, `gh` call
+ * or size scan never holds the tick that serves waiting runs. Each logs a `daemon_maintenance` record with its
+ * phases; one that throws is logged and the next tick starts them again.
+ */
+export function createMaintenanceLane(
+  log: (
+    level: 'debug' | 'info' | 'warn' | 'error',
+    event: string,
+    msg: string,
+    fields?: Record<string, unknown>,
+  ) => void,
+): MaintenanceLane {
+  let current: Promise<void> | null = null;
+  let taken: DaemonLadderAction[] = [];
+  return {
+    start({ config, measured, operation }, act) {
+      if (current) return;
+      const started = performance.now();
+      let mark = started;
+      const lap = () => {
+        const at = performance.now();
+        const ms = Math.round(at - mark);
+        mark = at;
+        return ms;
+      };
+      current = (async () => {
+        const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
+        const deleted = await runDormantDependencies({ config, act, log, ...reading });
+        taken.push(...deleted);
+        const dependenciesMs = lap();
+        const skipped = await runMaintenance('daemon', { report: !act, tick: { operation, measured } });
+        const maintenanceMs = lap();
+        const tookMs = Math.round(performance.now() - started);
+        log('debug', 'daemon_maintenance', `maintenance ${tookMs}ms${skipped ? `; skipped: ${skipped}` : ''}`, {
+          tookMs,
+          phases: { dependenciesMs, maintenanceMs },
+          ...(skipped ? { skipped } : {}),
+        });
+      })()
+        .catch((error: unknown) => {
+          log('warn', 'daemon_maintenance_failed', error instanceof Error ? error.message : String(error));
+        })
+        .finally(() => {
+          current = null;
+        });
+    },
+    running: () => current !== null,
+    take() {
+      const actions = taken;
+      taken = [];
+      return actions;
+    },
+    settled: async () => {
+      await current;
+    },
   };
 }
 

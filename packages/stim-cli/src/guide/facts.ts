@@ -655,7 +655,7 @@ leased until <time>" for each one.`,
                   memory-culprit is a costs-time finding naming a process
                   with an abnormally large footprint and, when it is safe to
                   restart, the command
-                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Remote Machines > Add
+                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Connections > This machine uses > Add
                   readiness-markers-missing is a note when no JS or TS source under the app directory contains [stim:readiness]; the scan skips node_modules, native and build output directories and dot-directories, and reports nothing past 5000 source files; see stim guide lifecycle readiness
 
 ON FAILURE
@@ -1371,7 +1371,10 @@ RULES
                                     Metro, but the adb reverse for that Metro
                                     port is gone, so the app cannot reach
                                     Metro; the remedy stim reload android
-                                    restores it
+                                    restores it. It also fires for a port
+                                    reversed with stim ports reverse that the
+                                    emulator lost; the remedy is then
+                                    stim ports reverse <port>
              avd-not-detected       adb does not see the owned emulator while
                                     the workspace expects it: it holds an
                                     unexpired lease on its serial, or it

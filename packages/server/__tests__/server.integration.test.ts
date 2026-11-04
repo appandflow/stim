@@ -83,6 +83,7 @@ import {
   readDeviceHostClients,
   readDevices,
   revokeDevice,
+  serverDir,
   serverIdentity,
   spendSecret,
   storeSetupSecret,
@@ -1055,6 +1056,17 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(await local.request('share.stop', { workspace: root, id: '' })).toMatchObject({
       error: { code: 'bad-request' },
     });
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+    for (const params of [
+      { token: 'short' },
+      { token: TOKEN, expiresAt: '2000-01-01T00:00:00.000Z' },
+      { token: TOKEN, expiresAt: new Date(Date.now() + 3600_000).toISOString(), expiresMinutes: 30 },
+      { token: TOKEN, expiresAt: new Date(Date.now() + 10 * 3600_000).toISOString() },
+    ]) {
+      expect(await local.request('share.start', { workspace: root, platform: 'ios', ...params })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+    }
     expect(await local.request('share.stop', { workspace: root, slot: 'beta' })).toEqual(
       expect.objectContaining({ result: { stopped: [] } }),
     );
@@ -1068,6 +1080,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       [{ slug: 'Pokedex' }, 'params.slug must be'],
       [{ slug: 'assets' }, 'params.slug cannot be assets'],
       [{ slug: 'pokedex', passwordless: true }, 'needs a password'],
+      [{ slug: 'pokedex', token: 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ' }, 'a slug or a token'],
     ] as const) {
       expect(await local.request('share.start', { workspace: root, platform: 'ios', ...params })).toMatchObject({
         error: { code: 'bad-request', message: expect.stringContaining(message) },
@@ -1399,6 +1412,7 @@ describe('pairing', () => {
           'share-waiting',
           'hosted-presence',
           'share-slug',
+          'share-reuse',
         ],
         actions: [],
         device: { name: 'Test phone' },
@@ -1408,6 +1422,16 @@ describe('pairing', () => {
     const second = await connect(port, undefined, { secret: token });
     expect(await second.closedWith).toEqual({ code: 4401, reason: 'unknown-secret' });
     expect(readDevices()).toHaveLength(1);
+  });
+
+  it('logs why it could not record a new client when a newer Stim wrote the registry', async () => {
+    const port = await start();
+    const { token } = createPairingToken();
+    writeFileSync(join(serverDir(), 'devices.json'), JSON.stringify({ version: 3, devices: [] }));
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const client = await connect(port, undefined, { secret: token });
+    expect(await client.closedWith).toEqual({ code: 4401, reason: 'home-unavailable' });
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('registry version 3, which a newer Stim wrote'));
   });
 
   it('refuses an expired pairing token', async () => {
@@ -1601,6 +1625,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-machine-history']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-remote']) } });
     expect(hello).toMatchObject({
       result: { features: expect.not.arrayContaining(['desktop-report-invalidate-target']) },
     });
@@ -1621,6 +1646,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
           'desktop-reports',
           'desktop-machine-history',
           'desktop-report-platform',
+          'desktop-report-remote',
           'desktop-report-invalidate-target',
         ]),
       },
@@ -1661,6 +1687,9 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       expect(await client.request('desktop.reports.get', { report })).toMatchObject({
         result: { pending: false, value: { records: [record] } },
       });
+    expect(await client.request('desktop.reports.get', { report: 'remote' })).toMatchObject({
+      result: { pending: false, value: { machines: [], findings: [] } },
+    });
     const subscribed = await client.request('desktop.reports.subscribe', { report: 'gc' });
     expect(subscribed).toHaveProperty('result.subscription');
     expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: first.result });

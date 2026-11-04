@@ -22,9 +22,12 @@ asks for it.
   stim share android --control --view-password '<value>'   # or one you choose
   stim share list                     # shares: target, control, state, viewers, expiry
   stim share stop                     # ends this workspace's shares now
+  stim share ios --reuse              # starts the stopped share again: same link, password and expiry
+  stim share stop --forget            # stop, and delete the saved links
 
-It prints the URL and, by default, a generated password once. Neither is
-stored anywhere; a lost password means a new share and a new link. --json prints one
+It prints the URL and, by default, a generated password. stim saves both for
+--reuse (see SHARE AGAIN AFTER A STOP), so a lost generated password is printed
+again by --reuse. --json prints one
 payload with url, auth (generated, set or none), expiresAt, control and the
 target; password is in it only when it was generated. A password you set is
 never printed back. A value passed on the command line can land in your shell
@@ -38,6 +41,39 @@ with STIM_BAD_ARG without --control, with --no-password, and when it equals
 is not read as its value. The output then lists both passwords, and --json adds
 viewAuth (generated, set or null) and viewPassword, present only when it was
 generated.
+
+SHARE AGAIN AFTER A STOP
+
+stim share stop, stim stop and a stim-server restart end a share and its link
+stops working. stim share ios|android saves the link's 256-bit URL token and its
+passwords, in clear, in share-links.json in the workspace's directory under
+$STIM_HOME/workspaces (mode 0600; written when a share starts; deleted with the
+workspace, by stim share stop --forget, and when stim share, starting, reusing or
+stopping in the workspace, finds it expired). stim share ios|android --reuse starts that
+target's saved link again (a share started with --slug is saved and started again
+by its slug, with its password; --device and --slot pick the target) until it
+expires: the same URL token, passwords and setup, the same expiry. The control,
+view-only and password setup comes from the saved share, so --reuse with
+--control, --password, --no-password or --view-password fails with
+STIM_BAD_ARG. --expires <minutes> replaces the expiry with that many minutes
+from now (1 to 480, so it can extend or shorten) and the saved expiry follows;
+an expired link is never extended. Nothing saved (no share started for that
+target, expired, forgotten) fails with STIM_SHARE_NOTHING_TO_REUSE and starts
+nothing: it never falls back to a new share. A link that is live or waiting now
+is refused with STIM_SHARE_REFUSED ("That link is live now"). --json adds
+reused: true and, for generated passwords, password and viewPassword; a
+password you set is never printed back. The address in the link is the one the
+listener has now; stim says so when it differs from the saved one.
+
+stim share stop keeps the saved links and lists them (platform, slot, expiry;
+reusable in --json, never a secret): stop is a pause, not a revocation, until
+the expiry. stim share stop --forget also deletes them, with or without a
+running stim-server. Each saved link records whether its share should be
+running (live) or was stopped on purpose (stopped); only stim share and stim
+stop change it, so a stim-server restart leaves it live. A share started from
+Stim Desktop is not saved. Tell the
+user that the saved file holds the token and passwords; when they want a link
+revoked for good, run stim share stop --forget.
 
 A SHARE WAITS FOR ITS DEVICE
 
@@ -309,7 +345,7 @@ SECURITY MODEL
   Android phone only. A device an agent or another client drives answers
   busy instead of being taken over.
 - Clipboard, with --control on an iOS simulator, Android emulator or Android phone: Command-V or Control-V while
-  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field; an iOS simulator types printable ASCII, line breaks and tabs, and pastes other text with Command-V, where iOS can ask first. The
+  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field; an iOS simulator types printable ASCII, line breaks and tabs, and pastes other text with Command-V, which lands without a prompt in an app Stim installed on an owned simulator (Stim allows its paste permission) and where iOS can ask first in any other app. The
   top bar's options menu has a Sync clipboard switch, on by default for control viewers and remembered in the
   browser: while the page is focused and visible it polls the device clipboard every two seconds (slower after
   failures) and writes new text to the browser clipboard, with a Copy from device chip when the browser refuses

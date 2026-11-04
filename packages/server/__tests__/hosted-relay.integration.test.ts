@@ -146,6 +146,7 @@ function serveHost(socket: NoiseSocket) {
     }
     if (stopped && (method === 'device-host.frames.subscribe' || method === 'device-host.control.begin'))
       return refuse('The hosted session stopped.');
+    if (method === 'device-host.attach') return answer({ state: stopped ? 'stopped' : 'ready' });
     if (method === 'device-host.frames.subscribe') {
       if (params.session !== HOST_SESSION) return refuse('wrong hosted session');
       const upstream = subscriptions.length ? `${UPSTREAM}-${subscriptions.length + 1}` : UPSTREAM;
@@ -435,11 +436,39 @@ it('refuses a pending credential before resolving or connecting to the host', as
   expect(endpointCalls).toEqual([]);
 });
 
-it('turns upstream close into one frames-failed event and drops the local subscription', async () => {
+it('subscribes again on a new host connection and keeps streaming to the same local subscription', async () => {
+  const local = await client();
+  expect(await local.request('frames.subscribe', target())).toMatchObject({ result: { subscription: 's1' } });
+  await local.next();
+  const before = connections;
+  requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket.terminate();
+  expect(await local.next()).toMatchObject({ event: 'frame', subscription: 's1' });
+  expect(connections).toBe(before + 1);
+  expect(requests.filter((request) => request.method === 'device-host.frames.subscribe')).toHaveLength(2);
+  expect(local.inbox).toEqual([]);
+});
+
+it('fails at once, without retrying, when the host refuses this machine on the new connection', async () => {
+  const local = await client();
+  expect(await local.request('frames.subscribe', target())).toMatchObject({ result: { subscription: 's1' } });
+  await local.next();
+  helloError = 'This machine lost device-host access.';
+  const before = connections;
+  requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket.terminate();
+  expect(await local.next()).toMatchObject({
+    event: 'error',
+    subscription: 's1',
+    error: { code: 'frames-failed', message: expect.stringContaining('lost device-host access') },
+  });
+  expect(connections).toBe(before + 1);
+});
+
+it('turns upstream close into one frames-failed event and drops the local subscription once the host session stopped', async () => {
   const local = await client();
   const reply = await local.request('frames.subscribe', target());
   expect(reply.result).toEqual({ subscription: 's1' });
   await local.next();
+  stopped = true;
   requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket.terminate();
   expect(await local.next()).toMatchObject({ event: 'error', subscription: 's1', error: { code: 'frames-failed' } });
   expect(await local.request('unsubscribe', { subscription: 's1' })).toMatchObject({
@@ -553,6 +582,7 @@ it('fails every relayed subscription and control session once when the shared co
   const second = (await local.request('frames.subscribe', target())).result.subscription;
   await local.next();
   const session = (await local.request('control.begin', target())).result.session!;
+  stopped = true;
   [...host.clients][0]!.terminate();
   const events = [await local.next(), await local.next(), await local.next()];
   expect(events).toEqual(

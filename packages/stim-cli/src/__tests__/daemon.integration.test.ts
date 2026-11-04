@@ -19,12 +19,13 @@ import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.
 import { acquireBuildSlot, releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { liveWaiters, takeWaitTicket } from '../engine/wait-queue.ts';
 import { askDaemon, beforeCommand, ensureDaemon, passPlacement, requestDaemonTick } from '../daemon/client.ts';
+import * as reclaim from '../daemon/reclaim.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import * as measure from '../daemon/measure.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
-import { runHomePasses } from '../daemon/passes.ts';
+import { createMaintenanceLane, runHomePasses } from '../daemon/passes.ts';
 import { macosDir } from '../macos/state.ts';
 import { runDaemon } from '../daemon/run.ts';
 import * as maintenanceMeasure from '../maintenance/measure.ts';
@@ -261,24 +262,31 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     onTestFinished(() => normal.mockRestore());
   }
 
-  function firstTick(): { eventLoopDelay: { maxMs: number }; phases: { maintenanceMs: number } } | undefined {
+  function daemonRecords<T>(event: string): T[] {
     return daemonLog()
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line))
-      .find((record) => record.event === 'daemon_tick');
+      .filter((record) => record.event === event);
   }
 
-  test('a tick that blocks the event loop reports the stall in its daemon_tick record', async () => {
+  const loopDelays = () =>
+    daemonRecords<{ eventLoopDelay: { maxMs: number } }>('daemon_tick').map((tick) => tick.eventLoopDelay.maxMs);
+  const maintenanceMs = () =>
+    daemonRecords<{ phases: { maintenanceMs: number } }>('daemon_maintenance')[0]?.phases.maintenanceMs;
+
+  test('a maintenance pass that blocks the event loop reports the stall in a daemon_tick record', async () => {
     normalMeasurement();
     const blocking = vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(async () => {
+      // monitorEventLoopDelay can miss a stall that starts right after reset(), before its first 10 ms sample.
+      await new Promise((done) => setTimeout(done, 30));
       const until = Date.now() + 300;
       while (Date.now() < until);
     });
     onTestFinished(() => blocking.mockRestore());
     await runDaemon({ tickMs: 50 });
-    expect(firstTick()?.eventLoopDelay.maxMs).toBeGreaterThanOrEqual(250);
-    expect(firstTick()?.phases.maintenanceMs).toBeGreaterThanOrEqual(250);
+    expect(Math.max(...loopDelays())).toBeGreaterThanOrEqual(250);
+    expect(maintenanceMs()).toBeGreaterThanOrEqual(250);
   }, 20_000);
 
   test.skipIf(process.platform !== 'darwin')(
@@ -301,8 +309,8 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       });
       await runDaemon({ tickMs: 50 });
       expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('fseventsd (pid 123) uses 80.0G');
-      expect(firstTick()?.phases.maintenanceMs).toBeGreaterThanOrEqual(600);
-      expect(firstTick()?.eventLoopDelay.maxMs).toBeLessThan(500);
+      expect(maintenanceMs()).toBeGreaterThanOrEqual(600);
+      expect(Math.max(...loopDelays())).toBeLessThan(500);
     },
     20_000,
   );
@@ -403,7 +411,10 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     });
     const calls = asyncOnlyTools();
 
-    const passes = await runHomePasses({ act: true, trigger: 'daemon', log: () => {} });
+    const passes = await runHomePasses({ act: true, log: () => {} });
+    const lane = createMaintenanceLane(() => {});
+    lane.start(passes, true);
+    await lane.settled();
 
     expect(passes.pressure.level).not.toBe('normal');
     expect(readMaintenanceState()?.lastPass?.trigger).toBe('daemon');
@@ -442,7 +453,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       const calls = asyncOnlyTools();
       sims = [{ udid: 'UDID-B', name: 'stim-booted (iPhone 16 18.0)', state: 'Booted' }];
 
-      const passes = await runHomePasses({ act: true, trigger: 'daemon', log: () => {} });
+      const passes = await runHomePasses({ act: true, log: () => {} });
       const reclaimed = await reclaimForBootWaiters({
         devices: passes.measured.devices,
         sims: passes.measured.sims,
@@ -490,7 +501,9 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       });
       const calls = asyncOnlyTools();
 
-      await runHomePasses({ act: false, trigger: 'daemon', log: () => {} });
+      const lane = createMaintenanceLane(() => {});
+      lane.start(await runHomePasses({ act: false, log: () => {} }), false);
+      await lane.settled();
 
       const state = readMaintenanceState();
       expect(state?.pressure?.memory.level).toBe('warning');
@@ -664,21 +677,24 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     await successor;
   }, 20_000);
 
-  test('a dev-build daemon hands over to an installed build only after the tick in progress, and queued runs keep their places', async () => {
+  test('a dev-build daemon hands over to an installed build only after the tick in progress, starts no maintenance pass after it, and queued runs keep their places', async () => {
     normalMeasurement();
     let entered!: () => void;
     const inPass = new Promise<void>((done) => (entered = done));
     let finishPass!: () => void;
     const pass = new Promise<void>((done) => (finishPass = done));
-    const blocked = vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(async () => {
+    const blocked = vi.spyOn(reclaim, 'reclaimForBootWaiters').mockImplementation(async () => {
       entered();
       await pass;
+      return null;
     });
+    const maintenance = vi.spyOn(maintenanceRun, 'runMaintenance');
     const build = vi
       .spyOn(spawnEntry, 'stimBuild')
       .mockReturnValue({ installed: false, digest: null, version: '1.40.0' });
     onTestFinished(() => {
       blocked.mockRestore();
+      maintenance.mockRestore();
       build.mockRestore();
     });
     const run = runDaemon({ tickMs: 50 });
@@ -709,6 +725,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
 
     finishPass();
     await run;
+    expect(maintenance).not.toHaveBeenCalled();
     await vi.waitFor(
       () => expect(readClaimSet(daemonClaimRoot()).live.map((claim) => claim.owner.pid)).toEqual([expect.any(Number)]),
       { timeout: 10_000, interval: 50 },
@@ -741,6 +758,57 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       releaseBuildSlot(slot);
       releaseBuildSlot(await second);
       expect(acquired).toEqual(['/a', '/b']);
+    } finally {
+      process.kill(successor.owner.pid, 'SIGTERM');
+      await vi.waitFor(() => expect(() => process.kill(successor.owner.pid, 0)).toThrow('ESRCH'), {
+        timeout: 30_000,
+        interval: 50,
+      });
+    }
+  }, 90_000);
+
+  test('a hand-over during a maintenance pass releases the claim at once, and the old daemon waits for that pass and starts no other', async () => {
+    normalMeasurement();
+    let entered!: () => void;
+    const inPass = new Promise<void>((done) => (entered = done));
+    let finishPass!: () => void;
+    const pass = new Promise<void>((done) => (finishPass = done));
+    const blocked = vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(async () => {
+      entered();
+      await pass;
+    });
+    const build = vi
+      .spyOn(spawnEntry, 'stimBuild')
+      .mockReturnValue({ installed: false, digest: null, version: '1.40.0' });
+    onTestFinished(() => {
+      blocked.mockRestore();
+      build.mockRestore();
+    });
+    let ended = false;
+    const run = (async () => {
+      await runDaemon({ tickMs: 50 });
+      ended = true;
+    })();
+    await inPass;
+
+    build.mockReturnValue({ installed: true, digest: 'digest-installed', version: '1.39.0' });
+    expect(await ensureDaemon({ ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' })).toBe(true);
+    await vi.waitFor(
+      () => {
+        const live = readClaimSet(daemonClaimRoot()).live;
+        expect(live).toHaveLength(1);
+        expect(live[0]?.owner.pid).not.toBe(process.pid);
+      },
+      { timeout: 10_000, interval: 50 },
+    );
+    const [successor] = readClaimSet(daemonClaimRoot()).live;
+    assert(successor && successor.owner.pid !== process.pid);
+    try {
+      expect(daemonLog()).toContain('exiting: a stim-daemon from a newer installed Stim build takes over');
+      expect(ended).toBe(false);
+      finishPass();
+      await run;
+      expect(blocked).toHaveBeenCalledTimes(1);
     } finally {
       process.kill(successor.owner.pid, 'SIGTERM');
       await vi.waitFor(() => expect(() => process.kill(successor.owner.pid, 0)).toThrow('ESRCH'), {

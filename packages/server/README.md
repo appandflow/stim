@@ -63,6 +63,23 @@ authorization or capabilities.
 device-host records share it; the server never learns a client's server key.
 The plain listing shows `from` and the first 12 characters of the key fingerprint.
 
+An entry of one of the three registry files that this version cannot read, such
+as a malformed one or one written in a shape only a newer Stim understands, is
+never dropped. Every registry write puts it back as the text it had, in its
+place, and it grants no access; the file's other top-level members are kept as
+their text too. `devices --json` lists each one in `unreadable`, which is `[]`
+when there are none: `{ "file": "devices.json", "index": 2, "id": "..." }` with
+the file's name, the entry's position in that file's `devices` list and, when
+the entry has a string `id`, that id cleaned like a name. Nothing else of the
+entry is shown. A file whose `version` is newer than 2 is listed as a whole,
+`{ "file": "devices.json", "version": 3 }`, its records are not read, and every
+write to it is refused so a downgrade never replaces it. A file of protocol 1
+(`version` 1) is still not read and is replaced by the next write. The plain
+listing prints a line for each. `devices rename`, `grant` and `revoke` with the
+id of an unreadable entry exit 1 and say it is left as it is; edit the file to
+change or remove it. A registry file that does not parse as a whole is still
+refused, and no write replaces it.
+
 `devices rename <id> <name>` renames the record with that id in whichever
 registry holds it, under the same lock and atomic write as every other registry
 change, and keeps its key and capabilities. The name is 1 to 64 characters of
@@ -92,7 +109,7 @@ it does not, `reason` is `off`, `unsupported`, `loopback-only`, `not-listening` 
 (see [Keep this machine awake](#keep-this-machine-awake)). A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
 carries, gets only `{ "version" }`, which Stim
-Desktop's Remote Machines list uses to find stim-server on the other machines of the
+Desktop's Connections settings use to find stim-server on the other machines of the
 tailnet. A request from this machine with a `Host` other than `127.0.0.1` or
 `localhost` gets HTTP 426, like any other plain HTTP request.
 
@@ -311,6 +328,11 @@ The local-only `desktop-report-platform` feature adds an optional `"platform": "
 or `"platform": "android"` to doctor targets. Omitting it checks all selected platforms.
 Reports for each cwd and selector have separate cache entries and subscriptions.
 Clients requiring a filtered report check this feature before requesting one.
+
+The local-only `desktop-report-remote` feature adds `{ "report": "remote" }`,
+whose value is the `{ "machines": [...], "findings": [...] }` that
+`stim remote list --json` prints. It contacts each machine in `remote.machines`
+and asks nothing new.
 
 `desktop.reports.subscribe` takes the same target and returns a subscription id.
 It pushes `desktop-report` events with that `subscription`, `target`, and a
@@ -987,12 +1009,22 @@ is refused. Another attempt cannot replace an occupied workspace/slot. The
 client never supplies a worker filesystem path or another client's session.
 `device-host.stop` with `{"session":"<id>"}` deletes only its recorded,
 ledger-owned simulator. Poll attach for completion. A new attempt may reserve
-after the previous one is confirmed stopped. Stopped session homes and device records remain for reconciliation. At start,
+after the previous one is confirmed stopped. Stopped session records remain for reconciliation; the home is removed after the grace period described below. At start,
 stim-server retires leftover stopped iOS and Android devices through their exact
 private ledger ownership.
 
 The worker persists the journal under `$STIM_HOME/server/device-host-sessions/`
 and chooses an isolated worker home under `$STIM_HOME/device-host/sessions/`.
+An hour after a session stopped (`stoppedAt` in its journal record), and for any
+home whose id the journal does not list when the server starts, stim-server
+removes the whole session folder. The hour is the client's time to copy the
+final logs with `device-host.logs.query`. It removes the folder only when the
+home's created-device ledger is readable and lists nothing; a macOS home, and a
+home that has neither a ledger nor a device record because its session stopped
+before creating a device, count as listing nothing. The session must not be
+parked, and neither the session claim nor any claim set of the agent driver
+under the folder may be live. Otherwise the folder stays, and a reason that is
+an error is written once to stderr. The journal keeps the stopped record.
 An uncertain create, child exit, journal or deletion outcome retains the slot
 as `unknown`. Closing the server leaves a ready iOS or Android session ready, its
 device booted, and releases its claims; the next server resumes it at start. For each
@@ -1058,7 +1090,7 @@ A ready Android `device` has `avdName`, `serial`, `consolePort`, `systemImage`,
 its exact AVD name and running ABI before reporting ready. Creation remains
 inside the worker's claimed process group. The worker opens no emulator viewer.
 Stop and revocation use centralized teardown only for its private ledger's exact
-AVD. They delete that AVD and retain the session home and record. At start,
+AVD. They delete that AVD; the session home is removed after the grace period described above, and the record stays. At start,
 stim-server retires leftover stopped sessions; unknown native outcomes retain
 the reservation and require explicit reconciliation. Android Metro
 and screen/input routing remain follow-ups in #2266. Android sessions
@@ -1439,6 +1471,14 @@ Ending a subscription or session sends `device-host.unsubscribe` or
 `device-host.control.end`, and the connection closes when the last one ends.
 The host's per-connection limits, such as its 32 subscriptions and input
 budgets, therefore apply to all of the client's relayed use of that host.
+When the host connection drops (the host's stim-server restarted, or the network broke), each
+relayed frame subscription keeps its local subscription id. It waits 1 second, doubling to 15,
+and subscribes again on a new connection with the same parameters once `device-host.attach`
+reports the session `ready`; `preparing`, `stopping` and `unknown` keep waiting. A `stopped`
+session, a `forbidden`, `unauthorized`, `unknown-session` or `protocol-unsupported` refusal
+(including an ended approval), a host that streams another video format, or three minutes
+without success end it with `frames-failed`. A relayed control session still ends with
+`control-ended` (`failed`), and the viewer begins it again.
 While a local client is behind on a relayed H.264 subscription, the relay drops
 its packets until the next keyframe and, when the host advertises the
 `hosted-congestion` feature, sends `device-host.frames.congested` at most every
@@ -2179,6 +2219,15 @@ workspace device with three methods that only the local Unix socket may call
   `auth` (`generated`, `set` or `none`), `viewAuth` (`generated`, `set` or
   `null`), and `password` and `viewPassword` only when it generated them, in
   `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, state, auth, viewAuth, slug, url, password, viewPassword }`.
+  `token` and `expiresAt` (the `share-reuse` feature) start the share under
+  that 43-character URL token and expire it at that time (an ISO time within the
+  next 480 minutes, instead of `expiresMinutes`), as `stim share --reuse`
+  restarts a stopped share with the link it saved (`token` and `slug` are
+  exclusive; a slug share is restarted with `slug`, which needs no `token`);
+  the server registers the
+  token's digest like a generated one and keeps no more than before. It refuses
+  a malformed token, a token a live or waiting share already uses (`That link is
+live now.`) and a time already past.
   `state` (the `share-waiting` feature) is `live` while the device streams and
   `waiting` while it is away; a server without the feature sends none, which
   means `live`.

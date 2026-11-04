@@ -24,6 +24,7 @@ import {
   PLACEMENT_DECISIONS,
   PLACEMENT_WORDS,
   REPLACED_SETTINGS,
+  MAX_REVERSE_PORTS,
 } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
@@ -742,6 +743,15 @@ test('the agent guide shares the Stim Desktop link the commands print, once', ()
   expect(agent).toContain(`"${printed}"`);
 });
 
+test('the agent guide tells agents to report Stim problems under the issue template headings', () => {
+  const template = readFileSync(new URL('../../../../.github/ISSUE_TEMPLATE/report.md', import.meta.url), 'utf-8');
+  const headings = [...template.matchAll(/^## (.+)$/gm)].map((match) => match[1]);
+  expect(headings.length).toBeGreaterThan(0);
+  const agent = renderTopic('agent')?.replaceAll(/\s+/g, ' ');
+  assert(agent);
+  for (const heading of headings) expect(agent).toContain(`${heading} (`);
+});
+
 test('the agent guide protects other workspaces device lease files', () => {
   const agent = renderTopic('agent');
   expect(agent).toMatch(/Never delete another\s+workspace's lease file/);
@@ -832,6 +842,13 @@ test('named ports guidance is routed and separates named listener cleanup from M
   expect(renderTopic('ports')).toContain('--dry-run');
   expect(renderTopic('ports')).toContain('stim stop leaves');
   expect(renderSection('cleanup', 'gc')).toContain('guide ports');
+});
+
+test('ports guidance documents reverse and its cap', () => {
+  const guide = renderTopic('ports');
+  expect(guide).toContain('stim ports reverse --remove');
+  expect(guide).toContain(`at most ${MAX_REVERSE_PORTS}`);
+  expect(guide).toContain('android-reverse-missing');
 });
 
 test('guide prints the status block before the index and the agent topic, and never before a section', async () => {
@@ -1044,7 +1061,7 @@ test('agents tell the user about remote machines and the phone app and never set
     const rendered = renderTopic(topic);
     assert(rendered);
     const body = rendered.replace(/\s+/g, ' ');
-    expect(body).toContain('Stim Desktop > Settings > Remote Machines > Add');
+    expect(body).toContain('Stim Desktop > Settings > Connections > This machine uses > Add');
     expect(body).toContain('Pair a Phone');
   }
   const settings = renderTopic('settings');
