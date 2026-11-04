@@ -8,6 +8,7 @@ import {
   readFileSync,
   readSync,
   realpathSync,
+  type Stats,
 } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -206,7 +207,7 @@ async function readNetwork(share: NetworkReading['share'], socket: boolean): Pro
   };
 }
 
-function lstatOrNull(target: string): ReturnType<typeof lstatSync> | null {
+function lstatOrNull(target: string): Stats | null {
   try {
     return lstatSync(target);
   } catch {
