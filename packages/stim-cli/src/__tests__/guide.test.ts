@@ -742,6 +742,17 @@ test('the agent guide shares the Stim Desktop link the commands print, once', ()
   expect(agent).toContain(`"${printed}"`);
 });
 
+test('the agent guide tells agents to report Stim problems under the issue template headings', () => {
+  const template = readFileSync(new URL('../../../../.github/ISSUE_TEMPLATE/report.md', import.meta.url), 'utf-8');
+  const headings = [...template.matchAll(/^## (.+)$/gm)].map((match) => match[1]);
+  expect(headings.length).toBeGreaterThan(0);
+  const agent = renderTopic('agent')?.replaceAll(/\s+/g, ' ');
+  assert(agent);
+  for (const heading of headings) expect(agent).toContain(`${heading} (`);
+  expect(agent).toContain('gh issue create --repo appandflow/stim');
+  expect(agent).toContain('github.com/appandflow/stim/issues/new');
+});
+
 test('the agent guide protects other workspaces device lease files', () => {
   const agent = renderTopic('agent');
   expect(agent).toMatch(/Never delete another\s+workspace's lease file/);
