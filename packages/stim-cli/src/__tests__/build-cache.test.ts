@@ -393,7 +393,7 @@ describe('Podfile.lock checksums of podspecs that embed the checkout path', () =
     if (hook) {
       writeFileSync(
         join(dir, 'fingerprint.config.js'),
-        'module.exports = { fileHookTransform: (_s, chunk) => chunk };',
+        'module.exports = { fileHookTransform: (_s, chunk) => chunk && chunk.toString() };',
       );
     }
     const podspec = `{"name":"ExpoModulesCore","version":"${version}","source":{"http":"file://${dir}/node_modules/expo-modules-core/ExpoModulesCore.tar.gz"}}\n`;

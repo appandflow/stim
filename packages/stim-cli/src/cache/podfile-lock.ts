@@ -8,7 +8,6 @@ type FileHook = NonNullable<FingerprintOptions['fileHookTransform']>;
 const CHECKOUT_PLACEHOLDER = '<stim-checkout>';
 const CHECKSUM_LINE = /^( {2}"?)([^":\s]+)("?: )([0-9a-f]{40})$/gm;
 
-/** The hooks that apply Stim's canonicalization alone, so the fingerprint stays a function of the files it hashes. */
 export const stimOnlyHooks: WeakSet<FileHook> = new WeakSet<FileHook>();
 
 function checkoutRootOf(dir: string): string | null {
@@ -97,7 +96,10 @@ export function podfileLockHook(projectRoot: string, iosProjectPath: string, pro
     if (source.type !== 'file' || source.filePath !== target) return output;
     const parts = held.get(source) ?? [];
     held.set(source, parts);
-    if (output !== null) parts.push(typeof output === 'string' ? Buffer.from(output, encoding) : output);
+    if (output !== null)
+      parts.push(
+        typeof output === 'string' ? Buffer.from(output, Buffer.isEncoding(encoding) ? encoding : 'utf8') : output,
+      );
     if (!isEndOfFile) return null;
     held.delete(source);
     const bytes = Buffer.concat(parts);
