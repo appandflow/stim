@@ -45,6 +45,7 @@ describe('resolveReversePort', () => {
     ['70000', /not a TCP port/],
     ['8082', /Metro port/],
     ['metro', /managed/],
+    ['web-cdp', /stim web/],
     ['missing', /stim ports get missing/],
   ])('refuses %s', (target, message) => {
     expect(() => resolveReversePort(root, target)).toThrow(message);
@@ -181,9 +182,18 @@ describe('ports recorded for a workspace', () => {
   test('releasing a label drops its reverse and no other', async () => {
     await recordReversePort(root, 8901, true);
     await recordReversePort(root, 3000, true);
-    await dropLabelReverses(root, 'other');
+    setDevice(root, 'android', { owned: true, avdName: 'stim-a', consolePort: 5554 });
+    const removed: string[] = [];
+    const deps = {
+      resolveAvd: async () => ({ serial: 'emulator-5554' }),
+      removeReverse: async (serial: string, port: number) => void removed.push(`${serial} ${port}`),
+      leases: () => [],
+    };
+    await dropLabelReverses(root, 'other', deps);
     expect(reversePorts(readWorkspaceState(root))).toEqual([3000, 8901]);
-    await dropLabelReverses(root, 'api');
+    expect(removed).toEqual([]);
+    await dropLabelReverses(root, 'api', deps);
     expect(reversePorts(readWorkspaceState(root))).toEqual([3000]);
+    expect(removed).toEqual(['emulator-5554 8901']);
   });
 });

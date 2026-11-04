@@ -12,6 +12,12 @@ import {
   type ReverseDeviceReport,
 } from '../reverse-ports.ts';
 
+function warnFailed(reports: ReverseDeviceReport[]): void {
+  for (const report of reports)
+    if (report.status === 'failed')
+      console.error(`could not remove the reverse from ${report.device}: ${report.detail}`);
+}
+
 async function inProject(action: (root: string) => Promise<void>): Promise<void> {
   try {
     const root = findCommandWorkspace(process.cwd());
@@ -78,7 +84,7 @@ export default function portsCommand(program: Command): void {
     .option('--dry-run', 'show the listeners and allocations that would be stopped and released')
     .action((label: string | undefined, opts: { dryRun?: boolean }) =>
       inProject(async (root) => {
-        if (!opts.dryRun) await dropLabelReverses(root, label);
+        if (!opts.dryRun) warnFailed(await dropLabelReverses(root, label));
         await clearNamedPorts(root, { label, stop: true, dryRun: opts.dryRun });
       }),
     );
@@ -87,7 +93,7 @@ export default function portsCommand(program: Command): void {
     .description('Release named ports without stopping their listeners; excludes Metro')
     .action((label: string | undefined) =>
       inProject(async (root) => {
-        await dropLabelReverses(root, label);
+        warnFailed(await dropLabelReverses(root, label));
         await clearNamedPorts(root, { label });
       }),
     );

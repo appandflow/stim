@@ -28,6 +28,7 @@ export function resolveReversePort(root: string, target: string): number {
   }
   if (target === 'metro')
     throw new Error("metro is managed by stim start; Stim already makes this workspace's Metro reachable.");
+  if (target === 'web-cdp') throw new Error('web-cdp is managed by stim web; choose another label.');
   const port = project?.ports?.[target];
   if (typeof port !== 'number')
     throw new Error(`No named port ${target}. Run \`stim ports get ${target}\` first, or give the port number.`);
@@ -188,13 +189,19 @@ export async function applyRecordedReverses(
   }
 }
 
-export async function dropLabelReverses(root: string, label: string | undefined): Promise<void> {
+export async function dropLabelReverses(
+  root: string,
+  label: string | undefined,
+  deps: Partial<ReverseDeps> = {},
+): Promise<ReverseDeviceReport[]> {
   const reversed = reversePorts(readWorkspaceState(root));
   const released = Object.entries(getProject(root)?.ports ?? {}).flatMap(([name, port]) =>
     name !== 'web-cdp' && (label === undefined || name === label) && reversed.includes(port) ? [port] : [],
   );
+  const reports: ReverseDeviceReport[] = [];
   for (const port of released) {
     await recordReversePort(root, port, false);
-    await reverseOnDevices(root, port, 'remove');
+    reports.push(...(await reverseOnDevices(root, port, 'remove', deps)));
   }
+  return reports;
 }

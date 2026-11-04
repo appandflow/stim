@@ -733,7 +733,7 @@ The argument is a label from `ports get` or a raw port that a tool of this works
 | Android phone (`android --device`) | `adb reverse`, removed by `stim stop` and `worktree remove` with the Metro reverse. Stim removes only the ports it recorded.                                                                                        |
 | iPhone (`ios --device`)            | Refused. USB carries no reverse forward.                                                                                                                                                                            |
 
-`stim stop` removes the reverses from the devices and keeps the recorded ports, so the next launch applies them again. `worktree remove`, `gc --delete` and automatic maintenance forget them with the workspace. `ports release` and `ports stop` remove a label's reverse before they free the port. Hosted devices (`--remote <machine>`) and EAS Simulator sessions are not reversed yet.
+`stim stop` removes the reverses from the devices and keeps the recorded ports, so the next launch applies them again. `worktree remove`, `gc --delete` and automatic maintenance forget them with the workspace. `ports release` and `ports stop` remove a label's reverse before they free the port. Hosted devices (`--remote <machine>`) and EAS Simulator sessions are not reversed by this Stim.
 
 Appduct and similar tools that connect from the app back to a daemon advertise an address in a one-time link. Set that address to the loopback, reverse the daemon's port, and deliver the link with `agent-device`:
 

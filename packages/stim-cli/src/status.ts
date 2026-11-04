@@ -440,7 +440,6 @@ export function metroReverseTargets(
   });
 }
 
-/** The owned emulators running this workspace's app, which a reversed port must reach. */
 export function reversePortTargets(
   state: EnvironmentState,
   launches: Readonly<Record<string, { deviceId: string }>>,
