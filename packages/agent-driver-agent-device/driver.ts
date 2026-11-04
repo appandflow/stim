@@ -9,9 +9,11 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -296,6 +298,39 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     );
   }
 
+  private get sessionsLink(): string {
+    return join(this.options.stateDir, 'sessions');
+  }
+
+  private get sessionsTarget(): string {
+    return join(this.recordings, 'sessions');
+  }
+
+  // agent-device 0.21.35 and later ignore a remote request's output path and write
+  // <state dir>/sessions/<session>/recording-<uuid>.<ext>, so that directory has to resolve off the Stim home.
+  private prepareRecordings(): void {
+    mkdirSync(this.recordings, { recursive: true, mode: 0o700 });
+    const root = lstatSync(this.recordings);
+    if (
+      !root.isDirectory() ||
+      (process.getuid !== undefined && (root.uid !== process.getuid() || (root.mode & 0o077) !== 0))
+    )
+      throw new Error(`${this.recordings} is not a private directory of this user`);
+    mkdirSync(this.sessionsTarget, { recursive: true, mode: 0o700 });
+  }
+
+  private linkSessions(): void {
+    this.prepareRecordings();
+    rmSync(this.sessionsLink, { recursive: true, force: true });
+    symlinkSync(this.sessionsTarget, this.sessionsLink, 'dir');
+  }
+
+  private assertSessionsLinked(): void {
+    const link = this.sessionsLink;
+    if (!lstatSync(link).isSymbolicLink() || readlinkSync(link) !== this.sessionsTarget)
+      throw new Error(`${link} does not lead to ${this.sessionsTarget}`);
+  }
+
   onExit(listener: () => void): void {
     this.listener = listener;
   }
@@ -349,6 +384,13 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     clearTimeout(this.recording?.timer);
     this.recording = null;
     rmSync(this.recordings, { recursive: true, force: true });
+    if (this.options.device) {
+      try {
+        this.linkSessions();
+      } catch (error) {
+        process.stderr.write(`Hosted recording directory failed: ${String(error).replace(/\s+/g, ' ')}\n`);
+      }
+    }
     const policy = join(this.options.stateDir, 'policy.json');
     writeFileSync(policy, `${JSON.stringify(this.options.device ? devicePolicy(this.options.device) : POLICY)}\n`, {
       mode: 0o600,
@@ -920,7 +962,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         clearTimeout(recording.timer);
         this.recording = null;
         if (succeeded(answer.body)) answer.body = withId(this.finished(recording, answer.body), id);
-        else discard(recording.dir);
+        else this.discardRecording(recording);
       }
       this.answer(response, answer);
       return;
@@ -964,13 +1006,8 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       attempts: 0,
     };
     try {
-      mkdirSync(this.recordings, { recursive: true, mode: 0o700 });
-      const root = lstatSync(this.recordings);
-      if (
-        !root.isDirectory() ||
-        (process.getuid !== undefined && (root.uid !== process.getuid() || (root.mode & 0o077) !== 0))
-      )
-        throw new Error(`${this.recordings} is not a private directory of this user`);
+      this.prepareRecordings();
+      this.assertSessionsLinked();
       mkdirSync(dir, { mode: 0o700 });
     } catch (error) {
       process.stderr.write(`Hosted recording directory failed: ${String(error).replace(/\s+/g, ' ')}\n`);
@@ -1001,7 +1038,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       } catch (error) {
         process.stderr.write(`Hosted recorder claim failed: ${String(error).replace(/\s+/g, ' ')}\n`);
         if (this.recording === next) this.recording = null;
-        discard(next.dir);
+        this.discardRecording(next);
         response
           .writeHead(500, { 'content-type': 'text/plain' })
           .end('The hosting Mac could not prepare the recording.\n');
@@ -1029,7 +1066,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       ).catch(() => null);
       await this.trackRecorder(udid);
       this.recording = null;
-      discard(next.dir);
+      this.discardRecording(next);
       response
         .writeHead(500, { 'content-type': 'text/plain' })
         .end('The hosting Mac could not identify the simulator recorder process, so it stopped the recording.\n');
@@ -1040,7 +1077,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       next.timer.unref();
     } else if (this.recording === next) {
       this.recording = null;
-      discard(next.dir);
+      this.discardRecording(next);
     }
     if (answer) this.answer(response, answer);
     else response.writeHead(502, { 'content-type': 'text/plain' }).end('Agent control is unavailable.\n');
@@ -1104,14 +1141,14 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     recording.attempts += 1;
     if (answer && noRecording(answer.body)) {
       this.recording = null;
-      discard(recording.dir);
+      this.discardRecording(recording);
       return;
     }
     if (!answer || !succeeded(answer.body)) {
       if (recording.attempts < CAP_ATTEMPTS) later(CAP_RETRY_MS, () => this.capLater(running, lease, recording));
       else {
         this.recording = null;
-        discard(recording.dir);
+        this.discardRecording(recording);
         process.stderr.write(
           'A hosted recording reached its time limit and could not be stopped; its files were deleted.\n',
         );
@@ -1122,7 +1159,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     later(ARTIFACT_TTL_MS, () => {
       if (this.recording !== recording) return;
       this.recording = null;
-      discard(recording.dir);
+      this.discardRecording(recording);
     });
   }
 
@@ -1138,14 +1175,20 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.answer(response, { status: 200, headers: {}, body: withId(capped, id) });
   }
 
+  private discardRecording(recording: Recording): void {
+    discard(recording.dir);
+    for (const file of sessionRecordings(this.sessionsTarget)) discard(file);
+  }
+
   private finished(recording: Recording, body: Buffer): Buffer {
     let bytes = 0;
     try {
       for (const entry of readdirSync(recording.dir, { withFileTypes: true }))
         if (entry.isFile()) bytes += statSync(join(recording.dir, entry.name)).size;
+      for (const file of sessionRecordings(this.sessionsTarget)) bytes += statSync(file).size;
     } catch {}
     if (bytes <= this.options.maxRecordingBytes) return body;
-    discard(recording.dir);
+    this.discardRecording(recording);
     return Buffer.from(
       JSON.stringify({
         jsonrpc: '2.0',
@@ -1657,6 +1700,20 @@ export async function stopRecorders(root: string, own: ClaimHandle | null = null
   if (!reap) return;
   const attempt = tryAcquireClaim({ root, mode: 'exclusive', label: RECORDER_LABEL });
   releaseClaim(attempt.acquired ?? attempt.pending);
+}
+
+function sessionRecordings(sessions: string): string[] {
+  try {
+    return readdirSync(sessions, { withFileTypes: true }).flatMap((session) =>
+      session.isDirectory()
+        ? readdirSync(join(sessions, session.name), { withFileTypes: true })
+            .filter((entry) => entry.isFile() && entry.name.startsWith('recording-'))
+            .map((entry) => join(sessions, session.name, entry.name))
+        : [],
+    );
+  } catch {
+    return [];
+  }
 }
 
 function discard(dir: string): void {
