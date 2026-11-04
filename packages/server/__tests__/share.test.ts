@@ -555,6 +555,22 @@ describe('a web share', () => {
     socket.close();
   });
 
+  it('with --control, keeps a touch down and up while the input rate limit drops moves', async () => {
+    await f.hub.stop(WORKSPACE);
+    f = fixture({ inputPerSecond: 4 });
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    const touch = (phase: string) => JSON.stringify({ type: 'touch', phase, x: 0.5, y: 0.5 });
+    socket.send(touch('down'));
+    for (let move = 0; move < 20; move++) socket.send(touch('move'));
+    socket.send(touch('up'));
+    await vi.waitFor(() => expect(f.inputs.at(-1)).toMatchObject({ command: { phase: 'up' } }));
+    expect(f.inputs[0]).toMatchObject({ command: { phase: 'down' } });
+    expect(f.inputs.length).toBeLessThan(10);
+    socket.close();
+  });
+
   it('with --control, drives only the shared device through the control hub and refuses other buttons', async () => {
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port!);

@@ -237,11 +237,17 @@ function password(): string {
   return out;
 }
 
-function take(bucket: { tokens: number; at: number }, cost: number, perSecond: number, capacity: number): boolean {
+function take(
+  bucket: { tokens: number; at: number },
+  cost: number,
+  perSecond: number,
+  capacity: number,
+  debt = 0,
+): boolean {
   const now = Date.now();
   bucket.tokens = Math.min(capacity, bucket.tokens + ((now - bucket.at) / 1000) * perSecond);
   bucket.at = now;
-  if (bucket.tokens < cost) return false;
+  if (bucket.tokens - cost < -debt) return false;
   bucket.tokens -= cost;
   return true;
 }
@@ -1395,7 +1401,9 @@ export class ShareHub {
     if (!method) return;
     const clipboard = method === 'input.clipboard.set' || method === 'input.clipboard.get';
     const cost = method === 'input.rotate' ? ROTATE_COST : clipboard ? CLIPBOARD_INPUT_COST : 1;
-    if (!take(viewer.inputs, cost, this.limits.inputPerSecond, this.limits.inputPerSecond)) return;
+    const boundary = method === 'input.touch' && (fields.phase === 'down' || fields.phase === 'up');
+    const debt = boundary ? this.limits.inputPerSecond : 0;
+    if (!take(viewer.inputs, cost, this.limits.inputPerSecond, this.limits.inputPerSecond, debt)) return;
     const params =
       method === 'input.touch'
         ? {
