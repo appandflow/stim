@@ -1857,11 +1857,12 @@ RULES
 
   \`status --watch\` runs one disk walk at a time on the whole machine, at low
   priority, off its refresh path, and measures a folder at most every 5
-  minutes while its environment is active and every hour otherwise. A walk
-  that fails or times out is not repeated by any watcher for that period. It
-  caches each size under $STIM_HOME/disk-usage, which one-shot status only
-  reads, so the fields appear once a watcher, such as stim-server or Stim
-  Desktop, has measured.
+  minutes while its environment is active and every hour otherwise. A
+  node_modules is measured again when its install changes and after 6 hours,
+  as the daemon and gc do. A walk that fails or times out is not repeated by
+  any watcher for that period. It caches each size under $STIM_HOME/disk-usage,
+  which one-shot status only reads, so the fields appear once a watcher, such
+  as stim-server or Stim Desktop, has measured.
 
   An environment carries agents when coding-agent sessions work in it, most
   recently active first:

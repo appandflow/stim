@@ -322,9 +322,9 @@ export interface StatusMeasurer {
  * each folder other than node_modules at most every 5 minutes while its environment is live and every hour otherwise,
  * and one `gh api graphql` per repository for worktrees whose lookup is over 5 minutes old or whose branch or HEAD
  * moved. It runs git only in the repository, never in a worktree, and only for worktrees whose git state status read.
- * It rechecks a folder's cache right before measuring, so two watchers rarely measure the same folder. A session the previous
- * discovery found and this one does not is recorded as ended in the workspaces it worked in. `updated` runs after each
- * write.
+ * It rechecks a folder's cache right before measuring, so two watchers rarely measure the same folder. A session the
+ * previous discovery found and this one does not is recorded as ended in the workspaces it worked in. `updated` runs
+ * after each write.
  */
 export function createStatusMeasurer({
   updated,
