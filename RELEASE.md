@@ -424,8 +424,8 @@ and repeat the affected gate rather than waiving it.
    requests and `main` run only Linux jobs, so the macOS, Windows, Desktop and
    native E2E smoke jobs run here instead. Push the release commit to
    `release-ci/X.Y.Z` as above, dispatch the suite with the native E2E smoke
-   (the default), and wait for it. It takes about an hour, dominated by the
-   native smoke on iOS and Windows Android:
+   (the default), and wait for it. The first run took 66 minutes, 30 of them the
+   Desktop job and the rest the macOS runner queue; Windows Android smoke was 14 minutes:
 
    ```bash
    gh workflow run full-suite.yml --ref release-ci/X.Y.Z
