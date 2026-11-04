@@ -196,7 +196,7 @@ final class ServerController: ObservableObject {
       ? "Check it with `stim-server service status`."
       : "Start it again."
     return
-      "\(server) is not answering. Stim Desktop waits for it and does not start its own server on that port. \(remedy) To use Desktop's own server instead, stop it and reopen Stim Desktop."
+      "\(server) is not answering. Stim Desktop waits for it and does not start its own server on that port. \(remedy) To use Desktop's own server instead, stop it and reopen Stim Desktop"
   }
 
   static func announcedLoopbackPort(_ line: OutputLine) -> Int? {
