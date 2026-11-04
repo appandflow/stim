@@ -285,7 +285,7 @@ phones in copy. It never revokes a pairing and leaves **Allow connections** as i
 paired phone gets the flag on at first launch with flags. The phone app is documented in
 `website/docs/phone-app.md`.
 
-**Settings > Connections > This machine uses** lists this Mac's pairings with other machines'
+**Settings > Connections > This machine uses** lists this machine's pairings with other machines'
 stim-servers and opens **Add... > View or Control Its Work...**, which takes the output of `stim-server pair` (the bare JSON or the
 `{ qr, expiresAt }` form of `--json`). `PairedServers` (StimKit) holds the list and the pairing in progress: one
 `ServerClient` per pairing while Desktop runs, reporting the connection and recording each `hello` back to the store, and one
@@ -1555,9 +1555,9 @@ preserving pre-existing approvals. When the pre-state is unknown, only grants
 recorded in the setup journal appear.
 
 **Remove...** in Connections takes the Mac out of `remote.machines` and forgets a
-pairing that shares its server key. Its sheet shows what to run on that Mac, since
-removing it here never revokes this Mac there: `stim-server devices revoke <id>` for
-this Mac's build, hosting and pairing records, and `stim-server service uninstall`. It
+pairing that shares its server key. Its sheet shows what to run on that machine, since
+removing it here never revokes this machine there: `stim-server devices revoke <id>` for
+this machine's build, hosting and pairing records, and `stim-server service uninstall`. It
 also says that an `ios.remote` or `android.remote` naming the Mac needs
 changing.
 
@@ -1747,7 +1747,7 @@ local disk cleanup actions.
 ### Using this machine
 
 The Remote Machines list is the **This machine uses** segment of
-[Connections](#connections). Machines approved with `stim-server setup` on this Mac
+[Connections](#connections). Machines approved with `stim-server setup` on this machine
 to build here or to host simulator and emulator sessions here are listed with the
 phones under **Using this machine**, one row per client key, with **Build** and
 **Run devices** in the warning color and **Revoke Access...**, which runs

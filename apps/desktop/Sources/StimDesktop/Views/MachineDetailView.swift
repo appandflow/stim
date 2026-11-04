@@ -1,7 +1,7 @@
 import StimKit
 import SwiftUI
 
-/// One remote machine's page in Settings > Connections: why this Mac can or cannot use it, every problem and note
+/// One remote machine's page in Settings > Connections: why this machine can or cannot use it, every problem and note
 /// by platform with the command that fixes it, its capacity, versions and approvals, and the switches that decide
 /// which work goes to it.
 struct MachineDetailPage<Toggles: View>: View {

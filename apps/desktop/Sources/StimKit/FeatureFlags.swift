@@ -67,7 +67,7 @@ public enum FeatureFlags {
 
   public static let servingResetKey = "featureFlags.servingReset"
 
-  /// Once, after `seed`: turns off `servesPhones` on a Mac whose Phone app flag is off. Its server listened on
+  /// Once, after `seed`: turns off `servesPhones` on a machine whose Phone app flag is off. Its server listened on
   /// loopback only while that flag was off, and Allow connections no longer depends on the flag.
   @discardableResult
   public static func resetServingWithoutPhoneApp(defaults: UserDefaults = .standard) -> Bool {

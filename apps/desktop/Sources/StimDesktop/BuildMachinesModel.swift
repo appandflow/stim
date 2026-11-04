@@ -350,6 +350,8 @@ final class BuildMachinesModel {
   }
 
   private func refreshListing() async {
+    runs += 1
+    defer { runs -= 1 }
     guard let listed = try? await remoteListing(), !Task.isCancelled else { return }
     listing = listed
   }
