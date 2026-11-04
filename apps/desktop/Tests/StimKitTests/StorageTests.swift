@@ -412,35 +412,39 @@ import Testing
 }
 
 @Suite struct WorktreeLifecycleTests {
-  func worktree(idle: Int?, merged: String? = nil) -> GcReport.LinkedWorktree {
-    GcReport.LinkedWorktree(path: "/w", idleDays: idle, mergedInto: merged, willRemove: merged != nil, detail: nil)
+  func worktree(
+    idle: Int?, merged: String? = nil, pullRequest: GcReport.PullRequestState? = nil
+  ) -> GcReport.LinkedWorktree {
+    GcReport.LinkedWorktree(
+      path: "/w", idleDays: idle, mergedInto: merged, pullRequest: pullRequest, willRemove: merged != nil, detail: nil)
   }
 
-  let pulls = ["feat": PullRequest(number: 42, url: "https://github.com/o/r/pull/42", headRefName: "feat")]
+  func pull(_ state: String) -> GcReport.PullRequestState {
+    GcReport.PullRequestState(number: 42, state: state, url: "https://github.com/o/r/pull/42", containsHead: true)
+  }
 
   @Test func mergedWinsOverAnOpenPullRequest() {
     #expect(
-      WorktreeLifecycle(worktree: worktree(idle: 1, merged: "origin/main"), branch: "feat", pulls: pulls)
+      WorktreeLifecycle(worktree: worktree(idle: 1, merged: "origin/main", pullRequest: pull("open")))
         == .merged(into: "origin/main"))
   }
 
   @Test func anOpenPullRequestKeepsAnIdleWorktreeFromReadingAsStale() {
     #expect(
-      WorktreeLifecycle(worktree: worktree(idle: 30), branch: "feat", pulls: pulls)
+      WorktreeLifecycle(worktree: worktree(idle: 30, pullRequest: pull("open")))
         == .pullRequest(number: 42, url: "https://github.com/o/r/pull/42"))
   }
 
-  @Test func withoutTheGitHubCLIIdlenessAloneDecides() {
-    #expect(WorktreeLifecycle(worktree: worktree(idle: 7), branch: "feat", pulls: nil) == .stale(days: 7))
-    #expect(WorktreeLifecycle(worktree: worktree(idle: 6), branch: "feat", pulls: nil) == .active)
-    #expect(WorktreeLifecycle(worktree: worktree(idle: nil), branch: "feat", pulls: nil) == .active)
-    #expect(WorktreeLifecycle(worktree: nil, branch: "main", pulls: nil) == nil)
+  @Test func aFinishedPullRequestIsNotShownAsOpen() {
+    #expect(WorktreeLifecycle(worktree: worktree(idle: 30, pullRequest: pull("merged"))) == .stale(days: 30))
+    #expect(WorktreeLifecycle(worktree: worktree(idle: 1, pullRequest: pull("closed"))) == .active)
   }
 
-  @Test func readsGhPullRequestsByBranchAndRejectsAnythingElse() {
-    let json = #"[{"number":7,"url":"https://github.com/o/r/pull/7","headRefName":"fix"}]"#
-    #expect(PullRequest.byBranch(Data(json.utf8))?["fix"]?.number == 7)
-    #expect(PullRequest.byBranch(Data("no git remotes found".utf8)) == nil)
+  @Test func withoutPullRequestStateIdlenessAloneDecides() {
+    #expect(WorktreeLifecycle(worktree: worktree(idle: 7)) == .stale(days: 7))
+    #expect(WorktreeLifecycle(worktree: worktree(idle: 6)) == .active)
+    #expect(WorktreeLifecycle(worktree: worktree(idle: nil)) == .active)
+    #expect(WorktreeLifecycle(worktree: nil) == nil)
   }
 }
 
