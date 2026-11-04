@@ -528,7 +528,8 @@ and repeat the affected gate rather than waiving it.
 
   Look at the failed jobs of the full Windows suite, `test (windows)`,
   `test (macos)` and `native process inspection (macos-15|windows-latest)` in
-  the `CI` run, and the `Native E2E` smoke. A failure that an open issue
+  the `CI` run, and the `Native E2E` smoke (iOS and Linux Android; the Windows
+  Android loop runs nightly). A failure that an open issue
   already describes (the full Windows suite:
   [#3878](https://github.com/appandflow/stim/issues/3878)) gets a comment with
   the run link. Any other failure gets an issue from

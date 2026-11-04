@@ -6,7 +6,14 @@ agent-device record start [path] --remote-config <file> records the ${noun};
 record stop downloads the video to path, or ./recording-<time>.mp4, on this
 machine. The host writes it only in a private directory for the session in its
 temporary directory and deletes the files after the download, on stim stop or session teardown and
-when its daemon restarts. One recording runs per session; a second start, a host output
+when its daemon restarts.${
+  noun === 'simulator'
+    ? `
+The host stops the recorder before it parks or deletes the simulator, and a
+stim-server that restarts stops a recorder its previous run left.`
+    : ''
+}
+One recording runs per session; a second start, a host output
 path, record inside batch and a record stop from another agent-device session
 are refused. The host stops a recording after 10 minutes; a record stop within
 the next 15 minutes downloads it. A finished recording over 512 MiB is deleted
