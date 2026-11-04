@@ -1504,8 +1504,8 @@ export class ShareHub {
     viewer.offering = true;
     viewer.peer?.close();
     viewer.peer = null;
+    let ended = false;
     try {
-      let ended = false;
       const handle: { close: () => void } = {
         close: () => {
           ended = true;
@@ -1526,7 +1526,7 @@ export class ShareHub {
       viewer.socket.send(JSON.stringify({ type: 'webrtc-answer', sdp: peer.answer }));
     } catch (cause) {
       console.error(`stim-server: web share ${share.id} WebRTC refused: ${String(cause)}`);
-      failed(cause instanceof Error ? cause.message : String(cause));
+      if (!ended) failed(cause instanceof Error ? cause.message : String(cause));
     } finally {
       viewer.offering = false;
     }

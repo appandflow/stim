@@ -134,8 +134,15 @@ export async function openRtc(offer: string, feed: RtcFeed, closed: (reason: str
   };
 
   const deliver = (unit: AccessUnit) => {
-    if (ended || !video?.isOpen()) return;
-    const verdict = gate.admit(unit, video.bufferedAmount());
+    if (ended || !video) return;
+    let queued: number;
+    try {
+      if (!video.isOpen()) return;
+      queued = video.bufferedAmount();
+    } catch (cause) {
+      return end(`WebRTC channel failed: ${String(cause)}`);
+    }
+    const verdict = gate.admit(unit, queued);
     if (verdict === 'send') {
       const packet = videoPacket(SUBSCRIPTION, sequence++, unit);
       try {
@@ -214,6 +221,7 @@ export async function openRtc(offer: string, feed: RtcFeed, closed: (reason: str
     }
   });
   pc.onStateChange((state) => {
+    if (ended) return;
     if (disconnecting) clearTimeout(disconnecting);
     disconnecting = null;
     if (state === 'failed' || state === 'closed') end(`WebRTC ${state}`);
