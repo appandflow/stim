@@ -631,6 +631,32 @@ export function dropPushToken(token: string): void {
   });
 }
 
+export type RenameOutcome = 'renamed' | 'unknown' | 'invalid-name';
+
+/** A name a person typed for a record: 1 to 64 characters after trimming, without control, format or separator characters. */
+function personName(name: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > MAX_CLIENT_NAME) return null;
+  return /(?!\u200d)[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(trimmed) ? null : trimmed;
+}
+
+/** Renames the record `id` in whichever registry holds it. Its key and capabilities stay as they are. */
+export function renameDevice(id: string, name: string): RenameOutcome {
+  const clean = personName(name);
+  if (clean === null) return 'invalid-name';
+  return transaction<RenameOutcome>(() => {
+    for (const file of [devicesFile(), clientsFile('build'), clientsFile('device-host')]) {
+      const records = readRecords(file);
+      const found = records.find((entry) => entry.id === id);
+      if (!found) continue;
+      found.name = clean;
+      writeRecords(file, records);
+      return 'renamed';
+    }
+    return 'unknown';
+  });
+}
+
 export function revokeDevice(id: string): boolean {
   return transaction(() => {
     const devices = readRecords(devicesFile());

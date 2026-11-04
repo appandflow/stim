@@ -1008,6 +1008,14 @@ test('hosting setup routes approval through doctor and a separate person-granted
   expect(renderSection('facts', 'payloads')).toContain('deviceHosts');
 });
 
+test('the guides name the connection fields of stim-server devices and stim remote list, and rename', () => {
+  const lifecycle = renderSection('lifecycle', 'hosted-ios');
+  for (const term of ['kind', 'access', 'owner', 'run-devices', 'theirs-running-here', 'stim-server devices rename'])
+    expect(lifecycle).toContain(term);
+  const settings = renderTopic('settings');
+  for (const field of ['serverKeyFingerprint', 'reachability', 'revoke']) expect(settings).toContain(field);
+});
+
 test('access ticket guidance routes agents to settings and reserves setup for a person', () => {
   const source = readFileSync(new URL('../offload/access-ticket.ts', import.meta.url), 'utf8');
   const env = /(?:process\.env|ambientEnv\(\))\.(STIM_[A-Z_]+)/.exec(source)?.[1];

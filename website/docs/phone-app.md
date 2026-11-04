@@ -173,6 +173,9 @@ In Desktop's **Settings > Paired Devices**, choose **Revoke...** from the phone'
 connections; the server checks registrations on changes and once a second.
 The phone must pair again to reconnect.
 
+To rename a paired phone on the Mac, run `stim-server devices rename <id> <name>`
+there; the phone gets the new name the next time it connects.
+
 **Forget** on the phone removes the saved Mac and its local status. To revoke
 the server's authorization, use the Mac-side action above.
 

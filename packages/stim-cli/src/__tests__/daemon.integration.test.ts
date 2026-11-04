@@ -17,6 +17,9 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { beforeCommand, ensureDaemon, passPlacement, requestDaemonTick } from '../daemon/client.ts';
+import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { takeWaitTicket } from '../engine/wait-queue.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import * as measure from '../daemon/measure.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
@@ -245,24 +248,25 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     20_000,
   );
 
-  const SIM_LIST = JSON.stringify({
-    devices: {
-      'com.apple.CoreSimulator.SimRuntime.iOS-18-0': [
-        {
-          udid: 'UDID-1',
-          name: 'stim-app (iPhone 16 18.0)',
-          state: 'Shutdown',
-          isAvailable: true,
-          deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16',
-          dataPathSize: 1,
-        },
-      ],
-    },
-  });
+  let sims: { udid: string; name: string; state: 'Booted' | 'Shutdown' }[] = [];
 
   function toolOutput(file: string, args: readonly string[]): string {
     const name = file.split('/').at(-1);
-    if (name === 'xcrun' && args.includes('list')) return SIM_LIST;
+    if (name === 'xcrun' && args.includes('list'))
+      return JSON.stringify({
+        devices: {
+          'com.apple.CoreSimulator.SimRuntime.iOS-18-0': sims.map((sim) => ({
+            ...sim,
+            isAvailable: true,
+            deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16',
+            dataPathSize: 1,
+          })),
+        },
+      });
+    if (name === 'xcrun' && args[1] === 'shutdown') {
+      sims = sims.map((sim) => (sim.udid === args[2] ? { ...sim, state: 'Shutdown' } : sim));
+      return '';
+    }
     if (name === 'sysctl') return '1\n';
     if (name === 'adb' && args[0] === 'devices') return 'List of devices attached\nemulator-5554\tdevice\n';
     if (name === 'adb') return 'stim-other\nOK\n';
@@ -272,6 +276,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
   }
 
   function asyncOnlyTools(): { sync: string[]; async: string[] } {
+    sims = [{ udid: 'UDID-1', name: 'stim-app (iPhone 16 18.0)', state: 'Shutdown' }];
     const real = getExecutor();
     const calls: { sync: string[]; async: string[] } = { sync: [], async: [] };
     const refuse = (file: string, args: readonly string[] = []): never => {
@@ -345,6 +350,59 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     expect(readMaintenanceState()?.lastPass?.trigger).toBe('daemon');
     expect(calls.sync).toEqual([]);
   }, 60_000);
+
+  test.skipIf(process.platform !== 'darwin')(
+    'a tick that idles a workspace with an owned booted simulator, then re-checks it for a waiting run, starts no child process synchronously',
+    async () => {
+      const root = join(home, 'booted');
+      mkdirSync(root);
+      writeFileSync(join(root, 'package.json'), '{"name":"app"}');
+      ensureWorkspaceStorage(root);
+      upsertProject(root, {
+        platforms: {
+          ios: { deviceUdid: 'UDID-B', owned: true },
+          android: { avdName: 'stim-app', owned: true, consolePort: 5554 },
+        },
+      });
+      recordCreatedDevice('ios', 'UDID-B');
+      recordWorkspaceUse(root, new Date(Date.now() - 30 * 86_400_000));
+      const waiting = join(home, 'waiting');
+      mkdirSync(waiting);
+      const ticket = takeWaitTicket('boot', { platform: 'ios', key: 'new', root: waiting, displayName: 'waiting' }, []);
+      process.env.STIM_DAEMON = 'on';
+      process.env.STIM_MAX_DEVICES = '1';
+      onTestFinished(() => {
+        releaseClaim(ticket);
+        delete process.env.STIM_DAEMON;
+        delete process.env.STIM_MAX_DEVICES;
+      });
+      vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+      onTestFinished(() => {
+        vi.restoreAllMocks();
+      });
+      const calls = asyncOnlyTools();
+      sims = [{ udid: 'UDID-B', name: 'stim-booted (iPhone 16 18.0)', state: 'Booted' }];
+
+      const passes = await runHomePasses({ act: true, trigger: 'daemon', log: () => {} });
+      const reclaimed = await reclaimForBootWaiters({
+        devices: passes.measured.devices,
+        sims: passes.measured.sims,
+        act: true,
+        log: () => {},
+        operation: passes.operation,
+      });
+
+      expect(calls.sync).toEqual([]);
+      expect(passes.workspaces).toEqual([expect.objectContaining({ path: root, outcome: 'idle' })]);
+      expect(sims).toEqual([expect.objectContaining({ udid: 'UDID-B', state: 'Shutdown' })]);
+      expect(reclaimed).toMatchObject({
+        target: 'UDID-B',
+        outcome: 'kept',
+        detail: expect.stringContaining('no longer idle'),
+      });
+    },
+    60_000,
+  );
 
   test.skipIf(process.platform !== 'darwin')(
     "a tick's maintenance pass takes memory pressure and simulator sizes from the tick's measurement instead of reading them again",

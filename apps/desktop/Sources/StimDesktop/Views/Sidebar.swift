@@ -416,6 +416,7 @@ struct WorkspaceRowContent: View {
   var openLogs: ((String) -> Void)?
   var archive: ArchivedPage? = nil
   var isHidden = false
+  var owner: ServerOwner = .local
 
   var body: some View {
     let status = archive?.rowStatus ?? env.rowStatus(now: now)
@@ -442,8 +443,9 @@ struct WorkspaceRowContent: View {
           RowDetailLine(context: context(env.rowDevices(now: now)), git: showsGit ? GitChip(env.worktree) : nil)
         }
         if archive == nil {
-          ForEach(env.orderedDevices.filter { $0.placement != nil }) { device in
-            DevicePlacementView(device: device)
+          ForEach(env.orderedDevices.map { OwnedDevice(owner: owner, ref: $0) }.filter { $0.placementBadge != nil }) {
+            device in
+            if let badge = device.placementBadge { PlacementBadgeView(badge: badge) }
           }
         }
       }

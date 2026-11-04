@@ -46,6 +46,7 @@ import * as processIdentity from '@stim-cli/core/process-identity';
 import { takeHostedInputClaim } from '../src/hosted-input.ts';
 import { DeviceHost } from '../src/device-host.ts';
 import { formatHostedSessions } from '../src/hosted-sessions.ts';
+import { changeHostedApp } from '../src/hosted-app.ts';
 import { setupClient } from './noise-client.ts';
 import { readPid } from './pid-file.ts';
 import { AgentDeviceDriver } from '../../agent-driver-agent-device/driver.ts';
@@ -121,6 +122,12 @@ if(input.mode === 'inspect') {
   const adopted=input.platform === 'android' ? {...stored,consolePort:input.consolePort,serial:'emulator-'+input.consolePort} : stored;
   writeFileSync(join(home,'hosted-device.json'),JSON.stringify(adopted));
   out({state:input.deviceType === 'adopt-failure'?'unknown':'ready',device:adopted});
+} else if(input.mode === 'resume') {
+  writeFileSync(join(home,'resume-entered'),String(process.pid));
+  while(existsSync(join(home,'hold-resume'))) await new Promise(resolve=>setTimeout(resolve,20));
+  const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
+  if(existsSync(join(home,'unresumable'))) { out({state:'unknown',device:stored,notice:'the simulator is no longer Booted'}); process.exit(0); }
+  out({state:'ready',device:stored});
 } else if(input.mode === 'park') {
   const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
   out({state:input.deviceType === 'park-failure'?'unknown':'parked',device:input.deviceType === 'wrong-park'?{...stored,udid:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'}:stored});
@@ -834,6 +841,210 @@ function recordAbsence(id: string, absentMs: number) {
   for (const record of journal.sessions) if (record.id === id) record.clientAbsentMs = absentMs;
   writeFileSync(file, JSON.stringify(journal));
 }
+
+describe('a hosted session across a server restart', () => {
+  const modes = (id: string) =>
+    readFileSync(join(deviceHostArea(id), 'home', 'modes'), 'utf8')
+      .split('\n')
+      .filter(Boolean);
+  const nextServer = () =>
+    new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents,
+      allowed: (client) => allowed.has(client),
+      connected: (client) => connected.has(client),
+      limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
+    });
+  async function installed(platform = 'ios') {
+    const session = await reserve({ platform });
+    await state(session.id, 'ready');
+    const app = appOffer(session.id, 'app-first', platform);
+    host.appOffer('client', app.params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      ...app.params,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+    return { session, app };
+  }
+
+  test('close leaves a ready session ready with its device running, and the next server resumes it', async () => {
+    const { session, app } = await installed();
+    await host.close();
+    const left = await state(session.id, 'ready');
+    expect(left.device).not.toBeNull();
+    expect(modes(session.id)).not.toContain('stop');
+    expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toHaveLength(0);
+
+    host = nextServer();
+    expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'unknown');
+    agentCalls = [];
+    await host.resumeSessions();
+
+    expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'ready');
+    expect(modes(session.id)).toContain('resume');
+    expect(modes(session.id)).not.toContain('stopped');
+    expect(agentCalls).toEqual([['running', expect.objectContaining({ session: session.id }), 'installed']]);
+    const next = appOffer(session.id, 'app-second');
+    expect(host.appOffer('client', next.params)).toHaveProperty('result');
+    expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed');
+  });
+
+  test('listens its Metro bridge on the recorded port again, and a reopen from the client finds it', async () => {
+    const { session } = await installed();
+    const metro = createServer((_request, response) => response.end('workspace bundle'));
+    await new Promise<void>((resolve) => metro.listen(0, '127.0.0.1', resolve));
+    try {
+      linkMetro(session.id, boundPort(metro));
+      const opened = await host.metroOpen('client', { session: session.id });
+      if ('error' in opened) throw new Error(opened.error.message);
+      const port = opened.result.port;
+      await host.close();
+      await expect(fetch(`http://127.0.0.1:${port}/status`)).rejects.toThrow('fetch failed');
+
+      host = nextServer();
+      await host.resumeSessions();
+      linkMetro(session.id, boundPort(metro));
+      expect(await (await fetch(`http://127.0.0.1:${port}/index.bundle`)).text()).toBe('workspace bundle');
+      expect(await host.metroOpen('client', { session: session.id })).toHaveProperty('result.port', port);
+    } finally {
+      await host.metroClose('client', { session: session.id });
+      metro.closeAllConnections();
+      await new Promise<void>((resolve) => metro.close(() => resolve()));
+    }
+  });
+
+  test('resumes a session a crashed server left ready, and the same session stops normally afterwards', async () => {
+    const crashed = seedHosted({ state: 'ready', attempt: 'crashed' });
+    await host.resumeSessions();
+    expect(host.attach('client', { session: crashed.id })).toHaveProperty('result.state', 'ready');
+    host.stop('client', { session: crashed.id });
+    await state(crashed.id, 'stopped');
+    expectRetired(crashed.id);
+  });
+
+  test('stops a session whose device is not verified as running instead of resuming it', async () => {
+    const crashed = seedHosted({ state: 'ready', attempt: 'lost-device' });
+    writeFileSync(join(deviceHostArea(crashed.id), 'home', 'unresumable'), '');
+    const written = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      await host.resumeSessions();
+      await state(crashed.id, 'stopped');
+      expect(modes(crashed.id)).toEqual(['resume', 'stop']);
+      expect(written.mock.calls.some(([line]) => String(line).includes('no longer Booted'))).toBe(true);
+    } finally {
+      written.mockRestore();
+    }
+  });
+
+  test('leaves a session alone while another process still holds its claim', async () => {
+    const held = seedHosted({ state: 'ready', attempt: 'held' });
+    const claim = tryAcquireClaim({
+      root: join(deviceHostRoot(), `${held.id}.claims`),
+      mode: 'exclusive',
+      label: 'hosted device session',
+      details: { session: held.id, client: 'client' },
+    });
+    if (!claim.acquired) throw new Error('the test claim was not taken');
+    const written = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      await host.resumeSessions();
+      expect(existsSync(join(deviceHostArea(held.id), 'home', 'modes'))).toBe(false);
+      expect(readHostedSessions().find((record) => record.id === held.id)).toMatchObject({ state: 'ready' });
+      expect(host.attach('client', { session: held.id })).toHaveProperty('result.state', 'unknown');
+    } finally {
+      releaseClaim(claim.acquired);
+      written.mockRestore();
+    }
+  });
+
+  test('does not resume a session of a client that lost its approval, or a macOS session', async () => {
+    const revoked = seedHosted({ state: 'ready', attempt: 'revoked' });
+    const macos = seedHosted({ state: 'ready', attempt: 'macos', platform: 'macos' }, 'missing');
+    allowed.delete('client');
+    await host.resumeSessions();
+    for (const { id } of [revoked, macos]) expect(existsSync(join(deviceHostArea(id), 'home', 'modes'))).toBe(false);
+  });
+
+  test('marks an install a restart interrupted as unknown so the next offer is accepted', async () => {
+    const { session, app } = await installed();
+    await host.close();
+    changeHostedApp(session.id, 'app-first', (current) => {
+      current.state = 'installing';
+    });
+    host = nextServer();
+    await host.resumeSessions();
+
+    expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'ready');
+    expect(host.appAttach('client', app.params)).toMatchObject({
+      result: { state: 'unknown', notice: expect.stringContaining('interrupted by a server restart') },
+    });
+    expect(host.appOffer('client', appOffer(session.id, 'app-second').params)).toHaveProperty('result');
+  });
+
+  test('refuses client requests until the resume verified the device, and a close then waits and still detaches it', async () => {
+    const { session, app } = await installed();
+    await host.close();
+    host = nextServer();
+    const workerHome = join(deviceHostArea(session.id), 'home');
+    writeFileSync(join(workerHome, 'hold-resume'), '');
+    const resuming = host.resumeSessions();
+    await vi.waitFor(() => expect(existsSync(join(workerHome, 'resume-entered'))).toBe(true));
+
+    expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'unknown');
+    expect(host.appOffer('client', appOffer(session.id, 'app-second').params)).toHaveProperty('error');
+    expect(await host.metroOpen('client', { session: session.id })).toHaveProperty('error');
+    expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed');
+
+    const closing = host.close();
+    rmSync(join(workerHome, 'hold-resume'));
+    await resuming;
+    await closing;
+    expect(readHostedSessions().find((record) => record.id === session.id)?.state).toBe('ready');
+    expect(modes(session.id)).not.toContain('stop');
+    expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toHaveLength(0);
+  });
+
+  test('a stop that began during the resume leaves its claim to the stop and starts no agent control', async () => {
+    const { session } = await installed();
+    await host.close();
+    host = nextServer();
+    agentCalls = [];
+    const workerHome = join(deviceHostArea(session.id), 'home');
+    writeFileSync(join(workerHome, 'hold-resume'), '');
+    const resuming = host.resumeSessions();
+    await vi.waitFor(() => expect(existsSync(join(workerHome, 'resume-entered'))).toBe(true));
+    host.stop('client', { session: session.id });
+    rmSync(join(workerHome, 'hold-resume'));
+    await resuming;
+    await state(session.id, 'stopped');
+    expect(agentCalls.filter(([kind]) => kind === 'running')).toEqual([]);
+    expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toHaveLength(0);
+  });
+
+  test('a session with an install in flight keeps the stop path on close', async () => {
+    const session = await reserve({ deviceType: 'install-hang' });
+    await state(session.id, 'ready');
+    const app = appOffer(session.id);
+    host.appOffer('client', app.params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      ...app.params,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(existsSync(join(deviceHostArea(session.id), 'home', 'installed'))).toBe(true));
+    await host.close();
+    expect(readHostedSessions().find((record) => record.id === session.id)?.state).not.toBe('ready');
+  });
+});
 
 describe('a hosted session whose client is gone', () => {
   beforeEach(() => {
@@ -2177,7 +2388,7 @@ test('a throttled backlog query reads saved logs after stop without starting ano
 });
 
 test.each(['ios', 'android'].flatMap((platform) => ['stop', 'close', 'revoke'].map((ending) => [platform, ending])))(
-  'a bounded %s log worker is cancelled and settled before %s deletes its device',
+  'a bounded %s log worker is cancelled and settled before %s ends the session',
   { skip: process.platform === 'win32' },
   async (platform, ending) => {
     const session = await reserve({
@@ -2206,9 +2417,9 @@ test.each(['ios', 'android'].flatMap((platform) => ['stop', 'close', 'revoke'].m
       host.revoke();
     } else host.stop('client', { session: session.id });
     expect(await pending).toHaveProperty('error');
-    await state(session.id, 'stopped');
+    await state(session.id, ending === 'close' ? 'ready' : 'stopped');
+    expect(existsSync(join(workerHome, 'stopped'))).toBe(ending !== 'close');
     expect(processGroupAlive(pid)).toBe(false);
-    expect(existsSync(join(workerHome, 'stopped'))).toBe(true);
   },
 );
 
