@@ -32,11 +32,8 @@ function checkoutRoots(projectRoot: string): string[] {
 }
 
 /**
- * `text` with the checksum of each pod whose podspec embeds the checkout path replaced by the checksum of that podspec
- * with the path neutralized. `pod install` writes `sha1(Pods/Local Podspecs/<pod>.podspec.json)` into Podfile.lock, and
- * the precompiled ExpoModulesCore podspec names the checkout's absolute path, so two checkouts of one commit get
- * different checksums. Only a checksum that equals the podspec's own sha1 is replaced, so a podspec that differs in
- * anything but the path still produces a different value.
+ * `text` with the checksum of each pod whose podspec names the checkout path replaced by the checksum of that podspec
+ * with the path neutralized. Only a checksum equal to the sha1 of its own podspec is replaced.
  */
 function canonicalPodfileLock(text: string, podsDir: string, projectRoot: string): string {
   const parsed = splitChecksums(text);
