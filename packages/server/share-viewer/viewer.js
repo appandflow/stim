@@ -940,15 +940,22 @@ if (control) {
       marker.style.top = 100 * pair[index].y + '%';
     });
   };
+  let touching = false;
   const sendTouch = (message) => {
-    if (!live) return;
+    if (message.phase === 'down') {
+      if (!live) return;
+      touching = true;
+    } else if (!touching || (message.phase === 'move' && !live)) return;
     if (message.phase === 'down') busy = false;
     if (!busy || message.phase === 'down') send(message);
     if (me) {
       const second = message.x2 === undefined ? null : { x: message.x2, y: message.y2 };
       overlay.own(me, message.phase, message.x, message.y, busy, second);
     }
-    if (message.phase === 'up') busy = false;
+    if (message.phase === 'up') {
+      busy = false;
+      touching = false;
+    }
   };
   let queuedMove = null;
   let frame = 0;
