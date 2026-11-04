@@ -1415,7 +1415,7 @@ and **Running here** follow.
 prints. `SetupRequest.parse` (StimKit) reads the ticket, `--expires`, `--build` and `--device-host` and refuses any other
 option, which still needs a terminal. **Continue** sends `desktop.setup.subscribe` on the proved bundled-server
 connection, and the server runs the same setup in process. Each grant shows **Allow** and **Don't Allow**, answered
-with `desktop.setup.answer`; a missing macOS permission shows **Skip**. The sheet then waits for the requesting machine
+with `desktop.setup.answer` naming that capability; a missing macOS permission shows **Skip**, naming that permission. When Desktop uses a server it did not start, or a `stim-server service` is installed, the request is refused with a pointer to Terminal, since this path never installs or changes a service. The sheet then waits for the requesting machine
 to connect; closing it withdraws the request. It ends on the confirmation screen. **Add... > Share Link...** still
 explains where shares start, because a share needs a running device.
 

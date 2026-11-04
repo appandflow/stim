@@ -862,7 +862,8 @@ ticket and sets STIM_ACCESS_TICKET for one \`doctor --fix\` run; without it,
 command to run on the worker. On a worker Mac with Stim Desktop, the person can
 instead paste that command in Settings > Connections > Using this machine >
 Add > Machine to Build or Run Simulators Here and answer each grant there; the
-same setup runs with the same rules, and only that Desktop can approve.
+same setup runs with the same rules and installs nothing. Only the Desktop that
+started the worker's server gets this; the terminal command still approves too.
 Agents never set STIM_ACCESS_TICKET, never run \`stim-server setup\`, never edit
 \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never approve requests.
 Until setup approves, the worker answers unknown-secret and the entry stays

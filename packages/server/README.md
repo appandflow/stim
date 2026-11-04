@@ -440,11 +440,19 @@ server with `desktop.setup.subscribe { ticket, expires, capabilities }`. The
 server runs the same setup in process, on its own port, with the same ticket
 and expiry checks, the same exclusive setup claim (one setup at a time on this
 Stim home, terminal runs included), the same journal and the same wait for the
-requesting machine. Where a terminal asks Y/n, the server sends
+requesting machine. It never installs or changes a service, Stim Host or a
+route: when `stim-server service` has installed a service for its label, or its
+own port does not answer as this server, it refuses and the person runs the
+command in a terminal instead. The 5-minute limit on each macOS permission wait
+stays. Where a terminal asks Y/n, the server sends
 `desktop-setup-progress { journal, asking }` with the capability it asks about,
 and nothing is stored until the person answers
-`desktop.setup.answer { journal, answer: "approve" }`; `"refuse"` declines that
-grant, and `"skip"` skips a missing macOS permission. `desktop-setup-ended`
+`desktop.setup.answer { journal, answer: "approve", capability }`. `"refuse"`
+declines that grant, and `{ answer: "skip", permission }` skips the missing
+macOS permission (`screenRecording` or `deviceControl`) setup is waiting for.
+An answer naming another grant or permission than the one asked is refused, so
+a late or repeated answer cannot land on the next question. A second subscribe
+with the same ticket on one connection is refused. `desktop-setup-ended`
 carries setup's exit code and its `--json` payload. Unsubscribing or closing
 the connection interrupts setup, which deletes the ticket's secret unless the
 requesting machine already spent it.
@@ -453,8 +461,9 @@ Both methods require the connection that proved Desktop's private bootstrap
 key, even on an adopted or standalone server, and only a server Desktop started
 advertises the local-only `desktop-setup` feature. A tailnet peer, a paired
 phone or machine, a build or device-host client, another client of this user on
-the Unix socket and an SSH session get `forbidden`, so no other machine can
-approve a request on this one.
+the Unix socket and an SSH session get `forbidden` on both methods. Running the
+setup command in a terminal on this machine, `--yes` included, approves as
+before.
 
 Setup installs its exact server release into the service's `versions/`
 directory (`~/Library/Application Support/Stim/services/<label>/versions/` on

@@ -676,9 +676,12 @@ A person at the worker Mac can approve a request in Stim Desktop instead of a te
 The same setup runs with the same rules: one ticket, one expiry at most two hours ahead, one
 record per approved capability for the key that spends the ticket, and one setup at a time on
 the worker. Desktop takes only `--expires`, `--build` and `--device-host`; a command with any
-other option, such as `--yes`, `--port` or `--label`, runs only in a terminal. Only the
-Stim Desktop that started the worker's server can approve, so no other machine, paired phone,
-SSH session or other program on the worker can approve a request.
+other option, such as `--yes`, `--port` or `--label`, runs only in a terminal. Desktop never
+installs or changes a service, Stim Host or a route: on a worker with a `stim-server service`,
+or where Desktop uses a server it did not start, run the command in a terminal instead. Only the
+Stim Desktop that started the worker's server can use this approval; another machine, a paired
+phone, an SSH session and any other program on the worker are refused. Running the command in a
+terminal on the worker still approves as before.
 
 ## CLI equivalent
 

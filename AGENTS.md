@@ -386,10 +386,12 @@ outside it moves to its own issue and pull request.
   a terminal (`--yes` otherwise). Stim Desktop on the worker is the other
   approver: the person pastes the setup command there, and the server Desktop
   started runs the same setup in process (`desktop.setup.subscribe`), asking
-  each grant through `desktop.setup.answer` instead of the terminal. Only the
-  connection that proved Desktop's private bootstrap key may call either, so
-  no other machine, paired client, SSH session or other local client can
-  approve. An SSH-driven run is not offered. Setup
+  each grant through `desktop.setup.answer` instead of the terminal, and
+  refuses rather than install or change a service, Stim Host or a route. Only
+  the connection that proved Desktop's private bootstrap key may call either;
+  another machine, a paired client, an SSH session and any other local client
+  get `forbidden` on those methods. The terminal command, `--yes` included,
+  approves as before. An SSH-driven run is not offered. Setup
   never enables Funnel or changes TCC. There is no pairing code for build, and
   `stim-server devices grant` never grants it.
   It never comes with `read` or `control`. Build clients live in
