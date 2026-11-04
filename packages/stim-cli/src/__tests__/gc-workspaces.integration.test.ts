@@ -2280,9 +2280,10 @@ test('worktree remove accepts local-only commits that a merged pull request hold
   const current = getExecutor();
   const runFile: typeof current.runFile = (file, args, opts) => {
     if (file !== 'gh') return current.runFile(file, args, opts);
-    const branch = args[args.indexOf('--head') + 1]!;
+    const branch = args.find((arg) => arg.startsWith('b0='))!.slice(3);
     const pull = { number: 7, url: 'https://github.com/o/r/pull/7', state: state[branch], headRefOid: heads[branch] };
-    return JSON.stringify([{ ...pull, mergedAt: '2026-09-01T00:00:00Z', closedAt: '2026-09-01T00:00:00Z' }]);
+    const nodes = [{ ...pull, mergedAt: '2026-09-01T00:00:00Z', closedAt: '2026-09-01T00:00:00Z' }];
+    return JSON.stringify({ data: { repository: { b0: { nodes } } } });
   };
   setExecutor({
     ...current,

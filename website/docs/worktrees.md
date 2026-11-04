@@ -314,7 +314,9 @@ missing or signed out, the repository has no GitHub remote, or status could not
 read the worktree's git. A later `gh` failure keeps the last answer. The watcher
 uses the same `gh` lookup as `stim gc`, off its refresh path, once per
 repository for worktrees whose answer is over 5 minutes old or whose HEAD
-moved; one-shot `stim status` only reads the cached answers.
+moved; one-shot `stim status` only reads the cached answers. `stim-server`'s
+notifications for finished worktrees read the same cache while an answer is
+under 5 minutes old, and `stim gc` and `stim worktree remove` write theirs to it.
 
 Status reads the worktree list from git's records in the repository. It runs
 `git status` only in worktrees outside macOS-protected folders, or in ones with
@@ -548,7 +550,7 @@ count, and an open one never finishes a worktree. A merged or closed pull
 request finishes it, with the same clean-state rules. After a merge, commits
 whose remote branch was deleted do not keep the worktree, because GitHub keeps
 them in the pull request. After a close they do: gc reports the worktree as
-unpushed. When `gh` is not installed, not signed in, or fails, gc says so
+unpushed. When `gh` is not installed, not signed in, rate limited, or fails, gc says so
 (`pullRequestUnknown` in `--json`) and decides from git alone.
 `stim worktree remove` makes the same check when local-only commits would
 refuse the removal, so a worktree whose pull request was squash-merged and
