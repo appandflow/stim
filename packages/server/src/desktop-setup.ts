@@ -1,7 +1,17 @@
 import type { SetupCapability, SetupJournal } from '@stim-cli/core/state';
 import { parseSetupArgs, runSetup, type SetupDeps } from './setup.ts';
 
-type DesktopSetupAnswer = 'approve' | 'refuse' | 'skip';
+/** Skips the macOS permission setup waits for, named as the journal's `permissions.<permission>` step does. */
+type SetupPermission = 'screenRecording' | 'deviceControl';
+
+/** The person's answer, naming the grant or permission it answers so it cannot land on the next one. */
+export type DesktopSetupAnswer =
+  | { answer: 'approve' | 'refuse'; capability: SetupCapability }
+  | { answer: 'skip'; permission: SetupPermission };
+
+const unreachable = async (): Promise<never> => {
+  throw new Error('Setup approved in Stim Desktop never installs or changes a service, Stim Host or a route.');
+};
 
 export interface DesktopSetupRequest {
   ticket: string;
@@ -49,18 +59,27 @@ export function startDesktopSetup(
     capability: SetupCapability;
     finish(yes: boolean): void;
   } | null = null;
-  let waking: (() => void) | null = null;
-  let skipping = false;
+  let waking: { permission: string; wake(): void } | null = null;
+  let skipping: string | null = null;
   let latest: SetupJournal | null = null;
   let output: unknown = null;
+  const waitingPermission = () =>
+    latest?.steps.find((step) => step.state === 'running' && step.id.startsWith('permissions.'))?.id.slice(12) ?? null;
   const report = () => {
     if (latest) events.progress(latest, asking?.capability ?? null);
   };
   const done = runSetup(args, version, {
     ...deps,
     ticket: request.ticket,
-    tty: true,
+    tty: false,
+    desktop: true,
     display: undefined,
+    install: unreachable,
+    update: unreachable,
+    installJob: unreachable,
+    installHost: unreachable,
+    recordRoute: unreachable,
+    createRoute: unreachable,
     signal: controller.signal,
     stdout: (line) => {
       try {
@@ -89,17 +108,17 @@ export function startDesktopSetup(
       }),
     permissionWait: (ms) =>
       new Promise<boolean>((resolve) => {
-        if (skipping) {
-          skipping = false;
-          return resolve(true);
-        }
+        const permission = waitingPermission();
+        const skipped = permission !== null && skipping === permission;
+        skipping = null;
+        if (skipped) return resolve(true);
         const timer = setTimeout(() => finish(false), ms);
         const finish = (skip: boolean) => {
           clearTimeout(timer);
           waking = null;
           resolve(skip);
         };
-        waking = () => finish(true);
+        waking = permission === null ? null : { permission, wake: () => finish(true) };
       }),
   }).then(
     (exitCode) => events.ended(exitCode, output),
@@ -108,22 +127,21 @@ export function startDesktopSetup(
   );
   return {
     journal,
-    answer(answer) {
-      if (answer === 'skip') {
-        if (waking) waking();
-        else if (latest?.steps.some((step) => step.state === 'running' && step.id.startsWith('permissions.')))
-          skipping = true;
+    answer(given) {
+      if (given.answer === 'skip') {
+        if (waking?.permission === given.permission) waking.wake();
+        else if (waitingPermission() === given.permission) skipping = given.permission;
         else return false;
         return true;
       }
-      if (!asking) return false;
-      asking.finish(answer === 'approve');
+      if (asking?.capability !== given.capability) return false;
+      asking.finish(given.answer === 'approve');
       return true;
     },
     stop() {
       controller.abort();
       asking?.finish(false);
-      waking?.();
+      waking?.wake();
     },
     done,
   };
