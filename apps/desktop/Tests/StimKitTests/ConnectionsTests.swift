@@ -56,7 +56,9 @@ struct ConnectionsTests {
       from: Data(
         """
         {"machines":[
-          {"machine":"mini","priority":1,"build":{"machine":"mini","state":"pending","deviceId":"b1"},"deviceHost":null,
+          {"machine":"mini","priority":1,"deviceHost":null,
+           "build":{"machine":"mini","state":"pending","deviceId":"b1","tailnet":{"name":"t.ts.net"},
+                    "host":{"name":"Stim Host","screenRecording":true,"accessibility":true}},
            "serverKeyFingerprint":"\(mini.id)","reachability":"reachable","revoke":["stim-server devices revoke b1"]},
           {"machine":"studio","priority":2,"build":null,"deviceHost":{"machine":"studio","state":"approved","deviceId":"h2"},
            "serverKeyFingerprint":null,"reachability":"reachable","revoke":[]}],
