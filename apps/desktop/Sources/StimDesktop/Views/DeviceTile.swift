@@ -1233,7 +1233,8 @@ struct DeviceTile: View {
             showsDeviceFrame: viewer && showsDeviceFrame, onFrameSizeChange: viewer ? { frameSizes[screenID] = $0 } : nil,
             duoFrame: viewer && device.formFactor == .dual ? duoFrame : nil, activeScreenID: mainScreenID,
             duoHingeAngle: observedHingeAngle, artworkScale: pixelScale.map { $0 * framePixelsPerUnit },
-            accurateScreenSize: accurateScreenSize(screenID), onInput: onInput
+            accurateScreenSize: accurateScreenSize(screenID), onInput: onInput,
+            hardwareKeyboard: sim.owned
           )
           .frame(
             width: displayedScreenIDs.contains(screenID) ? screenWidth(screenID) : 0,
