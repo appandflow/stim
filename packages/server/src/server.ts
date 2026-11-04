@@ -2067,7 +2067,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         );
       }
       device = chosen;
-      if (!local) touchDevice(device.id);
+      if (!local) touchDevice(device.id, params.client);
       if (access === 'device-host' && !local) {
         hostedDevices.clientSeen(device.id);
         let heardAt = Date.now();

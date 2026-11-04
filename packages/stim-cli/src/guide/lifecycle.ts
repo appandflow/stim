@@ -820,12 +820,15 @@ independent and selects a compatible build worker for a cache miss.
 The host's own owned devices count toward concurrency.maxDevices and its per-platform cap
 (concurrency.maxIosDevices, concurrency.maxAndroidDevices; macOS apps use concurrency.maxMacosApps).
 
-Each record in stim-server devices --json carries kind (phone for a pairing
-from stim-server pair, which Stim Desktop on another machine also uses,
-build-client or device-host-client), access (view, control, build or
-run-devices), owner (this-machine for a phone, theirs-running-here for a
-build or device-host client) and keyFingerprint, the client key one machine's
-build and device-host records share. A person on the host renames a record
+Each record in stim-server devices --json carries kind (phone or desktop for
+a pairing from stim-server pair, build-client or device-host-client), access
+(view, control, build or run-devices), owner (this-machine for a phone or
+desktop, theirs-running-here for a build or device-host client) and
+keyFingerprint, the client key one machine's build and device-host records
+share. clientApp and clientVersion are the app and version the client named in
+its last hello, shown once it has connected; a pairing is desktop when
+clientApp is Stim Desktop or Stim Dev and phone otherwise. They are display
+only and never change access. A person on the host renames a record
 with stim-server devices rename <id> <name>; the client sees the name on its
 next connection, and its access does not change.
 
