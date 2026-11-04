@@ -28,6 +28,7 @@ import { runDaemon } from '../daemon/run.ts';
 import * as maintenanceMeasure from '../maintenance/measure.ts';
 import * as maintenanceRun from '../maintenance/run.ts';
 import * as spawnEntry from '../spawn-entry.ts';
+import * as ndjson from '../ndjson.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -751,6 +752,36 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     const successorTick = records.find((logged) => logged.event === 'daemon_tick');
     expect(successorTick?.ts).toBeGreaterThanOrEqual(exitedAt);
   }, 60_000);
+
+  test('a daemon signalled right after its tick exits at once instead of sleeping through its wait', async () => {
+    normalMeasurement();
+    const before = new Set(process.listeners('SIGTERM'));
+    const create = ndjson.createNdjsonWriter;
+    let signal: (() => void) | null = null;
+    const spy = vi.spyOn(ndjson, 'createNdjsonWriter').mockImplementation((...args) => {
+      const writer = create(...args);
+      return {
+        ...writer,
+        write(record: unknown) {
+          const written = writer.write(record);
+          if (typeof record === 'object' && record !== null && 'event' in record && record.event === 'daemon_tick')
+            signal?.();
+          return written;
+        },
+      };
+    });
+    onTestFinished(() => spy.mockRestore());
+    const run = runDaemon({ tickMs: 60_000 });
+    await listening();
+    const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+    assert(handler);
+    signal = () => handler('SIGTERM');
+    expect(await askDaemon('tick', 10_000)).toMatchObject({ op: 'ticked' });
+    const started = Date.now();
+    await run;
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(daemonLog()).toContain('exiting: SIGTERM');
+  }, 90_000);
 
   test('a daemon started in report mode stays in report mode', async () => {
     await runDaemon({ tickMs: 50, mode: 'report' });
