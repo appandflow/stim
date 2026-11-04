@@ -50,9 +50,9 @@ export function drawerStatus(machines: DrawerMachine[]): DrawerStatus {
   const pending = machines.filter((m) => m.state.kind !== 'open').length;
   const text =
     total === 0
-      ? t`No Macs paired`
+      ? t`No machines paired`
       : pending > 0
-        ? plural(total, { one: `# Mac, ${pending} connecting`, other: `# Macs, ${pending} connecting` })
-        : plural(total, { one: '# Mac connected', other: '# Macs connected' });
+        ? plural(total, { one: `# machine, ${pending} connecting`, other: `# machines, ${pending} connecting` })
+        : plural(total, { one: '# machine connected', other: '# machines connected' });
   return { text, tone: 'normal', macId: null };
 }

@@ -12,6 +12,11 @@ extension CapacityLoad {
     }
   }
 
+  /// What Stim does at `busyAt`, which is `server.maxLoadPerCore`.
+  public var busySentence: String {
+    "Stim stops taking builds from other Macs when load reaches \(formatLoad(busyAt))/core."
+  }
+
   /// What the state means for new work on this Mac.
   public var explanation: String {
     switch state {

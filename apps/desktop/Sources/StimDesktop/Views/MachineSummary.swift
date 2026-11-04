@@ -90,7 +90,7 @@ struct MachineSummary: View {
         case .divider:
           Rectangle().fill(Palette.secondary.opacity(0.3)).frame(width: 1, height: 16)
         case .item(.cpu):
-          if let cpu { cpuItem(cpu) }
+          if let cpu { cpuItem(cpu, load: load) }
         case .item(.load):
           if let load { loadItem(load) }
         case .item(.memory):
@@ -112,22 +112,34 @@ struct MachineSummary: View {
     .padding(.vertical, Space.xs)
   }
 
-  private func cpuItem(_ cpu: Double) -> some View {
-    Button {
+  private func cpuItem(_ cpu: Double, load: CapacityLoad?) -> some View {
+    let cpuText = formatPercent(cpu * 100)
+    let cpuTone = UsageThresholds.cpu(fraction: cpu)
+    var value = cpuText
+    var tone = cpuTone
+    var accessibilityLabel = "CPU details"
+    var accessibilityValue = cpuText
+    var help = "CPU is the share of this Mac's processor time in use right now, up to 100%."
+    if let load {
+      value = "\(cpuText) \u{00B7} \(load.text)"
+      tone = UsageThresholds.worse(cpuTone, load.tone)
+      accessibilityLabel = "CPU and load details"
+      accessibilityValue = "CPU \(cpuText), load \(load.text)"
+      help += " Load is the 5-minute average of tasks running or waiting, per core. \(load.busySentence)"
+    }
+    if let workspacesCpu {
+      help += " Stim's share of CPU: active workspaces' processes, simulators and emulators use \(workspacesCpu)."
+    }
+    return Button {
       expandedResource = .cpu
     } label: {
-      statItem(
-        icon: ResourceKind.cpu.icon, label: "CPU", value: formatPercent(cpu * 100), tone: UsageThresholds.cpu(fraction: cpu)
-      )
-      .padding(Space.sm)
+      statItem(icon: ResourceKind.cpu.icon, label: "CPU", value: value, tone: tone)
+        .padding(Space.sm)
     }
     .buttonStyle(.hoverRow(radius: Radius.round))
-    .accessibilityLabel("CPU details")
-    .accessibilityValue(formatPercent(cpu * 100))
-    .help(
-      "CPU used on this Mac, as a percent of all its cores."
-        + (workspacesCpu.map { " Stim's share: active workspaces' processes, simulators and emulators use \($0)." } ?? "")
-    )
+    .accessibilityLabel(accessibilityLabel)
+    .accessibilityValue(accessibilityValue)
+    .help(help)
     .popover(isPresented: shows(.cpu), arrowEdge: .bottom) { popover(.cpu) }
     .onHover { hovering in
       if hovering, expandedResource != nil {
@@ -150,7 +162,7 @@ struct MachineSummary: View {
     .buttonStyle(.hoverRow(radius: Radius.round))
     .accessibilityLabel("Load details")
     .accessibilityValue(load.text)
-    .help("The 5-minute load average per core on this Mac. \(load.explanation)")
+    .help("Load is the 5-minute average of tasks running or waiting, per core. \(load.busySentence)")
     .popover(isPresented: shows(.load), arrowEdge: .bottom) { popover(.load) }
     .onHover { hovering in
       if hovering, expandedResource != nil {
@@ -231,12 +243,17 @@ struct MachineSummary: View {
   }
 
   private var cpuPopover: some View {
-    MachineResourcePopover(title: "CPU", icon: "speedometer", openMachine: openMachine) {
+    let load = store.payload?.capacity?.load
+    return MachineResourcePopover(
+      title: load == nil ? "CPU" : "CPU and load", icon: ResourceKind.cpu.icon, openMachine: openMachine
+    ) {
       if let cpu = metrics.machineCpuFraction {
+        if load != nil { SectionLabel(title: "CPU") }
         Text(formatPercent(cpu * 100)).font(.stim(.title)).monospacedDigit()
         Sparkline(values: metrics.machineCpu, minimumPeak: 100).frame(height: 48)
           .accessibilityLabel("CPU usage, recent history, oldest to newest")
-        Text("CPU used on this Mac. 100% means all of its cores.").foregroundStyle(Palette.secondary)
+        Text("CPU is how much of this Mac's processor time is in use right now. It tops out at 100%.")
+          .foregroundStyle(Palette.secondary)
         if let workspacesCpu {
           Text(
             "Stim workspaces: \(workspacesCpu)"
@@ -245,20 +262,28 @@ struct MachineSummary: View {
           .foregroundStyle(Palette.secondary)
         }
       }
+      if let load {
+        Rectangle().fill(Palette.border).frame(height: 1)
+        SectionLabel(title: "Load")
+        loadDetails(load)
+      }
     }
   }
 
   private var loadPopover: some View {
     MachineResourcePopover(title: "Load", icon: ResourceKind.load.icon, openMachine: openMachine) {
-      if let load = store.payload?.capacity?.load {
-        Text(load.text).font(.stim(.title)).foregroundStyle(Color(load.tone)).monospacedDigit()
-        Text(
-          "The 5-minute load average divided by this Mac's \(load.cpus) cores. CPU reads 100% from about one load per core; Load keeps counting past that."
-        )
-        .foregroundStyle(Palette.secondary)
-        Text(load.explanation).foregroundStyle(Palette.secondary)
-      }
+      if let load = store.payload?.capacity?.load { loadDetails(load) }
     }
+  }
+
+  @ViewBuilder private func loadDetails(_ load: CapacityLoad) -> some View {
+    Text(load.text).font(.stim(.title)).foregroundStyle(Color(load.tone)).monospacedDigit()
+    Text(
+      "Load is how many tasks are running or waiting per core, averaged over 5 minutes. Above 1 per core, work queues up."
+    )
+    .foregroundStyle(Palette.secondary)
+    Text(load.busySentence).foregroundStyle(Palette.secondary)
+    if load.state != .free { Text(load.explanation).foregroundStyle(Palette.secondary) }
   }
 
   private var memoryPopover: some View {

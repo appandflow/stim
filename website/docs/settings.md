@@ -1027,7 +1027,18 @@ ladder above normal, and reclaims a device for a run waiting to boot. Automatic
 maintenance and the dormant stage's dependency deletion run beside the ticks,
 one pass at a time, so a slow `git fetch`, pull request lookup or size scan
 never delays a tick or a waiting run. It also wakes the oldest
-run waiting for a build slot as soon as one is released. `report` logs what
+run waiting for a build slot as soon as one is released. When one of those
+commands runs from an installed Stim (a global install or a `node_modules`
+dependency) with a newer version than the running daemon, for example after
+an upgrade, or the daemon runs a development build, that daemon keeps serving
+the command and one new daemon from the installed build takes over once the
+current tick finishes. A maintenance pass the old daemon has running finishes
+in its process, which starts no other. The same or an older version never
+replaces it, so
+alternating a global `stim` with `npx stim` or a project's copy does not
+restart the daemon. A development build (a checkout's `dist`, `npm link` or
+`pnpm link --global`) never replaces a daemon. Runs waiting for a build slot or
+a boot keep their queue positions across the handover. `report` logs what
 each pass would do and acts on nothing. `off` runs no daemon and no pass: each
 dev server supervisor stops its own dev server and devices after
 `idle.minutes`, and nothing times a device with no dev server. It is `off` in

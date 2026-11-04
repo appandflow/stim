@@ -707,12 +707,14 @@ function BuildDestination({
 }: {
   build: Pick<LastBuild, 'buildMachine' | 'builtOn' | 'errorCode'> & { cacheHit?: LastBuild['cacheHit'] | boolean };
 }) {
+  const { mac } = useMacConnection();
+  const localName = mac?.name ?? t`The machine`;
   const selected = build.buildMachine;
   const selectedName =
     selected === 'auto'
       ? t`Automatic`
       : selected === 'local'
-        ? t`This Mac`
+        ? localName
         : selected === 'remote'
           ? t`Prefer remote`
           : selected === 'remote-only'
@@ -723,7 +725,7 @@ function BuildDestination({
   const actualName = build.cacheHit
     ? null
     : build.builtOn === 'here'
-      ? t`This Mac`
+      ? localName
       : build.builtOn
         ? machineName(build.builtOn)
         : null;
@@ -986,14 +988,14 @@ function HistoryEntryDetails({
   );
 }
 
-/** The Mac a run that considered offloading built on; a tap shows why it did not offload. */
+/** The machine a run that considered offloading built on; a tap shows why it did not offload. */
 function Fallback({ build }: { build: LastBuild }) {
   const { theme } = useUnistyles();
   const { mac } = useMacConnection();
   const [open, setOpen] = useState(false);
   const reason = build.offloadFallback;
   if (!reason) return null;
-  const name = mac?.name ?? t`This Mac`;
+  const name = mac?.name ?? t`The machine`;
   return (
     <Touch
       onPress={() => setOpen(!open)}

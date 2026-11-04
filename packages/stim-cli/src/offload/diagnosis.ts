@@ -1,3 +1,5 @@
+import { hostname } from 'node:os';
+
 import type { RemoteDiagnosis } from '@stim-cli/core/protocol';
 import { isJsonObject, type TailnetPeer, type TailnetIdentity, type WrongTailnet } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
@@ -18,6 +20,21 @@ export interface PeerStartup {
 export type TailscaleReading = { running: true } | { running: false; code: TailscaleCode };
 
 export type TailscaleCode = 'tailscale-unavailable' | 'tailscale-stopped' | 'tailscale-logged-out';
+
+/**
+ * This machine's name as its peers see it: the Tailscale `Self.HostName` of `status` when it has one, else the OS host
+ * name. A diagnosis read on another machine, such as a phone, names where it was made with it.
+ */
+export function localMachineName(status?: unknown): string {
+  const self = isJsonObject(status) && isJsonObject(status.Self) ? status.Self : {};
+  const raw = typeof self.HostName === 'string' && self.HostName ? self.HostName : hostname();
+  return (
+    raw
+      .replace(/[\p{Cc}\p{Cf}]/gu, '')
+      .trim()
+      .slice(0, 64) || 'this machine'
+  );
+}
 
 const SILENT_ERRORS = new Set(['ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'EHOSTDOWN']);
 
@@ -55,31 +72,31 @@ export function readTailscale(status: unknown): TailscaleReading {
   }
 }
 
-export function tailscaleDiagnosis(code: TailscaleCode): RemoteDiagnosis {
+export function tailscaleDiagnosis(code: TailscaleCode, host: string = localMachineName()): RemoteDiagnosis {
   switch (code) {
     case 'tailscale-logged-out':
       return {
         layer: 'tailscale',
         code,
         title: 'Tailscale signed out',
-        message: 'Tailscale on this Mac is signed out, so it cannot reach any remote machine.',
-        remedy: 'Sign in to Tailscale on this Mac (its menu bar app, or `tailscale up`), then run `stim doctor` again.',
+        message: `Tailscale on ${host} is signed out, so it cannot reach any remote machine.`,
+        remedy: `Sign in to Tailscale on ${host} (its menu bar app, or \`tailscale up\`), then run \`stim doctor\` on ${host} again.`,
       };
     case 'tailscale-stopped':
       return {
         layer: 'tailscale',
         code,
         title: 'Tailscale is off',
-        message: 'Tailscale is turned off on this Mac, so it cannot reach any remote machine.',
-        remedy: 'Turn on Tailscale on this Mac (its menu bar app, or `tailscale up`), then run `stim doctor` again.',
+        message: `Tailscale is turned off on ${host}, so it cannot reach any remote machine.`,
+        remedy: `Turn on Tailscale on ${host} (its menu bar app, or \`tailscale up\`), then run \`stim doctor\` on ${host} again.`,
       };
     case 'tailscale-unavailable':
       return {
         layer: 'tailscale',
         code,
         title: 'Tailscale is off',
-        message: 'Tailscale is not running on this Mac or is not installed, so it cannot reach any remote machine.',
-        remedy: 'Install Tailscale or open it on this Mac and sign in, then run `stim doctor` again.',
+        message: `Tailscale is not running on ${host} or is not installed, so it cannot reach any remote machine.`,
+        remedy: `Install Tailscale or open it on ${host} and sign in, then run \`stim doctor\` on ${host} again.`,
       };
   }
 }
@@ -87,25 +104,34 @@ export function tailscaleDiagnosis(code: TailscaleCode): RemoteDiagnosis {
 const tailnetLabel = (tailnet: TailnetIdentity) =>
   tailnet.suffix ? `${tailnet.name} (${tailnet.suffix})` : tailnet.name;
 
-/** A machine that is not on the tailnet this Mac is signed in to now, but was on the one it was signed in to at approval. */
-export function wrongTailnetDiagnosis(entry: string, wrong: WrongTailnet): RemoteDiagnosis {
+/** A machine that is not on the tailnet `host` is signed in to now, but was on the one it was signed in to at approval. */
+export function wrongTailnetDiagnosis(
+  entry: string,
+  wrong: WrongTailnet,
+  host: string = localMachineName(),
+): RemoteDiagnosis {
   const owner = wrong.owner ? `, or to ${wrong.owner}, the tailnet that owns ${entry}` : '';
   return {
     layer: 'peer',
     code: 'peer-wrong-tailnet',
     title: 'Other Tailscale account',
-    message: `This Mac asked ${entry} for access while it was signed in to the Tailscale tailnet ${tailnetLabel(wrong.recorded)}. This Mac is signed in to ${tailnetLabel(wrong.current)} now, and no peer there is named ${entry}.`,
-    remedy: `Switch Tailscale on this Mac to ${tailnetLabel(wrong.recorded)}${owner}, then run \`stim doctor\` again.`,
+    message: `${host} asked ${entry} for access while it was signed in to the Tailscale tailnet ${tailnetLabel(wrong.recorded)}. ${host} is signed in to ${tailnetLabel(wrong.current)} now, and no peer there is named ${entry}.`,
+    remedy: `Switch Tailscale on ${host} to ${tailnetLabel(wrong.recorded)}${owner}, then run \`stim doctor\` on ${host} again.`,
   };
 }
 
-export function notOnTailnetDiagnosis(entry: string, ambiguous: boolean, wrong?: WrongTailnet | null): RemoteDiagnosis {
-  if (wrong && !ambiguous) return wrongTailnetDiagnosis(entry, wrong);
+export function notOnTailnetDiagnosis(
+  entry: string,
+  ambiguous: boolean,
+  wrong?: WrongTailnet | null,
+  host: string = localMachineName(),
+): RemoteDiagnosis {
+  if (wrong && !ambiguous) return wrongTailnetDiagnosis(entry, wrong, host);
   return {
     layer: 'peer',
     code: ambiguous ? 'peer-ambiguous' : 'peer-not-found',
     title: ambiguous ? 'Name is ambiguous' : 'Not on the tailnet',
-    message: ambiguous ? `Several peers on this tailnet match ${entry}.` : `No peer on this tailnet is named ${entry}.`,
+    message: ambiguous ? `Several peers on the tailnet match ${entry}.` : `No peer on the tailnet is named ${entry}.`,
     remedy: ambiguous
       ? `Use the full MagicDNS name in remote.machines (see \`tailscale status\`).`
       : `Check the name in \`tailscale status\`, or sign in to Tailscale on ${entry} with the same account.`,
@@ -141,6 +167,8 @@ export interface UnreachableInput {
   /** Whether `tailscale ping` reached the peer, read after a silent connection; undefined when not asked. */
   pinged?: boolean;
   now?: number;
+  /** The machine making the diagnosis; defaults to this machine's name. */
+  host?: string;
 }
 
 /**
@@ -176,7 +204,7 @@ function serverNotReady(entry: string, startup: PeerStartup | null | undefined, 
  * including one past the transport (no `transport`), shows the peer answered.
  */
 export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
-  const { entry, peer, port, transport, now = Date.now() } = input;
+  const { entry, peer, port, transport, now = Date.now(), host = localMachineName() } = input;
   const route = `https port ${port}`;
   if (input.code === 'home-unavailable') return serverNotReady(entry, { state: 'degraded', cause: 'home-unreadable' });
   if (transport?.kind === 'silent' && input.pinged === true) {
@@ -193,7 +221,7 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
     return {
       layer: 'peer',
       code: 'peer-offline',
-      title: 'Mac is offline',
+      title: 'Machine is offline',
       message: `${entry} is offline on Tailscale${seen ? ` (last seen ${seen})` : ''}.`,
       remedy: `Wake ${entry} or check that it is powered on, connected to a network and signed in to Tailscale, then run \`stim doctor\` again.`,
     };
@@ -211,9 +239,9 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
     return {
       layer: 'peer',
       code: 'peer-no-answer',
-      title: 'Mac not answering',
+      title: 'Machine not answering',
       message: `${entry} did not answer the connection, and Tailscale does not list it as offline.`,
-      remedy: `Check that ${entry} is awake and its network is up; \`tailscale ping ${entry}\` on this Mac tests the path.`,
+      remedy: `Check that ${entry} is awake and its network is up; \`tailscale ping ${entry}\` on ${host} tests the path.`,
     };
   }
   if (transport?.kind === 'tls') {
@@ -221,7 +249,7 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
       layer: 'route',
       code: 'route-tls',
       title: 'Route certificate',
-      message: `The tailscale serve route on ${entry} (${route}) did not present a certificate this Mac accepts: ${sentence(transport.message)}`,
+      message: `The tailscale serve route on ${entry} (${route}) did not present a certificate ${host} accepts: ${sentence(transport.message)}`,
       remedy: `On ${entry}, run \`tailscale serve status\`, then \`stim-server service install --serve\` to recreate the route.`,
     };
   }
@@ -259,9 +287,9 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
  * network, the machine's firewall, or a server that does not listen on that address.
  */
 export function diagnoseLocalUnreachable(
-  input: Pick<UnreachableInput, 'entry' | 'port' | 'reason' | 'transport' | 'code' | 'startup'>,
+  input: Pick<UnreachableInput, 'entry' | 'port' | 'reason' | 'transport' | 'code' | 'startup' | 'host'>,
 ): RemoteDiagnosis {
-  const { entry, port, transport } = input;
+  const { entry, port, transport, host = localMachineName() } = input;
   if (input.code === 'home-unavailable') return serverNotReady(entry, { state: 'degraded', cause: 'home-unreadable' });
   if (transport?.kind === 'refused') {
     return {
@@ -269,7 +297,7 @@ export function diagnoseLocalUnreachable(
       code: 'lan-not-listening',
       title: 'Not listening on the local network',
       message: `${entry} answers on the local network, but nothing accepts connections on port ${port}: its stim-server is not running or does not listen on that address.`,
-      remedy: `On ${entry}, run \`stim-server service status\`, and check that server.lanAddresses names the network interface or address this machine reaches (\`npx --yes stim settings get server.lanAddresses\`). Its stim-server log names each entry it cannot use.`,
+      remedy: `On ${entry}, run \`stim-server service status\`, and check that server.lanAddresses names the network interface or address ${host} reaches (\`npx --yes stim settings get server.lanAddresses\`). Its stim-server log names each entry it cannot use.`,
     };
   }
   if (transport?.kind === 'silent') {
@@ -278,7 +306,7 @@ export function diagnoseLocalUnreachable(
       code: 'lan-no-answer',
       title: 'Not answering',
       message: `${entry} did not answer a connection on port ${port}.`,
-      remedy: `Check that ${entry} is awake, on the same network as this machine and has that address. On a Mac, the macOS firewall drops connections until a person allows incoming connections for stim-server's node there (System Settings > Network > Firewall > Options).`,
+      remedy: `Check that ${entry} is awake, on the same network as ${host} and has that address. On macOS, the firewall drops connections until a person allows incoming connections for stim-server's node there (System Settings > Network > Firewall > Options).`,
     };
   }
   if (transport?.kind === 'http' && transport.status === 503)
@@ -293,13 +321,18 @@ export function diagnoseLocalUnreachable(
 }
 
 /** The doctor finding for a `local:` machine whose server key no person has confirmed, so Stim has not pinned it. */
-export function unconfirmedKeyFinding(code: string, entry: string, fingerprint: string): Finding {
+export function unconfirmedKeyFinding(
+  code: string,
+  entry: string,
+  fingerprint: string,
+  host: string = localMachineName(),
+): Finding {
   return {
     code,
     level: 'note',
     title: `Remote machine ${entry} needs its server key confirmed`,
-    detail: `${entry} approved this machine and answered with the stim-server key fingerprint ${fingerprint}. On the local network nothing vouches for that key, so Stim pins it only after a person checks it against the fingerprint \`stim-server setup\` printed there. Until then this machine does not use ${entry}.`,
-    fix: `Run \`stim remote list\` in a terminal here and answer y only if the fingerprint matches. If it does not, another machine answered at that address: do not confirm, and check the address in remote.machines.`,
+    detail: `${entry} approved ${host} and answered with the stim-server key fingerprint ${fingerprint}. On the local network nothing vouches for that key, so Stim pins it only after a person checks it against the fingerprint \`stim-server setup\` printed there. Until then ${host} does not use ${entry}.`,
+    fix: `Run \`stim remote list\` in a terminal on ${host} and answer y only if the fingerprint matches. If it does not, another machine answered at that address: do not confirm, and check the address in remote.machines.`,
   };
 }
 

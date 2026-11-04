@@ -20,6 +20,7 @@ const paired = (id: string, serverId = machine): WorkspaceLinkMachine => {
     features: [],
     actions: [],
     deviceId: id,
+    deviceName: null,
   };
   return { mac: { id, serverId }, state, status, statusSource: state, cachedSeenAt: null };
 };
@@ -67,6 +68,7 @@ test('links wait for this authenticated home and refuse missing workspaces', () 
           actions: [],
           capabilities: [],
           deviceId: 'a',
+          deviceName: null,
         },
       },
     ]),
