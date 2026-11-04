@@ -528,8 +528,8 @@ tar -xf <archive>/untracked.tar -C <path>
 ```
 
 Worktree archives follow `archive.maxAgeDays` and `archive.maxTotalGb`. Archive
-retention, which runs around each new archive and after each worktree removal
-that archives its workspace, deletes the expired ones. A new archive that would
+retention, which runs around each new archive, after each worktree removal
+that archives its workspace and in the daily age sweep, deletes the expired ones. A new archive that would
 not fit beside the others under the cap keeps its worktree instead, so the
 oldest go for size only after you lower the cap, and an archive whose removal is
 still running is never deleted. With `archive.enabled false`, for the worktree or

@@ -681,6 +681,13 @@ In `on` mode a pass works through these steps, cheapest to rebuild first:
 8. In the daily sweep, pressure ladder rung 6: idle Gradle and Kotlin daemons,
    unpinned Gradle versions unmodified for `maintenance.gradleVersionIdleDays`,
    Stim TMPDIR leftovers unmodified for 24 hours, and the worktree trash.
+9. In the daily sweep, what outlived the thing it describes, by the rules
+   `stim gc --delete` applies: status cache files of folders and worktrees that
+   are gone, process lock directories that hold no claim, expired device lease
+   files, and [archives](./settings.md#archive-retention) past their `archive.*`
+   limits. A lease whose workspace is pinned with `maintenance.keep` or in use
+   stays, and so does anything Stim cannot show stale; each keep is logged with
+   its reason. These run whatever `maintenance.olderThanDays` is.
 
 The daily sweep runs every `maintenance.sweepHours` (24) on a [stim-daemon](./settings.md#stim-daemon) tick, or, while no daemon holds the home, in `stim doctor`, `stim start`, `stim ios` or `stim android` (on Windows also in the background process other top-level commands start); never at a
 set hour. It waits while the one-minute load is above 4 per core.

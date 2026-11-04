@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readdirSync, statSync } from 'node:fs';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import {
@@ -53,14 +54,29 @@ export interface StatusCacheEntry {
   bytes: number;
 }
 
+const statusCacheDirs = (): readonly (readonly [StatusCacheEntry['kind'], string])[] => [
+  ['disk-usage', diskUsageCacheDir()],
+  ['pull-request', pullRequestCacheDir()],
+  ['git-merge', gitMergeCacheDir()],
+];
+
+const isCacheFileName = (name: string) => /^[0-9a-f]{32}\.json$/.test(name);
+
+function statusCacheEntry(
+  kind: StatusCacheEntry['kind'],
+  file: string,
+  name: string,
+  bytes: number,
+  recorded: unknown,
+): StatusCacheEntry {
+  const path = typeof recorded === 'string' && isAbsolute(recorded) && cacheName(recorded) === name ? recorded : null;
+  return { kind, file, path, bytes };
+}
+
 /** Every finished file in the disk-usage, pull-request and git-merge caches; a file being written is not listed. */
 export function listStatusCacheEntries(): StatusCacheEntry[] {
   const entries: StatusCacheEntry[] = [];
-  for (const [kind, dir] of [
-    ['disk-usage', diskUsageCacheDir()],
-    ['pull-request', pullRequestCacheDir()],
-    ['git-merge', gitMergeCacheDir()],
-  ] as const) {
+  for (const [kind, dir] of statusCacheDirs()) {
     let names: string[];
     try {
       names = readdirSync(dir).toSorted();
@@ -68,7 +84,7 @@ export function listStatusCacheEntries(): StatusCacheEntry[] {
       continue;
     }
     for (const name of names) {
-      if (!/^[0-9a-f]{32}\.json$/.test(name)) continue;
+      if (!isCacheFileName(name)) continue;
       const file = join(dir, name);
       let bytes: number;
       try {
@@ -76,10 +92,39 @@ export function listStatusCacheEntries(): StatusCacheEntry[] {
       } catch {
         continue;
       }
-      const recorded = readJsonObject(file)?.path;
-      const path =
-        typeof recorded === 'string' && isAbsolute(recorded) && cacheName(recorded) === name ? recorded : null;
-      entries.push({ kind, file, path, bytes });
+      entries.push(statusCacheEntry(kind, file, name, bytes, readJsonObject(file)?.path));
+    }
+  }
+  return entries;
+}
+
+/** `listStatusCacheEntries` without blocking the event loop; cancellation propagates. */
+export async function listStatusCacheEntriesAsync(signal?: AbortSignal): Promise<StatusCacheEntry[]> {
+  const entries: StatusCacheEntry[] = [];
+  for (const [kind, dir] of statusCacheDirs()) {
+    signal?.throwIfAborted();
+    let names: string[];
+    try {
+      names = (await readdir(dir)).toSorted();
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      signal?.throwIfAborted();
+      if (!isCacheFileName(name)) continue;
+      const file = join(dir, name);
+      let bytes: number;
+      try {
+        bytes = (await stat(file)).size;
+      } catch {
+        continue;
+      }
+      let recorded: unknown;
+      try {
+        const value: unknown = JSON.parse(await readFile(file, 'utf-8'));
+        recorded = isJsonObject(value) ? value.path : undefined;
+      } catch {}
+      entries.push(statusCacheEntry(kind, file, name, bytes, recorded));
     }
   }
   return entries;

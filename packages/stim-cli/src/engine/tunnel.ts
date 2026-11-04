@@ -1,18 +1,8 @@
 import type { StimContext } from '@stim-cli/core';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import type { ChildProcess } from 'node:child_process';
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  readFileSync,
-  rmdirSync,
-  unlinkSync,
-  watch,
-  type FSWatcher,
-} from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, rmdirSync, unlinkSync, watch, type FSWatcher } from 'node:fs';
+import { readdir, rmdir } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path';
 import { getConfigDir } from '../workspace/config.ts';
@@ -211,9 +201,9 @@ function removeEmptyDirs(dirs: string[]): void {
   }
 }
 
-function childDirs(dir: string): string[] {
+async function childDirs(dir: string): Promise<string[]> {
   try {
-    return readdirSync(dir, { withFileTypes: true })
+    return (await readdir(dir, { withFileTypes: true }))
       .filter((entry) => entry.isDirectory())
       .map((entry) => join(dir, entry.name));
   } catch {
@@ -221,15 +211,41 @@ function childDirs(dir: string): string[] {
   }
 }
 
-export function pruneEmptyProcessLockDirs(): number {
-  const base = join(getConfigDir(), 'process-locks');
-  let removed = 0;
-  for (const top of childDirs(base)) {
-    const entries = basename(top) === 'worktrees' ? childDirs(top) : [top];
-    for (const entry of entries) {
-      removeEmptyDirs(entry === top ? [join(top, '.stim'), top] : [entry]);
-      if (!existsSync(entry)) removed++;
+async function isEmptyDir(dir: string, allowEmptyStim = false): Promise<boolean> {
+  try {
+    const names = await readdir(dir);
+    return (
+      names.length === 0 ||
+      (allowEmptyStim && names.length === 1 && names[0] === '.stim' && (await isEmptyDir(join(dir, '.stim'))))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** The lock directories under `process-locks` that hold nothing, not even a claim: a held lock keeps a file in its own. */
+export async function emptyProcessLockDirs(signal?: AbortSignal): Promise<string[]> {
+  const empty: string[] = [];
+  for (const top of await childDirs(join(getConfigDir(), 'process-locks'))) {
+    const nested = basename(top) === 'worktrees';
+    for (const entry of nested ? await childDirs(top) : [top]) {
+      signal?.throwIfAborted();
+      if (await isEmptyDir(entry, !nested)) empty.push(entry);
     }
+  }
+  return empty;
+}
+
+/** Removes the lock directories `emptyProcessLockDirs` lists; `rmdir` refuses one that gained a claim since. */
+export async function pruneEmptyProcessLockDirs(signal?: AbortSignal): Promise<number> {
+  let removed = 0;
+  for (const entry of await emptyProcessLockDirs(signal)) {
+    signal?.throwIfAborted();
+    try {
+      await rmdir(join(entry, '.stim')).catch(() => {});
+      await rmdir(entry);
+      removed++;
+    } catch {}
   }
   return removed;
 }

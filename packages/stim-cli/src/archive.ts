@@ -556,20 +556,26 @@ export async function worktreeArchiveBytes(signal?: AbortSignal): Promise<number
   return (await listWorktreeArchives(signal)).entries.reduce((sum, entry) => sum + entry.bytes, 0);
 }
 
-async function pruneWorktreeArchives(now: number, limits: Record<string, number>, signal?: AbortSignal): Promise<void> {
-  const listed = await listWorktreeArchives(signal);
-  const { repositories } = listed;
-  const entries = listed.entries.filter((entry) => {
+const pastAge = (at: number, now: number, days: number) => now - at >= days * DAY;
+
+/** The worktree archives no process holds or may hold: a live or unresolved claim keeps one. */
+function unclaimed<T extends { path: string }>(entries: readonly T[]): T[] {
+  return entries.filter((entry) => {
     const claims = readClaimSet(`${entry.path}.claims`);
     return !claims.live.length && !claims.unresolved.length;
   });
+}
+
+async function pruneWorktreeArchives(now: number, limits: Record<string, number>, signal?: AbortSignal): Promise<void> {
+  const listed = await listWorktreeArchives(signal);
+  const { repositories } = listed;
+  const entries = unclaimed(listed.entries);
   entries.sort((a, b) => a.at - b.at);
   let total = entries.reduce((sum, entry) => sum + entry.bytes, 0);
   const cap = (limits.maxTotalGb ?? 0) * 1024 ** 3;
-  const maxAgeMs = (limits.maxAgeDays ?? 0) * DAY;
   for (const entry of entries) {
     signal?.throwIfAborted();
-    if (now - entry.at < maxAgeMs && total <= cap) continue;
+    if (!pastAge(entry.at, now, limits.maxAgeDays ?? 0) && total <= cap) continue;
     if (clearFreeClaimSet({ root: `${entry.path}.claims`, label: 'worktree archive' }).status !== 'cleared') continue;
     await rm(entry.path, { recursive: true, force: true });
     total -= entry.bytes;
@@ -579,6 +585,87 @@ async function pruneWorktreeArchives(now: number, limits: Record<string, number>
       await rmdir(join(worktreeArchiveRoot(), repository));
     } catch {}
   }
+}
+
+/** The archives that stay, given `archive.maxAgeDays` and `archive.maxCount`; `listed` runs newest first. */
+function retainedArchives(
+  listed: readonly ArchivedWorkspace[],
+  limits: Record<string, number>,
+  now: number,
+): ArchivedWorkspace[] {
+  return listed.filter(
+    (record, index) =>
+      limits.maxAgeDays! > 0 &&
+      now - Date.parse(record.removedAt) < limits.maxAgeDays! * DAY &&
+      index >= listed.length - limits.maxCount!,
+  );
+}
+
+/** The kinds of a kept archive that have outlived their own age limit, or the recordings of a disabled setting. */
+function expiredKinds(
+  record: ArchivedWorkspace,
+  limits: Record<string, number>,
+  now: number,
+  recordings: boolean,
+): Kind[] {
+  return (['recordings', 'agentActions', 'logs'] as const).filter((kind) => {
+    const age = limits[`${kind}.maxAgeDays`]!;
+    return (
+      record.bytes[kind] > 0 &&
+      (!age || pastAge(Date.parse(record.removedAt), now, age) || (kind === 'recordings' && !recordings))
+    );
+  });
+}
+
+export interface ArchiveExpiry {
+  /** Whole archives past `archive.maxAgeDays` or `archive.maxCount`. */
+  records: { id: string; bytes: number }[];
+  /** Logs, recordings or agent actions of a kept archive past their own age limit. */
+  parts: { id: string; kind: Kind; bytes: number }[];
+  /** Worktree archives past `archive.maxAgeDays` that no claim holds. */
+  worktreeArchives: { path: string; bytes: number }[];
+  bytes: number;
+}
+
+/**
+ * What `enforceArchiveRetention` would remove for age or count, by the same rules, or why it cannot be read. The size
+ * caps are not looked at here: they are enforced as each archive is written, so a pass finds them exceeded only
+ * after a setting was lowered.
+ */
+export async function archivesPastRetention(
+  now: number = Date.now(),
+  operation?: StimContext,
+): Promise<ArchiveExpiry | { refusal: string }> {
+  const signal = operation?.signal;
+  signal?.throwIfAborted();
+  let limits: Record<string, number>;
+  try {
+    limits = archiveSettings(operation?.env ?? process.env);
+  } catch (error) {
+    return {
+      refusal: `could not read the archive settings: ${(error instanceof Error ? error.message : String(error)).split('\n')[0]}`,
+    };
+  }
+  const listed = (await readArchivesAsync(signal)).toReversed();
+  const retained = retainedArchives(listed, limits, now);
+  const recordings = recordingEnabled(operation?.env ?? process.env, [loadConfig()]);
+  const records = listed.filter((record) => !retained.includes(record));
+  const parts = retained.flatMap((record) =>
+    expiredKinds(record, limits, now, recordings).map((kind) => ({ id: record.id, kind, bytes: record.bytes[kind] })),
+  );
+  const worktreeArchives = unclaimed((await listWorktreeArchives(signal)).entries).filter((entry) =>
+    pastAge(entry.at, now, limits.maxAgeDays ?? 0),
+  );
+  const expiry = {
+    records: records.map((record) => ({ id: record.id, bytes: record.bytes.total })),
+    parts,
+    worktreeArchives: worktreeArchives.map(({ path, bytes }) => ({ path, bytes })),
+  };
+  const bytes = [...expiry.records, ...expiry.parts, ...expiry.worktreeArchives].reduce(
+    (sum, entry) => sum + entry.bytes,
+    0,
+  );
+  return { ...expiry, bytes };
 }
 
 export async function enforceArchiveRetention(now: number = Date.now(), operation?: StimContext): Promise<void> {
@@ -600,12 +687,7 @@ export async function enforceArchiveRetention(now: number = Date.now(), operatio
     archiveLock(),
     async () => {
       const listed = (await readArchivesAsync(signal)).toReversed();
-      const records = listed.filter(
-        (record, index) =>
-          limits.maxAgeDays! > 0 &&
-          now - Date.parse(record.removedAt) < limits.maxAgeDays! * DAY &&
-          index >= listed.length - limits.maxCount!,
-      );
+      const records = retainedArchives(listed, limits, now);
       for (const record of listed) {
         signal?.throwIfAborted();
         if (!records.includes(record)) await removeRecord(record.id);
@@ -613,14 +695,9 @@ export async function enforceArchiveRetention(now: number = Date.now(), operatio
       const recordings = recordingEnabled(env, [loadConfig()]);
       for (const record of records) {
         signal?.throwIfAborted();
-        for (const kind of ['recordings', 'agentActions', 'logs'] as const) {
+        for (const kind of expiredKinds(record, limits, now, recordings)) {
           signal?.throwIfAborted();
-          const age = limits[`${kind}.maxAgeDays`]!;
-          if (
-            record.bytes[kind] &&
-            (!age || now - Date.parse(record.removedAt) >= age * DAY || (kind === 'recordings' && !recordings))
-          )
-            await removeKind(record, kind);
+          await removeKind(record, kind);
         }
         const cap = limits['logs.maxMbPerWorkspace']! * 1024 ** 2;
         if (record.bytes.logs > cap) {

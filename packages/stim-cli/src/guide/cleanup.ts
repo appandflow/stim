@@ -155,6 +155,15 @@ In on mode a pass runs, cheapest to rebuild first:
      daemons, unpinned Gradle versions unmodified for
      maintenance.gradleVersionIdleDays, Stim TMPDIR leftovers unmodified for 24
      hours, and the worktree trash.
+  9. the age sweep also prunes what outlived the thing it describes, by the
+     rules gc --delete applies: status cache files (disk-usage, pull-request,
+     git-merge) of folders and worktrees that are provably gone, process lock
+     directories that hold no claim, expired device lease files, and archives
+     past the archive.* retention (guide settings). A lease whose workspace is
+     pinned with maintenance.keep or in use stays; so does anything Stim cannot
+     show stale, each logged as a kept record with its reason. These steps
+     run whatever maintenance.olderThanDays is; maintenance.sweepHours 0 turns
+     them off with the rest of the sweep.
 The age sweep runs every maintenance.sweepHours (24) on a stim-daemon tick, or,
 while no daemon holds the home, in stim doctor, start, ios or android (on
 Windows also in the background process other top-level commands start); never
@@ -374,7 +383,9 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   beginning "could not archive:" and removal continues with empty stdout.
 
   Retention runs on every worktree removal, archived or not, once an archive
-  exists. It deletes records past their age or count limit first, then expires
+  exists, and in automatic maintenance's daily age sweep, so archives that
+  outlive their limits go without another removal (a worktree archive that a
+  claim holds stays). It deletes records past their age or count limit first, then expires
   recordings, agent actions and logs by age from removedAt; trims per-workspace
   logs (oldest rotated generations, then build logs, then oldest other files);
   and removes the largest kind of the oldest archive while over total caps.
@@ -973,19 +984,22 @@ BUILD LOCKS
   removing it would put a second workspace on the same compile.
   \`gc --delete\` also removes the empty directories under ~/.stim/process-locks
   that removed projects and worktrees leave behind; it never touches a lock
-  that holds a claim.
+  that holds a claim. The daily age sweep removes them too.
 
 DEVICE LEASES
   A workspace can hold a timed lease on a physical device. The lease is one
   file under ~/.stim/device-locks, and it expires on its own. \`gc\` reports
   the lease files whose expiry has passed; \`gc --delete\` removes those
   files, re-reading each one under its own lock first, so a lease renewed in
-  the meantime survives. Two kinds are reported and KEPT: a file that does
+  the meantime survives. The daily age sweep removes them the same way, and
+  keeps one whose workspace is pinned with maintenance.keep or in use. Two
+  kinds are reported and KEPT: a file that does
   not parse, which no run may take the device around, and an unexpired lease
   whose holder directory is gone. \`stim status\` lists every lease file with
   its holder and expiry, including holders no config knows. \`stop\` and
   \`worktree remove\` release the leases of the workspace they act on, and
-  nothing else deletes a lease file: never remove another workspace's.
+  nothing else deletes a lease file but the daily age sweep, for an expired
+  one: never remove another workspace's.
   They also remove the \`adb reverse\` that an \`android --device\` run added
   for this workspace's Metro port on that phone, using the serial and port the
   run recorded in its workspace state; any other reverse on the phone stays.

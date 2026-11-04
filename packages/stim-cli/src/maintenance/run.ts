@@ -104,6 +104,10 @@ const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
   'would-delete-parked-device': 2,
   'would-delete-temp-leftovers': 2,
   'would-delete-trash': 2,
+  'would-delete-status-caches': 2,
+  'would-delete-process-locks': 2,
+  'would-delete-device-lease': 2,
+  'would-delete-expired-archives': 2,
   'would-trim-cache': 2,
   'would-clear-build-dirs': 3,
   'would-empty-cache': 3,
@@ -161,6 +165,14 @@ function describeDone(action: MaintenanceAction): string {
       return `Deleted the recognized leftovers in ${action.target}`;
     case 'would-delete-trash':
       return `Deleted the worktree trash in ${action.target}`;
+    case 'would-delete-status-caches':
+      return `Deleted the stale status cache entries in ${action.target}`;
+    case 'would-delete-process-locks':
+      return `Deleted the empty process lock directories in ${action.target}`;
+    case 'would-delete-device-lease':
+      return `Deleted the expired device lease ${action.target}`;
+    case 'would-delete-expired-archives':
+      return `Deleted the archives past their retention in ${action.target}`;
     case 'would-delete-devices':
       return `Deleted the owned devices of ${name}`;
     case 'would-clear-build-dirs':
