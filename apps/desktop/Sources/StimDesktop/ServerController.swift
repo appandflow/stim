@@ -518,7 +518,7 @@ final class ServerController: ObservableObject {
         if !owned {
           missedProbes += 1
           guard missedProbes >= 2 else { return }
-          let held = await StimServerCLI.portIsHeld(port)
+          let held = probe == nil ? await StimServerCLI.portIsHeld(port) : false
           guard current == generation, isResponding, !provisional else { return }
           if held {
             state = .notReady(.degraded(Self.portHeldReason(port: port)), owned: false)

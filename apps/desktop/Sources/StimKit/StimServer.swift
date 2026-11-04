@@ -354,7 +354,9 @@ public struct StimServerCLI: Sendable {
       if result == 0 { return true }
       guard errno == EINPROGRESS else { return false }
       var wait = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
-      guard poll(&wait, 1, 500) > 0 else { return true }
+      let ready = poll(&wait, 1, 500)
+      if ready == 0 { return true }
+      guard ready > 0 else { return false }
       var failure: Int32 = 0
       var length = socklen_t(MemoryLayout<Int32>.size)
       getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &failure, &length)
