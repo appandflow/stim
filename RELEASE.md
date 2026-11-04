@@ -401,25 +401,47 @@ and repeat the affected gate rather than waiving it.
    )
    ```
 
-   Do not wait for the rest of the `CI` run, and do not watch the whole run
-   with `gh run watch`: it also contains the Windows and macOS jobs, which do
-   not gate the release. For 1.34.0 the merge gate took 7 minutes and the
-   slowest gate job finished 9 minutes after the push.
+   Do not wait for the rest of the `CI` run. For 1.34.0 the merge gate took 7
+   minutes and the slowest gate job finished 9 minutes after the push.
 
    The push run is cancelled when another pull request lands on `main` before
    it finishes (its concurrency group is the branch), and it may be missing
    when the push did not start `CI`. Then run the same jobs on a throwaway
    branch at the same commit, and repeat the check with the dispatched run
    once it appears in `gh run list --workflow ci.yml --branch release-ci/X.Y.Z`.
-   That run also starts the full Windows suite; do not wait for it.
+   `-f full=false` keeps the dispatched run to the Linux jobs; a stable release
+   starts the `Full suite` below on the same branch anyway.
 
    ```bash
    git push origin <release-commit-sha>:refs/heads/release-ci/X.Y.Z
-   gh workflow run ci.yml --ref release-ci/X.Y.Z
+   gh workflow run ci.yml --ref release-ci/X.Y.Z -f full=false
    ```
 
    Run the check again with the first line changed to set `ci_event` to
    `workflow_dispatch` and `ci_branch` to `release-ci/X.Y.Z`.
+
+   **A stable version also needs a green `Full suite` on that commit.** Pull
+   requests and `main` run only Linux jobs, so the macOS, Windows, Desktop and
+   native E2E smoke jobs run here instead. Push the release commit to
+   `release-ci/X.Y.Z` as above, dispatch the suite with the native E2E smoke
+   (the default), and wait for it. It takes about an hour, dominated by the
+   native smoke on iOS and Windows Android:
+
+   ```bash
+   gh workflow run full-suite.yml --ref release-ci/X.Y.Z
+   gh run list --workflow full-suite.yml --branch release-ci/X.Y.Z --limit 1 --json databaseId,status,conclusion,url
+   gh run watch <databaseId> --exit-status
+   ```
+
+   The `Release` and `Desktop release` workflows check for that run before they
+   publish a stable version: `scripts/full-suite-gate.mjs` accepts only a
+   successful run named `Full suite (native E2E)` whose head is the tagged
+   commit. A tag pushed without it fails in the first job, before anything is
+   published; run the suite on a branch at that commit and re-run the failed
+   job. A prerelease (`-rc.N`) needs no `Full suite` run, and neither does the
+   expedited RC lane, whose gate stays the Linux jobs above. The `next`
+   channels (npm and Desktop) never wait for it. A flaky job in the suite is a
+   failure to read, not to re-run blindly: the same rule as section 5.
 
    A fix creates a new commit and repeats steps 2 to 4. Never tag a commit
    that has not passed this gate. Delete `release-ci/X.Y.Z` once the tag is
@@ -474,10 +496,7 @@ and repeat the affected gate rather than waiving it.
 
    The `Release` run holds only `tag-on-main`, `publish` and `smoke`, so it
    ends when `smoke` does: in 1.29.0 to 1.33.0 `publish` took under 2 minutes
-   and `smoke` 6 to 8. The same tag starts `Post-release validation`
-   (`.github/workflows/post-release.yml`), which runs the full Windows unit
-   suite on its own. It cannot delay or fail the publish. Section 5 says what
-   to do with its result.
+   and `smoke` 6 to 8.
 
    A NEW package, a failed publish, or
    a provenance rejection: see
@@ -516,28 +535,14 @@ and repeat the affected gate rather than waiving it.
 
 ## 5. After the release
 
-- Triage what the release did not wait for. None of it blocks the release or
-  is a reason to unpublish: a published version stays, and a real defect ships
-  in the next version.
-
-  ```bash
-  gh run list --workflow "Post-release validation" --branch vX.Y.Z --json databaseId,status,conclusion,url
-  gh api "repos/appandflow/stim/actions/runs?head_sha=<release-commit-sha>&event=push&per_page=100" \
-    --jq '.workflow_runs[] | select(.name == "CI" or .name == "Native E2E") | [.name, .status, .conclusion, .html_url] | @tsv'
-  ```
-
-  Look at the failed jobs of the full Windows suite, `test (windows)`,
-  `test (macos)` and `native process inspection (macos-15|windows-latest)` in
-  the `CI` run, and the `Native E2E` smoke (iOS and Linux Android; the Windows
-  Android loop runs nightly). A failure that an open issue
-  already describes (the full Windows suite:
-  [#3878](https://github.com/appandflow/stim/issues/3878)) gets a comment with
-  the run link. Any other failure gets an issue from
-  `.github/ISSUE_TEMPLATE/report.md`, with the run link, the failing job and
-  whether it reproduces on the previous release. A failure that shows the
+- Triage the nightly failures. None of them blocks the release or is a
+  reason to unpublish: a published version stays, and a real defect ships in
+  the next version. The `Full suite`, `Native E2E` and `Stim CI dogfood`
+  nightlies file an issue titled `Nightly failure: <workflow>` when they fail
+  (`gh issue list --label "source: nightly"`). A failure that shows the
   published packages are broken on that platform is `priority: P0`: follow
   [docs/release-recovery.md](./docs/release-recovery.md). Do not hold the
-  release report, the Desktop release or the machine updates for these runs.
+  release report, the Desktop release or the machine updates for them.
 
 - Leave every `package.json` at the just-released version. The next release
   bumps them as part of its own section 2, step 1; we don't carry a `-dev`
@@ -643,7 +648,7 @@ signed unless `HOST_SIGNING_IDENTITY` is set.
   candidate with an unresolved CRITICAL or HIGH finding.
 - Treat “no QA” as permission to skip the release gate on the exact release
   commit, candidate version verification, or tarball inspection.
-- Hold the tag or the publish for a macOS or Windows job. Those run after the
-  publish (section 5).
+- Hold the tag or the publish for a nightly run. Only the `Full suite` run on
+  the release commit (section 4, step 4) gates a stable version.
 - Publish one package at a new version and leave the others behind. The shared
   version is the compatibility statement; a partial release makes it a lie.

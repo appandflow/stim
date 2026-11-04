@@ -57,6 +57,21 @@ real-tool and app verification requirements below. Candidate version commits
 follow the preflight in [`RELEASE.md`](./RELEASE.md), which leaves the checks
 that CI runs on the release commit to CI.
 
+A pull request, the merge queue and a push to `main` run only Linux jobs and,
+when Desktop files change, `swift build -Xswiftc -warnings-as-errors`.
+The macOS and Windows unit suites, native process inspection, Desktop `swift
+test` and Release compile, the mobile license check and the native E2E smoke run
+in the `Full suite` workflow: nightly, on dispatch, and before a stable release
+(`RELEASE.md`). A failing nightly files a `Nightly failure:` issue labeled
+`source: nightly`; read those issues first when `main` looks broken on one
+platform. Run platform-specific changes on that platform before committing:
+the vitest files that branch on `process.platform` on macOS, and `swift build`
+and `swift test` with warnings-as-errors for Desktop. Add the `ci-full` label
+to a pull request that changes native tool calls (invariant 9), Desktop Swift,
+the frames helper or other macOS or Windows code paths, and wait for `Full
+suite` before the fresh review; for a branch without a pull request run
+`gh workflow run full-suite.yml --ref <branch>`.
+
 Filter unit tests with `pnpm test <file> -t "case name"`. Do not insert `--`
 before the file: pnpm forwards it to Vitest, which then ignores the filter and
 runs the full suite.
@@ -91,8 +106,8 @@ route. A remote server grants it only the capabilities recorded for its key:
 treats every remote message as untrusted input, never turns a remote path into a
 local file or process, and never stores another machine's workspace data on
 disk. Build and test it with `swift build` and
-`swift test` from that directory, both with `-Xswiftc -warnings-as-errors` in
-CI. Format and lint its Swift sources with `scripts/format.sh` and
+`swift test` from that directory, both with `-Xswiftc -warnings-as-errors`; a
+pull request's CI runs the build, the `Full suite` runs the tests. Format and lint its Swift sources with `scripts/format.sh` and
 `scripts/format.sh --check`. Its design tokens and empty-state agent prompts are generated from
 `apps/mobile/src/design/tokens.ts` and `apps/mobile/src/lib/agent-prompts.ts`; run
 `node apps/desktop/scripts/generate-tokens.mjs` after changing either file. Keep
