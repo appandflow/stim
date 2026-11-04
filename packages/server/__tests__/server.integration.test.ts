@@ -86,6 +86,7 @@ import {
   readDeviceHostClients,
   readDevices,
   revokeDevice,
+  serverDir,
   serverIdentity,
   spendSecret,
   storeSetupSecret,
@@ -1483,6 +1484,16 @@ describe('pairing', () => {
     const second = await connect(port, undefined, { secret: token });
     expect(await second.closedWith).toEqual({ code: 4401, reason: 'unknown-secret' });
     expect(readDevices()).toHaveLength(1);
+  });
+
+  it('logs why it could not record a new client when a newer Stim wrote the registry', async () => {
+    const port = await start();
+    const { token } = createPairingToken();
+    writeFileSync(join(serverDir(), 'devices.json'), JSON.stringify({ version: 3, devices: [] }));
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const client = await connect(port, undefined, { secret: token });
+    expect(await client.closedWith).toEqual({ code: 4401, reason: 'home-unavailable' });
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('registry version 3, which a newer Stim wrote'));
   });
 
   it('refuses an expired pairing token', async () => {

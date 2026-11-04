@@ -244,6 +244,7 @@ OK: com.appandflow.trailhead on stim-trailhead (iPhone 17 26.5) (4F2A..), Metro 
 - A refusal prints a code such as `STIM_METRO_TIMEOUT`. Run
   `stim guide errors <CODE>` for its cause and remedy, or look it up on the
   [troubleshooting page](./troubleshooting.md).
+- If Stim itself looks wrong, [report a problem](./agent-skills.md#report-a-problem).
 
 Use [remote machines](./remote-machines.md) to build on an approved machine or
 run on an approved Mac, and the [phone app](./phone-app.md) to watch

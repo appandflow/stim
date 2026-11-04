@@ -63,6 +63,23 @@ authorization or capabilities.
 device-host records share it; the server never learns a client's server key.
 The plain listing shows `from` and the first 12 characters of the key fingerprint.
 
+An entry of one of the three registry files that this version cannot read, such
+as a malformed one or one written in a shape only a newer Stim understands, is
+never dropped. Every registry write puts it back as the text it had, in its
+place, and it grants no access; the file's other top-level members are kept as
+their text too. `devices --json` lists each one in `unreadable`, which is `[]`
+when there are none: `{ "file": "devices.json", "index": 2, "id": "..." }` with
+the file's name, the entry's position in that file's `devices` list and, when
+the entry has a string `id`, that id cleaned like a name. Nothing else of the
+entry is shown. A file whose `version` is newer than 2 is listed as a whole,
+`{ "file": "devices.json", "version": 3 }`, its records are not read, and every
+write to it is refused so a downgrade never replaces it. A file of protocol 1
+(`version` 1) is still not read and is replaced by the next write. The plain
+listing prints a line for each. `devices rename`, `grant` and `revoke` with the
+id of an unreadable entry exit 1 and say it is left as it is; edit the file to
+change or remove it. A registry file that does not parse as a whole is still
+refused, and no write replaces it.
+
 `devices rename <id> <name>` renames the record with that id in whichever
 registry holds it, under the same lock and atomic write as every other registry
 change, and keeps its key and capabilities. The name is 1 to 64 characters of
@@ -1454,6 +1471,14 @@ Ending a subscription or session sends `device-host.unsubscribe` or
 `device-host.control.end`, and the connection closes when the last one ends.
 The host's per-connection limits, such as its 32 subscriptions and input
 budgets, therefore apply to all of the client's relayed use of that host.
+When the host connection drops (the host's stim-server restarted, or the network broke), each
+relayed frame subscription keeps its local subscription id. It waits 1 second, doubling to 15,
+and subscribes again on a new connection with the same parameters once `device-host.attach`
+reports the session `ready`; `preparing`, `stopping` and `unknown` keep waiting. A `stopped`
+session, a `forbidden`, `unauthorized`, `unknown-session` or `protocol-unsupported` refusal
+(including an ended approval), a host that streams another video format, or three minutes
+without success end it with `frames-failed`. A relayed control session still ends with
+`control-ended` (`failed`), and the viewer begins it again.
 While a local client is behind on a relayed H.264 subscription, the relay drops
 its packets until the next keyframe and, when the host advertises the
 `hosted-congestion` feature, sends `device-host.frames.congested` at most every

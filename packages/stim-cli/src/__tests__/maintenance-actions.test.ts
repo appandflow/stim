@@ -25,6 +25,8 @@ import {
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
+import { recordGcResult } from '../commands/gc/results.ts';
+import * as gcWorktrees from '../commands/gc/worktrees.ts';
 import * as ios from '../devices/ios.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { register, readManifest } from '../cache/cache-manifest.ts';
@@ -594,3 +596,60 @@ test('report mode lists a worktree once when the worktree check plans one the la
   expect(readMaintenanceState()?.plan.filter((action) => action.target === shipped)).toHaveLength(1);
   expect(existsSync(shipped)).toBe(true);
 }, 60_000);
+
+test("two worktree removals running at once in one process each report their own outcome, not the other's", async () => {
+  vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 100 * 1024 }]);
+  const candidate = (path: string): gcWorktrees.WorktreeSweep['worktrees'][number] => ({
+    path,
+    keys: [path],
+    idleDays: null,
+    merge: null,
+    head: null,
+    pullRequest: null,
+    skipCode: null,
+    skipped: null,
+    eligibleAt: null,
+    activity: null,
+  });
+  const first = join(projects, 'first');
+  const second = join(projects, 'second');
+  let started!: () => void;
+  const firstStarted = new Promise<void>((done) => (started = done));
+  let finishFirst!: () => void;
+  const firstHeld = new Promise<void>((done) => (finishFirst = done));
+  vi.spyOn(gcWorktrees, 'removeWorktrees').mockImplementation(async (sweep) => {
+    const path = sweep.worktrees[0]?.path ?? '';
+    recordGcResult('worktree', 'done', path, { detail: `removed ${path}` });
+    if (path === first) {
+      started();
+      await firstHeld;
+    }
+    return 0;
+  });
+  const context: ActContext = {
+    settings: resolveMaintenanceSettings(),
+    protectedRoot: '/nowhere',
+    worktreeSweep: {
+      idle: null,
+      graceMs: 0,
+      now: Date.now(),
+      noOwnCommitsIdleMs: null,
+      worktrees: [candidate(first), candidate(second)],
+    },
+  };
+  const remove = (target: string): MaintenanceAction => ({
+    kind: 'would-remove-worktree',
+    target,
+    bytes: 0,
+    reason: 'merged',
+  });
+
+  const removingFirst = executeAction(remove(first), context);
+  await firstStarted;
+  const removingSecond = executeAction(remove(second), context);
+  await new Promise((done) => setImmediate(done));
+  finishFirst();
+
+  expect(await removingFirst).toMatchObject({ status: 'done', detail: `removed ${first}` });
+  expect(await removingSecond).toMatchObject({ status: 'done', detail: `removed ${second}` });
+});
