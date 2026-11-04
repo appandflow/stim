@@ -687,7 +687,9 @@ run waiting to boot, and automatic maintenance.
           and reclaims a device for a run waiting to boot. Automatic
           maintenance and the dormant stage's dependency deletion run beside
           the ticks, one pass at a time, so a slow git fetch, pull request
-          lookup or size scan never delays a tick or a waiting run. When one
+          lookup or size scan never delays a tick or a waiting run. The same
+          lane records the fingerprint of a running workspace whose git HEAD
+          or lockfile changed (stim guide lifecycle). When one
           of those commands runs from an installed
           Stim (a global install or a node_modules dependency) with a newer
           version than the running daemon, or the daemon runs a development

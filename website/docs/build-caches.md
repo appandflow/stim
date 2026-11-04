@@ -177,6 +177,19 @@ runs in the background at low priority. If it disagrees, Stim drops the record
 and prints a warning at the end of the run; run the command again to use the
 current tree.
 
+While `daemon.mode` is `on`, the daemon also records the fingerprint ahead of
+the run. When the git HEAD or the lockfile of a workspace that is running, not
+idle and has an iOS or Android device recorded changes, the daemon computes the
+digest and, if no record has it, the full fingerprint in a low-priority child
+process, so the next `stim ios` or `stim android` finds the record. It starts
+at most two per minute tick, none while pressure is above normal or the host
+load exceeds 4 per core, and does not retry a failed one until HEAD or the
+lockfile changes again. A run still computes its own digest of the tree and
+reads the record only when the two match, so an edit made after the precompute,
+or an environment variable the config reads that has another value in your shell
+than in the daemon's, leaves the record unread and the run fingerprints in full.
+A `pod install` alone triggers nothing.
+
 A config that the digest cannot follow always gets a full fingerprint. That
 includes dynamic imports, `process.env` used other than by literal name, file,
 process or network access while the config is evaluated, and `dotenv`. Local

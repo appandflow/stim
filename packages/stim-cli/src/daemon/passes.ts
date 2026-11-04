@@ -14,6 +14,7 @@ import { loadConfig, type Config } from '../workspace/config.ts';
 import { daemonClaimHeld, requestDaemonTick } from './client.ts';
 import { commandWorkspace } from './command-workspace.ts';
 import { runDormantDependencies } from './dependencies.ts';
+import { createFingerprintPrecompute, type PrecomputeInput } from './fingerprint-precompute.ts';
 import { daemonMode } from './mode.ts';
 import { runIdlePass, type IdlePassInput } from './idle.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
@@ -156,10 +157,11 @@ export interface MaintenanceLane {
 }
 
 /**
- * The daemon's slow passes, beside its tick instead of in it: the dormant stage's dependency step and an automatic
- * maintenance pass, from the measurement of the tick that started them, one at a time, so a slow git fetch, `gh` call
- * or size scan never holds the tick that serves waiting runs. Each logs a `daemon_maintenance` record with its
- * phases; one that throws is logged and the next tick starts them again.
+ * The daemon's slow passes, beside its tick instead of in it: the fingerprint precompute of the live workspaces whose
+ * HEAD or lockfile changed, the dormant stage's dependency step and an automatic maintenance pass, from the
+ * measurement of the tick that started them, one at a time, so a slow git fetch, `gh` call or size scan never holds
+ * the tick that serves waiting runs. Each logs a `daemon_maintenance` record with its phases; one that throws is
+ * logged and the next tick starts them again.
  */
 export function createMaintenanceLane(
   log: (
@@ -168,11 +170,12 @@ export function createMaintenanceLane(
     msg: string,
     fields?: Record<string, unknown>,
   ) => void,
+  precompute: { run(input: PrecomputeInput, act: boolean): Promise<void> } = createFingerprintPrecompute(log),
 ): MaintenanceLane {
   let current: Promise<void> | null = null;
   let taken: DaemonLadderAction[] = [];
   return {
-    start({ config, measured, operation }, act) {
+    start({ config, measured, operation, workspaces, pressure }, act) {
       if (current) return;
       const started = performance.now();
       let mark = started;
@@ -186,6 +189,10 @@ export function createMaintenanceLane(
       loopDelay.enable();
       current = (async () => {
         const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
+        await precompute.run({ config, workspaces, pressure, operation }, act).catch((error: unknown) => {
+          log('warn', 'daemon_fingerprint_precompute', error instanceof Error ? error.message : String(error));
+        });
+        const fingerprintMs = lap();
         const deleted = await runDormantDependencies({ config, act, log, ...reading });
         taken.push(...deleted);
         const dependenciesMs = lap();
@@ -194,7 +201,7 @@ export function createMaintenanceLane(
         const tookMs = Math.round(performance.now() - started);
         log('debug', 'daemon_maintenance', `maintenance ${tookMs}ms${skipped ? `; skipped: ${skipped}` : ''}`, {
           tookMs,
-          phases: { dependenciesMs, maintenanceMs },
+          phases: { fingerprintMs, dependenciesMs, maintenanceMs },
           eventLoopDelay: {
             maxMs: Math.round(loopDelay.max / 1e6),
             p99Ms: Math.round(loopDelay.percentile(99) / 1e6),
