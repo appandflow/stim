@@ -396,10 +396,17 @@ function listed(device: PairedDevice, registry: keyof typeof KINDS) {
 }
 
 function refuseUnreadable(id: string): void {
-  const entry = readUnreadable().find((each) => each.id === id);
+  const unreadable = readUnreadable();
+  const entry = unreadable.find((each) => each.id === id);
   if (entry) {
     fail(
       `${id} is an entry of ${entry.file} that this stim-server cannot read, so it is left as it is. Edit that file to change or remove it.`,
+    );
+  }
+  const whole = unreadable.filter((each) => each.version !== undefined);
+  if (whole.length) {
+    fail(
+      `no paired device or approved client ${id} that this stim-server can read. ${whole.map((each) => `${each.file} is registry version ${each.version}, written by a newer Stim`).join('; ')}, and is left as it is.`,
     );
   }
 }

@@ -150,6 +150,12 @@ describe('--json', () => {
     spend(createPairingToken().token, 'Phone');
     writeFileSync(join(home, 'server', 'devices.json'), JSON.stringify({ version: 3, devices: [{ id: 'future' }] }));
     expect(run('devices', '--json')).toMatchObject({ devices: [], unreadable: [{ file: 'devices.json', version: 3 }] });
+    const refused = spawnSync(process.execPath, [BIN, 'devices', 'revoke', 'nope'], {
+      env: { ...process.env, STIM_HOME: home, PATH: '' },
+      encoding: 'utf8',
+    });
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain('devices.json is registry version 3, written by a newer Stim');
   });
 
   it('devices reports Stim Desktop as desktop, any other or unrecorded app as phone, and the recorded app additively', () => {

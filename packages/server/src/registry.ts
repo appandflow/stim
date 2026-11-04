@@ -376,6 +376,13 @@ function recordsOrNone(file: string): PairedDevice[] {
   }
 }
 
+function refuseNewer(file: string, newer: number | null): void {
+  if (newer === null) return;
+  throw new RegistryUnavailable(
+    `${file} is registry version ${newer}, which a newer Stim wrote; this Stim writes version ${REGISTRY_VERSION} and leaves it as it is.`,
+  );
+}
+
 /**
  * Writes `devices` as the file's records. An entry this version cannot read stays in its place, as the text it has in
  * the file, and so does any other top-level member. A record left in `devices` takes the place of the entry with its id,
@@ -387,11 +394,7 @@ function writeRecords(file: string, devices: PairedDevice[]): void {
   const remaining = [...devices];
   const entries: unknown[] = [];
   const { slots, others, newer } = readContents(file);
-  if (newer !== null) {
-    throw new RegistryUnavailable(
-      `${file} is registry version ${newer}, which a newer Stim wrote; this Stim writes version ${REGISTRY_VERSION} and leaves it as it is.`,
-    );
-  }
+  refuseNewer(file, newer);
   for (const { raw, device } of slots) {
     if (device === null) entries.push(`${marker}${unreadable.push(raw) - 1}`);
     else {
@@ -669,6 +672,11 @@ export function spendSecret(
       capabilities,
       ...(secret.journal ? { setupJournal: secret.journal } : {}),
     });
+    const targets =
+      secret.kind === 'pairing'
+        ? [devicesFile()]
+        : (['build', 'device-host'] as const).filter((each) => secret.capabilities.includes(each)).map(clientsFile);
+    for (const target of targets) refuseNewer(target, readContents(target).newer);
     if (secret.kind === 'pairing') {
       const device = record(secret.capabilities, 'Phone');
       writeRecords(devicesFile(), [

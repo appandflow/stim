@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import { randomBytes } from 'node:crypto';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -299,14 +300,15 @@ describe('entries this version cannot read', () => {
   const future =
     '{ "id" : "future-1",  "record":{"kind":"passkey","big":12345678901234567890,"n":1.0,"note":"a \\"quoted\\" ] }, [ { text","list":[1,[2,{"x":"}"}]]} }';
   const opaque = '"opaque"';
-  const unreadable = [malformed, future, opaque];
+  const escaped = '{"id":"esc","note":"one \\" quote ] }","tail":"back\\\\"}';
+  const unreadable = [malformed, future, opaque, escaped];
   const file = (name: string) => join(home, 'server', name);
 
   function interleave(name: string, first: PairedDevice, second: PairedDevice) {
     const records = [first, second].map((record) => JSON.stringify(record));
     writeFileSync(
       file(name),
-      `{"version":2,"devices":[${malformed}, ${records[0]}, ${future},\n${records[1]},${opaque}]}`,
+      `{"version":2,"devices":[${malformed}, ${records[0]}, ${future},\n${records[1]},${opaque}, ${escaped}]}`,
     );
   }
 
@@ -322,7 +324,7 @@ describe('entries this version cannot read', () => {
     const first = pair('First');
     const second = pair('Second');
     interleave('devices.json', first, second);
-    const order = [malformed, first.id, future, second.id, opaque];
+    const order = [malformed, first.id, future, second.id, opaque, escaped];
     const at = Date.parse(first.lastSeenAt ?? '') + 120_000;
 
     touchDevice(first.id, { name: 'Stim Desktop', version: '1' }, at);
@@ -339,7 +341,7 @@ describe('entries this version cannot read', () => {
     const third = pair('Third');
     expectKept('devices.json', [...order, third.id]);
     expect(revokeDevice(first.id)).toBe(true);
-    expectKept('devices.json', [malformed, future, second.id, opaque, third.id]);
+    expectKept('devices.json', [malformed, future, second.id, opaque, escaped, third.id]);
     expect(readDevices().map((device) => device.id)).toEqual([second.id, third.id]);
   });
 
@@ -357,9 +359,9 @@ describe('entries this version cannot read', () => {
       const name = `${capability}-clients.json`;
       interleave(name, first, second);
       renameDevice(first.id, 'Box');
-      expectKept(name, [malformed, first.id, future, second.id, opaque]);
+      expectKept(name, [malformed, first.id, future, second.id, opaque, escaped]);
       expect(revokeDevice(first.id)).toBe(true);
-      expectKept(name, [malformed, future, second.id, opaque]);
+      expectKept(name, [malformed, future, second.id, opaque, escaped]);
     },
   );
 
@@ -370,6 +372,7 @@ describe('entries this version cannot read', () => {
       { file: 'devices.json', index: 0, id: 'bad' },
       { file: 'devices.json', index: 2, id: 'future-1' },
       { file: 'devices.json', index: 4 },
+      { file: 'devices.json', index: 5, id: 'esc' },
     ]);
   });
   it('keeps the other top-level members of a version 2 file as their text', () => {
@@ -401,6 +404,22 @@ describe('entries this version cannot read', () => {
     for (const name of ['devices.json', 'build-clients.json', 'device-host-clients.json']) {
       expect(readFileSync(file(name), 'utf8')).toBe(newer);
     }
+  });
+
+  it('writes none of the files a setup ticket records into when one of them is newer, and keeps the ticket', () => {
+    const { ticket, key } = setup(['build', 'device-host']);
+    mkdirSync(join(home, 'server'), { recursive: true });
+    const newer = JSON.stringify({ version: 3, devices: [] });
+    writeFileSync(file('device-host-clients.json'), newer);
+    expect(() => spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net')).toThrow(/version 3/);
+    expect(existsSync(file('build-clients.json'))).toBe(false);
+    expect(readFileSync(file('device-host-clients.json'), 'utf8')).toBe(newer);
+    expect(secretPsk(lookupOf(ticket))).not.toBeNull();
+    rmSync(file('device-host-clients.json'));
+    expect(spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net')).toMatchObject({
+      build: { publicKey: key },
+      'device-host': { publicKey: key },
+    });
   });
 
   it('still replaces a file of protocol 1 on the next write', () => {
