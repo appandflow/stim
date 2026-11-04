@@ -795,13 +795,14 @@ class FrameSource {
  * screenshot loop sends a frame only when the screen changed: up to 5 times a second while it changes, backing
  * off to once a second while it does not, spending at most half of its time capturing, with at most two
  * captures at once across all devices. A helper that fails before its first frame gives way to the screenshot
- * loop.
+ * loop. A subscriber on screenshots because the helper was being built moves onto it when it is ready.
  */
 export class FramePool {
   private readonly sources = new Map<string, FrameSource | HelperSource>();
   private readonly stopping = new Pending();
   private readonly limiter = new Limiter(MAX_CAPTURES);
   private readonly litPanels = new Map<string, DuoPanel>();
+  private readonly upgrades = new Set<() => void>();
   private readonly env: NodeJS.ProcessEnv;
   private readonly limits: FrameLimits;
   private readonly helper: () => string | null;
@@ -825,6 +826,11 @@ export class FramePool {
     this.foldHelper = foldHelper;
   }
 
+  /** Moves the subscribers streaming screenshots while the helper was being built onto it. */
+  helperReady(): void {
+    for (const upgrade of this.upgrades) upgrade();
+  }
+
   subscribe(device: Device, listener: FrameListener, hint: FrameHint = DEFAULT_FRAME_HINT): () => void {
     const detach = this.attach(device, listener, hint);
     const unview = this.viewers?.add(device);
@@ -846,7 +852,28 @@ export class FramePool {
       );
       return () => {};
     }
-    if (helper === null) return this.screenshots(device).add(listener);
+    if (helper === null) {
+      let delayed = false;
+      let current = this.screenshots(device).add({
+        ...listener,
+        delayed: (value, reason) => {
+          delayed = value;
+          listener.delayed(value, reason);
+        },
+      });
+      const upgrade = () => {
+        if (this.helper() === null) return;
+        this.upgrades.delete(upgrade);
+        current();
+        if (delayed) listener.delayed(false);
+        current = this.attach(device, listener, hint);
+      };
+      this.upgrades.add(upgrade);
+      return () => {
+        this.upgrades.delete(upgrade);
+        current();
+      };
+    }
     let streamed = false;
     let cancelled = false;
     const { video } = listener;
@@ -1030,6 +1057,7 @@ export class FramePool {
   }
 
   async close(): Promise<void> {
+    this.upgrades.clear();
     this.viewers?.clear();
     await Promise.all([...this.sources.values()].map((source) => source.stop()));
     await this.stopping.settled();

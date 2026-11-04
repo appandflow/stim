@@ -1538,6 +1538,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       } finally {
         helperBuilding = false;
       }
+      if (helperPath) frames.helperReady();
     })();
   };
   const frameHelper = () => {
