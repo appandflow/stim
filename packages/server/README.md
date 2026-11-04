@@ -952,6 +952,13 @@ private ledger ownership.
 
 The worker persists the journal under `$STIM_HOME/server/device-host-sessions/`
 and chooses an isolated worker home under `$STIM_HOME/device-host/sessions/`.
+An hour after a session stopped (`stoppedAt` in its journal record), and for any
+home whose id the journal does not list when the server starts, stim-server
+removes the whole session folder. The hour is the client's time to copy the
+final logs with `device-host.logs.query`. It removes the folder only when the home's
+created-device ledger is readable and lists nothing (a macOS home has no ledger),
+the session is not parked, and neither the session claim nor the agent driver's
+claim is live; otherwise it keeps the folder. The journal keeps the stopped record.
 An uncertain create, child exit, journal or deletion outcome retains the slot
 as `unknown`. Closing the server leaves a ready iOS or Android session ready, its
 device booted, and releases its claims; the next server resumes it at start. For each
