@@ -83,6 +83,9 @@ export const DEFAULT_VIDEO_LIMITS: VideoLimits = {
   recoverMs: 2000,
 };
 
+/** The top of the bitrate ladder for a hosted subscription: the host's uplink to the client is not measured. */
+export const HOSTED_MAX_BITRATE = 4_500_000;
+
 /**
  * Decides, for one subscriber, whether each access unit goes out. A subscriber starts waiting for a keyframe.
  * When its socket backs up it drops everything until the next keyframe, because a P-frame is useless without
@@ -121,12 +124,20 @@ export class Bitrate {
   private value: number;
   private calmSince: number;
   private cutAt = -Infinity;
+  private ceiling: number;
   private readonly limits: VideoLimits;
 
   constructor(limits: VideoLimits, now: number) {
     this.limits = limits;
     this.value = limits.startBitrate;
+    this.ceiling = limits.maxBitrate;
     this.calmSince = now;
+  }
+
+  /** Sets the top of the ladder to `ceiling`, within the limits; a bitrate above it drops to it at once. */
+  limit(ceiling: number): void {
+    this.ceiling = Math.min(this.limits.maxBitrate, Math.max(this.limits.minBitrate, ceiling));
+    this.value = Math.min(this.value, this.ceiling);
   }
 
   get current(): number {
@@ -145,7 +156,7 @@ export class Bitrate {
   tick(now: number): number | null {
     if (now - this.calmSince < this.limits.recoverMs) return null;
     this.calmSince = now;
-    return this.set(Math.min(this.limits.maxBitrate, Math.round(this.value * 1.25)));
+    return this.set(Math.min(this.ceiling, Math.round(this.value * 1.25)));
   }
 
   private set(next: number): number | null {

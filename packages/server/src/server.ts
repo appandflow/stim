@@ -233,7 +233,7 @@ import {
   type TailscaleTransport,
 } from '@stim-cli/transport-tailscale';
 import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
-import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
+import { DEFAULT_VIDEO_LIMITS, HOSTED_MAX_BITRATE, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
@@ -2730,6 +2730,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const hint: FrameHint = {
         fps: Math.min(fps ?? FRAME_FPS.default, offersVideo ? FRAME_FPS.video : FRAME_FPS.max),
         maxEdge: maxEdge ?? FRAME_EDGE.default,
+        ...(hosted ? { maxBitrate: HOSTED_MAX_BITRATE } : {}),
       };
       const replayDir =
         platform === 'macos'

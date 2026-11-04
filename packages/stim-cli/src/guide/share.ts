@@ -336,9 +336,10 @@ SECURITY MODEL
   same-origin request. At most 5 viewers watch one share.
 - A browser that decodes H.264 with WebCodecs (Chrome, Edge, Safari 16.4+ on
   macOS and iOS, desktop Firefox 130+) gets video at up to 60 fps, 1280 px on
-  the long edge, 3 to 8 Mbit/s; others, and a browser whose decoder fails, get
-  JPEG at 10 fps. A viewer that falls behind skips to the next keyframe, and a
-  joining viewer gets a keyframe at once. #jpeg on the link forces JPEG.
+  the long edge, 3 to 8 Mbit/s (4.5 at most for hosted video); others, and
+  a browser whose decoder fails, get JPEG at 10 fps. A viewer that falls behind
+  skips to the next keyframe, and a joining viewer gets a keyframe at once.
+  #jpeg on the link forces JPEG.
   Measured on a local iOS simulator share of an animation in Chrome through
   Funnel: H.264 54 fps at 4.8 Mbit/s, 7 ms median capture to screen; JPEG
   9 fps at 4.0 Mbit/s.

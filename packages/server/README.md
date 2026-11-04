@@ -2563,11 +2563,12 @@ Events are `{ "event", "subscription", ... }`.
   simulator's IOSurface, from the emulator's RGBA frames, or from the page's
   screencast JPEGs, only when the screen changed. A subscriber starts at a keyframe, and `frames.keyframe`
   with its `subscription` asks for another one, such as after its decoder
-  lost state; a device sends at most one requested keyframe every 250 ms.
+  lost state; a device sends at most one requested keyframe every 100 ms.
   A subscriber whose socket holds more than 256 KB unsent drops frames
   until it drains, then gets a keyframe. While it is behind, the device's
   bitrate halves every 2 seconds, from 3 Mbps down to 0.25 Mbps; it climbs
-  back by a quarter every 2 seconds without congestion, up to 8 Mbps. All
+  back by a quarter every 2 seconds without congestion, up to 8 Mbps, or
+  4.5 Mbps while a hosted session's subscriber is attached. All
   video subscribers of a device share one encoder and its bitrate, and JPEG
   subscribers of the same device still get at most the `fps` they asked
   for. Watching video needs only `read`. Without the helper, the result has

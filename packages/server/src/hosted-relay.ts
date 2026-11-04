@@ -30,7 +30,7 @@ import { DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, videoSubscription, Vide
 
 const TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 20_000;
-const KEYFRAME_RETRY_MS = 1000;
+const KEYFRAME_RETRY_MS = 400;
 const RECONNECT_FIRST_MS = 1000;
 const RECONNECT_MAX_MS = 15_000;
 const RECONNECT_WINDOW_MS = 3 * 60_000;
