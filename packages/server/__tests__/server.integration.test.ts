@@ -4519,6 +4519,46 @@ describe('unauthenticated connections', () => {
     }
     await expect(pair(port)).resolves.toHaveProperty('id');
   });
+
+  it('survives a peer that resets the connection after a refused upgrade', async () => {
+    const port = await start({ loopbackOnly: true });
+    const localSocket = server?.localSocket;
+    assert(localSocket);
+    const upgradeRequest = (headers: string) =>
+      `GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n${headers}\r\n`;
+    const resetAfterRefusal = (headers: string) =>
+      new Promise<void>((resolve) => {
+        const refused = connectNet({ port, host: '127.0.0.1' });
+        refused.once('connect', () => refused.write(upgradeRequest(headers)));
+        refused.once('data', () => {
+          refused.resetAndDestroy();
+          resolve();
+        });
+      });
+    const closeBeforeRefusal = (headers: string) =>
+      new Promise<void>((resolve) => {
+        const refused = connectNet({ path: localSocket });
+        refused.once('connect', () =>
+          refused.write(upgradeRequest(headers), () => {
+            refused.destroy();
+            resolve();
+          }),
+        );
+      });
+    const uncaught: Error[] = [];
+    const record = (error: Error) => uncaught.push(error);
+    process.on('uncaughtException', record);
+    try {
+      await resetAfterRefusal('X-Forwarded-For: 100.64.0.2\r\n');
+      await resetAfterRefusal('Origin: https://attacker.example\r\n');
+      await closeBeforeRefusal('Origin: https://attacker.example\r\n');
+      for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setImmediate(resolve));
+      expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBe(200);
+    } finally {
+      process.off('uncaughtException', record);
+    }
+    expect(uncaught).toEqual([]);
+  });
 });
 
 const lanIp = Object.values(networkInterfaces())

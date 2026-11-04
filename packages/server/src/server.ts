@@ -5238,6 +5238,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
 
   function upgrade(request: IncomingMessage, socket: Socket, head: Buffer): void {
+    // Node's http server drops its own socket error listener once it emits 'upgrade'; without one, a peer that resets
+    // the connection after a refusal would raise an uncaught ECONNRESET.
+    socket.on('error', () => socket.destroy());
     if (startup.state !== 'ready') {
       socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
@@ -5357,6 +5360,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
 
   function upgradeLocal(request: IncomingMessage, socket: Socket, head: Buffer): void {
+    // Node's http server drops its own socket error listener once it emits 'upgrade'; without one, a peer that resets
+    // the connection after a refusal would raise an uncaught ECONNRESET.
+    socket.on('error', () => socket.destroy());
     if (startup.state !== 'ready') {
       socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
