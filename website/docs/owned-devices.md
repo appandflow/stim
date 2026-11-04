@@ -597,6 +597,17 @@ Tailscale refuses and Stim prints Tailscale's error message.
 {`Set metro.tunnel to tailscale for this workspace and start Metro for my remote agent-device proxy on the same tailnet. Show me its URL with stim status, then use stim stop when finished.`}
 </PromptBox>
 
+## Typing from a viewer
+
+When Stim Desktop or stim-server sends input to an owned iOS simulator, Stim
+puts the simulator in hardware-keyboard mode, the setting behind Simulator.app's
+Connect Hardware Keyboard. The on-screen keyboard stays hidden and the keys of
+the viewer's keyboard type into the focused field. An XCTest run, including
+agent-device on an iOS simulator, turns the mode off and brings the on-screen
+keyboard back; the next input from a viewer after two idle seconds turns it on
+again. An Android emulator keeps its on-screen keyboard: its keyboard is built in
+to the emulator, so Android's "Use on-screen keyboard" setting does not apply.
+
 ## Control from the phone viewer
 
 A phone granted control can use the compact bottom toolbar for Keyboard,

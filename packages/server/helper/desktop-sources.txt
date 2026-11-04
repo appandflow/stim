@@ -1,5 +1,6 @@
 SimulatorFrames/SimulatorDisplay.swift
 SimulatorFrames/SimulatorHID.swift
+SimulatorFrames/SimulatorHardwareKeyboard.swift
 SimulatorFrames/SimulatorTyping.swift
 EmulatorFrames/EmulatorDiscovery.swift
 EmulatorFrames/GrpcFraming.swift

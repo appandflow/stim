@@ -1138,7 +1138,7 @@ extension SimulatorSource: Source {
         MainActor.assumeIsolated {
           guard let touch = self.duo?.touch(phase, point: point, revision: revision) else { return }
           self.inputQueue.async {
-            if self.hid?.isConnected != true { self.hid = SimulatorHID(udid: self.udid) }
+            if self.hid?.isConnected != true { self.hid = SimulatorHID(udid: self.udid, hardwareKeyboard: true) }
             self.hid?.touch(phase, at: touch.point, screenID: touch.screenID)
           }
         }
@@ -1166,7 +1166,7 @@ extension SimulatorSource: Source {
       }
       return
     }
-    if hid?.isConnected != true { hid = SimulatorHID(udid: udid) }
+    if hid?.isConnected != true { hid = SimulatorHID(udid: udid, hardwareKeyboard: true) }
     guard let hid else { return Output.notice(["inputError": "\(udid) could not be opened for input."]) }
     switch command {
     case .touch(let phase, let point, let second, let index):
