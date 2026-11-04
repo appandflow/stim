@@ -1009,7 +1009,8 @@ it is not a --loopback-only server. It lets go when the setting turns false, whe
 listeners go away, and when it stops, and it reads the setting without a restart.
 \`stim-server service status\` prints a keep awake line, and /health carries keepAwake
 with held and, when not held, a reason (off, unsupported, loopback-only, not-listening,
-failed). On Linux and Windows the setting has no effect and the status says so. Agents
+failed). A failed caffeinate is not restarted by itself: turn the setting off and on, or
+restart stim-server, to retry. On Linux and Windows the setting has no effect and the status says so. Agents
 change this setting only when the user asks them to.
 
 DEVICE HOSTING

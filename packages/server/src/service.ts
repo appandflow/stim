@@ -555,7 +555,8 @@ const KEEP_AWAKE_REASONS: Record<KeepAwakeReason, string> = {
   unsupported: 'not held, only macOS supports it',
   'loopback-only': 'not held, this server accepts only this machine',
   'not-listening': 'not held, no tailnet or local network listener is up',
-  failed: 'not held, caffeinate did not run',
+  failed:
+    'not held, caffeinate did not start or stopped (turn server.keepAwake off and on, or restart stim-server, to retry)',
 };
 
 function keepAwakeText(keepAwake: KeepAwakeStatus): string {

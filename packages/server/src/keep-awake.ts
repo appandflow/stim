@@ -21,7 +21,7 @@ export interface KeepAwakeOptions {
   spawnHolder?: (serverPid: number) => ChildProcess;
 }
 
-export function keepAwakeReason(input: {
+function keepAwakeReason(input: {
   platform: NodeJS.Platform;
   setting: boolean;
   loopbackOnly: boolean;
@@ -85,7 +85,10 @@ export function createKeepAwake(
     else if (was === 'held') console.log(`stim-server: no longer keeping this machine awake (${now}).`);
     if (now === 'unsupported')
       console.error('stim-server: server.keepAwake is on, but only macOS supports it; nothing is held.');
-    if (now === 'failed') console.error('stim-server: could not hold the keep-awake assertion; caffeinate stopped.');
+    if (now === 'failed')
+      console.error(
+        'stim-server: could not hold the keep-awake assertion; caffeinate did not start or stopped. Turn server.keepAwake off and on, or restart stim-server, to retry.',
+      );
   };
 
   const sync = () => {
@@ -93,7 +96,14 @@ export function createKeepAwake(
       failed = false;
       release();
     } else if (!holder && !failed) {
-      const started = spawnHolder(process.pid);
+      let started: ChildProcess;
+      try {
+        started = spawnHolder(process.pid);
+      } catch {
+        failed = true;
+        report();
+        return;
+      }
       holder = started;
       const lost = () => {
         if (holder !== started) return;
