@@ -40,6 +40,7 @@ const fixture = vi.hoisted(() => ({
   events: [] as string[],
   calls: [] as { path: string; body: string; headers: Record<string, string> }[],
   recordError: { code: '', message: '' },
+  maxLeaseTtl: '',
 }));
 
 vi.mock('@stim-cli/core/process-identity', async (original) => {
@@ -77,6 +78,7 @@ vi.mock('@stim-cli/core/process-identity', async (original) => {
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),
   spawn: (_command: string, _args: string[], options: { env: NodeJS.ProcessEnv }) => {
+    fixture.maxLeaseTtl = options.env.AGENT_DEVICE_LEASE_MAX_TTL_MS ?? '';
     const policy = JSON.parse(readFileSync(options.env.AGENT_DEVICE_DAEMON_POLICY!, 'utf8'));
     const canonical = JSON.stringify({
       devices: policy.devices.allow.map((device: { udid: string }) => device.udid),
@@ -365,6 +367,21 @@ test('allows screenshot artifacts but refuses uploads and stops forwarding after
   await driver.revoke(SESSION);
   expect((await rpc({ command: 'snapshot' })).status).toBe(503);
   expect(fixture.calls).toEqual([]);
+});
+
+test('holds the session lease for an hour whatever window the client asks for', async () => {
+  await start();
+  expect(fixture.maxLeaseTtl).toBe('3600000');
+  const sent = async (method: string, params: object) => {
+    fixture.calls = [];
+    await rpc(params, method);
+    return JSON.parse(fixture.calls.at(-1)?.body ?? '{}').params;
+  };
+  expect(await sent('agent_device.lease.allocate', { ttlMs: 300_000 })).toMatchObject({ ttlMs: 3_600_000 });
+  expect(await sent('agent_device.lease.heartbeat', { leaseId: 'a'.repeat(32) })).toMatchObject({ ttlMs: 3_600_000 });
+  expect(await sent('agent_device.lease.release', { leaseId: 'a'.repeat(32), ttlMs: 5000 })).not.toHaveProperty(
+    'ttlMs',
+  );
 });
 
 const recordStart = (output?: string) => ({

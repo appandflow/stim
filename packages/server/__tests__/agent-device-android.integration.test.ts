@@ -420,7 +420,7 @@ test.each(['heartbeat', 'release'])('accepts the real client lease %s scope and 
     deviceKey: `android:mobile:${SERIAL}`,
     backend: 'android-instance',
     leaseId: 'client-lease',
-    ...(command === 'heartbeat' ? { ttlMs: 300000 } : {}),
+    ...(command === 'heartbeat' ? { ttlMs: 3_600_000 } : {}),
   });
 });
 
@@ -477,6 +477,7 @@ test('pins allocation and nested batch steps to the host owner without ambient f
     deviceKey: `android:mobile:${SERIAL}`,
     leaseProvider: 'proxy',
     backend: 'android-instance',
+    ttlMs: 3_600_000,
   });
   expect(
     (
