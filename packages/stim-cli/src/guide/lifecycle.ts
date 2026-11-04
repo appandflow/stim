@@ -2283,7 +2283,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   listing taken under the admission lock. A waiting boot reads the device caps
   again on every poll, so raising concurrency.maxDevices or a per-platform cap
   admits it on its next poll, and lowering one holds back boots not yet
-  admitted but never stops a device that is already booted. Every 10s a waiting
+  admitted but never stops a device that is already booted. A waiting build
+  reads concurrency.maxBuilds again on every poll the same way, and a lowered
+  cap never stops a build that holds a slot. Every 10s a waiting
   run prints its queue position and what it waits for:
 
     build       waiting for a build slot: queue position 2 of 3, all 1 in use, 40s elapsed -- stim guide lifecycle concurrency

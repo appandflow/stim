@@ -471,7 +471,6 @@ export async function acquireAndroidArtifact(
       const buildSlot = await run.takeBuildSlot({
         signal,
         automatic: automaticBuild(buildMachine),
-        max: maxBuilds,
         out,
         waitingFor: (info) => waitingFor?.(info, 'build-slot'),
       });
