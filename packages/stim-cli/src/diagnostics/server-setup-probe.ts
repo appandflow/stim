@@ -263,7 +263,7 @@ async function readPermissions(services: InstalledServerService[]): Promise<Perm
       readdirSync(real);
       external.push({ path: real, blocked: false });
     } catch (error) {
-      external.push({ path: real, blocked: (error as NodeJS.ErrnoException).code === 'EPERM' });
+      external.push({ path: real, blocked: error instanceof Error && 'code' in error && error.code === 'EPERM' });
     }
   }
   return {
