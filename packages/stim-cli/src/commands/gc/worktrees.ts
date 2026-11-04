@@ -8,16 +8,11 @@ import { ownedAvdSerialResolver, ownedAvdSerialResolverAsync, type ResolvedAvdSe
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import { listAllIosSimsAsync, type IosSimRecord } from '../../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
-import { getExecutor, isTimeoutError, type ExecOptions } from '../../exec.ts';
+import { isTimeoutError, type ExecOptions } from '../../exec.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
-import {
-  MAINTENANCE_LOG_NAME,
-  readPullRequestCache,
-  settingDefinition,
-  type PullRequestCacheEntry,
-} from '@stim-cli/core/state';
+import { MAINTENANCE_LOG_NAME, settingDefinition } from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
 import { workspaceInUseAsync } from '../../workspace/in-use.ts';
@@ -33,9 +28,8 @@ import {
 import {
   describePullRequest,
   endedPullRequest,
-  pullRequestLookups,
+  ghMissing,
   type PullRequestLookup,
-  type PullRequestQuery,
 } from '../../workspace/pull-request.ts';
 import {
   dirtyPathsAsync,
@@ -58,7 +52,7 @@ import {
   reclaimKeys,
   removeWorktreeTarget,
 } from '../worktree.ts';
-import { recordPullRequestLookup } from '../../status-measures.ts';
+import { cachedPullRequest, refreshPullRequests, type PullRequestRequest } from '../../pull-request-state.ts';
 import { worktreeArchiveLimits } from '../../archive.ts';
 import { stimCliEntries, stimCliUseOf } from '../../workspace/service-guard.ts';
 import { uncommittedActivityOf, type WorktreeArchive } from '../../workspace/worktree-archive.ts';
@@ -888,26 +882,21 @@ export async function collectWorktreeSweep({
 }
 
 async function lookUpPullRequests(inspected: readonly Inspected[], operation?: StimContext): Promise<void> {
-  const repos = new Map<string, { facts: WorktreeFacts; query: PullRequestQuery }[]>();
+  const repos = new Map<string, { facts: WorktreeFacts; request: PullRequestRequest }[]>();
   for (const { candidate, facts, repo, branch } of inspected) {
     if (repo === null || branch === null || candidate.head === null) continue;
-    const query = { cwd: candidate.path, branch, head: candidate.head };
-    repos.set(repo, [...(repos.get(repo) ?? []), { facts, query }]);
+    const request = { path: candidate.path, cwd: candidate.path, branch, head: candidate.head };
+    repos.set(repo, [...(repos.get(repo) ?? []), { facts, request }]);
   }
-  const lookup = pullRequestLookups({ operation });
+  const refresh = refreshPullRequests({ maxAgeMs: 0, operation });
   const probes = [...repos].map(([repo, entries]) => async () => {
-    const answers = await lookup(
+    const answers = await refresh(
       repo,
-      entries.map(({ query }) => query),
+      entries.map(({ request }) => request),
     );
-    const at = new Date().toISOString();
-    entries.forEach(({ facts, query }, i) => {
+    entries.forEach(({ facts }, i) => {
       operation?.signal.throwIfAborted();
-      const answer = answers[i] ?? null;
-      facts.pullRequest = answer;
-      if (answer && 'pullRequest' in answer) {
-        recordPullRequestLookup({ path: query.cwd, branch: query.branch, head: query.head }, answer.pullRequest, at);
-      }
+      facts.pullRequest = answers[i] ?? null;
     });
   });
   if (operation)
@@ -919,43 +908,14 @@ async function lookUpPullRequests(inspected: readonly Inspected[], operation?: S
 }
 
 function readCachedPullRequests(inspected: readonly Inspected[], now: number, freshMs: number): void {
-  let gh: boolean | undefined;
+  const missing = ghMissing();
   for (const { candidate, facts, repo, branch } of inspected) {
     if (repo === null || branch === null || candidate.head === null) continue;
-    const cached = cachedPullRequest(readPullRequestCache(candidate.path), branch, candidate.head, now, freshMs);
-    if (!('pullRequest' in cached)) gh ??= getExecutor().findExecutable('gh') !== null;
-    facts.pullRequest = 'pullRequest' in cached || gh ? cached : { unavailable: 'gh is not installed' };
+    facts.pullRequest = cachedPullRequest(
+      { path: candidate.path, branch, head: candidate.head },
+      { maxAgeMs: freshMs, now: () => now },
+    ) ?? { unavailable: missing ?? PULL_REQUEST_NOT_CHECKED };
   }
-}
-
-function cachedPullRequest(
-  cached: PullRequestCacheEntry | null,
-  branch: string,
-  head: string,
-  now: number,
-  freshMs: number,
-): PullRequestLookup {
-  const notChecked = { unavailable: PULL_REQUEST_NOT_CHECKED };
-  if (!cached || cached.branch !== branch || cached.head !== head) return notChecked;
-  if (!(now - Date.parse(cached.checkedAt) < freshMs)) return notChecked;
-  const { pullRequest: pr, containsHead, endedAt } = cached;
-  if (pr === null) return { pullRequest: null };
-  if (containsHead === undefined || (pr.state !== 'open' && pr.state !== 'draft' && typeof endedAt !== 'number')) {
-    return notChecked;
-  }
-  const state = pr.state === 'draft' ? 'open' : pr.state;
-  const open = state === 'open';
-  return {
-    pullRequest: {
-      number: pr.number,
-      url: pr.url,
-      head,
-      containsHead,
-      state,
-      draft: pr.state === 'draft',
-      endedAt: open ? null : (endedAt ?? null),
-    },
-  };
 }
 
 async function noOwnCommitsRecheck(

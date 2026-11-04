@@ -781,7 +781,7 @@ SWEEPING FINISHED WORKTREES
   deleted do not block removal. Closed, they do: a closed pull request whose
   remote branch is gone keeps the worktree as unpushed. An open pull request
   never makes a worktree finished. When gh is
-  not installed, not signed in, or fails, the JSON pullRequestUnknown field
+  not installed, not signed in, rate limited, or fails, the JSON pullRequestUnknown field
   and the report say why, and gc judges from git alone. A detached HEAD is
   not looked up. \`stim worktree remove\` makes the same check when
   local-only commits alone would refuse the removal, and accepts a merged

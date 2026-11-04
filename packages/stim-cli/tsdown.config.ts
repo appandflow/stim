@@ -12,7 +12,7 @@ export default defineConfig({
     api: 'src/api.ts',
     'android-cas-compiler': 'bin/android-cas-compiler.ts',
     'cache-manifest': 'src/cache/cache-manifest.ts',
-    'pull-requests': 'src/workspace/pull-request.ts',
+    'pull-requests': 'src/pull-request-state.ts',
     'share-links': 'src/workspace/share-links.ts',
     'build-artifact-cache': 'src/offload/build-artifact-cache.ts',
     'daemon-run': 'src/daemon/run.ts',

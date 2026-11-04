@@ -120,7 +120,10 @@ graphql lookup gc uses, one call per repository, for a worktree whose lookup
 is over 5 minutes old or whose branch or HEAD moved. It runs git in the
 repository, never in the worktree. It caches each answer
 under $STIM_HOME/pull-requests, which one-shot status only reads, and never
-warns when gh is unavailable.
+warns when gh is unavailable. That cache is the one every pull request lookup
+shares: stim-server's finished-worktree notifications read it while it is under
+5 minutes old and ask GitHub only for the rest, and gc and \`worktree remove\`
+write their answers to it.
 
 status's remoteDevices lists each environment's recorded EAS Simulator
 session. The session is billable while it runs, and it makes the environment
