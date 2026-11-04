@@ -10,7 +10,7 @@ import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
 :::note[Phone app feature flag]
 Stim Desktop hides everything about the phone app unless the **Phone app**
-feature flag is on: paired phones and **Add > Phone...** in **Settings > Connections**, the phone
+feature flag is on: paired phones and **Add... > Pair a Phone...** in **Settings > Connections**, the phone
 steps of the setup guide and tutorial, and phone suggestions. Turn it on in
 **Settings > Advanced > Feature flags**. A Mac that already serves phones or has
 a paired phone starts with it on. Turning the flag off does not stop a running
@@ -60,7 +60,7 @@ bring back a welcome screen you have already dismissed or completed.
 
 ## Allow connections
 
-On the Mac, open **Stim > Settings > Connections > Using this machine > Add... > Phone...**, or choose
+On the Mac, open **Stim > Settings > Connections > Using this machine > Add... > Pair a Phone...**, or choose
 **Pair a Phone...** in the first-run guide's **Pair Your Phone** step. The wizard
 walks through getting Stim Mobile and Tailscale on your phone, connecting both
 devices to the same tailnet, allowing connections, scanning a code, and confirming

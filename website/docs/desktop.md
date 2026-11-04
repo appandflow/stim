@@ -239,7 +239,7 @@ show refusals for removals started from its own workspace actions.
 
 :::note[Phone app feature flag]
 Stim Desktop hides everything about the phone app unless the **Phone app**
-feature flag is on: paired phones and **Add > Phone...** in **Settings > Connections**,
+feature flag is on: paired phones and **Add... > Pair a Phone...** in **Settings > Connections**,
 the phone steps of the setup guide and tutorial, and phone suggestions. Turn it on in
 **Settings > Advanced > Feature flags**. A Mac that already serves phones or has
 a paired phone starts with it on. Turning the flag off revokes no pairings and
@@ -436,9 +436,8 @@ it over the tailnet stays opt-in: **Allow connections** in **Settings > Connecti
   the control one. The link and generated passwords appear once, each with a Copy button;
   Desktop does not keep them. **Settings > Connections > Using this machine > Share
   links** lists the live shares with their viewers and time left ("View and control, view password" for a share with
-  two passwords). **Stop** on a row ends that one share; a workspace with
-  several shares also has **Stop All**. A stim-server older than this (without the
-  `share-stop-id` feature) has only the workspace-wide **Stop**, which ends every share of
+  two passwords). **Stop** on a row ends that one share. With a stim-server older than this (without the
+  `share-stop-id` feature) each row has **Stop All** instead, which ends every share of
   the workspace. Quitting
   Desktop asks first while the server it started holds live shares, since quitting ends them.
 - **Cleanup history.** **Settings > App > Cleanup History** lists every run that deleted
@@ -754,7 +753,7 @@ stim ios`}
 2. Click a device to open its viewer. **Take over** lets you use it; Escape
    gives it back.
 3. To use the phone app, open **Stim > Settings > Connections > Using this machine**
-   and choose **Add... > Phone…**. The wizard checks Tailscale, turns on serving, sets up a private
+   and choose **Add... > Pair a Phone…**. The wizard checks Tailscale, turns on serving, sets up a private
    tailnet route, shows a code and waits for the phone. Setup keeps existing
    Tailscale routes and never enables Funnel. If Tailscale asks to enable HTTPS,
    approve its browser setup and retry. Pairing waits for a verified private
@@ -907,7 +906,7 @@ existing workspace and archive behavior.
 - **Share links** lists the live [web shares](./share.md), each with **Stop**.
 - **Running here** lists the hosted simulators, emulators and apps other machines
   run on this Mac, each with **Stop**.
-- **Add...** opens **Pair a Phone** (with the Phone app flag on) and explains how
+- **Add...** offers **Pair a Phone...** (with the Phone app flag on) and explains how
   another machine asks to build here and how to share a device.
 
 **This machine uses** lists one row per machine this Mac uses: its

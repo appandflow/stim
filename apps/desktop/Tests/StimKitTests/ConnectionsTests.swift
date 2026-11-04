@@ -74,7 +74,7 @@ struct ConnectionsTests {
     #expect(rows[0].revokeCommands == ["stim-server devices revoke b1", "stim-server devices revoke d-mini"])
     #expect(rows[1].access == [.runDevices] && rows[1].revokeCommands == ["stim-server devices revoke h2"])
     #expect(rows[2].entry == nil && rows[2].access == [.view])
-    #expect(rows[2].revokeCommands == ["stim-server devices"])
+    #expect(rows[2].revokeCommands.isEmpty)
     #expect(rows[3].revokeCommands.isEmpty)
   }
 

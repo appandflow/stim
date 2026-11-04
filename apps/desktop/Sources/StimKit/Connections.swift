@@ -82,7 +82,7 @@ public struct OutgoingConnection: Identifiable, Equatable, Sendable {
   /// The Keychain pairing that views or controls its work.
   public var pairing: PairedServers.Entry?
   public var access: [ConnectionAccess]
-  /// What to run on that machine to revoke this machine there, which removing it here does not do.
+  /// What to run on that machine to revoke this machine's records there, which removing it here does not do.
   public var revokeCommands: [String]
 }
 
@@ -145,10 +145,7 @@ public enum Connections {
         let command = "stim-server devices revoke \(id)"
         if !commands.contains(command) { commands.append(command) }
       }
-      if let pairing = pairing?.pairing {
-        let command = PairedServerWording.revokeCommand(deviceID: pairing.deviceID)
-        if !commands.contains(command) { commands.append(command) }
-      }
+      if let command = pairing.flatMap(revokeCommand), !commands.contains(command) { commands.append(command) }
       return OutgoingConnection(
         name: entry, entry: entry, pairing: pairing, access: ConnectionAccess.ordered(access), revokeCommands: commands)
     }
@@ -156,9 +153,13 @@ public enum Connections {
       let name = entry.pairing.map { $0.name.isEmpty ? "Machine" : $0.name } ?? "Unreadable pairing"
       return OutgoingConnection(
         name: name, entry: nil, pairing: entry, access: pairingAccess(entry),
-        revokeCommands: entry.pairing.map { [PairedServerWording.revokeCommand(deviceID: $0.deviceID)] } ?? [])
+        revokeCommands: revokeCommand(entry).map { [$0] } ?? [])
     }
     return rows
+  }
+
+  private static func revokeCommand(_ entry: PairedServers.Entry) -> String? {
+    PairedServerWording.plainDeviceID(entry.pairing?.deviceID).map { "stim-server devices revoke \($0)" }
   }
 
   private static func pairingAccess(_ entry: PairedServers.Entry) -> [ConnectionAccess] {

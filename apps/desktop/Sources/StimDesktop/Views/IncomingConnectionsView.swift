@@ -271,7 +271,7 @@ struct IncomingConnectionsContent<Server: View>: View {
 
   private var addMenu: some View {
     Menu("Add\u{2026}") {
-      if phoneApp { Button("Phone\u{2026}", action: addPhone) }
+      if phoneApp { Button("Pair a Phone\u{2026}", action: addPhone) }
       Button("Machine to Build or Run Simulators Here\u{2026}") { explain(.machine) }
       Button("Share Link\u{2026}") { explain(.shareLink) }
     }

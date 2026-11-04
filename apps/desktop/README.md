@@ -280,7 +280,7 @@ Advanced > Feature flags** lists them with **Reset to Defaults**. Code asks `Fea
 (StimKit), or `FeatureFlagStore.shared` from a view. A launch argument such as `-featureFlag.phoneApp YES` sets a
 flag for one run.
 
-**Phone app** is off by default. Off, Desktop hides paired phones and **Add > Phone...** in **Settings > Connections**, the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
+**Phone app** is off by default. Off, Desktop hides paired phones and **Add... > Pair a Phone...** in **Settings > Connections**, the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
 phones in copy. It never revokes a pairing and leaves **Allow connections** as it is. A Mac that already serves phones or has a
 paired phone gets the flag on at first launch with flags. The phone app is documented in
 `website/docs/phone-app.md`.
@@ -1340,7 +1340,7 @@ An iPhone that turns on notifications gets push notifications from the server
 while **Allow connections** is on, even when the app on the phone is closed; see
 [Push notifications](../../packages/server/README.md#push-notifications).
 
-**Add... > Phone...** in **Settings > Connections > Using this machine** opens a five-step wizard: get the apps, connect Tailscale,
+**Add... > Pair a Phone...** in **Settings > Connections > Using this machine** opens a five-step wizard: get the apps, connect Tailscale,
 allow connections, scan a code, and see the paired phone. It is also available
 from the first-run guide's **Pair Your Phone** step. The wizard turns on serving
 and sets up a tailnet-only route through the authenticated loopback `route.setup`
