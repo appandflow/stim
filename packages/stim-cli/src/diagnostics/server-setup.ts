@@ -17,6 +17,9 @@ export const SERVER_FINDING_CODES = [
   'server-share-proxy',
   'server-tcp-lowat',
   'server-service-paths',
+  'server-socket-permissions',
+  'server-macos-permission',
+  'server-linger',
 ] as const;
 
 /** Whether `finding` reports this machine's stim-server setup rather than the checkout. */
@@ -55,6 +58,8 @@ export interface ServerHealthReading {
   keepAwake?: { setting: boolean; held: boolean; reason?: string };
   /** Whether the server serves this machine only. */
   loopbackOnly?: boolean;
+  /** The grants macOS gives the app the server runs under (Stim Host), when it reports them. */
+  host?: { name: string; screenRecording: boolean; accessibility: boolean };
 }
 
 /** One installed service: its file, the job its manager runs, and the answer on its port. */
@@ -94,6 +99,28 @@ export interface ServerSetup {
   network: NetworkReading;
   /** Paths a service file records (its node, server script, `--path-prepend` directories and path variables) that do not exist. */
   missingPaths: string[];
+  /** The Stim home's local socket and its directory; null on a machine without one. */
+  socket: SocketReading | null;
+  /** External-volume and macOS privacy reads; null off macOS. */
+  permissions: PermissionReading | null;
+  /** Whether systemd keeps this user's services running without a login; null without a systemd service. */
+  linger: { user: string; enabled: boolean } | null;
+}
+
+export interface SocketReading {
+  path: string;
+  dir: { isDirectory: boolean; mode: number; uid: number } | null;
+  socket: { isSocket: boolean; mode: number; uid: number } | null;
+  /** The uid doctor runs as. */
+  uid: number;
+}
+
+export interface PermissionReading {
+  macosMajor: number;
+  /** Android SDK and AVD roots on an external volume, and whether listing one failed with a privacy denial. */
+  external: Array<{ path: string; blocked: boolean }>;
+  /** Lines of a service's log in which macOS denied a path under /Volumes. */
+  logDenials: Array<{ label: string; line: string }>;
 }
 
 export interface NetworkReading {

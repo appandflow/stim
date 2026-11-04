@@ -210,3 +210,11 @@ function clientCount(name: string): number {
 export function readServerClientCounts(): { build: number; deviceHost: number } {
   return { build: clientCount('build-clients.json'), deviceHost: clientCount('device-host-clients.json') };
 }
+
+/** The System Settings pane names for the Screen Recording and device control grants on macOS `major`. */
+export function permissionPanes(major: number): { screen: string; control: string } {
+  return {
+    screen: major >= 15 ? 'Screen & System Audio Recording' : 'Screen Recording',
+    control: major >= 27 ? 'Device Control and Data Access' : 'Accessibility',
+  };
+}

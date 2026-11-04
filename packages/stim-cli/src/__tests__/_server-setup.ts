@@ -58,6 +58,9 @@ export const setup = (over: Partial<ServerSetup> = {}): ServerSetup => ({
   clients: { build: 0, deviceHost: 0 },
   network: network(),
   missingPaths: [],
+  socket: null,
+  permissions: null,
+  linger: null,
   ...over,
 });
 

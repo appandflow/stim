@@ -13,7 +13,9 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isJsonObject } from '@stim-cli/core/state';
+import { isJsonObject, permissionPanes } from '@stim-cli/core/state';
+
+export { permissionPanes };
 import { ServiceError } from './service-plist.ts';
 
 const FLAVORS = {
@@ -247,13 +249,6 @@ export async function readHostPermissions(executable: string): Promise<{
 
 export async function requestHostPermissions(appPath: string): Promise<void> {
   await run('/usr/bin/open', ['-n', '-g', appPath, '--args', 'request-permissions'], 5000);
-}
-
-export function permissionPanes(major: number): { screen: string; control: string } {
-  return {
-    screen: major >= 15 ? 'Screen & System Audio Recording' : 'Screen Recording',
-    control: major >= 27 ? 'Device Control and Data Access' : 'Accessibility',
-  };
 }
 
 export async function hostPermissionPanes(): Promise<ReturnType<typeof permissionPanes>> {

@@ -1,6 +1,16 @@
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+} from 'node:fs';
+import { homedir, userInfo } from 'node:os';
+import { dirname, join } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import {
   isJsonObject,
@@ -14,6 +24,7 @@ import {
   serverLocalSocket,
   type InstalledService,
 } from '@stim-cli/core/state';
+import { androidHome, avdStorageRoots } from '../devices/android.ts';
 import { getExecutor } from '../exec.ts';
 import { readLocalHello, readWebShares } from '../local-server.ts';
 import { localMachineName } from '../offload/diagnosis.ts';
@@ -25,7 +36,9 @@ import {
   type ServerHealthReading,
   type ServerReading,
   type NetworkReading,
+  type PermissionReading,
   type ServerSetup,
+  type SocketReading,
 } from './server-setup.ts';
 import { servicePaths } from './server-toolchain.ts';
 
@@ -127,6 +140,18 @@ async function readHealth(port: number): Promise<ServerHealthReading | null> {
         ? { startup: { state: body.startup.state } }
         : {}),
       ...(body.loopbackOnly === true ? { loopbackOnly: true } : {}),
+      ...(isJsonObject(body.host) &&
+      typeof body.host.name === 'string' &&
+      typeof body.host.screenRecording === 'boolean' &&
+      typeof body.host.accessibility === 'boolean'
+        ? {
+            host: {
+              name: body.host.name,
+              screenRecording: body.host.screenRecording,
+              accessibility: body.host.accessibility,
+            },
+          }
+        : {}),
       ...(keep && typeof keep.setting === 'boolean' && typeof keep.held === 'boolean'
         ? {
             keepAwake: {
@@ -181,6 +206,86 @@ async function readNetwork(share: NetworkReading['share'], socket: boolean): Pro
   };
 }
 
+function lstatOrNull(target: string): ReturnType<typeof lstatSync> | null {
+  try {
+    return lstatSync(target);
+  } catch {
+    return null;
+  }
+}
+
+function readSocket(): SocketReading | null {
+  const path = serverLocalSocket();
+  const dir = lstatOrNull(dirname(path));
+  const socket = lstatOrNull(path);
+  return {
+    path,
+    dir: dir && { isDirectory: dir.isDirectory(), mode: dir.mode, uid: dir.uid },
+    socket: socket && { isSocket: socket.isSocket(), mode: socket.mode, uid: socket.uid },
+    uid: process.getuid?.() ?? -1,
+  };
+}
+
+const LOG_TAIL_BYTES = 64 * 1024;
+
+function logTail(path: string): string {
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, 'r');
+    const size = fstatSync(fd).size;
+    const buffer = Buffer.alloc(Math.min(size, LOG_TAIL_BYTES));
+    readSync(fd, buffer, 0, buffer.length, size - buffer.length);
+    return buffer.toString('utf8');
+  } catch {
+    return '';
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+}
+
+async function readPermissions(services: InstalledServerService[]): Promise<PermissionReading> {
+  const version = await getExecutor().runFileQuietAsync('/usr/bin/sw_vers', ['-productVersion'], {
+    timeoutMs: PROBE_TIMEOUT_MS,
+  });
+  const external: PermissionReading['external'] = [];
+  const seen = new Set<string>();
+  for (const root of [androidHome(), ...avdStorageRoots()]) {
+    let real: string;
+    try {
+      real = realpathSync(root);
+    } catch {
+      continue;
+    }
+    if (!real.startsWith('/Volumes/') || seen.has(real)) continue;
+    seen.add(real);
+    try {
+      readdirSync(real);
+      external.push({ path: real, blocked: false });
+    } catch (error) {
+      external.push({ path: real, blocked: (error as NodeJS.ErrnoException).code === 'EPERM' });
+    }
+  }
+  return {
+    macosMajor: Number(version?.trim().split('.')[0]) || 0,
+    external,
+    logDenials: services.flatMap(({ label, installed }) => {
+      const line = logTail(installed.logPath ?? '')
+        .split('\n')
+        .findLast((each) => /EPERM|Operation not permitted/i.test(each) && each.includes('/Volumes/'));
+      return line ? [{ label, line: line.trim().slice(0, 300) }] : [];
+    }),
+  };
+}
+
+async function readLinger(services: InstalledServerService[]): Promise<{ user: string; enabled: boolean } | null> {
+  if (!services.some((service) => service.manager === 'systemd')) return null;
+  const user = userInfo().username;
+  const shown = await getExecutor().runFileQuietAsync('loginctl', ['show-user', user, '-p', 'Linger', '--value'], {
+    timeoutMs: PROBE_TIMEOUT_MS,
+  });
+  return shown === null ? null : { user, enabled: shown.trim() === 'yes' };
+}
+
 /**
  * Reads this machine's stim-server setup: installed services, running servers with their `/health`, and the server
  * on this Stim home's local socket. Null when there is no sign of a server, so a machine without one pays only for
@@ -201,7 +306,7 @@ export async function readServerSetup(
   const socket = existsSync(serverLocalSocket());
   if (processes.length === 0 && services.length === 0 && !socket) return null;
   const classified = classifyServers(processes, rows, services);
-  const [servers, local, network] = await Promise.all([
+  const [servers, local, network, permissions, linger] = await Promise.all([
     Promise.all(
       classified.map(async (server): Promise<ServerReading> =>
         Object.assign(server, { health: await readHealth(server.port) }),
@@ -209,6 +314,8 @@ export async function readServerSetup(
     ),
     socket ? readLocalHello(version, HELLO_TIMEOUT_MS) : null,
     readNetwork(share, socket),
+    platform === 'darwin' ? readPermissions(services) : null,
+    platform === 'linux' ? readLinger(services) : null,
   ]);
   return {
     platform,
@@ -219,6 +326,9 @@ export async function readServerSetup(
     local,
     clients: readServerClientCounts(),
     network,
+    socket: socket ? readSocket() : null,
+    permissions,
+    linger,
     missingPaths: [...new Set(services.flatMap((service) => servicePaths(service.installed)))].filter(
       (path) => !existsSync(path),
     ),
