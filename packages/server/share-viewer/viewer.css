@@ -43,7 +43,7 @@ html,
 body {
   height: 100%;
 }
-html {
+html:has(body.viewer) {
   background: var(--card);
 }
 html:has(body.viewer) {
@@ -124,6 +124,7 @@ footer .credit a:hover {
 .topbar {
   position: sticky;
   top: 0;
+  z-index: 5;
   flex: none;
   display: flex;
   align-items: center;
@@ -406,6 +407,8 @@ body[data-away='true'] #screen {
   .viewer .stage {
     grid-column: 1;
     grid-row: 2;
+  }
+  .viewer .stage:has(+ .toolbar .group:not([hidden])) {
     padding-right: 8px;
   }
   .viewer .toolbar {
