@@ -24,10 +24,10 @@ import Testing
         == [.item(.cpu), .divider, .item(.memory), .divider, .item(.disk)])
   }
 
-  @Test func loadSitsNextToCpuAndIsOptional() {
+  @Test func loadRidesWithCpuAndStandsAloneWithoutIt() {
     #expect(
       ResourceSummary.entries(cpu: true, load: true, memory: true, disk: false)
-        == [.item(.cpu), .divider, .item(.load), .divider, .item(.memory)])
+        == [.item(.cpu), .divider, .item(.memory)])
     #expect(ResourceSummary.entries(cpu: false, load: true, memory: false, disk: true) == [.item(.load), .divider, .item(.disk)])
   }
 }

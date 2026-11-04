@@ -394,14 +394,16 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   **Builds** shows recent build placements and explains when history is unavailable.
   Overview includes the latest three placements when available. Remote machine
   choices show their reported readiness; only the selected choice uses the accent color.
-  The toolbar's **Load** figure is the 5-minute load average per core, amber at or over
-  `server.maxLoadPerCore` and red while new local work waits; CPU reads 100% from about
-  one load per core, and Load keeps counting past that. While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
+  The toolbar's **CPU** figure shows the share of processor time in use and, after a dot,
+  the 5-minute load average per core, such as `83% · 2.7/core`. It takes the worse color
+  of the two: load is amber at or over `server.maxLoadPerCore` and red while new local work
+  waits. CPU tops out at 100%; load keeps counting past one per core. A Mac that reports no
+  load shows CPU alone. While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
   `concurrency.maxAndroidDevices` or `concurrency.maxBuilds` is set, **This Mac** shows **Devices**, **iOS simulators**, **Android emulators** and **Builds** meters, such as
   `6 / 6`. A full device meter lists the devices holding the slots with their slot and idle
   time, each with **Stop**, which runs `stim stop --slot` in that workspace; builds are listed
   by workspace, or as offloaded for a client. A device no workspace records has no **Stop**.
-  Click the toolbar's CPU, load, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
+  Click the toolbar's CPU, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
   in each popover opens the Machines page. CPU covers active workspace processes,
   while memory covers the whole Mac.
   CPU and memory popovers graph recent whole-machine usage. Each disk volume
