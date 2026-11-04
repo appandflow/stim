@@ -173,7 +173,8 @@ as the CLI, keeps read and control without them. A server Desktop adopted or tha
 runs on its own, such as a `stim-server service`, has no private key: it offers no
 challenge and serves those methods, the actions included, to every client of this
 user on its local socket, and it advertises their `desktop-*` features to that
-socket only. The socket's 0600 mode in a 0700 directory owned by this user is
+socket only, with the `desktop-local-authority` feature that tells Desktop its
+connection is authorized. The socket's 0600 mode in a 0700 directory owned by this user is
 the proof, the same trust the `stim` CLI has: it runs the same actions for this
 user. A network connection, even one from this machine's own loopback address,
 never gets them and does not see the features. The exception is
@@ -216,8 +217,9 @@ record checks.
 The local-only `desktop-run` feature provides `desktop.run.subscribe` with an
 absolute `cwd` and `options` matching the typed `stim.run` selectors. For example,
 `{ "cwd": "/absolute/app", "options": { "platform": "ios", "slot": "fold", "remote": "mini" } }`
-builds, installs and launches through the in-process API. Only a proved private
-Desktop session can call it; adopted servers and local control alone cannot.
+builds, installs and launches through the in-process API. Only a Desktop session
+can call it: one that proved the private key on a server Desktop started, or any
+local-socket connection on a server without that key. Network connections cannot.
 `desktop-run-progress` carries ordered `stream`/`message` chunks, followed by
 `desktop-run-ended` with `exitCode`, a human `message`, and `stdout` containing
 the serialized `{ platform, facts }` API result or typed refusal. The default
@@ -244,9 +246,9 @@ Desktop buttons do not use it yet.
 The private `desktop-gc` feature provides `desktop.gc.subscribe` with an absolute
 existing `cwd` and optional `cache`, `olderThan` (whole days), `worktrees` and
 `delete`. It invokes `createStim.collectGarbage`
-with the same scoped cleanup and ownership rules as the CLI. Only the proved
-Desktop connection can call it; phone, network and adopted-server connections
-cannot. Ordered `desktop-gc-progress` events end with `desktop-gc-ended`, whose
+with the same scoped cleanup and ownership rules as the CLI. Only a Desktop
+connection (proved, or on a key-less server's local socket) can call it; phone and
+network connections cannot. Ordered `desktop-gc-progress` events end with `desktop-gc-ended`, whose
 `stdout` contains the GC JSON report or typed refusal and whose `exitCode` preserves
 partial cleanup failures. It preserves the API's 60-second execution and 35-second
 cleanup budgets. The server's request deadline can cancel execution earlier; its
@@ -260,9 +262,9 @@ The private `desktop-worktree-remove` feature provides
 `desktop.worktree.remove.subscribe` with an absolute existing `cwd`, an optional
 absolute `target`, and optional boolean `force`. It calls `createStim.removeWorktree`
 with the CLI's safety checks and ownership rules. A separate target can be absent
-on disk when retrying pending branch cleanup. Only the proved connection of the
-Desktop that started this server can call it; paired phones and adopted local
-connections cannot.
+on disk when retrying pending branch cleanup. Only a Desktop connection
+(proved, or on a key-less server's local socket) can call it; paired phones and
+network connections cannot.
 
 Ordered `desktop-worktree-remove-progress` events end with
 `desktop-worktree-remove-ended`. Its `stdout` contains `{ removed, exitCode }` or
@@ -280,8 +282,8 @@ separately.
 The private `desktop-worktree-warm` feature provides
 `desktop.worktree.warm.subscribe` with only an absolute existing `cwd`. It calls
 `createStim.warmWorktree` for plain copying; refresh and dependency installation
-remain CLI-only. Only the proved connection of the Desktop that started this
-server can call it. Phones, network clients and adopted local connections cannot.
+remain CLI-only. Only a Desktop connection (proved, or on a key-less server's local socket) can
+call it. Phones and network clients cannot.
 
 Ordered `desktop-worktree-warm-progress` events end with
 `desktop-worktree-warm-ended`, whose `stdout` contains `{ exitCode }` or a typed
@@ -831,7 +833,8 @@ clients' checkouts and blobs, and persist through LaunchAgents or shell startup
 files. `devices grant` never turns a paired device into a build client, and the
 protocol does not list `read` or `control` among a build client's capabilities,
 but do not rely on that as a boundary. Grant it only to machines you trust with
-that. Revoking the grant stops future builds and kills the running job's
+that. That code can also open the server's local Unix socket, which a server
+without Desktop's private key trusts for Desktop's actions. Revoking the grant stops future builds and kills the running job's
 process group. It does not undo anything project code already did. Approve a
 machine only when you expect it.
 

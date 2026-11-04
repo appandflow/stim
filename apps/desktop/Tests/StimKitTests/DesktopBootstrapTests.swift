@@ -1188,12 +1188,20 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   {
     let (client, socket) = try await client(key: hasKey ? DesktopBootstrapKey() : nil)
     defer { client.stop() }
-    socket.answer("hello", hello(features: ["desktop-settings-write"]))
+    socket.answer("hello", hello(features: ["desktop-local-authority"]))
     await settle()
     #expect(client.isOpen && client.hasDesktopAuthority)
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.authenticate") })
     socket.onEvent(.closed("restarted"))
     #expect(!client.isOpen && !client.hasDesktopAuthority)
+  }
+
+  @Test func aServerThatAdvertisesWriteFeaturesWithoutGrantingLocalAuthorityIsNotTrusted() async throws {
+    let (client, socket) = try await client(key: nil)
+    defer { client.stop() }
+    socket.answer("hello", hello(features: ["desktop-settings-write", "desktop-gc"]))
+    await settle()
+    #expect(client.isOpen && !client.hasDesktopAuthority)
   }
 
   @Test func aPairedServerNeverGetsAuthorityFromItsFeatures() async throws {
@@ -1209,7 +1217,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     client.start()
     await settle()
     defer { client.stop() }
-    try #require(socket).answer("hello", hello(features: ["desktop-settings-write"]))
+    try #require(socket).answer("hello", hello(features: ["desktop-local-authority"]))
     await settle()
     #expect(client.isOpen && !client.hasDesktopAuthority)
   }

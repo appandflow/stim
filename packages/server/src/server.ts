@@ -2259,6 +2259,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               keyless ||
               desktopChallenge !== null) &&
             (feature !== 'desktop-setup' || desktopChallenge !== null) &&
+            (feature !== 'desktop-local-authority' || keyless) &&
             (local ||
               ![
                 'desktop-plan',

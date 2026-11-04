@@ -187,6 +187,7 @@ export const FEATURES = [
   'desktop-worktree-warm',
   'desktop-plan',
   'desktop-setup',
+  'desktop-local-authority',
   'share-stop-id',
   'presence',
   'device-clipboard',

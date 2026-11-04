@@ -1262,9 +1262,11 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     expect(hello).toMatchObject({ result: { capabilities: ['read', 'control'] } });
     expect(hello).not.toHaveProperty('result.desktopBootstrap');
     expect(hello).toMatchObject({
-      result: { features: expect.arrayContaining(['desktop-settings-write', 'desktop-gc']) },
+      result: { features: expect.arrayContaining(['desktop-settings-write', 'desktop-gc', 'desktop-local-authority']) },
     });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-setup']) } });
+    for (const method of ['desktop.gc.subscribe', 'desktop.start.subscribe', 'desktop.worktree.remove.subscribe'])
+      expect(await client.request(method, {})).toHaveProperty('error.code', 'bad-request');
     const write = { cwd: root, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     expect(await client.request('desktop.settings.write', write)).toHaveProperty('result.changed', true);
     expect(loadConfig()?.concurrency?.maxBuilds).toBe(3);
@@ -1278,7 +1280,9 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     const { keyPair } = await pair(port, undefined, true);
     const network = await connect(port, undefined, { keyPair });
     expect(await network.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-settings-write', 'desktop-gc']) },
+      result: {
+        features: expect.not.arrayContaining(['desktop-settings-write', 'desktop-gc', 'desktop-local-authority']),
+      },
     });
     expect(await network.request('device-host.sessions')).toHaveProperty('error.code', 'forbidden');
     expect(await network.request('desktop.settings.write', { ...write, value: '5' })).toHaveProperty(
@@ -1292,6 +1296,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     await start();
     const { client, hello } = await asking();
     expect(hello.features).toContain('desktop-settings-write');
+    expect(hello.features).not.toContain('desktop-local-authority');
     const write = { cwd: root, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     expect(await client.request('desktop.settings.write', write)).toHaveProperty('error.code', 'forbidden');
     assert(server?.localSocket);
