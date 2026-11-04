@@ -607,13 +607,17 @@ While controlling a local iPhone simulator, drag up from the bottom edge and
 release to go Home, or pause before releasing to open the app switcher. iOS
 handles the gesture timing, including when the simulator is rotated.
 
-While controlling a local iOS simulator or Android emulator, hold **Option** and
+While controlling an iOS simulator or Android emulator, or an iOS or Android device that Desktop reaches
+through stim-server (hosted, paired or a leased Android phone), hold **Option** and
 drag to pinch or rotate two fingers around their center. Hold **Option-Shift**
 to move both fingers together. Trackpad pinch also sends a two-finger pinch.
 Two markers show the contact positions, including on a framed or folded screen.
 Releasing Option, ending the gesture, changing orientation or releasing Control
 lifts both contacts. Option and the gesture's Shift modifier stay on the Mac.
-These gestures are not available for physical devices, remote previews or web pages.
+A device reached through stim-server takes them as `input.touch` with a second finger, so the server must be a
+version that accepts it: an older paired server turns a pinch into a one-finger touch, and an older hosted worker
+refuses it. The gestures are not available for a physical iPhone, an iPhone Duo, macOS apps, remote previews or web
+pages.
 
 With **Control** on an owned local simulator or emulator, the Mac and the device
 share their clipboard text automatically. Switching to the viewer window, or
