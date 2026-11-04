@@ -62,6 +62,8 @@ describe('the share.start params of a saved share', () => {
 
 describe('restoring saved shares', () => {
   function deps(answers: Array<Awaited<ReturnType<ShareRestoreDeps['start']>>>) {
+    const ended: string[] = [];
+    let wanted = true;
     const lines: string[] = [];
     const waits: number[] = [];
     const calls: Record<string, unknown>[] = [];
@@ -74,6 +76,10 @@ describe('restoring saved shares', () => {
       wait: async (ms) => {
         waits.push(ms);
       },
+      wanted: () => wanted,
+      end: async (_link, id) => {
+        ended.push(id);
+      },
       closed: () => closed,
       log: (line) => lines.push(line),
     };
@@ -82,14 +88,21 @@ describe('restoring saved shares', () => {
       lines,
       waits,
       calls,
+      ended,
       close: () => {
         closed = true;
+      },
+      unwant: () => {
+        wanted = false;
       },
     };
   }
 
   it('starts each live share once and says so', async () => {
-    const f = deps([{ started: true }, { started: true }]);
+    const f = deps([
+      { started: true, id: 'w1' },
+      { started: true, id: 'w1' },
+    ]);
     await restoreSavedShares(f.d, [link(), link({ platform: 'android' })]);
     expect(f.calls).toHaveLength(2);
     expect(f.lines).toEqual([
@@ -102,7 +115,7 @@ describe('restoring saved shares', () => {
     const f = deps([
       { code: 'action-failed', message: 'Tailscale is not running.' },
       { code: 'action-failed', message: 'Tailscale is not running.' },
-      { started: true },
+      { started: true, id: 'w1' },
     ]);
     await restoreSavedShares(f.d, [link()]);
     expect(f.waits).toEqual([5000, 10_000]);
@@ -119,6 +132,27 @@ describe('restoring saved shares', () => {
     await restoreSavedShares(refused.d, [link()]);
     expect(refused.waits).toEqual([]);
     expect(refused.lines).toEqual(['did not restore the web share of ios of /work/app: That link is live now.']);
+  });
+
+  it('does not start a share whose saved entry was stopped while it waited to retry, and ends one stopped mid-start', async () => {
+    const waiting = deps([
+      { code: 'action-failed', message: 'later' },
+      { started: true, id: 'w1' },
+    ]);
+    waiting.d.wait = async () => {
+      waiting.unwant();
+    };
+    await restoreSavedShares(waiting.d, [link()]);
+    expect(waiting.calls).toHaveLength(1);
+
+    const midStart = deps([{ started: true, id: 'w7' }]);
+    midStart.d.start = async () => {
+      midStart.unwant();
+      return { started: true, id: 'w7' };
+    };
+    await restoreSavedShares(midStart.d, [link()]);
+    expect(midStart.ended).toEqual(['w7']);
+    expect(midStart.lines).toEqual([]);
   });
 
   it('stops when the server is closing', async () => {

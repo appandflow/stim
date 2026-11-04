@@ -270,8 +270,9 @@ when `stim share` starts a share, reuses one or stops and finds them expired. Th
 and the passwords in clear, so anyone who can read your Stim home can start the
 share again until it expires. Each saved link also records whether its share is
 running or was stopped on purpose. A stim-server restart or crash does not change
-that: when a stim-server starts, it starts every saved share that is still running and
-has not expired again, with the same link, passwords and expiry, without `--reuse`; one
+that: when a stim-server starts (the full server, not the one `stim share` starts for
+a single share), it starts every saved share that is still running and has not
+expired again, retrying for about two minutes while Tailscale is not up yet, with the same link, passwords and expiry, without `--reuse`; one
 whose device is not there yet waits for it like any waiting share. Stopping a share,
 including with Stim Desktop's Stop, marks it stopped so it does not come back.
 A share started from Stim Desktop is not saved, so it does not come back.
@@ -568,7 +569,7 @@ reload.
   expiry, on `stim share stop`, `stim stop` (the workspace, or one slot with
   `--slot`), `stim worktree remove`, Stop in Stim Desktop, and while stim-server
   is stopped; the next stim-server starts the saved, unexpired ones again. A device that goes away does not end it: the share waits
-  and keeps its link, passwords and signed-in browsers, and nothing about it is
+  and keeps its link, passwords and signed-in browsers; waiting itself is not
   written to disk.
   Ending closes its viewers' connections. The last share removes the Funnel
   route first and only then closes the listener; the listener a background

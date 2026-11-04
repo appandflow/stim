@@ -71,7 +71,8 @@ the expiry. stim share stop --forget also deletes them, with or without a
 running stim-server. Each saved link records whether its share should be
 running (live) or was stopped on purpose (stopped); stim share, stim stop and
 share.stop (also Stim Desktop's Stop) change it, so a stim-server restart or
-crash leaves it live. When a stim-server starts it starts every live, unexpired
+crash leaves it live. When a full stim-server starts (not the --share one) it
+starts every live, unexpired
 saved share again by itself, with the same link, passwords and expiry; one whose
 device is not there yet waits for it. A share started from Stim Desktop is not
 saved, so it does not come back. Tell the

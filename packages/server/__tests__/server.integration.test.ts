@@ -1090,7 +1090,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     }
   });
 
-  it('starts the saved live shares again when it starts, never a stopped one, and marks a share stopped over share.stop', async () => {
+  it('starts the saved live shares again when it starts, never a stopped one, and marks a share stopped before share.stop ends it', async () => {
     const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
     const saved = {
       slot: 'default',
@@ -1104,29 +1104,29 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     };
     mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
     writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
-    writeFileSync(
-      workspaceShareLinksFile(workspace),
-      JSON.stringify({
-        version: 1,
-        links: {
-          ios: { ...saved, platform: 'ios', token: TOKEN, state: 'live' },
-          android: {
-            ...saved,
-            platform: 'android',
-            token: 'Z'.repeat(43),
-            state: 'stopped',
-          },
-        },
-      }),
-    );
+    const entries = {
+      ios: { ...saved, platform: 'ios', token: TOKEN, state: 'live' },
+      'ios@tablet': { ...saved, platform: 'ios', slot: 'tablet', token: 'T'.repeat(43), state: 'live' },
+      android: { ...saved, platform: 'android', token: 'Z'.repeat(43), state: 'stopped' },
+    };
+    writeFileSync(workspaceShareLinksFile(workspace), JSON.stringify({ version: 1, links: entries }));
     const started = vi
       .spyOn(ShareHub.prototype, 'start')
-      .mockResolvedValue({ id: 'w1', url: 'https://x.test/s/x/', expiresAt: saved.expiresAt } as never);
-    const stopped = { id: 'w1', workspace, platform: 'ios', slot: 'default', physical: false };
-    vi.spyOn(ShareHub.prototype, 'stop').mockResolvedValue([stopped] as never);
+      .mockImplementation(async () => ({ id: 'w1', url: 'https://x.test/s/x/', expiresAt: saved.expiresAt }) as never);
+    const order: string[] = [];
+    vi.spyOn(ShareHub.prototype, 'stop').mockImplementation(async () => {
+      order.push(`stop saw ${JSON.stringify(savedStates())}`);
+      return [];
+    });
+    const savedStates = () =>
+      Object.fromEntries(
+        Object.entries(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links).map(
+          ([key, link]) => [key, (link as { state: string }).state],
+        ),
+      );
     await routeServer();
     const client = await desktop();
-    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(2));
     expect(started).toHaveBeenCalledWith(
       expect.objectContaining({
         workspace,
@@ -1138,11 +1138,15 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       }),
       { restore: true },
     );
+    expect(started).toHaveBeenCalledWith(expect.objectContaining({ slot: 'tablet', token: 'T'.repeat(43) }), {
+      restore: true,
+    });
 
-    expect(await client.request('share.stop', { workspace })).toMatchObject({ result: { stopped: [{ id: 'w1' }] } });
-    const links = JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links;
-    expect(links.ios.state).toBe('stopped');
-    expect(links.android.state).toBe('stopped');
+    await client.request('share.stop', { workspace, slot: 'tablet' });
+    expect(savedStates()).toEqual({ ios: 'live', 'ios@tablet': 'stopped', android: 'stopped' });
+    await client.request('share.stop', { workspace });
+    expect(savedStates()).toEqual({ ios: 'stopped', 'ios@tablet': 'stopped', android: 'stopped' });
+    expect(order[0]).toBe('stop saw {"ios":"live","ios@tablet":"stopped","android":"stopped"}');
   });
 
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {

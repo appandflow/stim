@@ -20,7 +20,11 @@ export function savedShareParams({ workspace, share }: LiveShareLink): Record<st
 
 export interface ShareRestoreDeps {
   /** Starts a share from `share.start` params, waiting for its device when that is not there yet. */
-  start: (params: Record<string, unknown>) => Promise<{ started: true } | Refusal>;
+  start: (params: Record<string, unknown>) => Promise<{ started: true; id: string } | Refusal>;
+  /** Whether the saved entry is still `live` with the link and expiry `link` has: it is read again before every start. */
+  wanted: (link: LiveShareLink) => boolean;
+  /** Ends a share this module started after its saved entry was stopped or replaced. */
+  end: (link: LiveShareLink, id: string) => Promise<void>;
   wait: (ms: number) => Promise<void>;
   closed: () => boolean;
   log: (line: string) => void;
@@ -30,7 +34,8 @@ export interface ShareRestoreDeps {
  * Starts every unexpired share that `stim share` saved as `live` and no stim-server runs now, the way `--reuse` would:
  * the same link and passwords, until the saved expiry. A share the server cannot start yet (for example Tailscale is
  * not up after a restart) is tried again with a growing wait; one that is refused for its own sake (bad params, a link
- * already live) is left alone. Nothing here writes the saved links.
+ * already live) is left alone. A share stopped or replaced while a start was pending never stays up. Nothing here
+ * writes the saved links.
  */
 export async function restoreSavedShares(
   deps: ShareRestoreDeps,
@@ -42,9 +47,12 @@ export async function restoreSavedShares(
 async function restoreOne(deps: ShareRestoreDeps, link: LiveShareLink): Promise<void> {
   const what = `${link.share.platform}${link.share.slot === 'default' ? '' : `@${link.share.slot}`} of ${link.workspace}`;
   for (let attempt = 0; ; attempt++) {
-    if (deps.closed()) return;
+    if (deps.closed() || !deps.wanted(link)) return;
     const answer = await deps.start(savedShareParams(link));
-    if ('started' in answer) return deps.log(`restored the web share of ${what}`);
+    if ('started' in answer) {
+      if (!deps.wanted(link)) return deps.end(link, answer.id);
+      return deps.log(`restored the web share of ${what}`);
+    }
     if (answer.code !== 'action-failed' || attempt >= RETRY_MS.length) {
       return deps.log(`did not restore the web share of ${what}: ${answer.message}`);
     }
