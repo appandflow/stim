@@ -103,6 +103,8 @@ export interface MaintenanceRecord extends NdjsonRecord {
   mode: 'report' | 'on';
 }
 
+export type MaintenancePlanPart = 'caps' | 'sweep' | 'worktree' | 'idle';
+
 export interface MaintenanceState {
   version: 1;
   lastAt: Partial<Record<MaintenanceCheck, number>>;
@@ -113,6 +115,11 @@ export interface MaintenanceState {
   recent: MaintenanceRecord[];
   plan: MaintenanceAction[];
   skipKeys?: string[];
+  /**
+   * The blocked reasons and skipped targets of each part of the plan, from the last pass that planned it: the cap trims
+   * and the sweep, worktree and idle checks. A pass keeps the entries of the parts it does not plan.
+   */
+  byCheck?: Partial<Record<MaintenancePlanPart, { blocked: string[]; skipKeys: string[] }>>;
   /**
    * The finished worktree the last worktree check kept only for its grace period that becomes removable first, and
    * when. The daemon stays alive until a later check removes it or keeps it for another reason.
@@ -160,6 +167,14 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
   if (!isJsonObject(value) || value.version !== 1 || !isJsonObject(value.lastAt)) return null;
   if (!Object.values(value.lastAt).every(finite)) return null;
   if (value.skipKeys !== undefined && !strings(value.skipKeys)) return null;
+  if (
+    value.byCheck !== undefined &&
+    (!isJsonObject(value.byCheck) ||
+      !Object.values(value.byCheck).every(
+        (part) => isJsonObject(part) && strings(part.blocked) && strings(part.skipKeys),
+      ))
+  )
+    return null;
   if (
     value.nextRemoval !== undefined &&
     (!isJsonObject(value.nextRemoval) || typeof value.nextRemoval.target !== 'string' || !finite(value.nextRemoval.at))

@@ -9,7 +9,7 @@ import {
   type MaintenanceAction,
   type PressureLevel,
 } from '@stim-cli/core/state';
-import { pruneCache, type CacheDescriptor } from '../cache/caches.ts';
+import { discoverCachesAsync, pruneCache, type CacheDescriptor } from '../cache/caches.ts';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
@@ -339,11 +339,10 @@ async function cachesRung(context: RungContext): Promise<void> {
     const bytes = await measuredDirectorySizeAsync(compilation, { timeoutMs: SIZE_TIMEOUT_MS });
     const capGb = context.settings.swiftCompilationCacheMaxGb;
     if (bytes !== null && (critical || (capGb > 0 && bytes > (capGb * GIB) / 2))) {
-      const blocked = cacheBlocked({
-        name: 'Swift compilation cache',
-        dir: compilation,
-        category: 'compilation-cache',
-      });
+      const blocked = cacheBlocked(
+        { name: 'Swift compilation cache', dir: compilation, category: 'compilation-cache' },
+        await discoverCachesAsync(),
+      );
       if (blocked)
         recordAction(
           context,

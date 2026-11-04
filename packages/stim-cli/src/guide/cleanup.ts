@@ -28,7 +28,9 @@ STIM_HOME home runs it like any other.
 The stim-daemon runs a pass in its own process on each tick when a check is
 due: a disk and memory reading for status (every minute), hosted idle stops
 (every 5 minutes), directory sizes (hourly), finished worktrees (every 15
-minutes) and the age sweep (daily). Pressure itself is the daemon's: each tick
+minutes) and the age sweep (daily). The reading plans nothing, the idle check
+plans only idle stops, and the cap trims follow the size, worktree and sweep
+checks. Pressure itself is the daemon's: each tick
 classifies the machine normal, high or critical and runs the pressure ladder
 above normal (stim guide lifecycle budget). While no daemon holds the home (on
 Windows, which has none, or when it cannot start), stim doctor runs the same

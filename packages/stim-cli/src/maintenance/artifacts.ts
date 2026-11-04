@@ -21,6 +21,7 @@ import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   ARTIFACT_DIRS,
   discoveredBuildDirs,
+  discoveredBuildDirsAsync,
   isBuildDirPath,
   type ArtifactKind,
 } from '../workspace/regenerable-dirs.ts';
@@ -133,6 +134,13 @@ export async function artifactWorktreesAsync(
 /** The directories of `kind` that `base` may hold: the fixed names, and for build output the discovered ones. */
 function artifactPaths(base: string, kind: ArtifactKind): string[] {
   return [...ARTIFACT_DIRS[kind].map((dir) => join(base, dir)), ...(kind === 'build' ? discoveredBuildDirs(base) : [])];
+}
+
+async function artifactPathsAsync(base: string, kind: ArtifactKind): Promise<string[]> {
+  return [
+    ...ARTIFACT_DIRS[kind].map((dir) => join(base, dir)),
+    ...(kind === 'build' ? await discoveredBuildDirsAsync(base) : []),
+  ];
 }
 
 function isKnownDir(kind: ArtifactKind, path: string): boolean {
@@ -366,7 +374,7 @@ export async function collectArtifactsAsync(
         }
       }
     for (const base of bases)
-      for (const path of artifactPaths(base, kind)) {
+      for (const path of await artifactPathsAsync(base, kind)) {
         signal.throwIfAborted();
         try {
           await pathStat(path);

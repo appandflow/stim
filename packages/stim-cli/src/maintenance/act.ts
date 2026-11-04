@@ -4,7 +4,7 @@ import { buildCacheRoot, metroCacheRoot, type StimContext } from '@stim-cli/core
 import { sharedCompilationCache, type MaintenanceAction } from '@stim-cli/core/state';
 import { cacheLabel } from '../budget.ts';
 import { unregister, readManifest } from '../cache/cache-manifest.ts';
-import { discoverCaches, pruneCache, type CacheDescriptor } from '../cache/caches.ts';
+import { discoverCachesAsync, pruneCache, type CacheDescriptor } from '../cache/caches.ts';
 import { emptyCaches, planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { deleteGradleVersion, waitForGradleExit } from '../commands/gc/gradle-versions.ts';
@@ -133,8 +133,8 @@ function rootCache(dir: string): CacheDescriptor | null {
   return name ? { name, dir, prune: 'entries', entriesDepth: name === 'Build cache' ? 2 : 3, note: '' } : null;
 }
 
-function cacheOf(action: MaintenanceAction): CacheDescriptor | null {
-  const discovered = discoverCaches();
+async function cacheOf(action: MaintenanceAction): Promise<CacheDescriptor | null> {
+  const discovered = await discoverCachesAsync();
   if (action.dir) {
     const dir = canonicalPath(action.dir);
     return discovered.find((cache) => canonicalPath(cache.dir) === dir) ?? rootCache(action.dir);
@@ -143,7 +143,7 @@ function cacheOf(action: MaintenanceAction): CacheDescriptor | null {
 }
 
 async function trimCache(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
-  const cache = cacheOf(action);
+  const cache = await cacheOf(action);
   if (!cache) return kept('it is no longer a cache Stim may trim');
   const [planned] = planCacheEmptying([cache], false);
   if (!planned || planned.machineGlobal) return kept(planned?.machineGlobal ?? 'it is no longer a cache Stim may trim');
@@ -171,9 +171,10 @@ async function trimCache(action: MaintenanceAction, context: ActContext): Promis
 
 async function emptyCompilationCache(action: MaintenanceAction): Promise<ActionOutcome> {
   const dir = sharedCompilationCache();
-  const blocked = cacheBlocked({ name: 'Swift compilation cache', dir, category: 'compilation-cache' });
+  const discovered = await discoverCachesAsync();
+  const blocked = cacheBlocked({ name: 'Swift compilation cache', dir, category: 'compilation-cache' }, discovered);
   if (blocked) return kept(blocked);
-  const cache = discoverCaches().find((candidate) => canonicalPath(candidate.dir) === canonicalPath(dir));
+  const cache = discovered.find((candidate) => canonicalPath(candidate.dir) === canonicalPath(dir));
   if (cache?.prune !== 'atomic') return kept('it is not a registered cache Stim empties whole');
   const [planned] = planCacheEmptying([{ ...cache, bytes: action.bytes }], true);
   const { results } = await quietly(() => emptyCaches(planned ? [planned] : []));

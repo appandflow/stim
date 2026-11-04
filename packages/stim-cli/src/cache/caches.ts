@@ -48,38 +48,60 @@ function gradleBuildCache(env: NodeJS.ProcessEnv, cwd: string): CacheDescriptor 
   };
 }
 
-function metroFileMaps(): CacheDescriptor | null {
-  const root = tmpdir();
-  if (!existsSync(root)) return null;
-  let names;
-  try {
-    names = readdirSync(root).filter((n) => n.startsWith('metro-file-map-'));
-  } catch {
-    return null;
-  }
+const METRO_FILE_MAP_PREFIX = 'metro-file-map-';
+
+function metroFileMapsOf(root: string, entries: { path: string; uid: number; size: number }[]): CacheDescriptor | null {
   const uid = process.getuid?.();
-  const files: string[] = [];
-  let bytes = 0;
-  for (const n of names) {
-    try {
-      const st = statSync(join(root, n));
-      if (uid !== undefined && st.uid !== uid) continue;
-      files.push(join(root, n));
-      bytes += st.size;
-    } catch {}
-  }
+  const files = entries.filter((entry) => uid === undefined || entry.uid === uid);
   if (!files.length) return null;
   return {
     name: 'Metro file maps',
     dir: root,
-    files,
-    bytes,
+    files: files.map((entry) => entry.path),
+    bytes: files.reduce((sum, entry) => sum + entry.size, 0),
     prune: 'entries',
     note: `${files.length} file(s), one per project root Metro has served`,
   };
 }
 
-export function discoverCaches(env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): CacheDescriptor[] {
+function metroFileMaps(): CacheDescriptor | null {
+  const root = tmpdir();
+  if (!existsSync(root)) return null;
+  let names;
+  try {
+    names = readdirSync(root).filter((n) => n.startsWith(METRO_FILE_MAP_PREFIX));
+  } catch {
+    return null;
+  }
+  const entries: { path: string; uid: number; size: number }[] = [];
+  for (const n of names) {
+    try {
+      const st = statSync(join(root, n));
+      entries.push({ path: join(root, n), uid: st.uid, size: st.size });
+    } catch {}
+  }
+  return metroFileMapsOf(root, entries);
+}
+
+async function metroFileMapsAsync(): Promise<CacheDescriptor | null> {
+  const root = tmpdir();
+  let names;
+  try {
+    names = (await readdir(root)).filter((n) => n.startsWith(METRO_FILE_MAP_PREFIX));
+  } catch {
+    return null;
+  }
+  const entries: { path: string; uid: number; size: number }[] = [];
+  for (const n of names) {
+    try {
+      const st = await stat(join(root, n));
+      entries.push({ path: join(root, n), uid: st.uid, size: st.size });
+    } catch {}
+  }
+  return metroFileMapsOf(root, entries);
+}
+
+function cachesWith(env: NodeJS.ProcessEnv, cwd: string, metro: CacheDescriptor | null): CacheDescriptor[] {
   const gradle = gradleBuildCache(env, cwd);
   const gradleDir = gradle ? canonicalCacheDir(gradle.dir) : null;
   const registered = protectNestedMetroAncestors(
@@ -94,10 +116,22 @@ export function discoverCaches(env: NodeJS.ProcessEnv = process.env, cwd: string
       ),
     ),
   );
-  const detected = [compilationCache(env), gradle, metroFileMaps()]
+  const detected = [compilationCache(env), gradle, metro]
     .filter((c): c is CacheDescriptor => Boolean(c))
     .map((c): CacheDescriptor => Object.assign({}, c, { source: 'detected' as const }));
   return distinguishSharedNames(mergeCacheDescriptors([...registered, ...detected], gradleDir));
+}
+
+export function discoverCaches(env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): CacheDescriptor[] {
+  return cachesWith(env, cwd, metroFileMaps());
+}
+
+/** `discoverCaches` without blocking the event loop. */
+export async function discoverCachesAsync(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): Promise<CacheDescriptor[]> {
+  return cachesWith(env, cwd, await metroFileMapsAsync());
 }
 
 function distinguishSharedNames(caches: CacheDescriptor[]): CacheDescriptor[] {

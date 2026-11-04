@@ -33,7 +33,7 @@ import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { existingBuildDirs } from '../workspace/regenerable-dirs.ts';
+import { existingBuildDirsAsync } from '../workspace/regenerable-dirs.ts';
 import {
   idleMinutesSetting,
   maintenanceKeepSetting,
@@ -142,11 +142,11 @@ async function idleWorkspaces(
   reading: DeviceReading,
   thresholdMs: number,
   setting: string,
-  worthIt: (path: string, project: ProjectRecord) => boolean,
+  worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
 ): Promise<StageCandidate[]> {
   const found: StageCandidate[] = [];
   for (const [path, project] of Object.entries(config.projects)) {
-    if (sameRoot(path, reading.protectedRoot) || !worthIt(path, project)) continue;
+    if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
     const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
     if (Number.isFinite(used) && Date.now() - used < thresholdMs) continue;
     try {
@@ -158,10 +158,10 @@ async function idleWorkspaces(
   return found.toSorted((a, b) => b.idleMs - a.idleMs);
 }
 
-function hasOutputs(path: string): boolean {
+async function hasOutputs(path: string): Promise<boolean> {
   return (
     workspaceOutputPaths(workspaceDir(path)).length > 0 ||
-    existingBuildDirs(path).length > 0 ||
+    (await existingBuildDirsAsync(path)).length > 0 ||
     existsSync(metroStoreRoot(path))
   );
 }

@@ -10,6 +10,7 @@ import {
   readMaintenanceState,
   type MaintenanceAction,
   type MaintenanceCheck,
+  type MaintenancePlanPart,
   type MaintenanceState,
   type MaintenanceRecord,
 } from '@stim-cli/core/state';
@@ -23,7 +24,7 @@ import { memoryCulpritsUnderAsync } from '../host-memory.ts';
 import { memoryCulpritAdvice } from '../memory-culprits.ts';
 import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { measureOwnedDevices, type OwnedDeviceReads } from './devices.ts';
-import { resolveMaintenanceSettings } from './settings.ts';
+import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
 import { capChildLog } from './attempt.ts';
 import { measurePressure, measureSizes, pressureFromMeasurement, sizeScanDeferred } from './measure.ts';
@@ -184,6 +185,56 @@ const actionKey = (action: MaintenanceState['plan'][number]) => JSON.stringify([
 const stableText = (text: string) => text.replace(/\d+(?:\.\d+)?/g, '#');
 const sameSet = (before: Set<string>, after: Set<string>) =>
   before.size === after.size && [...before].every((key) => after.has(key));
+
+const PLAN_PARTS: readonly MaintenancePlanPart[] = ['caps', 'sweep', 'worktree', 'idle'];
+
+const planPart = (action: MaintenanceAction): MaintenancePlanPart =>
+  action.check === 'sweep' || action.check === 'worktree' || action.check === 'idle' ? action.check : 'caps';
+
+type PlanParts = NonNullable<MaintenanceState['byCheck']>;
+
+/** The parts this pass planned take its blocked reasons and skips; the others keep those of the pass that planned them last. */
+function partsAfter(
+  previous: MaintenanceState['byCheck'],
+  planned: ReadonlySet<MaintenancePlanPart>,
+  result: PlannedMaintenance,
+  outcomes: readonly { action: MaintenanceAction; outcome: ActionOutcome }[] = [],
+): PlanParts {
+  const parts: PlanParts = { ...previous };
+  for (const part of planned) {
+    const own = outcomes.filter(({ action }) => planPart(action) === part);
+    const blocked = [
+      ...(result.byCheck[part]?.blocked ?? []),
+      ...own.flatMap(({ outcome }) => (outcome.shortfall ? [outcome.shortfall] : [])),
+    ];
+    const skipKeys = [
+      ...(result.byCheck[part]?.skips ?? []).map((skip) => skip.target),
+      ...own.filter(({ outcome }) => outcome.status === 'kept').map(({ action }) => action.target),
+    ];
+    if (blocked.length || skipKeys.length) parts[part] = { blocked, skipKeys };
+    else delete parts[part];
+  }
+  return parts;
+}
+
+/** The parts whose check its settings turn off: they plan nothing, so nothing of theirs is kept. */
+const disabledParts = (settings: MaintenanceSettings): MaintenancePlanPart[] => [
+  ...(settings.removeFinishedWorktrees ? [] : (['worktree'] as const)),
+  ...(settings.sweepHours > 0 ? [] : (['sweep'] as const)),
+];
+
+const partsBlocked = (parts: PlanParts) => PLAN_PARTS.flatMap((part) => parts[part]?.blocked ?? []);
+const partsSkipKeys = (parts: PlanParts) => [...new Set(PLAN_PARTS.flatMap((part) => parts[part]?.skipKeys ?? []))];
+
+function uniqueActions(actions: readonly MaintenanceAction[]): MaintenanceAction[] {
+  const keys = new Set<string>();
+  return actions.filter((action) => {
+    const key = actionKey(action);
+    if (keys.has(key)) return false;
+    keys.add(key);
+    return true;
+  });
+}
 
 const BACKGROUND_TRIGGERS = new Set(['daemon']);
 
@@ -367,9 +418,17 @@ export async function runMaintenance(
     }
     const plannedWorktrees =
       ran.has('worktree') || (ran.has('sweep') && settings.removeFinishedWorktrees && settings.removeIdleWorktrees);
+    const caps = ran.has('size') || ran.has('sweep') || plannedWorktrees;
+    if (!caps && !ran.has('idle')) {
+      writeState(state);
+      return;
+    }
+    const partPlanned = { caps, sweep: ran.has('sweep'), worktree: plannedWorktrees, idle: ran.has('idle') };
+    let plannedParts = new Set([...PLAN_PARTS.filter((part) => partPlanned[part]), ...disabledParts(settings)]);
     let result: PlannedMaintenance;
     try {
       result = await plannedMaintenance(state.sizes, settings, {
+        caps,
         sweep: ran.has('sweep'),
         worktrees: plannedWorktrees,
         idle: ran.has('idle'),
@@ -383,7 +442,8 @@ export async function runMaintenance(
         target: 'plan',
         error: message,
       });
-      result = { actions: [], blocked: [], skips: [] };
+      result = { actions: [], blocked: [], skips: [], byCheck: {} };
+      plannedParts = new Set(disabledParts(settings));
       for (const check of ['sweep', 'worktree'] as const) if (ran.has(check)) delete state.lastAt[check];
     }
     if (plannedWorktrees) {
@@ -447,15 +507,9 @@ export async function runMaintenance(
       }
       return results;
     }
-    const retained = state.plan.filter(
-      (action) =>
-        (action.check === 'sweep' && !ran.has('sweep')) ||
-        (action.check === 'worktree' && !plannedWorktrees) ||
-        (action.check === 'idle' && !ran.has('idle')),
-    );
+    const retained = state.plan.filter((action) => !plannedParts.has(planPart(action)));
     const previousActions = new Set(state.plan.map(actionKey));
     const previousSkips = new Set(state.skipKeys ?? []);
-    const nextSkips = new Set(result.skips.map((skip) => skip.target));
     const loggedSkips = new Set(previousSkips);
     for (const skip of result.skips) {
       if (loggedSkips.has(skip.target)) continue;
@@ -465,19 +519,16 @@ export async function runMaintenance(
     if (writeError) failures.push(`Could not write the maintenance state or log: ${writeError}`);
     if (settings.mode === 'on') {
       const outcomes = await executePlan(result.actions);
-      const blockedNow = [
-        ...result.blocked,
-        ...failures,
-        ...outcomes.flatMap(({ outcome }) => (outcome.shortfall ? [outcome.shortfall] : [])),
-      ];
+      state.byCheck = partsAfter(state.byCheck, plannedParts, result, outcomes);
+      const blockedNow = [...partsBlocked(state.byCheck), ...failures];
       const done = outcomes.filter(({ outcome }) => outcome.status === 'done');
       const freedBytes = done.reduce((sum, { outcome }) => sum + outcome.bytes, 0);
       for (const { action, outcome } of done) shrinkSizes(state, action, outcome);
-      state.plan = outcomes.filter(({ outcome }) => outcome.status !== 'done').map(({ action }) => action);
-      state.skipKeys = [
-        ...nextSkips,
-        ...outcomes.filter(({ outcome }) => outcome.status === 'kept').map(({ action }) => action.target),
-      ];
+      state.plan = uniqueActions([
+        ...outcomes.filter(({ outcome }) => outcome.status !== 'done').map(({ action }) => action),
+        ...retained,
+      ]);
+      state.skipKeys = partsSkipKeys(state.byCheck);
       const previousBlocked = state.lastPass?.blocked;
       state.lastPass = {
         startedAt,
@@ -501,14 +552,10 @@ export async function runMaintenance(
           { ...state.lastPass },
         );
     } else {
-      const blocked = [...result.blocked, ...failures];
-      const keys = new Set<string>();
-      const planned = [...result.actions, ...retained].filter((action) => {
-        const key = actionKey(action);
-        if (keys.has(key)) return false;
-        keys.add(key);
-        return true;
-      });
+      state.byCheck = partsAfter(state.byCheck, plannedParts, result);
+      const blocked = [...partsBlocked(state.byCheck), ...failures];
+      const nextSkips = new Set(partsSkipKeys(state.byCheck));
+      const planned = uniqueActions([...result.actions, ...retained]);
       const nextActions = new Set(planned.map(actionKey));
       const changed =
         !state.lastPass ||

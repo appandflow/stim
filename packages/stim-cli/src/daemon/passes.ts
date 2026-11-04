@@ -1,3 +1,4 @@
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
 import {
   daemonNdjsonFile,
@@ -181,6 +182,8 @@ export function createMaintenanceLane(
         mark = at;
         return ms;
       };
+      const loopDelay = monitorEventLoopDelay();
+      loopDelay.enable();
       current = (async () => {
         const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
         const deleted = await runDormantDependencies({ config, act, log, ...reading });
@@ -192,6 +195,10 @@ export function createMaintenanceLane(
         log('debug', 'daemon_maintenance', `maintenance ${tookMs}ms${skipped ? `; skipped: ${skipped}` : ''}`, {
           tookMs,
           phases: { dependenciesMs, maintenanceMs },
+          eventLoopDelay: {
+            maxMs: Math.round(loopDelay.max / 1e6),
+            p99Ms: Math.round(loopDelay.percentile(99) / 1e6),
+          },
           ...(skipped ? { skipped } : {}),
         });
       })()
@@ -199,6 +206,7 @@ export function createMaintenanceLane(
           log('warn', 'daemon_maintenance_failed', error instanceof Error ? error.message : String(error));
         })
         .finally(() => {
+          loopDelay.disable();
           current = null;
         });
     },
