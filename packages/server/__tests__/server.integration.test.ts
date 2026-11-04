@@ -1518,6 +1518,7 @@ describe('pairing', () => {
           'share-slug',
           'share-reuse',
           'share-starting',
+          'shared-control',
         ],
         actions: [],
         device: { name: 'Test phone' },
@@ -9819,10 +9820,13 @@ describe('frames.subscribe', () => {
         await first.request('device-host.input.touch', { session: controlSession, phase: 'up', x: 0, y: 1 }),
       ).toHaveProperty('result');
       const sameClient = await open();
-      expect(await sameClient.request('device-host.control.begin', { session })).toHaveProperty(
-        'error.code',
-        'device-busy',
+      const joined = await sameClient.request('device-host.control.begin', { session });
+      assert(
+        'result' in joined && joined.result && 'session' in joined.result && typeof joined.result.session === 'string',
       );
+      const joinedSession = joined.result.session;
+      expect(joinedSession).not.toBe(controlSession);
+      expect(await sameClient.request('device-host.control.end', { session: joinedSession })).toHaveProperty('result');
       expect(
         await sameClient.request('device-host.input.touch', { session: controlSession, phase: 'down', x: 1, y: 0 }),
       ).toHaveProperty('error.code', 'unknown-session');
@@ -10031,10 +10035,13 @@ describe('frames.subscribe', () => {
       expect(begun).toMatchObject({ result: { platform: 'macos', lease: null, postures: [] } });
       const { session } = (begun as { result: { session: string } }).result;
       const other = await authed(port, true);
-      expect(await other.request('control.begin', { workspace, platform: 'macos' })).toHaveProperty(
-        'error.code',
-        'device-busy',
+      const joined = await other.request('control.begin', { workspace, platform: 'macos' });
+      assert(
+        'result' in joined && joined.result && 'session' in joined.result && typeof joined.result.session === 'string',
       );
+      expect(joined).toHaveProperty('result.platform', 'macos');
+      const joinedSession = joined.result.session;
+      expect(await other.request('control.end', { session: joinedSession })).toHaveProperty('result');
       expect(await other.request('input.text', { session, text: 'wrong connection' })).toHaveProperty(
         'error.code',
         'unknown-session',
@@ -10087,7 +10094,7 @@ describe('frames.subscribe', () => {
       const active = sent.find((entry) => entry.control && (entry.control as { enabled: boolean }).enabled)!
         .control as { session: string };
       expect(sent.filter((entry) => entry.input).map((entry) => entry.controlSession)).toEqual(
-        Array(9).fill(active.session),
+        Array(10).fill(active.session),
       );
       expect(sent.filter((entry) => entry.input === 'window')).toEqual([
         { input: 'window', window: 12, controlSession: active.session },
@@ -10634,6 +10641,7 @@ describe('frames.subscribe', () => {
       await until(() => commands().some((command) => command.input === 'duo-release'));
       expect(commands()).toEqual([
         { input: 'touch', phase: 'down', x: 0.25, y: 0.75, duoRevision: revision },
+        { input: 'touch', phase: 'up', x: 0.25, y: 0.75, duoRevision: revision },
         { input: 'duo-release' },
       ]);
       expect(alive(await readPid(`${toolCalls}.started`))).toBe(true);
@@ -10820,6 +10828,7 @@ describe('frames.subscribe', () => {
         { input: 'text', text: 'Hi!\n' },
         { input: 'button', button: 'home' },
         { input: 'rotate', direction: 'left' },
+        { input: 'touch', phase: 'up', x: 0.25, y: 0.75, display: 0 },
       ]);
       await until(() => !existsSync(leaseFile.path));
       expect(existsSync(samePlatform.path)).toBe(false);
@@ -11062,13 +11071,14 @@ describe('frames.subscribe', () => {
         { input: 'touch', phase: 'down', x: 0.5, y: 0.5, display: 0 },
         { input: 'text', text: 'hi\n' },
         { input: 'button', button: 'back' },
+        { input: 'touch', phase: 'up', x: 0.5, y: 0.5, display: 0 },
       ]);
       expect(lockCalls()).toEqual([]);
     },
     10_000,
   );
 
-  test.skipIf(!fakeTailscale)('refuses a page that another DevTools client drives, unless taken over', async () => {
+  test.skipIf(!fakeTailscale)('controls a page that another DevTools client drives', async () => {
     const driven = {
       ...OWNED_WEB,
       activity: { state: 'driven', driver: { tool: 'playwright', pid: 77, since: null }, basis: ['cdp-client'] },
@@ -11076,9 +11086,6 @@ describe('frames.subscribe', () => {
     const port = await startControl({ FAKE_STIM_PAYLOADS: statusWith({ web: driven }) });
     const client = await authed(port, true);
     expect(await client.request('control.begin', { workspace, platform: 'web' })).toMatchObject({
-      error: { code: 'device-busy', message: expect.stringContaining('playwright') },
-    });
-    expect(await client.request('control.begin', { workspace, platform: 'web', takeOver: true })).toMatchObject({
       result: { platform: 'web' },
     });
   });
@@ -11217,7 +11224,7 @@ describe('frames.subscribe', () => {
   );
 
   test.skipIf(!fakeTailscale)(
-    'refuses a device an agent drives, and takes it over only when asked, keeping the agent lease',
+    'controls a device an agent drives, keeping the agent lease',
     async () => {
       const since = '2026-09-25T12:00:00.000Z';
       const port = await startControl({
@@ -11230,16 +11237,12 @@ describe('frames.subscribe', () => {
         FAKE_STIM_LOCK_GRANTED: since,
       });
       const client = await authed(port, true);
-      expect(await client.request('control.begin', { workspace, platform: 'ios' })).toMatchObject({
-        error: { code: 'device-busy', message: expect.stringContaining('agent-device') },
-      });
-      const taken = await client.request('control.begin', { workspace, platform: 'ios', takeOver: true });
-      const { session } = (taken as { result: { session: string } }).result;
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+      const { session } = (begun as { result: { session: string } }).result;
       await client.request('control.end', { session });
-      await until(() => readAudit().length === 3);
+      await until(() => readAudit().length === 2);
       expect(readAudit().map((record) => [record.action, record.ok])).toEqual([
-        ['control.begin', false],
-        ['control.take-over', true],
+        ['control.begin', true],
         ['control.end', true],
       ]);
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -11249,7 +11252,7 @@ describe('frames.subscribe', () => {
   );
 
   test.skipIf(!fakeTailscale)(
-    'lets one client control a device at a time, and ends the session another takes over',
+    'lets two clients control a device at once, holding its lease until the last one ends',
     async () => {
       const lease = controlLease(workspace, 'SIM-2', 'ios', 'tablet');
       const kept = controlLease(workspace, 'SIM-1');
@@ -11263,27 +11266,44 @@ describe('frames.subscribe', () => {
       const target = { workspace, platform: 'ios', slot: 'tablet' };
       const begun = await first.request('control.begin', target);
       const { session } = (begun as { result: { session: string } }).result;
-      expect(await second.request('control.begin', target)).toMatchObject({
-        error: { code: 'device-busy', message: expect.stringContaining('Test phone') },
-      });
-      expect(await second.request('control.begin', { ...target, takeOver: true })).toMatchObject({
-        result: { session: expect.any(String) },
-      });
-      expect(await first.next()).toMatchObject({ event: 'control-ended', session, reason: 'taken-over' });
-      expect(await first.request('input.touch', { session, phase: 'down', x: 0, y: 0 })).toMatchObject({
-        error: { code: 'unknown-session' },
-      });
+      const joined = await second.request('control.begin', target);
+      assert(
+        'result' in joined && joined.result && 'session' in joined.result && typeof joined.result.session === 'string',
+      );
+      const other = joined.result.session;
+      expect(other).not.toBe(session);
+      expect(await first.request('input.text', { session, text: 'a' })).toMatchObject({ result: {} });
+      expect(await second.request('input.text', { session: other, text: 'b' })).toMatchObject({ result: {} });
+      first.socket.close();
+      expect(await second.request('input.text', { session: other, text: 'c' })).toMatchObject({ result: {} });
       expect(existsSync(lease.path)).toBe(true);
       second.socket.close();
       await until(() => !existsSync(lease.path));
       expect(existsSync(kept.path)).toBe(true);
+      expect(lockCalls().filter((args) => args.startsWith('device lock'))).toHaveLength(1);
       expect(lockCalls().every((args) => args.startsWith('device lock'))).toBe(true);
     },
     10_000,
   );
 
   test.skipIf(!fakeTailscale)(
-    'pushes a take-over to the phone that lost the device when it registered for control',
+    'refuses a client without takeOver while another workspace leases the device, though another client took it over',
+    async () => {
+      const port = await startControl({ FAKE_STIM_LOCK_BUSY: '1' });
+      const first = await authed(port, true);
+      const second = await authed(port, true);
+      const target = { workspace, platform: 'ios' };
+      expect(await first.request('control.begin', target)).toMatchObject({ error: { code: 'device-busy' } });
+      expect(await first.request('control.begin', { ...target, takeOver: true })).toHaveProperty('result.lease', null);
+      expect(await second.request('control.begin', target)).toMatchObject({
+        error: { code: 'device-busy', message: expect.stringContaining('Another workspace leases this device') },
+      });
+      expect(await second.request('control.begin', { ...target, takeOver: true })).toHaveProperty('result.session');
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'pushes to the phone that controls a device when an agent starts driving it',
     async () => {
       const bodies: { to: string; body: string; data: unknown }[] = [];
       const expo = createHttpServer((request, response) => {
@@ -11299,25 +11319,35 @@ describe('frames.subscribe', () => {
       await new Promise<void>((resolve) => expo.listen(0, '127.0.0.1', resolve));
       try {
         const address = expo.address() as { port: number };
-        const port = await startControl({}, undefined, `http://127.0.0.1:${address.port}/push`);
+        const statusFile = join(root, 'status.json');
+        writeFileSync(statusFile, JSON.stringify(statusPayload({ ios: OWNED_SIM })));
+        const port = await startControl(
+          { FAKE_STIM_STATUS_FILE: statusFile },
+          undefined,
+          `http://127.0.0.1:${address.port}/push`,
+        );
         const first = await authed(port, true);
         const second = await authed(port, true);
         const token = 'ExponentPushToken[first]';
         await first.request('push.register', { token, events: ['control'], ref: 'mac-1' });
         const listed = await first.request('notifications.list');
         expect(listed).toMatchObject({ result: { cursor: 0, notifications: [] } });
-        const { log } = (listed as { result: { log: string } }).result;
         await second.request('notifications.list', { since: 0 });
         await first.request('control.begin', { workspace, platform: 'ios' });
-        await second.request('control.begin', { workspace, platform: 'ios', takeOver: true });
-        await until(() => bodies.length > 0);
-        expect(bodies).toEqual([
+        const driven = {
+          ...OWNED_SIM,
+          activity: { state: 'driven', driver: { tool: 'agent-device', pid: 42, since: null }, basis: [] },
+        };
+        writeFileSync(`${statusFile}.next`, JSON.stringify(statusPayload({ ios: driven })));
+        renameSync(`${statusFile}.next`, statusFile);
+        const body = 'agent-device started driving the iOS device you are controlling';
+        await until(() => bodies.some((sent) => sent.body === body));
+        expect(bodies.filter((sent) => sent.body === body)).toEqual([
           expect.objectContaining({
             to: token,
-            body: 'Test phone took over the iOS device you were controlling',
             data: {
               ref: 'mac-1',
-              notification: 1,
+              notification: expect.any(Number),
               target: 'device',
               path: workspace,
               platform: 'ios',
@@ -11326,20 +11356,21 @@ describe('frames.subscribe', () => {
           }),
         ]);
         const entry = {
-          seq: 1,
           id: `control:${workspace}:ios:default`,
           category: 'control',
-          body: 'Test phone took over the iOS device you were controlling',
+          body,
           target: { kind: 'device', path: workspace, platform: 'ios', slot: 'default' },
         };
-        const events = [await first.next(), await first.next()];
-        expect(events).toContainEqual({ event: 'notification', log, notification: expect.objectContaining(entry) });
-        expect(await first.request('notifications.list', { since: 0 })).toMatchObject({
-          result: { log, cursor: 1, notifications: [expect.objectContaining(entry)] },
-        });
-        expect(await second.request('notifications.list', { since: 0 })).toMatchObject({
-          result: { log, cursor: 1, notifications: [] },
-        });
+        const controls = (reply: unknown) => {
+          assert(isJsonObject(reply) && isJsonObject(reply.result) && Array.isArray(reply.result.notifications));
+          return reply.result.notifications.filter(
+            (notification) => isJsonObject(notification) && notification.category === 'control',
+          );
+        };
+        expect(controls(await first.request('notifications.list', { since: 0 }))).toEqual([
+          expect.objectContaining(entry),
+        ]);
+        expect(controls(await second.request('notifications.list', { since: 0 }))).toEqual([]);
         expect(await second.request('notifications.list', { since: -1 })).toMatchObject({
           error: { code: 'bad-request' },
         });
@@ -11581,6 +11612,7 @@ describe('frames.subscribe', () => {
       expect(run?.configs.slice(1)).toEqual([
         { input: 'touch', phase: 'down', x: 0.5, y: 0.5, display: 0 },
         { input: 'text', text: 'hi\n' },
+        { input: 'touch', phase: 'up', x: 0.5, y: 0.5, display: 0 },
       ]);
     },
   );

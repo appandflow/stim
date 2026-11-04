@@ -402,7 +402,7 @@ it('routes input using the host control id and closes upstream after control.end
     takeOver: true,
   });
   expect(readAudit().filter((record) => record.workspace === workspace)).toEqual([
-    expect.objectContaining({ action: 'control.take-over', workspace, platform: 'macos', ok: true }),
+    expect.objectContaining({ action: 'control.begin', workspace, platform: 'macos', ok: true }),
     expect.objectContaining({
       action: 'control.end',
       workspace,

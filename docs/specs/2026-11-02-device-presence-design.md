@@ -69,6 +69,12 @@ Recommendation: keep one control session per share and add a per-device pointer 
   with `device-busy` while the other client drives. Frames and presence keep flowing, so share viewers watch the
   Host's touches. An agent detected through status refuses the share's `begin` the same way.
 
+Superseded 2026-11-04 (#5172): the maintainer decided "Can we remove this device busy and embrace multiplayer
+instead". `ControlHub` now lets any number of sessions control one device: they share its lease, its `stim-frames`
+input and one pointer grab per device, held by a share viewer or by a session's own controller (shown as `Host`).
+`begin` no longer refuses for another client or a driver in status, nothing is taken over, and the `shared-control`
+hello feature tells clients. Take-over mid-share and the agent arbitration in 6.3 no longer apply.
+
 Rejected: per-viewer sessions, because `ControlHub` allows one session per device and they would take each other over;
 explicit turn-taking, because the pointer grab already gives a turn per gesture and five viewers do not need a queue.
 

@@ -300,7 +300,7 @@ describe('presence on a share of a hosted device', () => {
   const bob: PresenceParticipant = { id: 's1-v2', kind: 'viewer', name: 'Bob', color: 3 };
   const touch = (phase: 'down' | 'move' | 'up', x = 0.5) => ({ input: 'touch', phase, x, y: 0.25 }) as never;
 
-  async function shared() {
+  async function shared(replies: Record<string, unknown> = {}) {
     const hub = {
       subscribe: vi.fn<(key: string, listener: unknown) => () => void>(() => vi.fn<() => void>()),
       join: vi.fn<(key: string, who: unknown) => void>(),
@@ -309,7 +309,7 @@ describe('presence on a share of a hosted device', () => {
     };
     const unfollow = vi.fn<() => void>();
     const follow = vi.fn<(key: string) => () => void>(() => unfollow);
-    const f = fixture({ 'device-host.control.begin': { session: 'hc1', postures: [] } }, [], {
+    const f = fixture({ 'device-host.control.begin': { session: 'hc1', postures: [] }, ...replies }, [], {
       hub,
       key: 'device',
       follow,
@@ -366,6 +366,14 @@ describe('presence on a share of a hosted device', () => {
       ['Ann', 'up'],
       ['Bob', 'down'],
     ]);
+  });
+
+  it("names the host when another client there holds the device's pointer, and frees the share's pointer", async () => {
+    const answers = [{ error: { code: 'device-busy', message: 'Host is using the screen.' } }, {}];
+    const f = await shared({ 'device-host.input.touch': () => answers.shift() });
+    expect(await f.send(ann, touch('down'))).toMatchObject({ code: 'device-busy', busy: 'Host' });
+    expect(f.hub.touch.mock.calls.at(-1)?.slice(1)).toEqual([ann, expect.objectContaining({ phase: 'up' })]);
+    expect(await f.send(bob, touch('down', 0.9))).toBeNull();
   });
 
   it('lifts the pointer for a holder that went quiet for 10 s or left, so the device is not stuck pressed', async () => {

@@ -61,7 +61,7 @@ import { Pending, runStim, terminate, type CommandLimits } from './stim-command.
 
 type Refusal = { code: ErrorCode; message: string };
 type TouchCommand = Extract<InputCommand, { input: 'touch' }>;
-/** A touch dropped because another participant holds the pointer; `busy` is that participant's name. */
+/** A touch dropped because another participant holds the device's pointer; `busy` is that participant's name. */
 export type BusyRefusal = Refusal & { busy: string };
 type Parsed<T> = { value: T } | Refusal;
 
@@ -680,35 +680,57 @@ function heldLease(
   return { grantedAt: lease.grantedAt, expiresAt: lease.expiresAt, mine: false };
 }
 
-interface Session {
+/** Who holds a device's pointer: a share viewer, or a session's own controller shown as the host. */
+interface Holder {
   id: string;
-  owner: Controller;
-  device: Device;
+  name: string;
+  who: PresenceParticipant;
+  session: string;
+}
+
+/**
+ * What every control session on one device shares: the lease, the `stim-frames` input, the pointer and the
+ * paste typing. The first session opens it and the last one to end closes it.
+ */
+interface DeviceControl {
   key: string;
+  device: Device;
   target: ControlBeginParams;
   cwd: string;
+  beganAt: number;
   lease: Lease | null;
+  /** Why `stim device lock` refused, when the first session took the device over without the lease. */
+  leaseRefused: Refusal | null;
   input: DeviceInput;
   frames: FramePool;
-  permitted?: () => boolean;
   claim?: ClaimHandle;
   postures: DevicePosture[];
   simulator: SimulatorOptions | null;
   simulatorAbort: AbortController;
-  grab: PointerGrab<PresenceParticipant, TouchCommand>;
+  grab: PointerGrab<Holder, TouchCommand>;
   grabIdle: NodeJS.Timeout | null;
-  /** Whether the session's own controller, not a participant it forwards, published a touch as the host. */
-  hostShown: boolean;
-  startedAt: number;
-  idle: NodeJS.Timeout;
+  sessions: Set<Session>;
   renew: NodeJS.Timeout;
   unwatch: () => void;
   renewing: Promise<void>;
   adb: Promise<void>;
   pasteTimer: NodeJS.Timeout | null;
   pasteTypingUntil: number;
+  closed: boolean;
+}
+
+interface Session {
+  id: string;
+  owner: Controller;
+  control: DeviceControl;
+  target: ControlBeginParams;
+  permitted?: () => boolean;
+  /** Whether the session's own controller, not a participant it forwards, published a touch as the host. */
+  hostShown: boolean;
+  startedAt: number;
+  idle: NodeJS.Timeout;
   ended: boolean;
-  /** The driver this session took over, and whether another one was already pushed to the owner. */
+  /** The driver the device had when this session began, and whether another one was already pushed to the owner. */
   driver: string | null;
   driverNoticed: boolean;
 }
@@ -733,7 +755,7 @@ export interface ControlOptions {
   foldHelper: () => Promise<string>;
   foldTimeoutMs: number;
   frameHelper: () => string | null;
-  /** Tells the paired device `deviceId` that someone else took over, or started driving, the device it controls. */
+  /** Tells the paired device `deviceId` that an agent or another tool started driving the device it controls. */
   conflict: (deviceId: string, conflict: ControlConflict) => void;
   /** Test switch: resolves a `physical` target to an emulator the workspace leases, driven over adb. */
   adbEmulators?: boolean;
@@ -745,17 +767,21 @@ export interface ControlOptions {
 
 const STATUS_WAIT_MS = 60_000;
 
+type Opened = { control: DeviceControl } | Refusal;
+
 /**
- * Control sessions across all connections: at most one per device. A session holds the device's `stim-frames`
- * helper for input. Ordinary sessions hold a `stim device lock` lease, renewed while they last and released
- * when they end if they took it. Hosted sessions use their native session's ownership claim instead.
+ * Control sessions across all connections. Any number of sessions control one device at once; they share the
+ * device's `stim-frames` helper for input and one pointer, which a touch `down` holds until its `up`. Ordinary
+ * devices hold a `stim device lock` lease while any session lasts, renewed and released by the hub when it took
+ * it. Hosted sessions use their native session's ownership claim instead.
  */
 export class ControlHub {
   private readonly options: ControlOptions;
   private readonly sessions = new Map<string, Session>();
-  private readonly byDevice = new Map<string, Session>();
+  private readonly byDevice = new Map<string, DeviceControl>();
+  private readonly opening = new Map<string, Promise<Opened>>();
+  private readonly releasing = new Map<string, Promise<void>>();
   private readonly ownLeases = new Set<string>();
-  private readonly starting = new Set<string>();
   private readonly folding = new Map<string, Promise<void>>();
   private readonly changingSimulator = new Set<string>();
   private readonly pending = new Pending();
@@ -773,21 +799,23 @@ export class ControlHub {
 
   targetOf(owner: Controller, session: string): SessionTarget | null {
     const found = this.sessions.get(session);
-    return found && found.owner === owner && !found.ended
-      ? {
-          platform: found.target.platform,
-          postures: found.postures,
-          ...(found.simulator ? { simulator: found.simulator } : {}),
-          ...(found.target.physical || (found.device.platform === 'android' && found.device.physical)
-            ? { physical: true }
-            : {}),
-        }
-      : null;
+    if (!found || found.owner !== owner || found.ended) return null;
+    const { control } = found;
+    return {
+      platform: found.target.platform,
+      postures: control.postures,
+      ...(control.simulator ? { simulator: control.simulator } : {}),
+      ...(found.target.physical || (control.device.platform === 'android' && control.device.physical)
+        ? { physical: true }
+        : {}),
+    };
   }
 
   /**
    * `stillAllowed` is checked again after the status read and the lock, which can take seconds: the client may
-   * have disconnected or lost `control` meanwhile.
+   * have disconnected or lost `control` meanwhile. Another client controlling the device, or an agent driving it,
+   * does not refuse; `takeOver` only lets a simulator or emulator be controlled without the lease another
+   * workspace holds.
    */
   async begin(
     owner: Controller,
@@ -802,53 +830,26 @@ export class ControlHub {
     const resolve = { adbEmulators: this.options.adbEmulators === true };
     const device = ownedDevice(status, target, null, resolve);
     if (typeof device === 'string') return { code: 'action-failed', message: device };
-    const key = deviceKey(device);
-    if (this.starting.has(key)) {
-      return { code: 'device-busy', message: 'Another client is starting to control this device. Try again.' };
+    if (target.physical) {
+      const held = heldLease(status, target, resolve);
+      if ('code' in held) return held;
     }
-    const earlier = this.byDevice.get(key);
-    const driver = earlier
-      ? `${earlier.owner.device.name} through stim-server`
-      : otherDriver(activityOf(status, target), this.ownLeases);
-    if (driver && !target.takeOver) {
-      return { code: 'device-busy', message: `This device is driven by ${driver}. Take over to control it anyway.` };
-    }
-    this.starting.add(key);
-    let lease: Lease | Refusal | null;
-    let postures: DevicePosture[];
-    try {
-      [lease, postures] = await this.pending.track(
-        Promise.all([
-          target.physical
-            ? Promise.resolve(heldLease(status, target, resolve))
-            : this.lock(device, target, cwd, beganAt),
-          devicePostures(device, this.options.env, POSTURE_TIMEOUT_MS),
-        ]),
+    const driver = otherDriver(activityOf(status, target), this.ownLeases);
+    for (;;) {
+      const opened = await this.deviceControl(deviceKey(device), () =>
+        this.openDevice(device, target, cwd, beganAt, status),
       );
-    } finally {
-      this.starting.delete(key);
+      if ('code' in opened) return opened;
+      if (this.closing || !stillAllowed()) {
+        void this.closeIfUnused(opened.control);
+        return { code: 'forbidden', message: 'This device can no longer control devices.' };
+      }
+      if (opened.control.leaseRefused && !target.takeOver) {
+        void this.closeIfUnused(opened.control);
+        return opened.control.leaseRefused;
+      }
+      if (!opened.control.closed) return this.join(opened.control, owner, target, driver);
     }
-    const helper = this.options.frameHelper();
-    const simulator =
-      device.platform === 'ios' && !device.physical && helper
-        ? await this.pending
-            .track(simulatorOptions(helper, device.udid, { action: 'read' }, this.options.env))
-            .catch(() => null)
-        : null;
-    const granted = lease === null || 'code' in lease ? null : lease;
-    if (lease !== null && !granted && (!target.takeOver || target.physical)) return lease as Refusal;
-    const current = this.byDevice.get(key);
-    const refuse = (refusal: Refusal): Refusal => {
-      if (granted?.mine && !current?.lease?.mine) void this.pending.track(this.unlock(target, cwd));
-      return refusal;
-    };
-    if (this.closing || !stillAllowed()) {
-      return refuse({ code: 'forbidden', message: 'This device can no longer control devices.' });
-    }
-    if (current && current !== earlier && !target.takeOver) {
-      return refuse({ code: 'device-busy', message: `${current.owner.device.name} started controlling this device.` });
-    }
-    return this.open(owner, target, cwd, device, postures, granted, driver, current, beganAt, status, simulator);
   }
 
   async beginHosted(
@@ -861,161 +862,212 @@ export class ControlHub {
     claim: ClaimHandle,
   ): Promise<ControlBeginResult | Refusal> {
     if (this.closing) return { code: 'action-failed', message: 'stim-server is stopping.' };
-    const key = deviceKey(device);
-    if (this.starting.has(key))
-      return { code: 'device-busy', message: 'Another client is starting to control this device. Try again.' };
-    const earlier = this.byDevice.get(key);
-    if (earlier && !target.takeOver)
-      return { code: 'device-busy', message: `${earlier.owner.device.name} is controlling this device.` };
-    this.starting.add(key);
-    let postures: DevicePosture[];
-    try {
-      postures = await this.pending.track(devicePostures(device, this.options.env, POSTURE_TIMEOUT_MS));
-    } finally {
-      this.starting.delete(key);
+    for (;;) {
+      const opened = await this.deviceControl(deviceKey(device), () =>
+        this.openHosted(device, target, cwd, frames, claim),
+      );
+      if ('code' in opened) return opened;
+      if (this.closing || !stillAllowed()) {
+        void this.closeIfUnused(opened.control);
+        return { code: 'forbidden', message: 'This hosted session can no longer be controlled.' };
+      }
+      if (!opened.control.closed) return this.join(opened.control, owner, target, null, stillAllowed);
     }
-    if (this.closing || !stillAllowed())
-      return { code: 'forbidden', message: 'This hosted session can no longer be controlled.' };
+  }
+
+  /**
+   * The device's open control, or the one being opened, so concurrent `begin`s share one lease and input. A control
+   * can close before its caller resumes, when every other caller gave up; the caller then opens it again.
+   */
+  private async deviceControl(key: string, open: () => Promise<Opened>): Promise<Opened> {
     const current = this.byDevice.get(key);
-    if (current && current !== earlier && !target.takeOver)
-      return { code: 'device-busy', message: `${current.owner.device.name} started controlling this device.` };
-    return this.open(
-      owner,
-      target,
-      cwd,
-      device,
-      postures,
-      null,
-      current?.owner.device.name ?? null,
-      current,
-      Date.now(),
-      undefined,
-      undefined,
-      frames,
-      stillAllowed,
-      claim,
+    if (current) return { control: current };
+    const starting = this.opening.get(key);
+    if (starting) {
+      const outcome = await starting;
+      return 'code' in outcome ? this.deviceControl(key, open) : outcome;
+    }
+    const attempt = this.pending.track(
+      (async () => {
+        await this.releasing.get(key);
+        return open();
+      })(),
+    );
+    this.opening.set(key, attempt);
+    try {
+      return await attempt;
+    } finally {
+      if (this.opening.get(key) === attempt) this.opening.delete(key);
+    }
+  }
+
+  private async openDevice(
+    device: Device,
+    target: ControlBeginParams,
+    cwd: string,
+    beganAt: number,
+    status: StatusPayload,
+  ): Promise<Opened> {
+    const resolve = { adbEmulators: this.options.adbEmulators === true };
+    const [lease, postures] = await Promise.all([
+      target.physical ? Promise.resolve(heldLease(status, target, resolve)) : this.lock(device, target, cwd, beganAt),
+      devicePostures(device, this.options.env, POSTURE_TIMEOUT_MS),
+    ]);
+    const helper = this.options.frameHelper();
+    const simulator =
+      device.platform === 'ios' && !device.physical && helper
+        ? await simulatorOptions(helper, device.udid, { action: 'read' }, this.options.env).catch(() => null)
+        : null;
+    const granted = lease === null || 'code' in lease ? null : lease;
+    if (lease !== null && !granted && (!target.takeOver || target.physical)) return lease as Refusal;
+    const opened = this.open(device, target, cwd, beganAt, postures, granted, simulator, this.options.frames);
+    if (!('code' in opened) && lease !== null && 'code' in lease) opened.control.leaseRefused = lease;
+    if ('code' in opened) {
+      if (granted?.mine) void this.pending.track(this.unlock(target, cwd));
+      return opened;
+    }
+    const control = opened.control;
+    control.unwatch = this.options.subscribeStatus({
+      item: (payload) => this.statusChanged(control, payload as unknown as StatusPayload),
+      failed: () => {},
+    });
+    return opened;
+  }
+
+  private openHosted(
+    device: Device,
+    target: ControlBeginParams,
+    cwd: string,
+    frames: FramePool,
+    claim: ClaimHandle,
+  ): Promise<Opened> {
+    return devicePostures(device, this.options.env, POSTURE_TIMEOUT_MS).then((postures) =>
+      this.open(device, target, cwd, Date.now(), postures, null, null, frames, claim),
     );
   }
 
   private open(
-    owner: Controller,
+    device: Device,
     target: ControlBeginParams,
     cwd: string,
-    device: Device,
-    postures: DevicePosture[],
-    granted: Lease | null,
-    driver: string | null,
-    current: Session | undefined,
     beganAt: number,
-    status?: StatusPayload,
-    simulator: SimulatorOptions | null = null,
-    frames: FramePool = this.options.frames,
-    permitted?: () => boolean,
+    postures: DevicePosture[],
+    lease: Lease | null,
+    simulator: SimulatorOptions | null,
+    frames: FramePool,
     claim?: ClaimHandle,
-  ): ControlBeginResult | Refusal {
-    const key = deviceKey(device);
-    const resolve = { adbEmulators: this.options.adbEmulators === true };
-    let session: Session;
-    const input = frames.control(device, (message) => queueMicrotask(() => void this.end(session, 'failed', message)));
+  ): Opened {
+    if (this.closing) return { code: 'action-failed', message: 'stim-server is stopping.' };
+    let control: DeviceControl;
+    const input = frames.control(device, (message) => queueMicrotask(() => this.endAll(control, 'failed', message)));
     if (!input) {
-      if (granted?.mine && !current?.lease?.mine) void this.pending.track(this.unlock(target, cwd));
       return { code: 'action-failed', message: 'Input needs the stim-frames helper, which this Mac has not built.' };
     }
-    const inherited = granted !== null && current?.lease?.mine === true;
-    if (current) {
-      void this.end(current, 'taken-over', `${owner.device.name} took over this device.`, !inherited);
-      if (status && current.owner.device.id !== owner.device.id)
-        this.options.conflict(current.owner.device.id, {
-          ...conflictAbout(status, target),
-          body: `${owner.device.name} took over the ${DEVICE_NOUN[target.platform]} you were controlling`,
-        });
-    }
-    const id = `c${this.next++}`;
-    session = {
-      id,
-      owner,
-      device,
+    const key = deviceKey(device);
+    control = {
       key,
+      device,
       target,
       cwd,
-      lease: granted ? { ...granted, mine: granted.mine || inherited } : null,
+      beganAt,
+      lease,
+      leaseRefused: null,
       input,
       frames,
-      ...(permitted ? { permitted } : {}),
       ...(claim ? { claim } : {}),
       postures,
       simulator,
       simulatorAbort: new AbortController(),
       grab: new PointerGrab(),
       grabIdle: null,
-      hostShown: false,
-      startedAt: Date.now(),
-      idle: setTimeout(() => void this.end(session, 'idle', 'No input for 5 minutes.'), this.options.idleMs),
-      renew: setInterval(() => this.renew(session, beganAt), this.options.renewMs),
-      renewing: Promise.resolve(),
+      sessions: new Set(),
+      renew: setInterval(() => this.renew(control), this.options.renewMs),
       unwatch: () => {},
+      renewing: Promise.resolve(),
       adb: Promise.resolve(),
       pasteTimer: null,
       pasteTypingUntil: 0,
+      closed: false,
+    };
+    this.byDevice.set(key, control);
+    return { control };
+  }
+
+  private join(
+    control: DeviceControl,
+    owner: Controller,
+    target: ControlBeginParams,
+    driver: string | null,
+    permitted?: () => boolean,
+  ): ControlBeginResult {
+    const id = `c${this.next++}`;
+    const session: Session = {
+      id,
+      owner,
+      control,
+      target,
+      ...(permitted ? { permitted } : {}),
+      hostShown: false,
+      startedAt: Date.now(),
+      idle: setTimeout(() => void this.end(session, 'idle', 'No input for 5 minutes.'), this.options.idleMs),
       ended: false,
       driver,
       driverNoticed: false,
     };
     this.sessions.set(id, session);
-    this.byDevice.set(key, session);
-    if (status)
-      session.unwatch = this.options.subscribeStatus({
-        item: (payload) => {
-          const latest = payload as unknown as StatusPayload;
-          const resolved = ownedDevice(latest, target, key, resolve);
-          if (target.physical && session.lease && typeof resolved !== 'string') {
-            session.lease.expiresAt = workspaceLease(latest, target, resolve)?.expiresAt ?? session.lease.expiresAt;
-          }
-          if (typeof resolved === 'string' || deviceKey(resolved) !== key) {
-            const message = typeof resolved === 'string' ? resolved : 'The device changed.';
-            queueMicrotask(() => void this.end(session, 'device-gone', message));
-            return;
-          }
-          const other = otherDriver(activityOf(latest, target), this.ownLeases);
-          if (other && other !== session.driver && !session.driverNoticed && !session.ended) {
-            session.driverNoticed = true;
-            const tool = activityOf(latest, target)?.driver?.tool ?? 'An agent';
-            this.options.conflict(owner.device.id, {
-              ...conflictAbout(latest, target),
-              body: `${tool} started driving the ${DEVICE_NOUN[target.platform]} you are controlling`,
-            });
-          }
-        },
-        failed: () => {},
-      });
-    this.audit(owner, target, driver || current ? 'control.take-over' : 'control.begin', {
-      ok: true,
-      ...(driver || current ? { reason: `took over from ${driver ?? current!.owner.device.name}` } : {}),
-    });
+    control.sessions.add(session);
+    this.audit(owner, target, 'control.begin', { ok: true });
     return {
       session: id,
       platform: target.platform,
-      lease: session.lease ? { grantedAt: session.lease.grantedAt, expiresAt: session.lease.expiresAt } : null,
-      postures,
-      ...(simulator ? { simulator } : {}),
+      lease: control.lease ? { grantedAt: control.lease.grantedAt, expiresAt: control.lease.expiresAt } : null,
+      postures: control.postures,
+      ...(control.simulator ? { simulator: control.simulator } : {}),
     };
   }
 
-  private renew(session: Session, beganAt: number): void {
-    if (session.ended || !session.lease?.mine) return;
-    session.renewing = this.pending.track(
+  private statusChanged(control: DeviceControl, latest: StatusPayload): void {
+    if (control.closed) return;
+    const { target, key } = control;
+    const resolve = { adbEmulators: this.options.adbEmulators === true };
+    const resolved = ownedDevice(latest, target, key, resolve);
+    if (target.physical && control.lease && typeof resolved !== 'string') {
+      control.lease.expiresAt = workspaceLease(latest, target, resolve)?.expiresAt ?? control.lease.expiresAt;
+    }
+    if (typeof resolved === 'string' || deviceKey(resolved) !== key) {
+      const message = typeof resolved === 'string' ? resolved : 'The device changed.';
+      queueMicrotask(() => this.endAll(control, 'device-gone', message));
+      return;
+    }
+    const other = otherDriver(activityOf(latest, target), this.ownLeases);
+    if (!other) return;
+    const tool = activityOf(latest, target)?.driver?.tool ?? 'An agent';
+    for (const session of control.sessions) {
+      if (other === session.driver || session.driverNoticed || session.ended) continue;
+      session.driverNoticed = true;
+      this.options.conflict(session.owner.device.id, {
+        ...conflictAbout(latest, target),
+        body: `${tool} started driving the ${DEVICE_NOUN[target.platform]} you are controlling`,
+      });
+    }
+  }
+
+  private renew(control: DeviceControl): void {
+    if (control.closed || !control.lease?.mine) return;
+    control.renewing = this.pending.track(
       (async () => {
-        const renewed = await this.lock(session.device, session.target, session.cwd, beganAt);
+        const renewed = await this.lock(control.device, control.target, control.cwd, control.beganAt);
         if (renewed === null) return;
         if ('code' in renewed) console.error(`stim-server: could not renew the device lease: ${renewed.message}`);
-        else if (session.lease) session.lease.expiresAt = renewed.expiresAt;
+        else if (control.lease) control.lease.expiresAt = renewed.expiresAt;
       })(),
     );
   }
 
   /**
-   * `participant` is the viewer a share forwards the input for; it holds the device's pointer from its `down` until
-   * its `up` and is told when another holds it. Input without one is the owner's own, shown as the host.
+   * `participant` is the viewer a share forwards the input for. Input without one is the session's own, shown as
+   * the host. A touch `down` holds the device's pointer for its participant until that participant's `up`; touches
+   * from anyone else meanwhile are dropped, and the one that turned a `down` away is named.
    */
   input(
     owner: Controller,
@@ -1027,59 +1079,60 @@ export class ControlHub {
     if (!session || session.owner !== owner || session.ended) {
       return Promise.resolve({ code: 'unknown-session', message: `No control session ${id} on this connection.` });
     }
+    const { control } = session;
     if (session.permitted && !session.permitted()) {
       void this.end(session, 'device-gone', 'The hosted session is no longer available.');
       return Promise.resolve({ code: 'forbidden', message: 'The hosted session is no longer available.' });
     }
     const reads = command.input === 'clipboard-get';
     if (!reads) session.idle.refresh();
-    if (session.target.physical && session.lease && Date.parse(session.lease.expiresAt) <= Date.now()) {
+    if (control.target.physical && control.lease && Date.parse(control.lease.expiresAt) <= Date.now()) {
       const message = "The workspace's lease on this device expired.";
-      void this.end(session, 'device-gone', message);
+      this.endAll(control, 'device-gone', message);
       return Promise.resolve({ code: 'unknown-session', message });
     }
-    if (!reads) this.options.onInput?.(session.device);
+    if (!reads) this.options.onInput?.(control.device);
     if (command.input === 'touch') {
       const dropped = this.touch(session, command, participant);
       if (dropped !== undefined) return Promise.resolve(dropped);
     }
-    if (command.input === 'simulator') return this.simulator(session, command);
-    if (command.input === 'clipboard' || command.input === 'clipboard-get') return this.clipboard(session, command);
-    if (command.input === 'posture' && session.device.platform === 'ios') {
-      const udid = session.device.udid;
+    if (command.input === 'simulator') return this.simulator(control, command);
+    if (command.input === 'clipboard' || command.input === 'clipboard-get') return this.clipboard(control, command);
+    if (command.input === 'posture' && control.device.platform === 'ios') {
+      const udid = control.device.udid;
       if (this.folding.has(udid))
         return Promise.resolve({ code: 'device-busy', message: 'The device is still folding.' });
-      const folded = this.fold(session, udid, command.posture);
+      const folded = this.fold(control, udid, command.posture);
       const settled = folded.then(() => {
         this.folding.delete(udid);
         return undefined;
       });
       this.folding.set(udid, settled);
-      session.adb = settled;
+      control.adb = settled;
       return folded;
     }
     if (
-      session.device.platform !== 'android' ||
-      session.device.physical ||
+      control.device.platform !== 'android' ||
+      control.device.physical ||
       command.input === 'touch' ||
       command.input === 'rotate' ||
       command.input === 'posture' ||
-      (session.input.keys() && !(command.input === 'key' && isExtendedDeviceKey(command.key, command.modifiers)))
+      (control.input.keys() && !(command.input === 'key' && isExtendedDeviceKey(command.key, command.modifiers)))
     ) {
-      session.input.send(
+      control.input.send(
         command.input === 'touch' && command.display === undefined && command.duoRevision === undefined
-          ? { ...command, display: session.frames.litDisplay(session.device) }
+          ? { ...command, display: control.frames.litDisplay(control.device) }
           : command,
       );
       return Promise.resolve(null);
     }
-    const serial = session.device.serial;
-    const previous = session.adb;
+    const serial = control.device.serial;
+    const previous = control.adb;
     const run = (async (): Promise<Refusal | null> => {
       await previous;
       try {
         for (const args of adbInputArgs(command as Extract<InputCommand, { input: 'text' | 'button' | 'key' }>)) {
-          if (session.ended) return null;
+          if (control.closed) return null;
           await runAdb(this.options.env, serial, args);
         }
         return null;
@@ -1087,18 +1140,18 @@ export class ControlHub {
         return { code: 'action-failed', message: (cause as Error).message };
       }
     })();
-    session.adb = run.then(() => undefined);
+    control.adb = run.then(() => undefined);
     return this.pending.track(run);
   }
 
   private clipboard(
-    session: Session,
+    control: DeviceControl,
     command: Extract<InputCommand, { input: 'clipboard' | 'clipboard-get' }>,
   ): Promise<Refusal | InputClipboardGetResult | InputClipboardSetResult | null> {
-    const { device } = session;
+    const { device } = control;
     const set = command.input === 'clipboard' ? command : null;
     const read = async (): Promise<string> => {
-      const text = await this.readClipboard(session, device);
+      const text = await this.readClipboard(control, device);
       if (Buffer.byteLength(text, 'utf8') > MAX_CLIPBOARD_READ_BYTES) {
         throw new Error(`The device clipboard is larger than ${MAX_CLIPBOARD_READ_BYTES} bytes.`);
       }
@@ -1111,14 +1164,14 @@ export class ControlHub {
         if (device.platform === 'ios') {
           const chunks = set.paste ? pasteTypingChunks(set.text) : null;
           if (chunks) {
-            if (Date.now() < session.pasteTypingUntil) {
+            if (Date.now() < control.pasteTypingUntil) {
               return { code: 'device-busy', message: 'The device is still typing the previous paste.' };
             }
             const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-            session.pasteTypingUntil = Date.now() + (total / PASTE_TYPING_CHARS_PER_SECOND) * 1000;
+            control.pasteTypingUntil = Date.now() + (total / PASTE_TYPING_CHARS_PER_SECOND) * 1000;
             reserved = true;
           }
-          const claim = session.claim ? takeHostedInputClaim(session.claim) : undefined;
+          const claim = control.claim ? takeHostedInputClaim(control.claim) : undefined;
           await runQuietly(
             simctlEnv(this.options.env),
             'xcrun',
@@ -1130,51 +1183,51 @@ export class ControlHub {
               input: set.text,
             },
           );
-          if (set.paste && !session.ended) {
-            if (!chunks) session.input.send({ clipboard: 'paste' });
+          if (set.paste && !control.closed) {
+            if (!chunks) control.input.send({ clipboard: 'paste' });
             else {
-              this.typePaste(session, chunks);
+              this.typePaste(control, chunks);
               return { typed: true };
             }
           }
         } else if (device.platform === 'android') {
-          await session.input.clipboard({
+          await control.input.clipboard({
             text: set.text,
             paste: set.paste && device.physical === true,
           });
-          if (set.paste && !device.physical && !session.ended) {
+          if (set.paste && !device.physical && !control.closed) {
             await runAdb(this.options.env, device.serial, ['shell', 'input', 'keyevent', 'KEYCODE_PASTE']);
           }
         }
         return null;
       } catch (cause) {
-        if (reserved) session.pasteTypingUntil = 0;
+        if (reserved) control.pasteTypingUntil = 0;
         return { code: 'action-failed', message: cause instanceof Error ? cause.message : String(cause) };
       }
     };
     if (device.platform !== 'android' || device.physical) return this.pending.track(run());
-    const previous = session.adb;
+    const previous = control.adb;
     const queued = previous.then(run);
-    session.adb = queued.then(() => undefined);
+    control.adb = queued.then(() => undefined);
     return this.pending.track(queued);
   }
 
-  private typePaste(session: Session, chunks: string[]): void {
+  private typePaste(control: DeviceControl, chunks: string[]): void {
     const feed = (index: number): void => {
-      session.pasteTimer = null;
+      control.pasteTimer = null;
       const chunk = chunks[index];
-      if (session.ended || chunk === undefined) return;
-      session.input.send({ input: 'text', text: chunk });
+      if (control.closed || chunk === undefined) return;
+      control.input.send({ input: 'text', text: chunk });
       if (index + 1 < chunks.length) {
-        session.pasteTimer = setTimeout(() => feed(index + 1), (chunk.length / PASTE_TYPING_CHARS_PER_SECOND) * 1000);
+        control.pasteTimer = setTimeout(() => feed(index + 1), (chunk.length / PASTE_TYPING_CHARS_PER_SECOND) * 1000);
       }
     };
     feed(0);
   }
 
-  private async readClipboard(session: Session, device: Device): Promise<string> {
+  private async readClipboard(control: DeviceControl, device: Device): Promise<string> {
     if (device.platform === 'ios') {
-      const claim = session.claim ? takeHostedInputClaim(session.claim) : undefined;
+      const claim = control.claim ? takeHostedInputClaim(control.claim) : undefined;
       return runQuietly(
         simctlEnv(this.options.env),
         'xcrun',
@@ -1187,26 +1240,26 @@ export class ControlHub {
         },
       );
     }
-    return (await session.input.clipboard(null)) ?? '';
+    return (await control.input.clipboard(null)) ?? '';
   }
 
-  /** Admits a touch through the pointer grab and shows it; undefined when it goes on to the device. */
+  /** Admits a touch through the device's pointer and shows it; undefined when it goes on to the device. */
   private touch(
     session: Session,
     command: TouchCommand,
     participant?: PresenceParticipant,
   ): BusyRefusal | null | undefined {
-    if (participant) {
-      const verdict = session.grab.admit(participant, command);
-      if (!verdict.admit) {
-        return verdict.busy === undefined
-          ? null
-          : { code: 'device-busy', message: `${verdict.busy} is using the screen.`, busy: verdict.busy };
-      }
-      if (session.grabIdle) clearTimeout(session.grabIdle);
-      session.grabIdle = command.phase === 'up' ? null : setTimeout(() => this.expireGrab(session), GRAB_IDLE_MS);
+    const { control } = session;
+    const who = participant ?? this.host(session);
+    const verdict = control.grab.admit({ id: who.id, name: who.name, who, session: session.id }, command);
+    if (!verdict.admit) {
+      return verdict.busy === undefined
+        ? null
+        : { code: 'device-busy', message: `${verdict.busy} is using the screen.`, busy: verdict.busy };
     }
-    this.show(session, participant ?? this.host(session), command);
+    if (control.grabIdle) clearTimeout(control.grabIdle);
+    control.grabIdle = command.phase === 'up' ? null : setTimeout(() => this.expireGrab(control), GRAB_IDLE_MS);
+    this.show(session.target, who, command);
     return undefined;
   }
 
@@ -1215,8 +1268,8 @@ export class ControlHub {
     return { id: session.id, kind: 'host', name: 'Host', color: 0 };
   }
 
-  private show(session: Session, who: PresenceParticipant, command: TouchCommand): void {
-    const { platform, slot, physical, workspace } = session.target;
+  private show(target: ControlBeginParams, who: PresenceParticipant, command: TouchCommand): void {
+    const { platform, slot, physical, workspace } = target;
     if (!this.options.presence || (platform !== 'ios' && platform !== 'android')) return;
     this.options.presence.touch(presenceKey(workspace, platform, slot ?? 'default', physical === true), who, {
       phase: command.phase,
@@ -1228,56 +1281,54 @@ export class ControlHub {
     });
   }
 
-  private lift(session: Session, lifted: { holder: { id: string }; up: TouchCommand } | null): void {
-    if (session.grabIdle) clearTimeout(session.grabIdle);
-    session.grabIdle = null;
-    if (!lifted || session.ended) return;
-    session.input.send(
+  /** Sends the `up` that lifts the pointer for a holder that left, and shows it. */
+  private lift(control: DeviceControl, lifted: { holder: Holder; up: TouchCommand } | null): void {
+    if (control.grabIdle) clearTimeout(control.grabIdle);
+    control.grabIdle = null;
+    if (!lifted || control.closed) return;
+    control.input.send(
       lifted.up.display === undefined && lifted.up.duoRevision === undefined
-        ? { ...lifted.up, display: session.frames.litDisplay(session.device) }
+        ? { ...lifted.up, display: control.frames.litDisplay(control.device) }
         : lifted.up,
     );
+    this.show(control.target, lifted.holder.who, lifted.up);
   }
 
-  private expireGrab(session: Session): void {
-    const lifted = session.grab.expire();
-    session.grabIdle = null;
-    this.lift(session, lifted);
-    if (lifted) this.show(session, lifted.holder, lifted.up);
+  private expireGrab(control: DeviceControl): void {
+    control.grabIdle = null;
+    this.lift(control, control.grab.expire());
   }
 
   /** A participant that held the pointer left (its socket closed): lifts the pointer for it. */
   release(owner: Controller, id: string, participant: PresenceParticipant): void {
     const session = this.sessions.get(id);
     if (!session || session.owner !== owner) return;
-    const lifted = session.grab.release(participant.id);
-    this.lift(session, lifted);
-    if (lifted) this.show(session, participant, lifted.up);
+    this.lift(session.control, session.control.grab.release(participant.id));
   }
 
   private async simulator(
-    session: Session,
+    control: DeviceControl,
     command: Extract<InputCommand, { input: 'simulator' }>,
   ): Promise<SimulatorOptions | Refusal> {
     const helper = this.options.frameHelper();
-    if (session.device.platform !== 'ios' || session.device.physical || !session.simulator || !helper) {
+    if (control.device.platform !== 'ios' || control.device.physical || !control.simulator || !helper) {
       return { code: 'action-failed', message: 'Simulator development controls are unavailable.' };
     }
-    if (this.changingSimulator.has(session.key)) {
+    if (this.changingSimulator.has(control.key)) {
       return { code: 'device-busy', message: 'A simulator option is still changing.' };
     }
-    this.changingSimulator.add(session.key);
+    this.changingSimulator.add(control.key);
     try {
       const result = await this.pending.track(
-        simulatorOptions(helper, session.device.udid, command, this.options.env, session.simulatorAbort.signal),
+        simulatorOptions(helper, control.device.udid, command, this.options.env, control.simulatorAbort.signal),
       );
-      if (session.ended) return { code: 'unknown-session', message: 'The control session ended.' };
-      session.simulator = result;
+      if (control.closed) return { code: 'unknown-session', message: 'The control session ended.' };
+      control.simulator = result;
       return result;
     } catch (cause) {
       return { code: 'action-failed', message: (cause as Error).message };
     } finally {
-      this.changingSimulator.delete(session.key);
+      this.changingSimulator.delete(control.key);
     }
   }
 
@@ -1285,15 +1336,15 @@ export class ControlHub {
    * `sim-fold` sweeps the hinge to the other posture, so it runs only when the Duo's last frame shows the
    * other one.
    */
-  private async fold(session: Session, udid: string, posture: DevicePosture): Promise<Refusal | null> {
-    const current = session.frames.litPosture(session.device);
+  private async fold(control: DeviceControl, udid: string, posture: DevicePosture): Promise<Refusal | null> {
+    const current = control.frames.litPosture(control.device);
     if (!current) {
       return { code: 'action-failed', message: 'Subscribe to frames of this device to learn its posture first.' };
     }
     if (current === posture) return null;
     try {
       const helper = await this.options.foldHelper();
-      if (session.ended) return null;
+      if (control.closed) return null;
       await this.pending.track(
         runQuietly(
           this.options.env,
@@ -1301,10 +1352,10 @@ export class ControlHub {
           ['simctl', 'spawn', udid, helper],
           'sim-fold',
           this.options.foldTimeoutMs,
-          session.claim ? takeHostedInputClaim(session.claim) : undefined,
+          control.claim ? takeHostedInputClaim(control.claim) : undefined,
         ),
       );
-      session.frames.folded(udid, posture === 'folded' ? 'folded' : 'unfolded');
+      control.frames.folded(udid, posture === 'folded' ? 'folded' : 'unfolded');
       return null;
     } catch (cause) {
       return { code: 'action-failed', message: (cause as Error).message };
@@ -1325,10 +1376,10 @@ export class ControlHub {
   }
 
   async endDevice(device: Device, message: string): Promise<void> {
-    const session = this.byDevice.get(deviceKey(device));
-    if (session) {
-      await this.end(session, 'device-gone', message);
-      await session.adb;
+    const control = this.byDevice.get(deviceKey(device));
+    if (control) {
+      await this.endAll(control, 'device-gone', message);
+      await control.adb;
     }
     if (device.platform === 'ios') await this.folding.get(device.udid);
   }
@@ -1339,32 +1390,51 @@ export class ControlHub {
     await this.pending.settled();
   }
 
-  private end(
-    session: Session,
-    reason: ControlEndedEvent['reason'] | null,
-    message: string,
-    release = true,
-  ): Promise<void> {
+  private endAll(control: DeviceControl, reason: ControlEndedEvent['reason'], message: string): Promise<void> {
+    return Promise.all([...control.sessions].map((session) => this.end(session, reason, message))).then(
+      () => undefined,
+    );
+  }
+
+  private end(session: Session, reason: ControlEndedEvent['reason'] | null, message: string): Promise<void> {
     if (session.ended) return Promise.resolve();
     session.ended = true;
-    session.simulatorAbort.abort();
     clearTimeout(session.idle);
-    clearInterval(session.renew);
-    if (session.grabIdle) clearTimeout(session.grabIdle);
-    if (session.pasteTimer) clearTimeout(session.pasteTimer);
+    const { control } = session;
+    if (control.grab.holder?.session === session.id) this.lift(control, control.grab.expire());
     if (session.hostShown) this.hideHost(session);
-    session.unwatch();
-    session.input.detach();
     this.sessions.delete(session.id);
-    if (this.byDevice.get(session.key) === session) this.byDevice.delete(session.key);
+    control.sessions.delete(session);
     if (reason) session.owner.send({ event: 'control-ended', session: session.id, reason, message });
     this.audit(session.owner, session.target, 'control.end', {
       ok: true,
       durationMs: Date.now() - session.startedAt,
       reason: `${reason ?? 'ended'}: ${message}`,
     });
-    if (!release || !session.lease?.mine) return Promise.resolve();
-    return this.pending.track(session.renewing.then(() => this.unlock(session.target, session.cwd)));
+    return this.closeIfUnused(control);
+  }
+
+  /** Closes a device control no session uses: detaches its input and releases the lease the hub took. */
+  private closeIfUnused(control: DeviceControl): Promise<void> {
+    if (control.closed || control.sessions.size) return Promise.resolve();
+    control.closed = true;
+    control.simulatorAbort.abort();
+    clearInterval(control.renew);
+    if (control.grabIdle) clearTimeout(control.grabIdle);
+    if (control.pasteTimer) clearTimeout(control.pasteTimer);
+    control.unwatch();
+    control.input.detach();
+    if (this.byDevice.get(control.key) === control) this.byDevice.delete(control.key);
+    if (!control.lease?.mine) return Promise.resolve();
+    const released: Promise<void> = this.pending.track(
+      control.renewing
+        .then(() => this.unlock(control.target, control.cwd))
+        .finally(() => {
+          if (this.releasing.get(control.key) === released) this.releasing.delete(control.key);
+        }),
+    );
+    this.releasing.set(control.key, released);
+    return released;
   }
 
   private hideHost(session: Session): void {
@@ -1373,7 +1443,6 @@ export class ControlHub {
       this.options.presence?.leave(presenceKey(workspace, platform, slot ?? 'default', physical === true), session.id);
     }
   }
-
   private status(): Promise<StatusPayload | Refusal> {
     return new Promise((resolve) => {
       let settled = false;

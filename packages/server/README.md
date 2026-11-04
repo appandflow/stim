@@ -1649,8 +1649,9 @@ macOS screen-recording permission.
 Start control with `device-host.control.begin` and
 `{"session":"<hosted-session-id>"}`. Its result returns a connection-bound
 control session ID and `lease: null`: the hosted lifetime claim protects this
-private device. Only one controller can drive the device; `takeOver: true`
-replaces the previous controller. Use the returned control ID with
+private device. Several controllers can drive the device at once, sharing its
+one pointer as ordinary control does; a worker without `shared-control` allows
+one, and there `takeOver: true` replaces the previous controller. Use the returned control ID with
 `device-host.input.touch|text|key`, using the same parameters as ordinary input
 (`key` takes the arrows and Escape on iOS and Android, and with a worker that advertises `device-keyboard` the keys and modifiers of ordinary `input.key`; `touch` takes the second
 finger `x2` and `y2`, which a worker older than this field refuses).
@@ -2421,15 +2422,15 @@ subscribes to the device's frames as a JPEG subscriber at 10 frames a second
 and 1280 pixels, as binary messages; the share never asks the recorder to
 record. With `control`, `touch`, `text` and `button` messages from a `control`
 session go through `parseInput` and the control hub as the `Web share`
-controller, which begins one control session without takeover when a viewer with
+controller, which begins one control session when a viewer with
 `control` connects (or the share resumes) and ends it when the last viewer
 leaves; every input from a `view`
 session is dropped. Each viewer socket is a presence participant: the share
 sends `{ type: 'you', id, name, color, access }` once, then
 `{ type: 'presence', participants }` with the `presence` event's participants
 of the other people on the device (30 messages a second at most, moves
-coalesced), and `{ type: 'busy', name }` when another viewer holds the touch
-pointer. A viewer may send `{ type: 'name', name }`, once per 5 seconds; names
+coalesced), and `{ type: 'busy', name }` when another viewer or client holds
+the device's touch pointer. A viewer may send `{ type: 'name', name }`, once per 5 seconds; names
 are cleaned (NFC, no control or format characters, 24 code points), kept only
 in memory and never logged. A share of a hosted device has the same presence:
 its viewers, their touches and the pointer grab live in this machine's
@@ -3062,8 +3063,9 @@ the events the device chose:
 - `machine`: a volume holding Stim state has less than 5 GB free (the episode
   ends once 6 GB are free again), or memory pressure stayed critical for a
   minute. It opens the machine sheet.
-- `control`: another client took over a device this phone controls, or an
-  agent started driving it. It opens the device viewer.
+- `control`: an agent started driving a device this phone controls (a server
+  without `shared-control` also sends it when another client takes the device
+  over). It opens the device viewer.
 - `attention`: something only a person can fix, from the needs-attention rule
   (`needsAttention` in `@stim-cli/core/oversight`): a port held by another app, a
   supervisor or owned Chrome Stim cannot verify, an owned AVD it could not
@@ -3226,23 +3228,36 @@ sends reaches any other device.
   `folded` and `unfolded` for an iPhone Duo, `folded`, `half-open` and
   `unfolded` for an emulator with a hinge, such as a `pixel_fold` AVD, and
   none otherwise.
-  The server refuses with `device-busy` when status reports the device driven
-  (agent-device, a `stim device lock`, a test runner) or another client
-  controls it, naming the driver. With `takeOver: true` it proceeds anyway;
-  another client's session then ends with `taken-over`.
-- The session holds a `stim device lock <platform> <id> --for 2m` lease,
-  renewed every minute, so `stim status` shows the device as driven by
-  `stim device lock` and agents leave it alone. `lease` carries its
-  `grantedAt`, the `since` of that driver, so a client can tell its own lease
-  from an agent's. The server releases the lease with `stim device unlock`
-  when the session ends, unless the lease was already held before the session
-  began, as when it took the device over from an agent in the same workspace;
-  it renews only a lease it took. Leases belong to the workspace, not to the
+  Any number of clients control one device at once (the `shared-control`
+  feature): another client's session, an agent driving the device
+  (agent-device, a test runner, a DevTools client) or another `stim device lock`
+  holder in the same workspace never refuses `control.begin` and never ends a
+  session. A server without `shared-control` refuses with `device-busy` while
+  another client controls the device or status reports it driven, unless
+  `takeOver: true`, which ends the other client's session with `taken-over`.
+  On a server with it, `takeOver: true` only lets a simulator or emulator be
+  controlled without the lease another workspace holds.
+- The device holds a `stim device lock <platform> <id> --for 2m` lease while
+  any session controls it, renewed every minute, so `stim status` shows the
+  device as driven by `stim device lock` and agents leave it alone. The first
+  session takes it; every session's `lease` carries its `grantedAt`, the
+  `since` of that driver, so a client can tell this lease from an agent's. The
+  server releases the lease with `stim device unlock` when the last session on
+  the device ends, unless the lease was already held before the first session
+  began, as when an agent in the same workspace held it; it renews only a lease
+  it took. A lease another workspace holds refuses with `device-busy`, unless
+  `takeOver: true` on a simulator or emulator. Leases belong to the workspace, not to the
   session: an agent in the same workspace that runs `stim device lock` on the
   device during a session shares the lease, and the session's end releases
   it.
 - `input.touch` takes `session`, `phase` (`down`, `move`, `up`), `x` and `y`
   as fractions of the upright screen, and `display` (0, the main display).
+  The device has one pointer: a `down` holds it for that client (or that share
+  viewer) until its `up`, its session ends or 10 seconds pass without input,
+  when the server lifts it with an `up` at the last point. Another client's
+  touches meanwhile are dropped, and its `down` is answered `device-busy`
+  naming the holder (`Host` for a client's own session); its `up` never lifts
+  the holder's finger, and two clients' fingers never form one gesture.
   `x2` and `y2`, given together, add a second finger for a pinch or a
   two-finger pan on an iOS simulator or an Android emulator or device: the
   simulator's digitizer takes both points in one HID event, an emulator takes
@@ -3299,8 +3314,9 @@ sends reaches any other device.
   second's worth of inputs beyond the limit, so the end of a drag is not refused while moves have used it up.
 - When hello advertises `macos-window-control`, `control.begin` accepts
   `platform: "macos"` for the verified native app in the default slot. It needs
-  `control` and takes one exclusive server session per app, with the same
-  takeover, disconnect, revocation and five-minute idle rules; `lease` is null
+  `control`, and its sessions share the helper's one control session for the
+  app, with the same disconnect, revocation and five-minute idle rules; an input
+  the helper refuses ends every session on the app. `lease` is null
   because CLI device locks do not cover macOS apps. Existing Device Control and
   Data Access permission (Accessibility on macOS 26 and earlier) is required, without permission requests or resets. Before each
   action the helper verifies PID/start time/executable/bundle and that the
@@ -3321,8 +3337,8 @@ sends reaches any other device.
   among the app's windows without activating the app, and capture stays on it
   while another window comes to the front.
   `window: null` follows the front window again. A pin also ends when its window
-  closes or leaves the screen, or when the Control session that set it ends,
-  including takeover, disconnect and the idle timeout. A window that is gone by
+  closes or leaves the screen, or when the last Control session on the app ends,
+  including by disconnect and the idle timeout. A window that is gone by
   then, or a modal dialog in the app, drops the input with a logged reason
   without ending Control. The hosted relay forwards it as `device-host.input.window`.
   `input.key` accepts Escape, Tab, Return, Backspace,
@@ -3366,8 +3382,7 @@ sends reaches any other device.
   Stim Desktop, without opening Device Hub.
 - `control.end` ends a session. The server also ends it with a
   `control-ended` event `{ "session", "reason", "message" }` after 5 minutes
-  without input (`idle`), when another client takes the device over
-  (`taken-over`), when the device stops or changes owner (`device-gone`),
+  without input (`idle`), when the device stops or changes owner (`device-gone`),
   when the paired device loses `control` (`forbidden`), or when input cannot
   reach the device (`failed`). Closing the connection ends its sessions.
 
@@ -3387,8 +3402,8 @@ streams its frames:
   key events, `\n`, `\t` and `\b` as Enter, Tab and Backspace. A web
   session holds no lease, since `stim device lock` covers devices; a
   DevTools client other than Stim's attached to the browser (`web.activity`
-  in status, such as Playwright MCP) makes `control.begin` answer
-  `device-busy` unless it takes over.
+  in status, such as Playwright MCP) shows as the page's driver and does not
+  refuse `control.begin`.
 - Emulators take touches through the emulator's gRPC `sendTouch`. Text and
   buttons go through gRPC `sendKey` when the emulator reports a hardware
   keyboard, which AVDs Stim creates have. An emulator without one drops key
@@ -3403,10 +3418,10 @@ streams its frames:
   swaps the posture, so the server runs it only when the Duo's latest frame
   shows the other posture, and refuses the request until a frame showed one.
 
-Every session start, takeover and end, and every refused `control.begin`,
-appends a line to the action log, with `action` set to `control.begin`,
-`control.take-over` or `control.end`, and a `reason` that says why the session
-ended or whom it took the device from. Inputs are not logged.
+Every session start and end, and every refused `control.begin`, appends a line
+to the action log, with `action` set to `control.begin` or `control.end`, and a
+`reason` that says why the session ended. Logs from older servers also have
+`control.take-over`. Inputs are not logged.
 
 The error codes `unauthorized`, `pairing-expired`, and `protocol-unsupported`
 refuse the client until it pairs again or updates; `unknown-secret` means the
