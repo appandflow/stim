@@ -1,0 +1,47 @@
+{
+  "notes": "Endpoints in a stim-server pair payload. Stim Desktop and the phone app both read this file. They agree on tailnet and private-network endpoints. They differ on purpose for loopback (the phone accepts it for the iOS Simulator and the mock server, Desktop would pair with itself) and for wss:// to a host that is not a .ts.net name (the phone accepts it with a warning, Desktop refuses it).",
+  "endpoints": [
+    { "endpoint": "wss://floco.tail1234.ts.net:7443", "kind": "tailnet", "desktop": true, "phone": true },
+    { "endpoint": "wss://Floco.Tail1234.TS.net/", "kind": "tailnet", "desktop": true, "phone": true },
+    { "endpoint": "ws://100.64.0.1:7787", "kind": "tailnet", "desktop": true, "phone": true },
+    { "endpoint": "ws://100.127.255.254:7787", "kind": "tailnet", "desktop": true, "phone": true },
+    { "endpoint": "ws://[fd7a:115c:a1e0::1]:7787", "kind": "tailnet", "desktop": true, "phone": true },
+
+    { "endpoint": "ws://192.168.1.4:7787", "kind": "localNetwork", "desktop": true, "phone": true },
+    { "endpoint": "ws://10.0.0.2", "kind": "localNetwork", "desktop": true, "phone": true },
+    { "endpoint": "ws://172.16.0.1:7787", "kind": "localNetwork", "desktop": true, "phone": true },
+    { "endpoint": "ws://172.31.255.255:7787", "kind": "localNetwork", "desktop": true, "phone": true },
+    { "endpoint": "ws://169.254.1.1:7787", "kind": "localNetwork", "desktop": true, "phone": true },
+    { "endpoint": "ws://[fd12:3456::1]:7787", "kind": "localNetwork", "desktop": true, "phone": true },
+    { "endpoint": "ws://[fe80::1]:7787", "kind": "localNetwork", "desktop": true, "phone": true },
+
+    { "endpoint": "ws://192.168.1.4:65535", "kind": "localNetwork", "desktop": true, "phone": true },
+    { "endpoint": "ws://192.168.1.4:0", "kind": "malformed", "desktop": false, "phone": false },
+    { "endpoint": "ws://192.168.1.4:65536", "kind": "malformed", "desktop": false, "phone": false },
+    { "endpoint": "wss://floco.tail1234.ts.net:99999", "kind": "malformed", "desktop": false, "phone": false },
+
+    { "endpoint": "ws://127.0.0.1:7787", "kind": "loopback", "desktop": false, "phone": true },
+    { "endpoint": "ws://127.1.2.3:7787", "kind": "loopback", "desktop": false, "phone": true },
+    { "endpoint": "ws://localhost:7787", "kind": "loopback", "desktop": false, "phone": true },
+    { "endpoint": "ws://[::1]:7443", "kind": "loopback", "desktop": false, "phone": true },
+
+    { "endpoint": "wss://example.com", "kind": "publicSecure", "desktop": false, "phone": true },
+    { "endpoint": "wss://ts.net", "kind": "publicSecure", "desktop": false, "phone": true },
+    { "endpoint": "wss://192.168.1.4:7443", "kind": "publicSecure", "desktop": false, "phone": true },
+
+    { "endpoint": "ws://8.8.8.8", "kind": "public", "desktop": false, "phone": false },
+    { "endpoint": "ws://203.0.113.5:7787", "kind": "public", "desktop": false, "phone": false },
+    { "endpoint": "ws://172.32.0.1", "kind": "public", "desktop": false, "phone": false },
+    { "endpoint": "ws://172.15.0.1", "kind": "public", "desktop": false, "phone": false },
+    { "endpoint": "ws://100.63.255.255:7787", "kind": "public", "desktop": false, "phone": false },
+    { "endpoint": "ws://100.128.0.1:7787", "kind": "public", "desktop": false, "phone": false },
+    { "endpoint": "ws://[2001:db8::1]:7787", "kind": "public", "desktop": false, "phone": false },
+    { "endpoint": "ws://mac.local", "kind": "public", "desktop": false, "phone": false },
+    { "endpoint": "ws://floco.tail1234.ts.net:7443", "kind": "public", "desktop": false, "phone": false },
+
+    { "endpoint": "wss://user:pass@floco.tail1234.ts.net", "kind": "malformed", "desktop": false, "phone": false },
+    { "endpoint": "wss://floco.tail1234.ts.net/?x=1", "kind": "malformed", "desktop": false, "phone": false },
+    { "endpoint": "wss://floco.tail1234.ts.net/#x", "kind": "malformed", "desktop": false, "phone": false },
+    { "endpoint": "http://100.64.0.1:7787", "kind": "malformed", "desktop": false, "phone": false }
+  ]
+}
