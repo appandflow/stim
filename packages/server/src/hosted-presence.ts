@@ -23,6 +23,8 @@ type Viewport = NonNullable<AgentSnapshotTree['viewport']>;
 interface Follower {
   listeners: number;
   stop: () => void;
+  /** Measures the session's device when that has not succeeded yet and no measuring is under way. */
+  measure: () => void;
 }
 
 /**
@@ -74,17 +76,27 @@ export class HostedPresence {
       const read = this.read(session, this.now());
       const timer = setInterval(() => this.publish(session, read()), this.pollMs);
       timer.unref();
-      follower = { listeners: 0, stop: () => clearInterval(timer) };
+      let measuring = false;
+      const measured: Follower = {
+        listeners: 0,
+        stop: () => clearInterval(timer),
+        measure: () => {
+          if (!screen || measuring || this.screens.has(session)) return;
+          measuring = true;
+          void (async () => {
+            try {
+              const viewport = await screen();
+              if (viewport && this.followers.get(session) === measured) this.screens.set(session, viewport);
+            } catch {
+            } finally {
+              measuring = false;
+            }
+          })();
+        },
+      };
+      follower = measured;
       this.followers.set(session, follower);
-      if (screen) {
-        const measured = follower;
-        void (async () => {
-          try {
-            const viewport = await screen();
-            if (viewport && this.followers.get(session) === measured) this.screens.set(session, viewport);
-          } catch {}
-        })();
-      }
+      follower.measure();
     }
     follower.listeners++;
     const held = follower;
@@ -106,6 +118,7 @@ export class HostedPresence {
     for (const record of records) {
       const { command, details } = record;
       if (record.event !== 'agent_action' || typeof command !== 'string' || !AGENT_COMMAND.test(command)) continue;
+      if (!this.trees.get(session)?.viewport) this.followers.get(session)?.measure();
       const gesture = agentActionGesture(
         details,
         this.trees.get(session) ?? null,
