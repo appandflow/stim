@@ -432,16 +432,52 @@ Install the client CLI globally or run it with npx:
 <StimInstallTabs />
 
 A remote machine can compile iOS simulator Debug and Release apps, Android
-emulator debug and macOS SwiftPM Debug apps. An iOS Release app built there
+emulator debug and release apps, and macOS SwiftPM Debug apps. An iOS Release app built there
 carries the JavaScript of the checkout this machine synced, including gitignored
 `.env.production` files, so a machine without Xcode, such as Linux, can run
 `stim ios --configuration Release --remote-build <mac>`. The worker bundles it
 in its own environment: an `EXPO_PUBLIC_` variable set only in this shell is not
 applied; put it in an `.env` file.
 Android builds on a
-worker machine need Java and the Android SDK. Device builds, Android release variants,
+worker machine need Java and the Android SDK. Device builds,
 EAS/proxy runs, Android CAS compiler-cache builds, and iOS/Android runs with
 artifact caching disabled in settings do not offload.
+
+### Android release variants
+
+`stim android --variant release --remote-build <machine>` builds the release
+variant on that machine. The APK carries the JavaScript of the checkout this
+machine synced, including gitignored `.env.production` files. An
+`EXPO_PUBLIC_` variable set only in this shell is not applied; put it in an
+`.env` file.
+
+Stim never sends a signing key or password to a remote machine. An Android
+offload leaves out every keystore other than `debug.keystore`, and
+`keystore.properties`, and the machine builds with its own private Gradle home, so
+`~/.gradle/gradle.properties` is not read on either machine. Builds on a worker
+run as one macOS or Linux user with no sandbox, which is why the key stays here.
+The project's release signing config decides what happens:
+
+- A release build type signed with `debug.keystore`, as the React Native and Expo
+  templates are, is signed on the remote machine. This machine needs no Android
+  tools.
+- Any other signing config builds there as an unsigned APK. This machine zipaligns
+  it and signs it with `android.keystore`, or `android/app/debug.keystore` when
+  that is unset. Without the Android SDK build-tools or that keystore, Stim
+  refuses and never sends the key.
+- Gradle scripts that read a missing key or password while configuring, such as
+  `file(MYAPP_UPLOAD_STORE_FILE)` with no `hasProperty` check, fail there. Guard
+  those reads or build here.
+- If the `android.keystore` file has another name inside the repository, or a
+  `.properties` or `credentials.json` file sets a store or key password, Stim
+  refuses before uploading anything.
+
+When a remote machine cannot take the build, `auto` and `remote` build here, and a
+named machine refuses with `STIM_OFFLOAD_REFUSED`.
+
+Stim cannot swap the JavaScript of an APK built on a remote machine, because it
+has no list of the assets that build packaged. A later run with the same
+fingerprint builds again on that machine, which reuses its Gradle outputs.
 
 Both machines need Node 22.12.0 or later, and either Tailscale running on the
 same tailnet or a shared local network (see

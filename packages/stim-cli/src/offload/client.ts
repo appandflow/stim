@@ -57,6 +57,7 @@ import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
 import { isReleaseConfiguration } from '../commands/ios/support.ts';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
+import { isSigningKeystore } from './signing-files.ts';
 import { namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import {
@@ -1320,6 +1321,12 @@ async function resumeJob(
 }
 
 /** Mirrors the checkout on the machine: the manifest in pages, then every blob it lacks. */
+function omittedFromSync(platform: BuildRequest['platform']): ((path: string) => boolean) | undefined {
+  return platform === 'android' ? isSigningKeystore : undefined;
+}
+
+type SyncRefusal = (repoRoot: string, paths: readonly string[]) => Promise<string | null>;
+
 async function syncSource(
   connection: BuildConnection,
   identity: RepoIdentity,
@@ -1327,6 +1334,8 @@ async function syncSource(
   native?: NativeInputSnapshot | GradleTransfer,
   signal?: AbortSignal,
   ignored: readonly string[] = [],
+  syncRefusal?: SyncRefusal,
+  omitted: (path: string) => boolean = () => false,
 ): Promise<
   { files: number; uploaded: number; uploadedBytes: number; syncMs: number; digest: string } | { failure: string }
 > {
@@ -1348,7 +1357,12 @@ async function syncSource(
             await sourceManifest(identity.repoRoot, false, signal),
             signal,
           )
-        : await sourceManifest(identity.repoRoot, false, signal, ignoredPaths);
+        : (await sourceManifest(identity.repoRoot, false, signal, ignoredPaths)).filter((file) => !omitted(file.path));
+  const refused = await syncRefusal?.(
+    identity.repoRoot,
+    manifest.map((file) => file.path),
+  );
+  if (refused) return { failure: refused };
   if (native && 'declaration' in native && manifestDigest(manifest) !== native.digest)
     return { failure: 'The native Gradle source changed before upload.' };
   const bySha = new Map(manifest.map((file) => [file.sha256, file]));
@@ -1572,6 +1586,8 @@ export async function offloadBuild(
     note: (line: string) => void;
     /** The fingerprint sources behind `expectedFingerprint` and the gitignored files they read, as absolute paths. */
     fingerprintInputs?: () => Promise<FingerprintInputs>;
+    /** Why these repository-relative paths may not go to a remote machine, checked before any is uploaded. */
+    syncRefusal?: SyncRefusal;
     restarts?: number;
   } & (
     | { request: Extract<BuildRequest, { platform: 'macos' }>; expectedFingerprint?: never }
@@ -1765,6 +1781,8 @@ export async function offloadBuild(
         nativeTransferInput(native),
         signal,
         inputs?.ignored,
+        input.syncRefusal,
+        omittedFromSync(request.platform),
       );
       checkCancelled();
       if ('failure' in synced) {

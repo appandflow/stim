@@ -8,7 +8,7 @@ import {
   reactNativeBuildQuery,
   reusedReactNativeArtifact,
 } from './react-native-artifact.ts';
-import { apkPackage, dumpApkManifest } from '../commands/android/support.ts';
+import { apkPackage, dumpApkManifest, isReleaseVariant } from '../commands/android/support.ts';
 import {
   chmodSync,
   constants,
@@ -1353,6 +1353,7 @@ async function compileAndroid(
           buildCache: options.gradleBuildCache,
           pch: options.pch,
           compilerCacheDisabled: options.compilerCache === 'none',
+          stripSigning: isReleaseVariant(options.variant),
           ccache: options.compilerCache === 'ccache' ? resolveCcache({ root, layout, onNote }) : null,
           onHeartbeat: onNote,
           onNote,

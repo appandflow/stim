@@ -29,6 +29,18 @@ export function missingPackageManagerRemedy(machine: string, reason: string): st
   return `${machine} has no ${tool} on the PATH of its stim-server service, and the app's lockfile needs it. ${install}, then run the same command again, or rerun with --remote-build auto or --remote-build local.`;
 }
 
+export const HOLDS_SIGNING_FILE = 'holds an Android signing key or its password';
+const SIGNING_FAILURE = /\bsign|keystore|store_?file/i;
+
+/** The remedy for an offloaded release build stopped by signing material that stays on this machine; undefined for any other reason. */
+export function signingRemedy(reason: string): string | undefined {
+  if (reason.includes(HOLDS_SIGNING_FILE))
+    return 'Remove that key or password from the repository, or build here with --remote-build local.';
+  return SIGNING_FAILURE.test(reason)
+    ? "A remote machine gets no signing key or password from this one, so it builds a project's real release signing as an unsigned APK and this machine signs it. If the build failed there, the project's Gradle scripts read the key or password while configuring: guard those reads with hasProperty or a file check, or build here with --remote-build local. If the APK could not be signed here, install the Android SDK build-tools, and set android.keystore or keep android/app/debug.keystore."
+    : undefined;
+}
+
 const PODS_FAILED_PREFIX = 'pod install failed: ';
 
 /** The reason a failed worker job is reported with: a `pods-failed` code reads as a failed pod install. */

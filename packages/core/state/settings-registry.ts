@@ -1156,7 +1156,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 'auto',
     env: 'STIM_REMOTE_BUILD',
     description:
-      'Where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: local here; auto here while it has a free concurrency.maxBuilds slot and load under server.maxLoadPerCore, otherwise on a remote.machines entry; remote on a remote.machines entry in order, here only when none takes the build; remote-only the same but never here; a machine name exactly that machine without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
+      'Where iOS simulator, Android emulator and macOS SwiftPM Debug builds run: local here; auto here while it has a free concurrency.maxBuilds slot and load under server.maxLoadPerCore, otherwise on a remote.machines entry; remote on a remote.machines entry in order, here only when none takes the build; remote-only the same but never here; a machine name exactly that machine without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
   },
   {
     key: 'server.maxOffloadedBuilds',

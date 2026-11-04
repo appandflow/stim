@@ -9,6 +9,7 @@
     "packages/stim-cli/shim/android-cas.gradle",
     "packages/stim-cli/shim/android-cas.toolchain.cmake",
     "packages/stim-cli/shim/android-optimizations.gradle",
+    "packages/stim-cli/shim/android-worker-signing.gradle",
     "packages/stim-cli/shim/expo-metro-config.cjs",
     "packages/stim-cli/shim/native-android.gradle",
     "packages/stim-cli/src/cache/build-cache.ts",
@@ -36,5 +37,5 @@
     "packages/stim-cli/src/optimizations.ts",
     "packages/stim-cli/src/supervisor/project-node.ts"
   ],
-  "digest": "9fc37586c00e64af4fc94e4c2c816f02fda2cfa37f14296f918bbd958a28b998"
+  "digest": "82594cda4c9b6a5329d08d71caefe5222619430ea4f31e58fa0c822197a49d91"
 }

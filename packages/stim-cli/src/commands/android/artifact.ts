@@ -60,6 +60,7 @@ import {
 import {
   fingerprintMismatchRemedy,
   missingPackageManagerRemedy,
+  signingRemedy,
   automaticBuild,
   namedBuildMachine,
   OffloadRefusal,
@@ -81,6 +82,8 @@ import { cancelledFailure, runCancellationSignal } from '../../engine/native-run
 import type { StimContext } from '@stim-cli/core';
 
 const FALLBACK_LINES = 5;
+
+const UNSIGNED_APK = /-unsigned\.apk$/;
 
 interface AndroidArtifactRequest {
   context: StimContext;
@@ -212,6 +215,7 @@ export async function acquireAndroidArtifact(
     phase('build', `${line} -> building here`);
   };
   const { variant, cache: cachePolicy } = buildPlan;
+  const embedsJs = recipe.embedsJs === true;
   const signal = runCancellationSignal(context) ?? context.signal;
   const cacheTarget = (key: string) => ({ projectRoot: root, platform: 'android' as const, key, signal });
   let useBuildCache = cachePolicy.read;
@@ -522,6 +526,7 @@ export async function acquireAndroidArtifact(
         placement.code === 'this-mac-free' &&
         cachePolicy.read &&
         cachePolicy.remote &&
+        !embedsJs &&
         (recipe.offload?.uncachedArtifacts || (recipe.offload && !recipe.offload.request.native))
       )
         return { cacheOnly: true, here, code: placement.code, reason: placement.reason, machines };
@@ -576,7 +581,7 @@ export async function acquireAndroidArtifact(
       selected: buildMachine,
       onCandidates: (each) => (asked = each),
       cacheOnly: candidate.cacheOnly,
-      ...(cachePolicy.read && cachePolicy.remote && storeHash && !request.native
+      ...(cachePolicy.read && cachePolicy.remote && storeHash && !request.native && !embedsJs
         ? { reactNativeArtifact: { fingerprint: storeHash, request } }
         : {}),
       ...(cachePolicy.read && cachePolicy.remote && request.native?.provider === 'gradle' && request.android.variant
@@ -635,6 +640,7 @@ export async function acquireAndroidArtifact(
       expectedFingerprint: uncached ? null : storeHash,
       request: recipe.offload!.request,
       fingerprintInputs: recipe.offload!.fingerprintInputs,
+      syncRefusal: recipe.offload?.syncRefusal,
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
       onEnter: (name) => {
@@ -649,6 +655,8 @@ export async function acquireAndroidArtifact(
     place(null);
     let stored: string | null = null;
     let reason = outcome.ok ? null : outcome.reason;
+    let artifactPath = outcome.ok ? outcome.artifactPath : '';
+    let signedHere = false;
     if (outcome.ok) {
       let unchanged = false;
       try {
@@ -656,21 +664,33 @@ export async function acquireAndroidArtifact(
       } catch (error) {
         reason = (error as Error).message;
       }
+      if (unchanged && UNSIGNED_APK.test(artifactPath) && recipe.offload?.signUnsigned) {
+        const signed = await recipe.offload.signUnsigned(artifactPath);
+        if ('failure' in signed) {
+          unchanged = false;
+          reason = signed.failure;
+        } else {
+          artifactPath = signed.apkPath;
+          signedHere = true;
+          phase('build', `signed the ${variant} APK here, because a signing key never leaves this machine`);
+        }
+      }
       if (!unchanged) {
         reason ??= 'the checkout here changed while it built';
       } else if (uncached) {
         if (!outcome.androidPackage) reason = 'the worker returned no verified APK package';
         else {
-          stored = outcome.artifactPath;
+          stored = artifactPath;
           androidPackage = outcome.androidPackage;
         }
       } else {
         try {
           stored =
-            (await recipe
-              .cache()
-              .store({ ...cacheTarget(storeKey!), sourcePath: outcome.artifactPath, overwrite: !useBuildCache })) ??
-            null;
+            (await recipe.cache().store({
+              ...cacheTarget(storeKey!),
+              sourcePath: artifactPath,
+              overwrite: !useBuildCache || embedsJs,
+            })) ?? null;
         } catch (err) {
           reason = `could not store the APK: ${(err as Error)?.message || err}`;
         }
@@ -691,9 +711,12 @@ export async function acquireAndroidArtifact(
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
         code: 'offload-failed',
         machine: choice.machine,
-        remedy: outcome.ok
-          ? undefined
-          : (fingerprintMismatchRemedy(outcome.reason) ?? missingPackageManagerRemedy(choice.machine, outcome.reason)),
+        remedy:
+          (outcome.ok
+            ? undefined
+            : (fingerprintMismatchRemedy(outcome.reason) ??
+              missingPackageManagerRemedy(choice.machine, outcome.reason))) ??
+          (embedsJs ? signingRemedy(why) : undefined),
       });
       writer.write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;
@@ -707,7 +730,7 @@ export async function acquireAndroidArtifact(
     }
     if (outcome.cacheHit) lateHit();
     apkPath = stored;
-    handoff = outcome.handoff ?? null;
+    handoff = signedHere ? null : (outcome.handoff ?? null);
     record.builtOn = outcome.machine;
     record.offloadedTo = outcome.machine;
     stats.setPlacement({

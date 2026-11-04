@@ -372,6 +372,14 @@ export type BuildAndroidResult = {
     }
 );
 
+function shimScript(name: string): string {
+  const script = [`../shim/${name}`, `../../shim/${name}`]
+    .map((path) => fileURLToPath(new URL(path, import.meta.url)))
+    .find((path) => existsSync(path));
+  if (!script) throw new Error(`Stim installation is missing shim/${name}.`);
+  return script;
+}
+
 export function gradleArgs(
   task: string,
   { buildCache = true, projectArgs = [] }: { buildCache?: boolean; projectArgs?: string[] } = {},
@@ -420,6 +428,7 @@ async function buildGradleWithEnv(
     cas = null,
     pch = 'auto',
     compilerCacheDisabled = false,
+    stripSigning = false,
     heartbeatMs = HEARTBEAT_INTERVAL_MS,
     estimateMs = null,
     onHeartbeat = (line: string) => console.error(line),
@@ -433,6 +442,8 @@ async function buildGradleWithEnv(
     cas?: AndroidCasSetup | null;
     pch?: 'auto' | 'on' | 'off';
     compilerCacheDisabled?: boolean;
+    /** Builds every signing config other than a `debug.keystore` as unsigned, for a machine that holds no key. */
+    stripSigning?: boolean;
     heartbeatMs?: number;
     estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
@@ -461,11 +472,9 @@ async function buildGradleWithEnv(
     args.push('--init-script', cas.initScript);
     onNote(chalk.dim(phaseLine('cache', `Apple Clang CAS on (${cas.dir})`)));
   }
-  const nativeScript = ['../shim/android-optimizations.gradle', '../../shim/android-optimizations.gradle']
-    .map((path) => fileURLToPath(new URL(path, import.meta.url)))
-    .find((path) => existsSync(path));
-  if (!nativeScript) throw new Error('Stim installation is missing shim/android-optimizations.gradle.');
+  const nativeScript = shimScript('android-optimizations.gradle');
   args.push('--init-script', nativeScript);
+  if (stripSigning) args.push('--init-script', shimScript('android-worker-signing.gradle'));
   const nativeBackend = cas
     ? cas.id
     : ccache

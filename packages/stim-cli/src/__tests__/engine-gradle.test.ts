@@ -214,6 +214,22 @@ describe('buildAndroid', () => {
     );
   });
 
+  test('stripSigning adds the worker signing script after the optimizations script', async () => {
+    makeAndroidProject();
+    const calls: string[][] = [];
+    await buildAndroid(
+      { root },
+      {
+        stripSigning: true,
+        spawnFn: (_cmd, args) => {
+          calls.push(args);
+          return fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() });
+        },
+      },
+    );
+    expect(calls[0]?.slice(-2)).toEqual(['--init-script', expect.stringContaining('android-worker-signing.gradle')]);
+  });
+
   test('the build_start record shows --no-build-cache when the cache is off', async () => {
     makeAndroidProject();
     const writer = recordingWriter();

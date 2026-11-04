@@ -56,6 +56,11 @@ export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
   '**/.git/**',
   // Metro and the Expo CLI write logs and caches here; reached through a `..` dir source it is not ignored by default.
   '**/.expo/**',
+  // A signing key never goes to a remote machine, which must still compute the same fingerprint.
+  '**/*.keystore',
+  '**/*.jks',
+  '**/keystore.properties',
+  '!**/debug.keystore',
 ];
 
 /**

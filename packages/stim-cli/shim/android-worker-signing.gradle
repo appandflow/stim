@@ -1,0 +1,11 @@
+gradle.beforeProject { project ->
+    project.pluginManager.withPlugin("com.android.application") {
+        project.extensions.getByName("androidComponents").finalizeDsl { android ->
+            ([android.defaultConfig] + android.buildTypes.toList() + android.productFlavors.toList()).each { config ->
+                if (config.signingConfig?.storeFile?.name == "debug.keystore") return
+                // AGP overloads setSigningConfig, so Groovy cannot pick one for a null argument.
+                config.class.methods.find { it.name == "setSigningConfig" }.invoke(config, [null] as Object[])
+            }
+        }
+    }
+}
