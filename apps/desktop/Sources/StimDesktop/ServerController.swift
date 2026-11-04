@@ -124,6 +124,7 @@ final class ServerController: ObservableObject {
   private var generation = 0
   private var devicesEpoch = 0
   private var missedProbes = 0
+  private var portHeldByStranger = false
   private var startedLoopbackOnly = true
   private var failedAt: Date?
   /// Why the next `.failed` state happens; nil is the adoption check in `State.init(probe:owned:resolvedHome:port:)`.
@@ -180,7 +181,6 @@ final class ServerController: ObservableObject {
     "Port \(port) is held by a program that does not answer as a stim-server, such as a stim-server too busy to reply. Stop it, or start Stim Desktop with -stimServerPort <port> to use another port."
   }
 
-  /// Whether the `dev.stim.server` LaunchAgent that `stim-server setup` installs exists for this user.
   static var serviceInstalled: Bool {
     let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
     return FileManager.default.fileExists(atPath: "\(home)/Library/LaunchAgents/dev.stim.server.plist")
@@ -311,6 +311,7 @@ final class ServerController: ObservableObject {
     state = .starting
     retriesFailure = true
     missedProbes = 0
+    portHeldByStranger = false
     automaticPort = nil
     Task {
       await waitForExiting()
@@ -319,6 +320,7 @@ final class ServerController: ObservableObject {
       let probe = await StimServerCLI.health(port: port)
       if probe == nil, await StimServerCLI.portIsHeld(port) {
         guard current == generation else { return }
+        portHeldByStranger = true
         state = .notReady(.degraded(Self.portHeldReason(port: port)), owned: false)
         return
       }
@@ -543,17 +545,31 @@ final class ServerController: ObservableObject {
       case .notReady(let startup, let stimHome)
       where owned || (stimHome.map { StimHome.adopts(serverHome: $0, resolved: resolved) } ?? true):
         missedProbes = 0
+        portHeldByStranger = false
         state = .notReady(startup, owned: owned)
       case .ready(let health) where owned || StimHome.adopts(serverHome: health.stimHome, resolved: resolved):
         missedProbes = 0
+        portHeldByStranger = false
         state = .running(health, owned: owned)
         if health.nativeViewerOpened == true { NativeViewerPermissions.shared.viewerOpened(serverOwned: owned) }
       default:
         if !owned {
           missedProbes += 1
           guard missedProbes >= 2 else { return }
-          state = .notReady(
-            .degraded(Self.adoptedServerSilentReason(port: port, serviceInstalled: Self.serviceInstalled)), owned: false)
+          if probe == nil, !portHeldByStranger {
+            state = .notReady(
+              .degraded(Self.adoptedServerSilentReason(port: port, serviceInstalled: Self.serviceInstalled)), owned: false)
+            return
+          }
+          let held = probe == nil ? await StimServerCLI.portIsHeld(port) : false
+          guard current == generation, isResponding, !provisional else { return }
+          if held {
+            state = .notReady(.degraded(Self.portHeldReason(port: port)), owned: false)
+            return
+          }
+          missedProbes = 0
+          state = .off
+          start()
         }
       }
     }

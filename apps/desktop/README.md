@@ -2246,7 +2246,7 @@ Sentry DSN or `stim-desktop` URL scheme. It has its own `UserDefaults`, login
 item, notification permission and notification history, and pairs with
 stim-server under its own name (see [Replay](#replay)). Both apps use port
 7787, so the one that starts second uses the other's server instead of starting
-one; when that app quits, the remaining one starts its own within two minutes. Paired phones and the `tailscale serve` route keep working
+one; when that app quits, the remaining one shows the server it adopted as unavailable and waits for it, and reopening it starts its own. Paired phones and the `tailscale serve` route keep working
 because they belong to the Stim home, not to either app. Both apps check disk
 pressure. `stim ios` and `stim android` open device links with `open -a Stim`,
 which reaches the release app, never Stim Dev.
