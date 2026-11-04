@@ -307,7 +307,7 @@ PATH).
   warnings-as-errors debug build, the linked SDK check, the staged server and
   `swift test`. Nightly (05:00 UTC) and dispatch add the Release configuration
   compile, the `stim-frames` helper compile, the hardened-runtime server start
-  and an ad-hoc release package, which together take about 20 more minutes.
+  and an ad-hoc release package, which together take about 15 to 20 more minutes.
   The Release compile is also built by every `Desktop next` run on `main`.
 
 - **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner

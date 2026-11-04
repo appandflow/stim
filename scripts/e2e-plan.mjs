@@ -35,16 +35,12 @@ function requested({ eventName, labels, suite, action, changedLabel }) {
   }
 }
 
-const SKIPPED_ON_PUSH = ['windows'];
-
 export function planSuites(input) {
   const suites = requested(input);
   return Object.fromEntries(
     Object.entries(PLATFORMS).map(([platform, supported]) => [
       platform,
-      input.eventName === 'push' && SKIPPED_ON_PUSH.includes(platform)
-        ? []
-        : suites.filter((s) => supported.includes(s)),
+      input.eventName === 'push' && platform === 'windows' ? [] : suites.filter((s) => supported.includes(s)),
     ]),
   );
 }
