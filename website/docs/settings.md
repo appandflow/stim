@@ -848,7 +848,8 @@ to WebSocket when WebRTC fails. It needs the optional `node-datachannel` package
 on that machine. That machine offers only private, link-local and Tailscale
 addresses and uses no STUN server, so a viewer on the same network or tailnet
 connects directly and a viewer on the internet stays on WebSocket and never
-learns the machine's public address. Setting `STIM_WEBRTC_STUN` to a `stun:` URL
+learns the machine's public address. The answer does list the machine's LAN and
+tailnet addresses to every viewer with the link. Setting `STIM_WEBRTC_STUN` to a `stun:` URL
 turns this filter off.
 
 ## Device recordings

@@ -321,14 +321,17 @@ the choice is not remembered. On, a viewer that opens the link with
 ?transport=webrtc (remembered in a cookie for a day) takes video over a WebRTC
 data channel from the machine that owns the device, so a hosted device's video
 does not cross this machine, and ?stats shows a stats panel. A missing
-node-datachannel package, an older worker without hosted-webrtc, or any WebRTC
+node-datachannel package, an older worker without hosted-webrtc-private, or any WebRTC
 failure drops the viewer back to WebSocket. Input stays on the share socket.
 
 The machine that sends the video offers only host candidates on private,
 link-local and Tailscale (100.64.0.0/10) addresses, does no STUN, and ignores a
 viewer's candidates at any other address. A viewer on the same LAN or tailnet
 gets a direct channel; a viewer on the public internet never learns this
-machine's public address, and falls back to WebSocket. There is no TURN relay.
+machine's public address and stays on WebSocket. A browser there still offers an
+mDNS name, so its channel attempt runs until it times out. The answer lists this
+machine's LAN and tailnet addresses to every viewer with the link. There is no
+TURN relay.
 STIM_WEBRTC_STUN=stun:host:port (comma separated) on the sending machine, and on
 the machine serving the share page when they differ, switches the filter off and
 lets viewers connect over public addresses; this machine's public address is

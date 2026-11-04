@@ -1597,7 +1597,7 @@ subscription ID as `params.subscription`. `device-host.frames.congested`
 (feature `hosted-congestion`) reports that a client further downstream is
 behind on that H.264 subscription; it lowers the bitrate the same way a backed-up
 socket does.
-`device-host.webrtc.offer` (feature `hosted-webrtc`, experimental) takes
+`device-host.webrtc.offer` (features `hosted-webrtc` and `hosted-webrtc-private`, experimental) takes
 `{ "session": "<hosted-session-id>", "sdp": "<offer>" }` and answers with a
 subscription ID and the SDP answer. The host then sends the session's H.264
 access units to the browser that made the offer over a WebRTC data channel,

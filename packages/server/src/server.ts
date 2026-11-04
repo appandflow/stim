@@ -525,6 +525,7 @@ const MACOS_ONLY_FEATURES: readonly string[] = [
   'native-xcode-build',
   'native-xcode-toolchain',
   'hosted-webrtc',
+  'hosted-webrtc-private',
 ];
 /**
  * Test switch: set to 1, a `physical` target may resolve to an emulator its workspace leases with `stim device
