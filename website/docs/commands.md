@@ -1690,9 +1690,13 @@ its data folder. `buildBytes` is Stim's own folder for the workspace, with Xcode
 derived data, Gradle outputs and logs. `nodeModulesBytes` counts APFS clones in
 full; `nodeModulesPrivateBytes` is what deleting `node_modules` would free, the
 blocks no copy-on-write clone or outside hard link shares, and is `null` off
-APFS or without the Command Line Tools. The watcher runs `du` off its refresh path, at
-most every 5 minutes per folder while the environment is active and every hour
-otherwise, and one-shot `stim status` reads its cached sizes.
+APFS or without the Command Line Tools. Both `node_modules` figures are `null`
+again after a reinstall or a fresh clone until the tree is measured, and they
+are the measurement `stim gc` and the daemon's cleanup use. The watcher
+measures off its refresh path, at most every 5 minutes per folder while the
+environment is active and every hour otherwise, and measures `node_modules`
+when its install changes and at least every 6 hours. One-shot `stim status`
+reads the cached sizes.
 
 An environment carries `agents` when a coding-agent session works in it:
 `[{ tool, sessionId, title?, cwd, startedAt?, lastActiveAt?, pid?, openUrl?, webUrl? }]`,
@@ -2680,7 +2684,8 @@ Each entry's
 blocks no copy-on-write clone or outside hard link shares, and is `null` for
 other directories, off APFS and without the Command Line Tools. gc reuses a
 size for up to an hour while no entry was added to or removed from the
-directory (for `node_modules` and Pods, while their install is unchanged),
+directory (for `node_modules` and Pods, for up to six hours while their install
+is unchanged, the measurement `stim status` and the daemon share),
 measures the rest with one `du` or private-size walk per directory, 4 at a time with a
 10-second limit each, and reports a directory it could not measure in time as
 `null`.

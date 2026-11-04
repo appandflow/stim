@@ -987,8 +987,10 @@ RULES
                               measured within 10 seconds; sizes are cached
                               for up to an hour while no entry of the
                               directory was added or removed (for
-                              node_modules and Pods, while their install
-                              signature is unchanged). null
+                              node_modules and Pods, for up to six hours
+                              while their install signature is unchanged,
+                              the same measurement status and the daemon
+                              use). null
                               for a root outside git. Without --worktrees,
                               the source checkout and roots outside git
                               are left out
@@ -1835,12 +1837,17 @@ RULES
                       workspace, node_modules included; the linked
                       worktrees nested inside a checkout are not counted
     nodeModulesBytes  node_modules at that root and at the workspace path;
-                      part of worktreeBytes; du counts APFS clones in full
+                      part of worktreeBytes; du counts APFS clones in full;
+                      null until measured, and again after a reinstall or
+                      a fresh clone until the next measurement
     nodeModulesPrivateBytes
                       what deleting that node_modules would free on APFS:
                       blocks no copy-on-write clone (worktree warm clones
                       it) or hard link outside it shares; null off APFS,
-                      without the Command Line Tools, or until measured
+                      without the Command Line Tools, or like
+                      nodeModulesBytes until measured. gc's node_modules
+                      privateBytes and the daemon's cleanup read the same
+                      measurement
     buildBytes        Stim's folder for the workspace: Xcode derived data,
                       Gradle outputs and logs
     measuredAt        the oldest of the three measurements; a figure not
@@ -1850,11 +1857,12 @@ RULES
 
   \`status --watch\` runs one disk walk at a time on the whole machine, at low
   priority, off its refresh path, and measures a folder at most every 5
-  minutes while its environment is active and every hour otherwise. A walk
-  that fails or times out is not repeated by any watcher for that period. It
-  caches each size under $STIM_HOME/disk-usage, which one-shot status only
-  reads, so the fields appear once a watcher, such as stim-server or Stim
-  Desktop, has measured.
+  minutes while its environment is active and every hour otherwise. A
+  node_modules is measured again when its install changes and after 6 hours,
+  as the daemon and gc do. A walk that fails or times out is not repeated by
+  any watcher for that period. It caches each size under $STIM_HOME/disk-usage,
+  which one-shot status only reads, so the fields appear once a watcher, such
+  as stim-server or Stim Desktop, has measured.
 
   An environment carries agents when coding-agent sessions work in it, most
   recently active first:

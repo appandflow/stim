@@ -1,6 +1,5 @@
-import type { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, sep } from 'node:path';
 import {
@@ -8,12 +7,10 @@ import {
   diskUsageCacheFile,
   gitMergeCacheFile,
   diskUsageFailureFile,
-  diskUsageWalkClaims,
   pullRequestCacheFile,
   ENDED_AGENT_RETENTION_MS,
   readAgentSessionsCache,
   readDiskUsage,
-  readDiskUsageFailure,
   readEndedAgentSessions,
   readPullRequestCache,
   readWorkspaceAgent,
@@ -30,46 +27,24 @@ import {
   type WorktreeFacts,
   type WorktreePullRequest,
 } from '@stim-cli/core/state';
-import {
-  clearClaimChild,
-  markClaimChildPending,
-  releaseClaim,
-  setClaimChild,
-  tryAcquireClaim,
-  type ClaimHandle,
-} from '@stim-cli/core/ownership-claim';
-import { captureProcessIdentity } from '@stim-cli/core/process-identity';
-import { debugLog } from './debug-log.ts';
 import { agentKey, attributeAgentSessions, discoverAgentSessions, type AgentWorkspace } from './agent-sessions.ts';
 import { withDirLock } from './dir-lock.ts';
 import { ownedAvdDirectory } from './devices/android.ts';
-import { getExecutor } from './exec.ts';
 import { gitAsync } from './workspace/git.ts';
 import { workspaceDir } from './workspace/paths.ts';
 import { gitCommonDirOnDisk, linkedWorktreesOnDisk } from './workspace/worktree.ts';
-import { measureTree, treeSignature, type TreeSize } from './private-size.ts';
+import { writeCacheFile } from './cache-file.ts';
+import { refreshMeasure, trustedMeasure } from './disk-usage.ts';
 import { pullRequestLookups, type PullRequestFact, type PullRequestQuery } from './workspace/pull-request.ts';
 
 const LIVE_DISK_MAX_AGE_MS = 5 * 60_000;
 const IDLE_DISK_MAX_AGE_MS = 60 * 60_000;
 const DU_TIMEOUT_MS = 120_000;
-const DU_NICENESS = '19';
 const PULL_REQUEST_MAX_AGE_MS = 5 * 60_000;
 const PULL_REQUEST_CHECK_MS = 60_000;
 const GIT_TIMEOUT_MS = 5000;
 const AGENT_DISCOVERY_MS = 15_000;
 const AGENT_CACHE_MAX_AGE_MS = 2 * 60_000;
-
-export function writeCacheFile(file: string, entry: object): void {
-  const temporary = `${file}.${randomUUID()}.tmp`;
-  try {
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(temporary, JSON.stringify(entry));
-    renameSync(temporary, file);
-  } catch {
-    rmSync(temporary, { force: true });
-  }
-}
 
 export function forgetStatusMeasures(worktree: string, workspaces: readonly string[]): void {
   const roots = [...new Set([worktree, ...workspaces])];
@@ -136,7 +111,7 @@ function environmentFolders(state: EnvironmentState): {
 /** The environment's disk use from the cached measurements; null before any folder was measured. */
 function environmentDisk(folders: ReturnType<typeof environmentFolders>): EnvironmentDisk | null {
   const worktree = readDiskUsage(folders.worktree);
-  const modules = folders.nodeModules.map((path) => readDiskUsage(path));
+  const modules = folders.nodeModules.map((path) => trustedMeasure(path));
   const build = readDiskUsage(folders.build);
   const modulesPrivate = modules.map((entry) => entry?.privateBytes);
   const measured = [worktree, ...modules, build].filter((entry): entry is DiskMeasure => entry !== null);
@@ -295,12 +270,6 @@ export function applyStatusMeasures(states: EnvironmentState[], worktrees: Workt
   }
 }
 
-/** Kilobytes from `du -sk` output, summed over its lines, or null when it printed none. */
-function parseDuKilobytes(output: string): number | null {
-  const sizes = [...output.matchAll(/^(\d+)\s/gm)].map((match) => Number(match[1]));
-  return sizes.length ? sizes.reduce((sum, kb) => sum + kb, 0) : null;
-}
-
 /** The folders inside a checkout that another measurement owns: its linked worktrees and Stim's workspace folder. */
 function nestedFolders(state: EnvironmentState): string[] {
   const common = gitCommonDirOnDisk(state.path);
@@ -333,31 +302,6 @@ function walkTargets(root: string, nested: readonly string[]): string[] {
   return targets;
 }
 
-/** Records a walk's process as the child of the disk-usage walk claim. */
-export function holdOn(claim: ClaimHandle): (child: ChildProcess) => void {
-  return (child) => {
-    if (child.pid === undefined) return;
-    const captured = captureProcessIdentity(child.pid);
-    if (!captured.ok) throw new Error(`Cannot record the disk usage walk: ${captured.reason}`);
-    setClaimChild(claim, { pid: child.pid, processToken: captured.token });
-  };
-}
-
-function isStale(measure: DiskMeasure | null, maxAgeMs: number, now: number): boolean {
-  return !measure || now - Date.parse(measure.measuredAt) >= maxAgeMs;
-}
-
-export function takeWalkClaim(): ClaimHandle | null {
-  try {
-    const attempt = tryAcquireClaim({ root: diskUsageWalkClaims(), mode: 'exclusive', label: 'disk usage walk' });
-    if (attempt.pending) releaseClaim(attempt.pending);
-    return attempt.acquired ?? null;
-  } catch (error) {
-    debugLog.log('disk-walk-claim', { error: String((error as Error)?.message ?? error) });
-    return null;
-  }
-}
-
 interface MeasuredFolder {
   path: string;
   maxAgeMs: number;
@@ -373,13 +317,14 @@ export interface StatusMeasurer {
 /**
  * Keeps the disk use, pull request and agent session caches fresh for `status --watch`, off its refresh path: one
  * agent session discovery at most every 15 seconds, which status ignores once it is over 2 minutes old, one disk walk at
- * a time on the whole machine (`du -sk`, or for node_modules the private-size walk of `measureTree`; an ownership claim; a failed walk is recorded so other watchers do not repeat it), at low
- * priority, live environments first, a checkout without the linked worktrees nested in it, each folder at most every 5 minutes while its environment is live and every hour otherwise, and one `gh api
- * graphql` per repository for worktrees whose lookup is over 5 minutes old or whose branch or HEAD moved. It
- * runs git only in the repository, never in a worktree, and only for worktrees whose git state status read. It rechecks
- * a folder's cache right before measuring, so two watchers rarely measure the same folder. A session the previous
- * discovery found and this one does not is recorded as ended in the workspaces it worked in. `updated` runs after each
- * write.
+ * a time on the whole machine through `refreshMeasure` (an ownership claim; a failed walk is recorded so other watchers
+ * do not repeat it), at low priority, live environments first, a checkout without the linked worktrees nested in it,
+ * each folder other than node_modules at most every 5 minutes while its environment is live and every hour otherwise,
+ * and one `gh api graphql` per repository for worktrees whose lookup is over 5 minutes old or whose branch or HEAD
+ * moved. It runs git only in the repository, never in a worktree, and only for worktrees whose git state status read.
+ * It rechecks a folder's cache right before measuring, so two watchers rarely measure the same folder. A session the
+ * previous discovery found and this one does not is recorded as ended in the workspaces it worked in. `updated` runs
+ * after each write.
  */
 export function createStatusMeasurer({
   updated,
@@ -388,89 +333,24 @@ export function createStatusMeasurer({
   updated: () => void;
   now?: () => number;
 }): StatusMeasurer {
-  const exec = getExecutor();
   let measuring = false;
-  let duMissing = false;
   let checking = false;
   let checkedAt = -Infinity;
   let discovering = false;
   let discoveredAt = -Infinity;
 
-  async function measureDependencies(path: string, claim: ClaimHandle): Promise<TreeSize | null> {
-    try {
-      markClaimChildPending(claim);
-      return await measureTree(path, { timeoutMs: DU_TIMEOUT_MS, onSpawn: holdOn(claim) });
-    } finally {
-      clearClaimChild(claim);
-    }
-  }
-
-  async function du(targets: string[], claim: ClaimHandle): Promise<number | null> {
-    const hold = holdOn(claim);
-    try {
-      markClaimChildPending(claim);
-      return parseDuKilobytes(
-        await exec.runFileAsync('nice', ['-n', DU_NICENESS, 'du', '-sk', ...targets], {
-          timeoutMs: DU_TIMEOUT_MS,
-          onSpawn: hold,
-        }),
-      );
-    } catch (error) {
-      const { code, status, stdout } = error as NodeJS.ErrnoException & { status?: number; stdout?: string };
-      if (code === 'ENOENT') duMissing = true;
-      return status === 1 && typeof stdout === 'string' ? parseDuKilobytes(stdout) : null;
-    } finally {
-      clearClaimChild(claim);
-    }
-  }
-
-  function due(path: string, maxAgeMs: number): boolean {
-    const failedAt = readDiskUsageFailure(path);
-    return isStale(readDiskUsage(path), maxAgeMs, now()) && (!failedAt || now() - Date.parse(failedAt) >= maxAgeMs);
-  }
-
   async function measure(folders: MeasuredFolder[]): Promise<void> {
     for (const { path, maxAgeMs, nested } of folders) {
-      if (duMissing || !due(path, maxAgeMs)) continue;
-      const stamp = () => ({ path, measuredAt: new Date(now()).toISOString() });
-      const dependencies = basename(path).startsWith('node_modules');
-      if (!existsSync(path)) {
-        if (!dependencies) continue;
-        writeCacheFile(diskUsageCacheFile(path), { ...stamp(), bytes: 0, privateBytes: 0 });
-        updated();
-        continue;
-      }
-      const claim = takeWalkClaim();
-      if (!claim) return;
-      try {
-        if (!due(path, maxAgeMs)) continue;
-        if (dependencies) {
-          const signature = treeSignature(path);
-          const size = await measureDependencies(path, claim);
-          if (!size) {
-            writeCacheFile(diskUsageFailureFile(path), { path, failedAt: new Date(now()).toISOString() });
-            continue;
-          }
-          writeCacheFile(diskUsageCacheFile(path), {
-            ...stamp(),
-            bytes: size.bytes,
-            ...(size.privateBytes !== null ? { privateBytes: size.privateBytes } : {}),
-            ...(signature ? { signature } : {}),
-          });
-          updated();
-          continue;
-        }
-        const targets = walkTargets(path, nested?.() ?? []);
-        const kb = targets.length ? await du(targets, claim) : 0;
-        if (kb === null) {
-          writeCacheFile(diskUsageFailureFile(path), { path, failedAt: new Date(now()).toISOString() });
-          continue;
-        }
-        writeCacheFile(diskUsageCacheFile(path), { ...stamp(), bytes: kb * 1024 });
-        updated();
-      } finally {
-        releaseClaim(claim);
-      }
+      const { outcome } = await refreshMeasure(path, {
+        timeoutMs: DU_TIMEOUT_MS,
+        maxAgeMs,
+        now,
+        claim: true,
+        failures: true,
+        ...(nested ? { targets: () => walkTargets(path, nested()) } : {}),
+      });
+      if (outcome === 'busy') return;
+      if (outcome === 'measured') updated();
     }
   }
 

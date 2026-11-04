@@ -27,7 +27,7 @@ import {
   readDaemonSnapshot,
   readJsonObject,
 } from '@stim-cli/core/state';
-import { writeCacheFile } from '../status-measures.ts';
+import { writeCacheFile } from '../cache-file.ts';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { recordCapacityRefusal, recordCapacityWait } from './stats.ts';
 import {
