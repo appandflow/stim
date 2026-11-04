@@ -1,9 +1,15 @@
 import type { StimContext } from '@stim-cli/core';
-import type { DaemonLadderAction } from '@stim-cli/core/state';
+import { readDeferredShutdowns, type DaemonLadderAction } from '@stim-cli/core/state';
+import { clearDeferredShutdown } from '../devices/deferred-shutdown.ts';
+import { deviceSlotKey, deviceSlotPlatforms, parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { isBootedParked, readParked, type ParkedSim } from '../devices/sim-pool.ts';
-import { shutDownBootedParkedIosSim } from '../devices/teardown.ts';
+import { shutDownBootedParkedIosSim, teardownOwnedIosSim } from '../devices/teardown.ts';
 import type { HostMemoryPressure } from '../host-memory.ts';
+import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { getProject, loadConfig, type Config } from '../workspace/config.ts';
+import { withIdleWorkspace } from '../workspace/in-use.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import type { IdlePassInput } from './idle.ts';
 
 export interface BootedParkedDue {
@@ -45,21 +51,107 @@ export function bootedParkedDue({
   return due;
 }
 
+/** A simulator `stop` left booted: the workspace's own owned device, with the time its shutdown is due. */
+interface DeferredMark {
+  root: string;
+  slot: string;
+  udid: string;
+  name: string;
+  until: string;
+}
+
+/** The deferred shutdowns of the owned simulators the registered workspaces still hold. */
+function readDeferredMarks(config: Config | null): DeferredMark[] {
+  const marks: DeferredMark[] = [];
+  for (const [root, project] of Object.entries(config?.projects ?? {})) {
+    if (!projectDeviceSlots(project).some(({ platforms }) => platforms.ios?.owned === true)) continue;
+    for (const [key, record] of Object.entries(readDeferredShutdowns(readWorkspaceState(root)))) {
+      const slot = parseDeviceSlotKey(key)?.slot;
+      if (slot === undefined) continue;
+      const ios = deviceSlotPlatforms(project, slot)?.ios;
+      if (ios?.owned === true && ios.deviceUdid === record.udid)
+        marks.push({
+          root,
+          slot,
+          udid: record.udid,
+          name: String(ios.deviceName ?? record.udid),
+          until: record.until,
+        });
+    }
+  }
+  return marks;
+}
+
+interface DeferredShutdownDue {
+  mark: DeferredMark;
+  why: string;
+  /** False when the simulator is no longer booted, so the mark only needs clearing. */
+  shutDown: boolean;
+}
+
+/**
+ * The deferred shutdowns that are due now: under memory pressure, once `until` has passed, or, with `all`, whatever
+ * the time. A simulator that is no longer booted is due only for clearing its mark. Nothing is due while the
+ * simulator list is unavailable.
+ */
+function deferredShutdownDue({
+  marks,
+  sims,
+  now,
+  memory,
+  all = false,
+}: {
+  marks: readonly DeferredMark[];
+  sims: readonly IosSimRecord[] | null;
+  now: number;
+  memory: HostMemoryPressure | null;
+  all?: boolean;
+}): DeferredShutdownDue[] {
+  if (sims === null) return [];
+  const due: DeferredShutdownDue[] = [];
+  for (const mark of marks) {
+    if (sims.find((sim) => sim.udid === mark.udid)?.state !== 'Booted') {
+      due.push({ mark, why: 'it is no longer booted', shutDown: false });
+      continue;
+    }
+    let why: string | null = null;
+    if (memory !== null && memory !== 'normal') why = `macOS memory pressure is ${memory}`;
+    else if (Date.parse(mark.until) <= now) why = 'its grace period has passed';
+    else if (all) why = 'every deferred shutdown is taken';
+    if (why) due.push({ mark, why, shutDown: true });
+  }
+  return due;
+}
+
 const RETRY_AFTER_EXPIRY_MS = 10 * 60_000;
 
 /**
- * Whether a parked simulator is still kept booted, or passed its grace period within the last 10 minutes and so may
- * need another shutdown attempt, which keeps the daemon running to end it.
+ * Whether a parked simulator, or one `stop` left booted, is still kept booted or passed its grace period within the
+ * last 10 minutes and so may need another shutdown attempt, which keeps the daemon running to end it.
  */
 export function bootedParkedPending(now: number = Date.now()): boolean {
-  return readParked('ios').some(
-    (record) => record.bootedUntil !== undefined && Date.parse(record.bootedUntil) + RETRY_AFTER_EXPIRY_MS > now,
+  return (
+    readParked('ios').some(
+      (record) => record.bootedUntil !== undefined && Date.parse(record.bootedUntil) + RETRY_AFTER_EXPIRY_MS > now,
+    ) || readDeferredMarks(loadConfig()).some((mark) => Date.parse(mark.until) + RETRY_AFTER_EXPIRY_MS > now)
   );
+}
+
+/** Whether the workspace's dev server runs, so it is in use again and a deferred shutdown no longer applies. */
+function workspaceServing(root: string): boolean {
+  const project = getProject(root);
+  const target = resolveSupervisorTarget({
+    state: readWorkspaceState(root)?.supervisor,
+    record: project?.supervisor,
+    reservedPort: project?.metroPort,
+  });
+  return target.status === 'ours' || target.status === 'unverified';
 }
 
 /**
  * Shuts down, through teardown, the parked simulators `bootedParkedDue` names, before any workspace's device is
- * touched. Each is shut down and stays parked.
+ * touched. Each is shut down and stays parked. Then the simulators `stop` left booted: each goes through the same
+ * teardown under the workspace's native-run lock and loses its deferral; one whose workspace serves again only loses it.
  */
 export async function runBootedParkedPass({
   sims,
@@ -108,6 +200,66 @@ export async function runBootedParkedPass({
       outcome: done ? 'done' : 'failed',
       bytes: 0,
       detail,
+    });
+  }
+  for (const { mark, why, shutDown } of deferredShutdownDue({
+    marks: readDeferredMarks(loadConfig()),
+    sims,
+    now,
+    memory,
+    all,
+  })) {
+    const target = mark.udid;
+    const label = `simulator ${mark.name}`;
+    if (!shutDown || workspaceServing(mark.root)) {
+      if (act) await clearDeferredShutdown(mark.root, mark.slot);
+      continue;
+    }
+    if (!act) {
+      log('info', 'deferred_shutdown_would_run', `${mark.root}: would shut down ${label}: ${why}`, {
+        workspace: mark.root,
+      });
+      actions.push({
+        rung,
+        kind: 'shut-down-deferred-device',
+        target,
+        workspace: mark.root,
+        outcome: 'would',
+        bytes: 0,
+        detail: 'daemon.mode report acts on nothing',
+      });
+      continue;
+    }
+    const run = await withIdleWorkspace(
+      mark.root,
+      async () => {
+        const current = readDeferredShutdowns(readWorkspaceState(mark.root))[deviceSlotKey('ios', mark.slot)];
+        if (current?.udid !== mark.udid) return null;
+        const outcome = await teardownOwnedIosSim(mark.udid, { label: mark.name, workspace: mark.root, operation });
+        if (outcome.status === 'torn-down' || outcome.status === 'missing')
+          await clearDeferredShutdown(mark.root, mark.slot);
+        return outcome;
+      },
+      { purpose: 'deferred simulator shutdown', operation, supervisor: false, managedLocks: false },
+    );
+    if (!run.ran || run.value === null) continue;
+    const outcome = run.value;
+    const done = outcome.status === 'torn-down' || outcome.status === 'missing';
+    const detail = done ? `shut down ${label}: ${why}` : `kept ${label} booted: ${outcome.reason ?? outcome.status}`;
+    log(done ? 'info' : 'warn', done ? 'deferred_shutdown_done' : 'deferred_shutdown_kept', `${mark.root}: ${detail}`, {
+      workspace: mark.root,
+      target,
+    });
+    if (outcome.status === 'skipped') continue;
+    actions.push({
+      rung,
+      kind: 'shut-down-deferred-device',
+      target,
+      workspace: mark.root,
+      outcome: done ? 'done' : 'failed',
+      bytes: 0,
+      detail,
+      ...(done ? { restore: 'stim ios' } : {}),
     });
   }
   return actions;

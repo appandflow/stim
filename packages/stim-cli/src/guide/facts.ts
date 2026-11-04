@@ -676,7 +676,9 @@ ON FAILURE
   exits 130 with no payload.
 
   \`stop --json\` prints { root, ok, supervisor, collectors, metro, device,
-  port, metroTunnel, releasedLeases, macos? }. macos is { status: stopped | failed,
+  port, metroTunnel, releasedLeases, macos? }. device.ios is { status:
+  "kept-booted", label, until } when the owned simulator stays booted until
+  the ISO time \`until\` (guide lifecycle pool); ok stays true. macos is { status: stopped | failed,
   reason? } when a macOS app is recorded. When it cannot end the \`ios\` or
   \`android\` run holding the workspace, it prints the error contract with
   root and ok: false instead, plus device.remote when it ended a recorded EAS

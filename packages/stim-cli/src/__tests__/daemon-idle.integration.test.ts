@@ -6,16 +6,19 @@ import {
   daemonNdjsonFile,
   DEVICE_METRO_IDLE_STOP_REASON,
   INTERACTIONS_KEY,
+  readDeferredShutdowns,
   readDeviceIdleShutdowns,
   readIdleStage,
 } from '@stim-cli/core/state';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import * as stopCommand from '../commands/stop.ts';
 import { forgetCreatedDevice, recordCreatedDevice } from '../devices/created-devices.ts';
+import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
+import { runBootedParkedPass } from '../daemon/booted-parked.ts';
 import { runIdlePass } from '../daemon/idle.ts';
 import * as measure from '../daemon/measure.ts';
 import { runPassesInProcess } from '../daemon/passes.ts';
@@ -410,5 +413,83 @@ describe.skipIf(process.platform === 'win32')('a web share', () => {
     ]);
     expect(tornDown).toEqual([]);
     expect(existsSync(derivedData)).toBe(true);
+  });
+});
+
+describe('a simulator that stop left booted', () => {
+  const FUTURE = () => new Date(Date.now() + 10 * MINUTE_MS).toISOString();
+  const PAST = () => new Date(Date.now() - MINUTE_MS).toISOString();
+  const defer = (root: string, udid: string, until: string) => recordDeferredShutdown(root, 'default', { udid, until });
+  const deferred = (root: string) => Object.keys(readDeferredShutdowns(readWorkspaceState(root)));
+  const run = (memory: 'normal' | 'warning' = 'normal') =>
+    runBootedParkedPass({ sims, memory, act: true, log: () => {} });
+
+  test('is left to its deferral: the idle stage does not take the stopped workspace before the deferral passes', async () => {
+    const { root, udid, derivedData } = bootedWorkspace('stopped', 20 * MINUTE_MS);
+    await defer(root, udid, FUTURE());
+    expect(await pass()).toEqual([]);
+    expect(tornDown).toEqual([]);
+    expect(existsSync(derivedData)).toBe(true);
+  });
+
+  test('goes back to the idle stage once the deferral has passed without the daemon ending it', async () => {
+    const { root, udid } = bootedWorkspace('overdue', 20 * MINUTE_MS);
+    await defer(root, udid, PAST());
+    expect(await pass()).toEqual([expect.objectContaining({ path: root, outcome: 'idle' })]);
+  });
+
+  test('is shut down through teardown once its deferral passes, and forgets the deferral', async () => {
+    const { root, udid } = bootedWorkspace('expired', 20 * MINUTE_MS);
+    await defer(root, udid, PAST());
+    const actions = await run();
+    expect(tornDown).toEqual([udid]);
+    expect(actions).toEqual([
+      expect.objectContaining({ kind: 'shut-down-deferred-device', target: udid, workspace: root, outcome: 'done' }),
+    ]);
+    expect(deferred(root)).toEqual([]);
+  });
+
+  test('stays booted before its deferral passes while memory is normal', async () => {
+    const { root, udid } = bootedWorkspace('waiting', 20 * MINUTE_MS);
+    await defer(root, udid, FUTURE());
+    expect(await run()).toEqual([]);
+    expect(tornDown).toEqual([]);
+    expect(deferred(root)).toEqual(['ios']);
+  });
+
+  test('is shut down before its deferral passes under memory pressure', async () => {
+    const { root, udid } = bootedWorkspace('pressured', 20 * MINUTE_MS);
+    await defer(root, udid, FUTURE());
+    await run('warning');
+    expect(tornDown).toEqual([udid]);
+    expect(deferred(root)).toEqual([]);
+  });
+
+  test('is kept when its workspace serves again, and only loses the deferral', async () => {
+    const { root, udid } = bootedWorkspace('restarted', 20 * MINUTE_MS);
+    writeWorkspaceState(root, {
+      ...readWorkspaceState(root),
+      supervisor: { ...liveClaimOwner(), port: 59123, mode: 'expo-child', hmrUpdates: true },
+    });
+    await defer(root, udid, PAST());
+    await run('warning');
+    expect(tornDown).toEqual([]);
+    expect(deferred(root)).toEqual([]);
+  });
+
+  test('only loses the deferral when the simulator is no longer booted', async () => {
+    const { root, udid } = bootedWorkspace('down', 20 * MINUTE_MS);
+    for (const sim of sims) sim.state = 'Shutdown';
+    await defer(root, udid, FUTURE());
+    expect(await run()).toEqual([]);
+    expect(tornDown).toEqual([]);
+    expect(deferred(root)).toEqual([]);
+  });
+
+  test('is not a deferral of the workspace once another simulator is assigned to it', async () => {
+    const { root } = bootedWorkspace('replaced', 20 * MINUTE_MS);
+    await defer(root, 'SOMEONE-ELSE', PAST());
+    expect(await run('warning')).toEqual([]);
+    expect(tornDown).toEqual([]);
   });
 });

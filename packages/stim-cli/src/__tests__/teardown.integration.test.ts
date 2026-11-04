@@ -17,6 +17,8 @@ import {
   teardownOwnedAvd,
 } from '../devices/teardown.ts';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
+import { readDeferredShutdowns } from '@stim-cli/core/state';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 
 function seedCreatedDevices(): void {
   for (const udid of ['U0', 'U1']) recordCreatedDevice('ios', udid);
@@ -413,6 +415,36 @@ test('shutDownBootedParkedIosSim shuts the simulator down and keeps it parked wi
     const [record] = readParked('ios');
     expect(record).toMatchObject({ udid: 'U1' });
     expect(record?.bootedUntil).toBeUndefined();
+  }));
+
+test('teardownOwnedIosSim leaves a booted simulator booted for a deferred shutdown, ends its app and records the deadline', () =>
+  withParkingHome(async (projectPath) => {
+    const exec = iosExecutor({ sims: [OWNED] });
+    setExecutor(exec);
+    const until = new Date(Date.now() + 15 * 60_000).toISOString();
+    const result = await teardownOwnedIosSim('U1', {
+      workspace: projectPath,
+      deferShutdown: { until, slot: 'default', appId: 'com.example.app' },
+    });
+    expect(result).toMatchObject({ status: 'torn-down', deferredUntil: until });
+    expect(exec.calls.some((call) => /simctl shutdown/.test(call))).toBe(false);
+    expect(exec.calls).toContain('xcrun simctl terminate U1 com.example.app');
+    expect(readDeferredShutdowns(readWorkspaceState(projectPath))).toEqual({ ios: { udid: 'U1', until } });
+    expect(getProject(projectPath)?.platforms?.ios?.deviceUdid).toBe('U1');
+  }));
+
+test('teardownOwnedIosSim shuts a simulator that is already shut down as before when a deferral is asked for', () =>
+  withParkingHome(async (projectPath) => {
+    const exec = iosExecutor({ sims: [{ ...OWNED, state: 'Shutdown' }] });
+    setExecutor(exec);
+    const until = new Date(Date.now() + 15 * 60_000).toISOString();
+    const result = await teardownOwnedIosSim('U1', {
+      workspace: projectPath,
+      deferShutdown: { until, slot: 'default' },
+    });
+    expect(result).toMatchObject({ status: 'torn-down' });
+    expect(result.deferredUntil).toBeUndefined();
+    expect(readDeferredShutdowns(readWorkspaceState(projectPath))).toEqual({});
   }));
 
 test("teardownOwnedIosSim carries the workspace record's scheme approvals into the parked record", async () => {

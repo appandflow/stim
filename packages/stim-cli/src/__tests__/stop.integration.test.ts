@@ -25,6 +25,8 @@ import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
+import { readDeferredShutdowns } from '@stim-cli/core/state';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { recordPhoneReverse } from '../devices/phone-reverses.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
@@ -1967,4 +1969,83 @@ test('stop --slot closes only the slot emulator sessions claimed in this workspa
     else process.env.AGENT_DEVICE_CLAIMS_DIR = previousClaims;
     rmSync(other, { recursive: true, force: true });
   }
+});
+
+describe('stop leaves the owned simulator booted when the booted-park gates hold', () => {
+  const UNTIL = '2026-11-04T12:15:00.000Z';
+  const ownedIos = {
+    metroPort: 8083,
+    bundleId: 'com.example.app',
+    platforms: { ios: { deviceUdid: 'U1', owned: true } },
+  };
+  const echoingTeardown =
+    (calls: TeardownCall[]) =>
+    async (udid: string, opts: { del?: boolean; label?: string; deferShutdown?: { until: string } }) => {
+      calls.push({ udid, opts });
+      const defer = opts.deferShutdown;
+      return { status: 'torn-down', label: 'stim-a', ...(defer ? { deferredUntil: defer.until } : {}) };
+    };
+
+  test('asks teardown to defer the shutdown, and reports the simulator as kept booted without failing the run', async () => {
+    const { calls, opts } = seams({ project: ownedIos, deferIosShutdown: async () => UNTIL });
+    opts.teardownIos = echoingTeardown(calls.teardowns);
+    const r = await runStop(opts);
+    expect(calls.teardowns).toEqual([
+      {
+        udid: 'U1',
+        opts: {
+          del: false,
+          label: undefined,
+          workspace: '/proj/a',
+          deferShutdown: { until: UNTIL, slot: 'default', appId: 'com.example.app' },
+        },
+      },
+    ]);
+    expect(r.ok).toBe(true);
+    expect(r.outcomes.device.ios).toEqual({ status: 'kept-booted', label: 'stim-a', until: UNTIL });
+    expect(r.summary).toContain(`ios stim-a kept booted until ${UNTIL}`);
+  });
+
+  test.each([
+    ['a gate fails', { deferIosShutdown: async () => null }],
+    ['the caller never asks, as the daemon idle stop does not', {}],
+  ])('shuts it down at once when %s', async (_name, over) => {
+    const { calls, opts } = seams({ project: ownedIos, ...over });
+    opts.teardownIos = echoingTeardown(calls.teardowns);
+    const r = await runStop(opts);
+    expect(calls.teardowns).toEqual([{ udid: 'U1', opts: { del: false, label: undefined, workspace: '/proj/a' } }]);
+    expect(r.outcomes.device.ios).toEqual({ status: 'shut-down', label: 'stim-a' });
+  });
+
+  test('reads the gates once for every slot and never for a workspace with no owned simulator', async () => {
+    let reads = 0;
+    const deferIosShutdown = async () => {
+      reads += 1;
+      return UNTIL;
+    };
+    const twoSlots = {
+      ...ownedIos,
+      deviceSlots: { second: { ios: { deviceUdid: 'U2', owned: true } } },
+    };
+    const { calls, opts } = seams({ project: twoSlots, deferIosShutdown });
+    opts.teardownIos = echoingTeardown(calls.teardowns);
+    await runStop(opts);
+    expect(calls.teardowns.map((call) => ('udid' in call ? call.udid : call.avd))).toEqual(['U1', 'U2']);
+    expect(reads).toBe(1);
+
+    reads = 0;
+    const { opts: androidOnly } = seams({
+      project: { metroPort: 8083, platforms: { android: { avdName: 'stim-app', owned: true } } },
+      deferIosShutdown,
+    });
+    await runStop(androidOnly);
+    expect(reads).toBe(0);
+  });
+
+  test('a shutdown at once forgets the deferral an earlier stop recorded', async () => {
+    await recordDeferredShutdown(tmpRoot, 'default', { udid: 'U1', until: UNTIL });
+    const { opts } = seams({ root: tmpRoot, project: ownedIos, deferIosShutdown: async () => null });
+    await runStop(opts);
+    expect(readDeferredShutdowns(readWorkspaceState(tmpRoot))).toEqual({});
+  });
 });

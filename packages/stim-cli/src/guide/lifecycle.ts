@@ -278,7 +278,9 @@ DESTRUCTIVE COMMANDS -- ask the user first
 
 Permanent local deletion lives in exactly TWO commands: \`worktree remove\`
 (the workspace you name) and \`gc --delete\` (the machine). For a local device,
-\`stop\` shuts it down and never deletes it. For a recorded EAS session,
+\`stop\` shuts it down and never deletes it (an owned iOS simulator first stays
+booted for \`pool.bootedGraceMinutes\` when memory permits, \`guide lifecycle pool\`).
+For a recorded EAS session,
 \`stop\` irreversibly ends the session. Externally started servers are left
 alone, even when they use the reserved port, and the reservation is kept while
 one answers from the project. A dev server whose supervisor died is stopped
@@ -1464,9 +1466,9 @@ result as proof instead of requiring an unrelated screenshot.`,
   otherwise it shuts the simulator down as before. It also shuts it down
   unless \`daemon.mode\` is \`on\` on a platform with a daemon, because only
   the stim-daemon ends the grace period. The leftover app is
-  terminated at park. \`stim stop\` shuts the workspace's simulator down
-  before it is parked, so run \`worktree remove\` without a prior \`stop\`
-  (it stops the workspace itself) to keep it booted.
+  terminated at park. \`stim stop\` applies the same gates to the workspace's
+  own simulator (STOP AND THE GRACE PERIOD), so \`stop\` then \`worktree
+  remove\` keeps it booted too.
   Adopting a booted parked simulator runs the same cleanup as any adoption
   (privacy and keychain reset, other user apps removed, app data cleared, the
   install verified by bytes) without the boot, and prefers it over a shut-down
@@ -1476,6 +1478,31 @@ result as proof instead of requiring an unrelated screenshot.`,
   workspace's device for a run waiting on a device slot; the simulator stays
   parked. Booted parked simulators count against the device caps. \`stim
   status\` shows how many are booted. Android emulators are shut down at park.
+
+  STOP AND THE GRACE PERIOD
+  While the same gates hold (\`pool.bootedGraceMinutes\` above 0, macOS memory
+  pressure normal, a device slot free, \`daemon.mode\` \`on\` on a platform with
+  a daemon), \`stim stop\` leaves the workspace's owned iOS simulator booted
+  instead of shutting it down. It still stops Metro, the collectors and the
+  app, and ends agent-device sessions on the simulator. The simulator stays
+  assigned to the workspace; \`stop\` records a deferred shutdown with its
+  expiry in the workspace state and makes sure the stim-daemon runs. \`stop\`
+  prints \`<name> stays booted for N minutes\`, and \`stop --json\` reports
+  \`device.ios\` as { status: "kept-booted", label, until } with \`ok\` true.
+  If any gate fails, \`stop\` shuts the simulator down as before.
+    - \`ios\` in the workspace before the expiry uses the booted simulator, with
+      no boot, and forgets the record.
+    - \`worktree remove\` parks it booted under the park gates, or shuts it
+      down.
+    - The stim-daemon shuts it down, through teardown under the workspace's
+      native-run lock, when the expiry passes or macOS memory pressure is not
+      normal. A workspace whose dev server runs again only loses the record.
+    - To shut it down now run \`STIM_POOL_BOOTED_GRACE_MINUTES=0 stim stop\`;
+      the setting at 0 turns the deferral off. There is no \`stop\` flag.
+  Until the expiry the idle stage leaves the stopped workspace alone, and
+  \`gc\` does not count the simulator as a reason to keep its worktree.
+  Android emulators are shut down by \`stop\`, and the daemon's idle stop and
+  automatic maintenance never defer.
 
   Adoption matches the device type AND the runtime EXACTLY: a ticket that asks
   for an iPad never gets an iPhone, and a request for iOS 18.5 never gets 26.5.

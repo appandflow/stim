@@ -19,7 +19,8 @@ simulator or emulator that Stim created, the only kind it boots or deletes.
 output from the source checkout into a new worktree. A lease is a time-limited
 claim on a physical device, so two workspaces do not install on the same phone
 at once. A slot, selected with `--slot <name>`, runs another device in the same
-workspace. `stop` shuts down the workspace's Metro server and devices and
+workspace. `stop` shuts down the workspace's Metro server and devices (an owned iOS
+simulator stays booted for a grace period when memory permits) and
 releases its leases; `worktree remove` reclaims everything the workspace owns.
 `gc` reports resources left behind by workspaces that are gone, and
 `gc --delete` removes them.

@@ -852,8 +852,10 @@ not a whole number 0 or more is refused by name on \`worktree remove\` and
 
 \`pool.bootedGraceMinutes\` (or STIM_POOL_BOOTED_GRACE_MINUTES) is how many
 minutes \`worktree remove\` keeps a simulator that is booted booted as it
-parks it, while memory pressure is normal and a device slot is free, so the
-next adoption skips the boot. Absent means 15; \`0\` shuts it down at park.
+parks it, and \`stop\` keeps the workspace's own owned simulator booted, while
+memory pressure is normal and a device slot is free, so the next adoption or
+\`ios\` skips the boot. Absent means 15; \`0\` shuts it down at park and at
+\`stop\`.
 When \`STIM_HOME\` is set it is 0 unless the variable is set. See
 \`guide lifecycle pool\`.
 

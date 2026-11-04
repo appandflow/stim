@@ -20,7 +20,7 @@ export interface BootedParkFacts {
 }
 
 /**
- * When a parked device that is booted now may stay booted until: the grace period from `now`, only while memory
+ * When a device that is booted now, one `worktree remove` parks or one `stop` leaves, may stay booted until: the grace period from `now`, only while memory
  * pressure reads normal and a device slot besides this one is free under both caps. Null shuts it down: a grace of 0,
  * no acting daemon, memory pressure that is not normal or unreadable, or devices that cannot be counted.
  */

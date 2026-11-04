@@ -78,6 +78,9 @@ import {
 } from '../workspace/workspace-state.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
+import { readBootedParkDeadline } from '../devices/booted-park.ts';
+import { clearDeferredShutdown } from '../devices/deferred-shutdown.ts';
+import { ensureDaemon } from '../daemon/client.ts';
 import { removeOwnedEmulatorMetroReverses } from '../devices/android.ts';
 import { removePhoneReverses } from '../devices/phone-reverses.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
@@ -109,6 +112,14 @@ interface TeardownResult {
   label?: string;
   serial?: string | null;
   holders?: string[];
+  deferredUntil?: string;
+}
+
+interface IosTeardownOptions {
+  del?: boolean;
+  label?: string;
+  workspace?: string;
+  deferShutdown?: { until: string; slot: string; appId?: string | null };
 }
 
 export function readSupervisorState(root: string): SupervisorStateRecord | null {
@@ -232,6 +243,8 @@ interface DeviceOutcomeEntry {
   reason?: string;
   kind?: string | null;
   remedy?: string;
+  /** When the daemon shuts a simulator that `stop` left booted down. */
+  until?: string;
 }
 
 interface DeviceOutcome {
@@ -496,6 +509,7 @@ async function stopWorkspace({
       cwdOf: async (pid) => (await processCwds([pid])).get(pid) ?? null,
     }),
   teardownIos = teardownOwnedIosSim,
+  deferIosShutdown,
   teardownAvd = teardownOwnedAvd,
   teardownBrowser = (projectRoot: string) => teardownOwnedBrowser(projectRoot),
   stopMacos,
@@ -527,7 +541,9 @@ async function stopWorkspace({
   waitForDeath?: ((pid: number) => Promise<boolean>) | undefined;
   waitMs?: number;
   resolveMetro?: (port: number, root: string) => Promise<MetroResolution>;
-  teardownIos?: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => Promise<TeardownResult>;
+  teardownIos?: (udid: string, opts: IosTeardownOptions) => Promise<TeardownResult>;
+  /** When the owned simulator may stay booted until, or null to shut it down now; absent shuts it down. */
+  deferIosShutdown?: () => Promise<string | null>;
   teardownAvd?: (avdName: string, opts: { del?: boolean; workspace?: string }) => Promise<TeardownResult>;
   stopMacos?: boolean;
   hostedSlot?: string;
@@ -732,7 +748,7 @@ async function stopWorkspace({
   if (stillHolding) {
     report(chalk.dim(phaseLine('device', 'left alone (something is still running)')));
   } else {
-    outcomes.device = await shutDownDevices(proj, root, { teardownIos, teardownAvd, report });
+    outcomes.device = await shutDownDevices(proj, root, { teardownIos, deferIosShutdown, teardownAvd, report });
     if (Object.values(outcomes.device).some((device) => device?.status === 'failed')) ok = false;
   }
 
@@ -1086,15 +1102,18 @@ async function shutDownDevices(
   workspace: string,
   {
     teardownIos,
+    deferIosShutdown,
     teardownAvd,
     report,
   }: {
-    teardownIos: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => Promise<TeardownResult>;
+    teardownIos: (udid: string, opts: IosTeardownOptions) => Promise<TeardownResult>;
+    deferIosShutdown?: () => Promise<string | null>;
     teardownAvd: (avdName: string, opts: { del?: boolean; workspace?: string }) => Promise<TeardownResult>;
     report: (line: string) => void;
   },
 ): Promise<DeviceOutcome> {
   const device: DeviceOutcome = { ios: null, android: null };
+  let deferral: Promise<string | null> | undefined;
   const entries: Array<{
     key: string;
     kind: 'ios' | 'android';
@@ -1112,10 +1131,28 @@ async function shutDownDevices(
       let result: Promise<TeardownResult> | null = null;
       if (ios?.owned) {
         debugLog.log('stop.device.start', { platform: 'ios', slot, deviceId: iosUdid });
-        result = teardownIos(iosUdid, { del: false, label: iosName, workspace }).then((outcome) => {
-          debugLog.log('stop.device.end', { platform: 'ios', slot, deviceId: iosUdid, status: outcome.status });
-          return outcome;
-        });
+        const appId = typeof project?.bundleId === 'string' ? project.bundleId : null;
+        const shutDown = (until: string | null) =>
+          teardownIos(iosUdid, {
+            del: false,
+            label: iosName,
+            workspace,
+            ...(until ? { deferShutdown: { until, slot, appId } } : {}),
+          });
+        result = (deferIosShutdown ? (deferral ??= deferIosShutdown()).then(shutDown) : shutDown(null)).then(
+          async (outcome) => {
+            if ((outcome.status === 'torn-down' || outcome.status === 'missing') && !outcome.deferredUntil)
+              await clearDeferredShutdown(workspace, slot).catch(() => {});
+            debugLog.log('stop.device.end', {
+              platform: 'ios',
+              slot,
+              deviceId: iosUdid,
+              status: outcome.status,
+              ...(outcome.deferredUntil ? { deferredUntil: outcome.deferredUntil } : {}),
+            });
+            return outcome;
+          },
+        );
       }
       entries.push({ key: iosKey, kind: 'ios', label: iosUdid, result });
     }
@@ -1179,6 +1216,19 @@ function reportDevice(
   report: (line: string) => void,
   kind: 'ios' | 'android',
 ): DeviceOutcomeEntry {
+  if (r.status === 'torn-down' && r.deferredUntil) {
+    const minutes = Math.max(1, Math.ceil((Date.parse(r.deferredUntil) - Date.now()) / 60_000));
+    report(
+      chalk.green(
+        phaseLine(
+          'device',
+          `${r.label ?? label} stays booted for ${plural(minutes, 'minute')} so the next run skips its boot; the stim-daemon shuts it down then, or sooner under memory pressure`,
+        ),
+      ),
+    );
+    report(chalk.dim(phaseLine('', 'to shut it down now, run `STIM_POOL_BOOTED_GRACE_MINUTES=0 stim stop`')));
+    return { status: 'kept-booted', label: r.label ?? label, until: r.deferredUntil };
+  }
   if (r.status === 'torn-down') {
     report(chalk.green(phaseLine('device', `shut down ${r.label ?? label}`)));
     return { status: 'shut-down', label: r.label ?? label };
@@ -1238,6 +1288,7 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   for (const [platform, o] of devicesByPlatform) {
     if (!o) continue;
     if (o.status === 'shut-down') parts.push(`${platform} ${o.label} shut down`);
+    if (o.status === 'kept-booted') parts.push(`${platform} ${o.label} kept booted until ${o.until}`);
     if (o.status === 'skipped') parts.push(`${platform} ${o.label} skipped`);
     if (o.status === 'failed') parts.push(`${platform} ${o.label} failed`);
   }
@@ -1349,6 +1400,20 @@ function signalledHolder(holder: ClaimHolder): boolean {
 }
 
 /**
+ * When `stop` may leave the owned simulator booted until: the booted-park gates hold and a daemon runs to end the
+ * grace period. Null shuts it down now; a reading that fails does too.
+ */
+async function iosShutdownDeadline(operation: StimContext | undefined): Promise<string | null> {
+  try {
+    const until = await readBootedParkDeadline('ios', operation);
+    return until && (await ensureDaemon(operation?.env)) ? until : null;
+  } catch {
+    operation?.signal.throwIfAborted();
+    return null;
+  }
+}
+
+/**
  * `stop` under the workspace's native-run lock. A billable remote session is ended as soon as the lock is
  * seen held; a live `ios` or `android` run that the stop leaves nothing to deploy to is asked to cancel through
  * its workspace state, sent SIGINT when its holder is a CLI process, and given INTERRUPT_WAIT_MS to exit; a build
@@ -1369,7 +1434,8 @@ export async function stopWorkspaceNow({
   endRemote = (projectRoot: string) => readRemoteSessionEntry(projectRoot, report, operation),
   deviceSlots = workspaceDeviceSlots,
   recordedSlots = recordedDeviceSlots,
-  stop = (options: { root: string; slot?: string }) => runStop({ ...options, operation, report }),
+  stop = (options: { root: string; slot?: string }) =>
+    runStop({ ...options, operation, report, deferIosShutdown: () => iosShutdownDeadline(operation) }),
 }: {
   root: string;
   operation?: StimContext;
@@ -1524,7 +1590,7 @@ export default function stopCommand(program: Command): void {
   program
     .command('stop')
     .description(
-      "The inverse of `start`: halt this workspace's supervisor, shut the owned device down (never deleted), and free the reserved port. Non-destructive -- the device stays assigned, so coming back costs a boot. Acts on the current workspace.",
+      "The inverse of `start`: halt this workspace's supervisor, shut the owned device down (never deleted), and free the reserved port. Non-destructive -- the device stays assigned, so coming back costs a boot, except that an owned iOS simulator stays booted for pool.bootedGraceMinutes when memory permits. Acts on the current workspace.",
     )
     .option(
       '--slot <name>',

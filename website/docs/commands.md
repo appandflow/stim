@@ -1228,7 +1228,12 @@ stim stop [--slot <name>] [--json]
 
 Without `--slot`, stops the supervisor and all log collectors, shuts down every
 owned local device, ends an owned remote session, and frees the port. Owned
-local devices stay assigned for reuse. A dev server left behind by a supervisor
+local devices stay assigned for reuse. An owned iOS simulator stays booted for
+`pool.bootedGraceMinutes` when macOS memory pressure is normal, a device slot
+is free and `daemon.mode` is `on`: the stim-daemon shuts it down when the grace
+period passes or under memory pressure, and `--json` reports it as
+`device.ios.status` `kept-booted` with `until`. Run
+`STIM_POOL_BOOTED_GRACE_MINUTES=0 stim stop` to shut it down at once. A dev server left behind by a supervisor
 that died is stopped when its recorded process identity still matches. An
 external server on the reserved port is left running, the port stays reserved
 while that server runs from this project, and a process whose ownership cannot
