@@ -902,6 +902,15 @@ ON THE SOURCE CHECKOUT
   Either reclaim archives each workspace it removes, as removal of a linked
   worktree does.
 
+FROM A SUBFOLDER OF A LINKED WORKTREE
+  A linked worktree is removed only when the target is its root: run from the
+  worktree root, or pass the root path. Run from a subfolder (for example
+  apps/mobile), or given one, \`worktree remove\` reclaims only the nearest
+  registered project at or above that folder and the projects nested under it,
+  leaves the tree and the other projects alone, and refuses with exit 1 when no
+  project is registered at or above it. It ends with:
+    Reclaimed the environment; the working tree stays (it was run from a subfolder of the worktree).
+
 The delete paths and \`stop\` do not check simulator occupancy. An explicit
 \`stim stop\` shuts down this workspace's Stim-owned simulator, including a
 simulator used by a UI-test runner. It never shuts down an unowned simulator.

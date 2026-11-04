@@ -200,6 +200,7 @@ waiting times out.
   # Retain proof before cleanup: a screenshot, recording, or relevant runtime output.
 
   stim stop
+  # From the worktree root. From an app folder, it reclaims only that app.
   stim worktree remove
 
 RULES DURING THE LOOP

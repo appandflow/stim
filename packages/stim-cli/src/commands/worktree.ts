@@ -1330,30 +1330,36 @@ async function removeOrRefuse(
     output.fail();
     return;
   }
-  if (entry.path === source.path) {
-    if (nativeCanonicalPath(entry.path) !== nativeCanonicalPath(path)) {
-      const project = projectAtOrAbove(entry.path, path);
-      if (!project) {
-        output.error(chalk.red(`Refusing to reclaim from ${path}: no Stim project is registered at or above it.`));
-        output.error(
-          chalk.dim(`  Run it from the project folder, or from ${entry.path} to reclaim every project under it.`),
-        );
-        output.fail();
-        return;
-      }
-      output.error(
-        chalk.dim(`${path} is inside the source checkout ${entry.path}; reclaiming only the project ${project}.`),
-      );
-      await reclaimEnvironment(project, 'it is the source checkout', output, opts.operation, opts.beforeRemove);
+  const isSource = entry.path === source.path;
+  if (nativeCanonicalPath(entry.path) !== nativeCanonicalPath(path)) {
+    const kind = isSource ? 'source checkout' : 'worktree';
+    const wholeHint = isSource
+      ? `Run it from ${entry.path} to reclaim every project under it.`
+      : `Pass ${entry.path} to remove the whole worktree.`;
+    const project = projectAtOrAbove(entry.path, path);
+    if (!project) {
+      output.error(chalk.red(`Refusing to reclaim from ${path}: no Stim project is registered at or above it.`));
+      output.error(chalk.dim(`  Run it from the project folder. ${wholeHint}`));
+      output.fail();
       return;
     }
+    output.error(
+      chalk.dim(`${path} is inside the ${kind} ${entry.path}; reclaiming only the project ${project}. ${wholeHint}`),
+    );
+    await reclaimEnvironment(
+      project,
+      isSource ? 'it is the source checkout' : 'it was run from a subfolder of the worktree',
+      output,
+      opts.operation,
+      opts.beforeRemove,
+    );
+    return;
+  }
+  if (isSource) {
     await reclaimEnvironment(entry.path, 'it is the source checkout', output, opts.operation, opts.beforeRemove);
     return;
   }
-  if (entry.path !== path) {
-    output.error(chalk.dim(`${path} is inside the worktree ${entry.path}; removing that.`));
-    path = entry.path;
-  }
+  path = entry.path;
   if (entry.locked) {
     output.error(chalk.red(`Refusing to remove ${path}: git has it locked.`));
     output.error(chalk.dim(`Unlock it, then retry: git -C ${source.path} worktree unlock ${path}`));
@@ -1690,7 +1696,7 @@ export function registerRemove(worktree: Command): void {
   worktree
     .command('remove [target]')
     .description(
-      'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the source checkout it reclaims the environment only and leaves the tree in place; from a subfolder it reclaims only the project at or above that folder, with the projects nested under it.',
+      'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the source checkout it reclaims the environment only and leaves the tree in place. From a subfolder, in the source checkout or in a linked worktree, it reclaims only the project at or above that folder, with the projects nested under it, and leaves the tree; pass the root of a linked worktree to remove it.',
     )
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work or initialized submodules')
     .action(async (target: string | undefined, opts: { force?: boolean }) => {
