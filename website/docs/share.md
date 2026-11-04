@@ -187,8 +187,8 @@ goes to the device the same way as Command-V. "Copy from device" fetches the dev
 clipboard and writes it to your clipboard inside the same tap; when the browser still
 refuses, the text appears in a field to select and copy by hand. On desktop the menu's
 "Copy from device" button copies once. Sending your copied text to the device counts as input and starts the share's
-control session like a paste. Syncing from the device starts after
-someone has tapped, typed or pasted, and does not keep an idle share's control
+control session like a paste. Syncing from the device starts once
+a viewer that can control has connected, and does not keep an idle share's control
 session alive. Everyone who controls the share with sync on shares the device
 clipboard, so text one of them copies reaches the others. Text only, up to 8 KiB
 sent to the device. A web page and a native macOS app have no clipboard action, and a share
@@ -288,8 +288,8 @@ not end. It **waits**:
   viewer can sign in and open the page while it waits.
 - When the slot's device is back (a booted simulator or running emulator, or a
   ready hosted session) the share **resumes** on the same page: frames return
-  with no reload and no new password, and control starts again on the next
-  tap. If the slot now runs another simulator or emulator, for example after
+  with no reload and no new password, and control starts again for the viewers
+  that can control. If the slot now runs another simulator or emulator, for example after
   `--device` picked another model, the share resumes on that one. After a
   failed stream the share tries again every few seconds, waiting longer after
   each failure, up to 30 seconds.
@@ -562,7 +562,9 @@ reload.
   connects and stops about 10 seconds after the last one leaves. An idle share
   costs only its listener and route. A share never records anything to disk.
 - **Control is the existing control path.** Input goes through the same
-  control session and device lease Stim Desktop and the phone app use, limited
+  control session and device lease Stim Desktop and the phone app use. A viewer
+  that can control starts the session, and so takes the device lease, when it
+  connects; it ends after 5 minutes without input or when the last viewer leaves. Input is limited
   to taps, two-finger gestures, text, the arrow keys and Escape, pasting and syncing the clipboard with your browser, rotation and the hardware buttons of the shared device. A device an
   agent or another client is driving answers busy; a share never takes it over.
 - **Saved link.** A share lives in stim-server's memory, but `stim share` also

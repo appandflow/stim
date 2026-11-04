@@ -341,6 +341,7 @@ interface Share {
   controlSession: string | null;
   controlStarting: Promise<string | null> | null;
   controlRetryAt: number;
+  controlUsed: boolean;
   recordKey: string | null;
   latest: StatusPayload | null;
   /** What the shared device's status says for the page titles, and the app's display name once read. */
@@ -544,6 +545,7 @@ export class ShareHub {
       controlSession: null,
       controlStarting: null,
       controlRetryAt: 0,
+      controlUsed: false,
       recordKey: null,
       latest: status,
       facts: titleFacts(status, request),
@@ -921,6 +923,7 @@ export class ShareHub {
       if (viewer.socket.readyState === viewer.socket.OPEN) viewer.socket.send('{"type":"resumed"}');
       this.attach(share, viewer);
       this.present(share, viewer);
+      this.warmControl(share, viewer);
     }
   }
 
@@ -1236,6 +1239,7 @@ export class ShareHub {
     share.viewers.add(viewer);
     this.introduce(share, viewer);
     this.present(share, viewer);
+    this.warmControl(share, viewer);
     let alive = true;
     socket.on('pong', () => {
       alive = true;
@@ -1368,6 +1372,12 @@ export class ShareHub {
     });
   }
 
+  private warmControl(share: Share, viewer: Viewer): void {
+    if (this.accessOf(share, viewer.login) === 'control') {
+      void this.controlSession(share, viewer);
+    }
+  }
+
   /** Gives the viewer its name, color and place on the roster among the viewers now connected. */
   private identify(share: Share, viewer: Viewer): void {
     const others = [...share.viewers].filter((other) => other !== viewer).map((other) => other.who);
@@ -1462,6 +1472,7 @@ export class ShareHub {
     ) {
       return;
     }
+    if (!polling) share.controlUsed = true;
     const refused = await source.input(share.owner, session, method, { ...params }, command, viewer.who);
     const open = viewer.socket.readyState === viewer.socket.OPEN;
     if (refused && 'code' in refused) {
@@ -1518,7 +1529,7 @@ export class ShareHub {
           return null;
         }
         if ('code' in outcome) {
-          share.controlRetryAt = Date.now() + 5000;
+          if (share.viewers.size > 0) share.controlRetryAt = Date.now() + 5000;
           this.releaseRecording(share, outcome.code !== 'device-busy');
           console.error(`stim-server: web share ${share.id} control refused: ${outcome.message}`);
           if (viewer.socket.readyState === viewer.socket.OPEN) {
@@ -1532,6 +1543,7 @@ export class ShareHub {
           return null;
         }
         share.controlSession = outcome.session;
+        share.controlUsed = false;
         return outcome.session;
       })
       .finally(() => {
@@ -1547,6 +1559,7 @@ export class ShareHub {
     share.controlSession = null;
     this.releaseRecording(share);
     console.error(`stim-server: web share ${share.id} control ended: ${message.message}`);
+    if (message.reason === 'idle' && !share.controlUsed) return;
     for (const viewer of share.viewers) {
       if (viewer.socket.readyState === viewer.socket.OPEN) {
         viewer.socket.send(JSON.stringify({ type: 'control', message: VIEWER_TEXT.controlEnded }));

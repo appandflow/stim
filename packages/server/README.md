@@ -2310,8 +2310,9 @@ subscribes to the device's frames as a JPEG subscriber at 10 frames a second
 and 1280 pixels, as binary messages; the share never asks the recorder to
 record. With `control`, `touch`, `text` and `button` messages from a `control`
 session go through `parseInput` and the control hub as the `Web share`
-controller, which begins one control session without takeover on the first
-input and ends it when the last viewer leaves; every input from a `view`
+controller, which begins one control session without takeover when a viewer with
+`control` connects (or the share resumes) and ends it when the last viewer
+leaves; every input from a `view`
 session is dropped. Each viewer socket is a presence participant: the share
 sends `{ type: 'you', id, name, color, access }` once, then
 `{ type: 'presence', participants }` with the `presence` event's participants

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { connect as tcpConnect, Socket } from 'node:net';
 import { WebSocket } from 'ws';
+import type { Controller } from '../src/control.ts';
 import type { FrameHint } from '../src/frame-helper.ts';
 import type { Device, Frame, FrameListener } from '../src/frames.ts';
 import { PresenceHub, presenceKey } from '../src/presence.ts';
@@ -53,6 +54,7 @@ interface Fixture {
   beginGate: Promise<void> | null;
   /** How many times the fake control hub's `begin` was called, including calls still held by `beginGate`. */
   beginCalls: number;
+  owner: Pick<Controller, 'send'> | null;
   /** A frame the fake frame pool hands every new subscriber at once, as the real one replays its latest frame. */
   replay: Frame | null;
   presence: PresenceHub;
@@ -92,6 +94,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
     busy: null,
     beginGate: null,
     beginCalls: 0,
+    owner: null,
     replay: null,
     presence: new PresenceHub(),
     appNames: {},
@@ -126,8 +129,9 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
       },
     },
     control: {
-      begin: async (_owner, target, _workspace, allowed) => {
+      begin: async (owner, target, _workspace, allowed) => {
         f.beginCalls++;
+        f.owner = owner;
         await f.beginGate;
         if (!allowed()) return { code: 'forbidden', message: 'This device can no longer control devices.' };
         f.begins.push(target);
@@ -578,6 +582,59 @@ describe('a web share', () => {
     socket.close();
   });
 
+  it('with --control, starts control when a viewer connects, so its first touch finds the session open', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+    expect(f.inputs).toEqual([]);
+    socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
+    expect(f.beginCalls).toBe(1);
+    socket.close();
+  });
+
+  it('with --control, does not tell viewers that control which nobody used ended when it idles', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket, messages } = await connect(url, {
+      origin: origin(url),
+      cookie: await login(url, share.password ?? ''),
+    });
+    await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+    const idle = { event: 'control-ended', session: 'c1', reason: 'idle', message: 'No input for 5 minutes.' } as const;
+    f.inputResult = { text: 'from the device' };
+    socket.send(JSON.stringify({ type: 'clipboard-get', id: 1, poll: true }));
+    await vi.waitFor(() => expect(messages).toContainEqual({ type: 'clipboard', id: 1, text: 'from the device' }));
+    f.owner?.send(idle);
+    socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+    await vi.waitFor(() => expect(f.begins).toHaveLength(2));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(2));
+    f.owner?.send(idle);
+    await vi.waitFor(() => expect(messages).toContainEqual({ type: 'control', message: 'Control ended.' }));
+    expect(messages.filter((message) => message.type === 'control')).toHaveLength(1);
+    socket.close();
+  });
+
+  it('with --control, starts control again for a viewer that reconnects after the last one left during the start', async () => {
+    let release = () => {};
+    f.beginGate = new Promise<void>((resolve) => (release = resolve));
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const cookie = await login(url, share.password ?? '');
+    const first = await connect(url, { origin: origin(url), cookie });
+    await vi.waitFor(() => expect(f.beginCalls).toBe(1));
+    first.socket.close();
+    await vi.waitFor(() => expect(f.hub.list()[0]?.viewers).toBe(0));
+    release();
+    await vi.advanceTimersByTimeAsync(20);
+    f.beginGate = null;
+    const second = await connect(url, { origin: origin(url), cookie });
+    await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+    expect(second.messages.map((message) => message.type)).not.toContain('control');
+    second.socket.close();
+  });
+
   it('with --control, passes the second finger of a touch on and drops a half pair', async () => {
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port ?? 0);
@@ -711,20 +768,22 @@ describe('a web share', () => {
     other.socket.close();
   });
 
-  it('answers a polling clipboard read without starting control, and serves it once control runs', async () => {
+  it('answers a polling clipboard read while control is still starting, and serves it once control runs', async () => {
+    let release = () => {};
+    f.beginGate = new Promise<void>((resolve) => (release = resolve));
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port ?? 0);
-    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
-    const messages: unknown[] = [];
-    socket.on('message', (data, binary) => {
-      if (!binary) messages.push(JSON.parse(data.toString()));
+    const { socket, messages } = await connect(url, {
+      origin: origin(url),
+      cookie: await login(url, share.password ?? ''),
     });
+    await vi.waitFor(() => expect(f.beginCalls).toBe(1));
     f.inputResult = { text: 'from the device' };
     socket.send(JSON.stringify({ type: 'clipboard-get', id: 1, poll: true }));
     await vi.waitFor(() => expect(messages).toContainEqual({ type: 'clipboard', id: 1, error: expect.any(String) }));
-    expect(f.begins).toEqual([]);
+    expect(f.beginCalls).toBe(1);
     expect(f.inputs).toEqual([]);
-    socket.send(JSON.stringify({ type: 'key', key: 'left' }));
+    release();
     await vi.waitFor(() => expect(f.begins).toHaveLength(1));
     socket.send(JSON.stringify({ type: 'clipboard-get', id: 2, poll: true }));
     await vi.waitFor(() => expect(messages).toContainEqual({ type: 'clipboard', id: 2, text: 'from the device' }));
@@ -849,6 +908,8 @@ describe('a web share', () => {
     it('lets the control password tap and drops every input from a viewer that logged in with the view password', async () => {
       const { url, headers } = await signed();
       const watcher = await connect(url, { ...headers, cookie: await login(url, 'view%20password') });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(f.beginCalls).toBe(0);
       const driver = await connect(url, { ...headers, cookie: await login(url, 'control%20pass') });
       for (const type of ['touch', 'text', 'key', 'button', 'rotate']) {
         watcher.socket.send(
@@ -1275,16 +1336,13 @@ describe('a web share', () => {
     f.refuseControl = true;
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port ?? 0);
-    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
-    const refused = new Promise<string>((resolve) =>
-      socket.on('message', (data, binary) => {
-        if (!binary && String(data).includes('"control"')) resolve(String(data));
-      }),
-    );
-    socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
-    const told = JSON.parse(await refused);
-    expect(told).toMatchObject({ type: 'control' });
-    expect(told.message).not.toContain('Desktop');
+    const { socket, messages } = await connect(url, {
+      origin: origin(url),
+      cookie: await login(url, share.password ?? ''),
+    });
+    await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({ type: 'control' })));
+    const told = messages.find((message) => message.type === 'control');
+    expect(told?.message).not.toContain('Desktop');
     expect(f.inputs).toEqual([]);
     expect(f.hub.unrecordedTargets()).toEqual(new Set());
     socket.close();
@@ -1501,10 +1559,9 @@ describe('a web share', () => {
     });
 
     it('does not lock control or tell the viewer it is refused when the device changed while control was starting', async () => {
-      const { socket, messages } = await signedIn({ control: true });
       let release = () => {};
       f.beginGate = new Promise<void>((resolve) => (release = resolve));
-      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      const { socket, messages } = await signedIn({ control: true });
       await vi.waitFor(() => expect(f.beginCalls).toBe(1));
       const other = payload('Booted');
       other.environments[0]!.ios.udid = 'SIM-2';
@@ -1514,7 +1571,6 @@ describe('a web share', () => {
       release();
       await vi.advanceTimersByTimeAsync(20);
 
-      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
       await vi.waitFor(() => expect(f.begins).toHaveLength(1));
       expect(messages.map((message) => message.type)).not.toContain('control');
       socket.close();
@@ -1533,32 +1589,32 @@ describe('a web share', () => {
       socket.close();
     });
 
-    it('starts control on the first tap after a resume even while the control that was starting before is still pending', async () => {
-      const { socket } = await signedIn({ control: true });
+    it('starts control again after a resume even while the control that was starting before is still pending', async () => {
       let release = () => {};
       f.beginGate = new Promise<void>((resolve) => (release = resolve));
-      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      const { socket } = await signedIn({ control: true });
       await vi.waitFor(() => expect(f.beginCalls).toBe(1));
       f.status(payload('Shutdown'));
       await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
       f.status(payload('Booted'));
       await vi.waitFor(() => expect(f.subscribed).toHaveLength(2));
+      await vi.waitFor(() => expect(f.beginCalls).toBe(2));
       f.beginGate = null;
-      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
-      await vi.waitFor(() => expect(f.begins).toHaveLength(1));
       release();
       await vi.advanceTimersByTimeAsync(20);
       expect(f.begins).toHaveLength(1);
       socket.close();
     });
 
-    it('refuses input while it waits and does not begin a control session', async () => {
+    it('refuses input while it waits and does not begin another control session', async () => {
       const { socket } = await signedIn({ control: true });
+      await vi.waitFor(() => expect(f.begins).toHaveLength(1));
       f.status(payload('Shutdown'));
       await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
       socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
       await vi.advanceTimersByTimeAsync(50);
-      expect(f.begins).toEqual([]);
+      expect(f.beginCalls).toBe(1);
+      expect(f.inputs).toEqual([]);
       socket.close();
     });
 
