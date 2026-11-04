@@ -261,7 +261,7 @@ port chosen by the OS. This lets hosted Desktop test copies coexist with the
 host's server. An explicit port override or **Allow connections** keeps the selected
 port and reports a home mismatch. Desktop reads workspace status from that server's status
 feed while the server allows reads and serves the same Stim home; the server reads status itself from the
-moment it starts. Refresh requests fresh workspace, machine and archive views. If the connection or a view fails, Desktop keeps the last good display and reports the error until the server delivers fresh data. Status never falls back to a CLI process. When the server cannot start, a warning icon in the
+moment it starts. Refresh requests fresh workspace, machine and archive views. If the connection or a view fails, Desktop keeps the last good display and reports the error until the server delivers fresh data. Status never falls back to a CLI process. When the server cannot start, or refuses Desktop's connection, a warning icon in the
 sidebar footer says why; click it to retry. Letting phones and other machines reach
 it over the tailnet stays opt-in: **Allow connections** in **Settings > Connections**.
 

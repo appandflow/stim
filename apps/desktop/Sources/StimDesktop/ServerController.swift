@@ -110,6 +110,8 @@ final class ServerController: ObservableObject {
   @Published private(set) var pendingGrants: [String: Bool] = [:]
   @Published private(set) var settingUpConnection = false
   @Published private(set) var connectionError: String?
+  @Published private(set) var connectionRefusal: String?
+  var reconnect: (() -> Void)?
 
   private var environment: Task<[String: String], Never>?
   private var resolvedEnvironment: [String: String]?
@@ -200,12 +202,15 @@ final class ServerController: ObservableObject {
     }
   }
 
-  /// Why the server is unusable, or nil while it starts, runs or waits for its Stim home.
-  var problem: String? {
+  /// Why the server is unusable, or nil while it starts, runs with an open connection or waits for its Stim home.
+  var problem: String? { Self.problem(state: state, connectionRefusal: connectionRefusal) }
+
+  static func problem(state: State, connectionRefusal: String?) -> String? {
     switch state {
     case .failed(let message): return message
     case .notReady(.degraded(let reason), _): return "Degraded: \(reason)"
-    case .off, .starting, .running, .notReady(.pending, _): return nil
+    case .running: return connectionRefusal
+    case .off, .starting, .notReady(.pending, _): return nil
     }
   }
 
@@ -219,7 +224,17 @@ final class ServerController: ObservableObject {
   }
 
   func retry() {
-    if case .failed = state { start() } else { refresh() }
+    if case .failed = state {
+      start()
+    } else if connectionRefusal != nil {
+      reconnect?()
+    } else {
+      refresh()
+    }
+  }
+
+  func connectionRefused(_ message: String?) {
+    if connectionRefusal != message { connectionRefusal = message }
   }
 
   private var wantsLoopbackOnly: Bool { !UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) }

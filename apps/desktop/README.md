@@ -1298,7 +1298,11 @@ other kind, such as a server for another Stim home, shows the same icon with the
 in its tooltip; click it to retry now. A port that something holds without answering
 `/health`, such as a stim-server too busy to reply, is neither adopted nor replaced:
 Desktop starts no second server onto it and shows it as degraded until it answers or the
-port is free. Desktop also retries a failed start every 30 seconds or more, except for an outdated server. No dialog
+port is free. The icon also shows while the server runs but refuses Desktop's connection,
+such as when another stim-server for the same Stim home owns its local socket; the reason
+is the server's refusal, repeated under the server's version in **Settings > Advanced** and
+on the Phones page, and the click connects again. The warning stays until the connection
+is open again. Desktop also retries a failed start every 30 seconds or more, except for an outdated server. No dialog
 interrupts. `--loopback-only` removes the server's own Tailscale listeners and makes it refuse any
 request that a `tailscale serve --https` route forwards to the port, so paired phones and other
 Macs cannot reach it; Desktop never removes or edits the route. Turning **Allow connections** off restarts the
