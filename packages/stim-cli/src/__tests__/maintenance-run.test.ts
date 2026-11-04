@@ -206,9 +206,12 @@ test.each([
     reason: 'low disk',
   };
   const skip = { target: 'busy', workspace, reason: 'build in progress' };
-  const planned = vi
-    .spyOn(preview, 'plannedMaintenance')
-    .mockResolvedValue({ actions: [action], skips: [skip], blocked: ['busy'] });
+  const planned = vi.spyOn(preview, 'plannedMaintenance').mockResolvedValue({
+    actions: [action],
+    skips: [skip],
+    blocked: ['busy'],
+    byCheck: { caps: { skips: [skip], blocked: ['busy'] } },
+  });
   await runMaintenance('status');
   now += 15 * 60_000;
   if (changed)
@@ -216,6 +219,7 @@ test.each([
       actions: [action, { ...action, target: 'new-output' }],
       skips: [skip, { ...skip, target: 'new-busy' }],
       blocked: ['busy'],
+      byCheck: { caps: { skips: [skip, { ...skip, target: 'new-busy' }], blocked: ['busy'] } },
     });
   await runMaintenance('status');
   const records = readFileSync(maintenanceNdjsonFile(), 'utf8')
@@ -249,11 +253,11 @@ test('a pass where only the minute pressure reading is due keeps the last plan a
   const action = { kind: 'would-clear-outputs' as const, target: join(home, 'a'), bytes: 1024, reason: 'over cap' };
   const planned = vi
     .spyOn(preview, 'plannedMaintenance')
-    .mockResolvedValue({ actions: [action], skips: [], blocked: [] });
+    .mockResolvedValue({ actions: [action], skips: [], blocked: [], byCheck: {} });
   await runMaintenance('status');
   const first = readMaintenanceState();
   now += 60_000;
-  planned.mockResolvedValue({ actions: [{ ...action, target: join(home, 'b') }], skips: [], blocked: [] });
+  planned.mockResolvedValue({ actions: [{ ...action, target: join(home, 'b') }], skips: [], blocked: [], byCheck: {} });
   await runMaintenance('status');
 
   expect(readMaintenanceState()).toMatchObject({
@@ -282,6 +286,75 @@ test('a pass where only the idle check is due keeps the cap trims of the last si
   await runMaintenance('status');
 
   expect(readMaintenanceState()).toMatchObject({ lastAt: { idle: now }, plan: [trim] });
+});
+
+test.each(['report', 'on'])(
+  'in %s mode a cap the last size check could not reach stays blocked, and is logged once, across idle-only passes',
+  async (mode) => {
+    process.env.STIM_DAEMON = mode;
+    process.env.STIM_CACHES_BUILD_CACHE_MAX_GB = '5';
+    onTestFinished(() => {
+      delete process.env.STIM_CACHES_BUILD_CACHE_MAX_GB;
+    });
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const dir = join(home, 'build-cache');
+    vi.spyOn(measurements, 'measureSizes').mockResolvedValue([
+      {
+        name: 'shared build cache',
+        category: 'build-cache',
+        dir,
+        bytes: 10 * 1024 ** 3,
+        measuredAt: now,
+        blocked: 'a build uses it',
+      },
+    ]);
+    const blocked = ['build-cache 10.0G over the 5G cap; target 4.0G; eligible targets cannot reach the target'];
+    await runMaintenance('status');
+    expect(readMaintenanceState()?.lastPass?.blocked).toEqual(blocked);
+    now += 5 * 60_000;
+    await runMaintenance('status');
+    expect(readMaintenanceState()?.lastPass?.blocked).toEqual(blocked);
+    now += 15 * 60_000;
+    await runMaintenance('status');
+
+    expect(readMaintenanceState()).toMatchObject({ lastAt: { worktree: now }, lastPass: { blocked } });
+    const records = readFileSync(maintenanceNdjsonFile(), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(records.filter((record) => record.event === 'maintenance_pass')).toHaveLength(1);
+    expect(records.filter((record) => record.event === 'maintenance_skip' && record.target === dir)).toHaveLength(1);
+  },
+);
+
+test('in on mode a pass where only the idle check is due neither plans cap trims nor drops a kept one', async () => {
+  process.env.STIM_DAEMON = 'on';
+  process.env.STIM_CACHES_BUILD_CACHE_MAX_GB = '5';
+  process.env.STIM_CACHES_METRO_CACHE_MAX_GB = '50';
+  onTestFinished(() => {
+    delete process.env.STIM_CACHES_BUILD_CACHE_MAX_GB;
+    delete process.env.STIM_CACHES_METRO_CACHE_MAX_GB;
+  });
+  let now = Date.now();
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const build = join(home, 'not-a-build-cache');
+  const metro = join(home, 'not-a-metro-cache');
+  vi.spyOn(measurements, 'measureSizes').mockResolvedValue([
+    { name: 'shared build cache', category: 'build-cache', dir: build, bytes: 10 * 1024 ** 3, measuredAt: now },
+    { name: 'Metro transform caches', category: 'metro-cache', dir: metro, bytes: 10 * 1024 ** 3, measuredAt: now },
+  ]);
+  await runMaintenance('status');
+  const trim = expect.objectContaining({ kind: 'would-trim-cache', target: build });
+  expect(readMaintenanceState()).toMatchObject({ plan: [trim], skipKeys: expect.arrayContaining([build]) });
+  process.env.STIM_CACHES_BUILD_CACHE_MAX_GB = '50';
+  process.env.STIM_CACHES_METRO_CACHE_MAX_GB = '5';
+  now += 5 * 60_000;
+  await runMaintenance('status');
+
+  const state = readMaintenanceState();
+  expect(state).toMatchObject({ lastAt: { idle: now }, plan: [trim], skipKeys: expect.arrayContaining([build]) });
+  expect(state?.skipKeys).not.toContain(metro);
 });
 
 test('cached Swift CAS observations refresh build protection before each plan', async () => {

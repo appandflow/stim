@@ -3,6 +3,7 @@ import { configDir, type StimContext } from '@stim-cli/core';
 import {
   loadConfig,
   readMaintenanceState,
+  type MaintenancePlanPart,
   type MaintenancePressure,
   type MaintenanceSize,
   type MaintenanceMode,
@@ -32,6 +33,8 @@ export function triggeringRoot(operation?: StimContext): string {
 export interface PlannedMaintenance extends MaintenancePlan {
   worktreeSweep?: WorktreeSweep;
   nextRemoval?: { target: string; at: number };
+  /** The blocked reasons and skips of each part this plan covered. */
+  byCheck: Partial<Record<MaintenancePlanPart, Pick<MaintenancePlan, 'blocked' | 'skips'>>>;
 }
 
 export async function plannedMaintenance(
@@ -87,8 +90,26 @@ export async function plannedMaintenance(
       };
     }
   };
-  if (!caps && !sweep && !worktrees)
-    return idle && devices ? await idleStops() : { actions: [], blocked: [], skips: [] };
+  const result: PlannedMaintenance = { actions: [], blocked: [], skips: [], byCheck: {} };
+  const merge = (part: MaintenancePlanPart, extra: MaintenancePlan) => {
+    for (const action of extra.actions)
+      if (
+        !result.actions.some(
+          (entry) =>
+            entry.kind === action.kind &&
+            entry.target === action.target &&
+            (action.check !== 'idle' || entry.check === 'idle'),
+        )
+      )
+        result.actions.push(action);
+    result.blocked.push(...extra.blocked);
+    result.skips.push(...extra.skips);
+    result.byCheck[part] = { blocked: extra.blocked, skips: extra.skips };
+  };
+  if (!caps && !sweep && !worktrees) {
+    if (idle && devices) merge('idle', await idleStops());
+    return result;
+  }
   const outputs = await collectWorkspaceOutputs({
     olderThan: null,
     now: Date.now(),
@@ -135,31 +156,22 @@ export async function plannedMaintenance(
     if (value === undefined) pins.set(workspace, (value = maintenancePinned(workspace)));
     return value;
   };
-  const result: PlannedMaintenance = caps
-    ? plan({
+  if (caps)
+    merge(
+      'caps',
+      plan({
         sizes: currentSizes,
         settings,
         protectedRoot: root,
         pinned,
         recentlyUsed: (workspace) => recentUse(workspace, settings),
-      })
-    : { actions: [], blocked: [], skips: [] };
-  const merge = (extra: MaintenancePlan) => {
-    for (const action of extra.actions)
-      if (
-        !result.actions.some(
-          (entry) =>
-            entry.kind === action.kind &&
-            entry.target === action.target &&
-            (action.check !== 'idle' || entry.check === 'idle'),
-        )
-      )
-        result.actions.push(action);
-    result.blocked.push(...extra.blocked);
-    result.skips.push(...extra.skips);
-  };
+      }),
+    );
   if (sweep)
-    merge(await planSweep({ settings, sizes, protectedRoot: root, pinned, now: Date.now(), devices, operation }));
+    merge(
+      'sweep',
+      await planSweep({ settings, sizes, protectedRoot: root, pinned, now: Date.now(), devices, operation }),
+    );
   if (worktrees) {
     const planned = await planWorktrees({
       protectedRoot: root,
@@ -172,11 +184,11 @@ export async function plannedMaintenance(
       operation,
       deviceActivity,
     });
-    merge(planned);
+    merge('worktree', planned);
     result.worktreeSweep = planned.sweep;
     if (planned.nextRemoval) result.nextRemoval = planned.nextRemoval;
   }
-  if (idle && devices) merge(await idleStops());
+  if (idle && devices) merge('idle', await idleStops());
   return result;
 }
 
