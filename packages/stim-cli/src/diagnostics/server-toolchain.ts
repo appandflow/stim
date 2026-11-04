@@ -44,8 +44,8 @@ export function serviceToolchainFindings(setup: ServerSetup): Finding[] {
         code: 'server-service-paths',
         level: starts ? 'cost' : 'note',
         title: `The ${service.label} service names ${gone.length === 1 ? 'a path' : 'paths'} that no longer exist`,
-        detail: `${gone.join(', ')} ${gone.length === 1 ? 'is' : 'are'} missing${starts ? ', so the service cannot start' : ', so the server will not find the tools they provide'}. A Homebrew or nvm upgrade removes the versioned directory that a service file pinned.`,
-        fix: `Run \`stim-server service install${labelFlag(service.label)}${service.installed.port === null ? '' : ` --port ${service.installed.port}`}\` again from a shell where the tool is installed, repeating any --env and --path-prepend (\`stim-server service status\` lists them).`,
+        detail: `${gone.join(', ')} ${gone.length === 1 ? 'is' : 'are'} missing${starts ? ', so the service cannot start' : ', so the server will not find the tools they provide'}. A Homebrew or nvm upgrade removes the versioned directory a service file pinned, and a path on an unmounted volume looks the same.`,
+        fix: `If a volume is unmounted, mount it. Otherwise run \`stim-server service install${labelFlag(service.label)}${service.installed.port === null ? '' : ` --port ${service.installed.port}`}\` again from a shell where the tool is installed, repeating any --env and --path-prepend (\`stim-server service status\` lists them).`,
       },
     ];
   });

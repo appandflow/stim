@@ -160,7 +160,6 @@ export interface ToolchainReport {
     version: string | null;
     match: 'exact' | 'major' | null;
   } | null;
-  /** Where each installed stim-server service's recorded environment finds each tool, before its login shell adds more. */
   services?: Array<{ label: string; entries: ToolchainEntry[] }>;
 }
 

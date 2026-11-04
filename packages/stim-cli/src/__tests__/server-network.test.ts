@@ -26,9 +26,9 @@ const withRecorded = (port: number | null) =>
 describe('parseServeProxies', () => {
   it('lists loopback proxies per HTTPS port with their Funnel flag, and drops other targets', () => {
     expect(parseServeProxies(SERVE)).toEqual([
-      { port: 443, target: 8788, funnel: true },
-      { port: 7443, target: 7788, funnel: false },
-      { port: 8443, target: 4321, funnel: false },
+      { port: 443, mount: '/gmail-pubsub', target: 8788, funnel: true },
+      { port: 7443, mount: '/', target: 7788, funnel: false },
+      { port: 8443, mount: '/', target: 4321, funnel: false },
     ]);
   });
 
@@ -37,7 +37,7 @@ describe('parseServeProxies', () => {
       parseServeProxies({
         Foreground: { abc: { Web: web('h:8443', 'http://127.0.0.1:7788'), AllowFunnel: { 'h:8443': true } } },
       }),
-    ).toEqual([{ port: 8443, target: 7788, funnel: true }]);
+    ).toEqual([{ port: 8443, mount: '/', target: 7788, funnel: true }]);
     expect(parseServeProxies({})).toEqual([]);
     expect(parseServeProxies(null)).toEqual([]);
   });
@@ -108,6 +108,30 @@ describe('Tailscale and the serve route', () => {
 });
 
 describe('Funnel', () => {
+  it("does not flag another program's Funnel route because a share has no password", () => {
+    const gmail = network({
+      serve: SERVE,
+      share: { exposure: 'tailscale', publicUrl: null },
+      shares: [{ id: 'ab12', workspace: '/w', auth: 'none' }],
+    });
+    expect(serverNetworkFindings(setup({ network: gmail }))).toEqual([]);
+    const proxyMode = network({
+      serve: { Web: web('h:443', 'http://127.0.0.1:54011'), AllowFunnel: { 'h:443': true } },
+      share: { exposure: 'proxy', publicUrl: 'https://demo.example.com' },
+      shares: [{ id: 'ab12', workspace: '/w', auth: 'none' }],
+    });
+    expect(serverNetworkFindings(setup({ network: proxyMode }))).toEqual([]);
+  });
+
+  it('knows a stopped service by its default port', () => {
+    const noPort = service({ installed: { ...service().installed, port: null } });
+    const funnelled = network({
+      serve: { Web: web('h:443', 'http://127.0.0.1:7787'), AllowFunnel: { 'h:443': true } },
+    });
+    const findings = serverNetworkFindings(setup({ services: [noPort], servers: [], network: funnelled }));
+    expect(findings.map((each) => each.code)).toEqual(['server-funnel']);
+  });
+
   const funnel = (target: number) => ({
     Web: web('mac.tail1234.ts.net:443', `http://127.0.0.1:${target}`),
     AllowFunnel: { 'mac.tail1234.ts.net:443': true },
@@ -133,6 +157,46 @@ describe('Funnel', () => {
       shares: [{ id: 'ab12', workspace: '/w', auth: 'generated' }],
     });
     expect(serverNetworkFindings(setup({ network: protectedShare }))).toEqual([]);
+  });
+});
+
+describe('route edge cases', () => {
+  it('leaves a recorded route that is itself a Funnel route to the Funnel finding', () => {
+    const findings = serverNetworkFindings(
+      serveSetup(
+        { Web: web('h:7443', 'http://127.0.0.1:7788'), AllowFunnel: { 'h:7443': true } },
+        { services: [withRecorded(7443)] },
+      ),
+    );
+    expect(findings.map((each) => each.code)).toEqual(['server-funnel']);
+  });
+
+  it('makes Tailscale-off a note when the server also listens on the local network', () => {
+    const stopped = network({ tailscaleStatus: { BackendState: 'Stopped' } });
+    const [finding] = serverNetworkFindings(
+      setup({
+        network: stopped,
+        services: [withRecorded(7443)],
+        servers: [reading({ health: health({ lan: true }) })],
+      }),
+    );
+    expect(finding).toMatchObject({ code: 'server-tailscale', level: 'note' });
+    expect(finding?.detail).toContain('local network');
+  });
+
+  it('does not ask for a route for a server of another Stim home', () => {
+    expect(
+      serverNetworkFindings(
+        serveSetup(
+          {},
+          {
+            services: [],
+            clients: { build: 1, deviceHost: 0 },
+            servers: [reading({ kind: 'manual', label: undefined, health: health({ stimHome: '/tmp/scratch' }) })],
+          },
+        ),
+      ),
+    ).toEqual([]);
   });
 });
 

@@ -49,8 +49,8 @@ export interface ServerHealthReading {
   stimHome: string;
   startup?: { state: string };
   keepAwake?: { setting: boolean; held: boolean; reason?: string };
-  /** Whether the server serves this machine only. */
   loopbackOnly?: boolean;
+  lan?: boolean;
 }
 
 export interface InstalledServerService {
@@ -94,7 +94,6 @@ export interface NetworkReading {
   tailscaleStatus: unknown;
   /** `tailscale serve status --json`; null when Tailscale is not running or the config could not be read. */
   serve: unknown;
-  /** `share.exposure` and `share.publicUrl` as settings resolve them. */
   share: { exposure: 'auto' | 'tailscale' | 'proxy'; publicUrl: string | null };
   /** The web shares this Stim home's server lists; null when none is reachable or none was read. */
   shares: Array<{ id: string; workspace: string; auth: 'generated' | 'set' | 'none' }> | null;
@@ -177,7 +176,7 @@ export const describeServer = (server: ServerReading): string => {
 
 export const labelFlag = (label: string): string => (label === 'dev.stim.server' ? '' : ` --label ${label}`);
 
-const sameHome = (a: string, b: string): boolean => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
+export const sameHome = (a: string, b: string): boolean => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
 
 function updateRemedy(server: ServerReading, version: string): string {
   if (server.kind === 'service')

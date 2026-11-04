@@ -1,16 +1,18 @@
 import { isJsonObject } from '@stim-cli/core/state';
 import { readTailscale, tailscaleDiagnosis } from '../offload/diagnosis.ts';
 import type { Finding } from './doctor.ts';
-import { describeServer, type ServerSetup } from './server-setup.ts';
+import { describeServer, sameHome, type ServerSetup } from './server-setup.ts';
 
 const SERVE_PORT = 7443;
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '0.0.0.0', '[::]']);
 /** `net.ipv4.tcp_notsent_lowat` reads this, the unsigned maximum, while the kernel has no limit set. */
 const LOWAT_UNLIMITED = 4_294_967_295;
 const RECOMMENDED_LOWAT = 16_384;
+const DEFAULT_SERVER_PORT = 7787;
 
 export interface ServeProxy {
   port: number;
+  mount: string;
   target: number;
   funnel: boolean;
 }
@@ -31,13 +33,13 @@ export function parseServeProxies(serve: unknown): ServeProxy[] {
     const funnels = isJsonObject(config.AllowFunnel) ? config.AllowFunnel : {};
     return Object.entries(isJsonObject(config.Web) ? config.Web : {}).flatMap(([hostPort, web]) => {
       const handlers = isJsonObject(web) && isJsonObject(web.Handlers) ? web.Handlers : {};
-      return Object.values(handlers).flatMap((handler): ServeProxy[] => {
+      return Object.entries(handlers).flatMap(([mount, handler]): ServeProxy[] => {
         const proxy = isJsonObject(handler) && typeof handler.Proxy === 'string' ? handler.Proxy : null;
         if (proxy === null || !URL.canParse(proxy.includes('://') ? proxy : `http://${proxy}`)) return [];
         const url = new URL(proxy.includes('://') ? proxy : `http://${proxy}`);
         if (!LOOPBACK.has(url.hostname) && !LOOPBACK.has(`[${url.hostname}]`)) return [];
         const target = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
-        return [{ port: portOf(hostPort), target, funnel: funnels[hostPort] === true }];
+        return [{ port: portOf(hostPort), mount, target, funnel: funnels[hostPort] === true }];
       });
     });
   });
@@ -63,10 +65,22 @@ function freeServePort(serve: unknown): number {
 const serveCommand = (port: number, target: number): string =>
   `tailscale serve --bg --https=${port} http://127.0.0.1:${target}`;
 
+function stimPorts(setup: ServerSetup): Set<number> {
+  return new Set([
+    ...setup.servers.filter((server) => server.kind !== 'share').map((server) => server.port),
+    ...setup.services.map((service) => service.installed.port ?? DEFAULT_SERVER_PORT),
+  ]);
+}
+
 function loggedIn(status: unknown): boolean {
   if (!isJsonObject(status) || status.BackendState !== 'Running') return false;
   const self = isJsonObject(status.Self) ? status.Self : null;
   return typeof self?.DNSName === 'string' && self.DNSName.replace(/\.$/, '') !== '';
+}
+
+function shareMode(setup: ServerSetup): 'tailscale' | 'proxy' {
+  const { exposure } = setup.network.share;
+  return exposure === 'auto' ? (loggedIn(setup.network.tailscaleStatus) ? 'tailscale' : 'proxy') : exposure;
 }
 
 function tailscaleFindings(setup: ServerSetup): Finding[] {
@@ -75,27 +89,26 @@ function tailscaleFindings(setup: ServerSetup): Finding[] {
     setup.services.some((service) => service.installed.serve) || setup.clients.build + setup.clients.deviceHost > 0;
   const reading = readTailscale(network.tailscaleStatus);
   if (!usesTailnet) return [];
+  const lan = setup.servers.some((server) => server.health?.lan === true);
   if (!reading.running) {
     const diagnosis = tailscaleDiagnosis(reading.code, network.host);
     return [
       {
         code: 'server-tailscale',
-        level: 'cost',
-        title: 'Tailscale is not running, so no other machine or phone can reach this stim-server',
-        detail: `${diagnosis.message} This machine has a stim-server service with a tailnet route or approved build or device-host clients.`,
+        level: lan ? 'note' : 'cost',
+        title: 'Tailscale is not running, so no other machine or phone can reach this stim-server over the tailnet',
+        detail: `${diagnosis.message} This machine has a stim-server service with a tailnet route or approved build or device-host clients.${lan ? ' The server also listens on the local network, which clients there can still use.' : ''}`,
         fix: diagnosis.remedy,
       },
     ];
   }
   if (network.serve === null) return [];
   const proxies = parseServeProxies(network.serve);
-  const ports = new Set([
-    ...setup.servers.filter((server) => server.kind !== 'share').map((server) => server.port),
-    ...setup.services.flatMap((service) => (service.installed.port === null ? [] : [service.installed.port])),
-  ]);
+  const ports = stimPorts(setup);
   return setup.servers.flatMap((server): Finding[] => {
     if (server.kind === 'share' || server.health === null || server.health.loopbackOnly) return [];
-    if (proxies.some((proxy) => proxy.target === server.port && !proxy.funnel)) return [];
+    if (!sameHome(server.health.stimHome, setup.stimHome)) return [];
+    if (proxies.some((proxy) => proxy.target === server.port)) return [];
     const service = server.kind === 'service' ? setup.services.find((each) => each.label === server.label) : undefined;
     const recorded = service?.installed.serve?.port;
     const elsewhere = proxies.find(
@@ -129,10 +142,8 @@ function funnelFindings(setup: ServerSetup): Finding[] {
   const { network } = setup;
   const funnels = parseServeProxies(network.serve).filter((proxy) => proxy.funnel);
   if (funnels.length === 0) return [];
-  const ports = new Set([
-    ...setup.servers.filter((server) => server.kind !== 'share').map((server) => server.port),
-    ...setup.services.flatMap((service) => (service.installed.port === null ? [] : [service.installed.port])),
-  ]);
+  const ports = stimPorts(setup);
+  const sharesOverFunnel = shareMode(setup) === 'tailscale';
   const open = (network.shares ?? []).filter((share) => share.auth === 'none');
   return funnels.flatMap((funnel): Finding[] => {
     const off = `Run \`tailscale funnel --https=${funnel.port} off\`, then check \`tailscale serve status\`.`;
@@ -147,7 +158,7 @@ function funnelFindings(setup: ServerSetup): Finding[] {
         },
       ];
     }
-    if (open.length === 0) return [];
+    if (!sharesOverFunnel || funnel.mount !== '/' || open.length === 0) return [];
     const names = open.map((share) => `${share.id} (${share.workspace})`).join(', ');
     return [
       {
@@ -155,7 +166,7 @@ function funnelFindings(setup: ServerSetup): Finding[] {
         level: 'cost',
         title: 'PUBLIC: a Tailscale Funnel route is open while a share has no password',
         detail: `https port ${funnel.port} is public and proxies to 127.0.0.1:${funnel.target}, and ${open.length === 1 ? 'this share has' : 'these shares have'} no password, so its URL token is the only secret: ${names}.`,
-        fix: `End the share with \`stim share stop\` in its workspace (\`stim share list\` names them) and start it again with a password. To close the route itself, run \`tailscale funnel --https=${funnel.port} off\`.`,
+        fix: 'End the share with `stim share stop` in its workspace (`stim share list` names them) and start it again with a password. Stim removes the Funnel route when the last share ends.',
       },
     ];
   });
@@ -164,7 +175,7 @@ function funnelFindings(setup: ServerSetup): Finding[] {
 function shareFindings(setup: ServerSetup): Finding[] {
   const { network, servers } = setup;
   const { exposure, publicUrl } = network.share;
-  const mode = exposure === 'auto' ? (loggedIn(network.tailscaleStatus) ? 'tailscale' : 'proxy') : exposure;
+  const mode = shareMode(setup);
   const sharing = servers.some((server) => server.kind === 'share') || (network.shares ?? []).length > 0;
   const findings: Finding[] = [];
   if (mode === 'proxy' && publicUrl === null && (exposure === 'proxy' || sharing)) {

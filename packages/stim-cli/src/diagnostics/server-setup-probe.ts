@@ -141,6 +141,7 @@ async function readHealth(port: number): Promise<ServerHealthReading | null> {
         ? { startup: { state: body.startup.state } }
         : {}),
       ...(body.loopbackOnly === true ? { loopbackOnly: true } : {}),
+      ...(isJsonObject(body.lan) ? { lan: true } : {}),
       ...(keep && typeof keep.setting === 'boolean' && typeof keep.held === 'boolean'
         ? {
             keepAwake: {
