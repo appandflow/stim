@@ -526,6 +526,28 @@ test.each([
   },
 );
 
+test('a later recording leaves an earlier one that was not downloaded yet alone', async () => {
+  await driver.stop();
+  driver = new AgentDeviceDriver({
+    env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
+    stateDir: join(home, 'agent'),
+    claimRoot: join(home, 'claims'),
+    device: { session: SESSION, udid: UDID },
+    maxRecordingBytes: 10,
+  });
+  await start();
+  await rpc(recordStart());
+  const first = agentDeviceRecording('recording-first.mp4');
+  writeFileSync(first, '0123456789');
+  const stop = { command: 'record', session: 'default', positionals: ['stop'] };
+  expect(JSON.parse((await rpc(stop)).text)).toMatchObject({ result: { ok: true } });
+  await rpc(recordStart());
+  const second = agentDeviceRecording('recording-second.mp4');
+  writeFileSync(second, '0123456789');
+  expect(JSON.parse((await rpc(stop)).text)).toMatchObject({ result: { ok: true } });
+  expect(existsSync(first)).toBe(true);
+});
+
 test('a start the daemon refuses leaves no recording behind', async () => {
   await start();
   fixture.recordError = { code: 'COMMAND_FAILED', message: 'recorder failed to start' };

@@ -230,6 +230,7 @@ interface Lease {
 
 interface Recording {
   dir: string;
+  earlier: string[];
   session: unknown;
   stop: Record<string, unknown>;
   pending: boolean;
@@ -1000,6 +1001,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     const body = Buffer.from(JSON.stringify(rpc));
     const next: Recording = {
       dir,
+      earlier: sessionRecordings(this.sessionsTarget),
       session: params.session,
       stop: recordStop({ ...params, meta: owner }),
       pending: true,
@@ -1175,9 +1177,13 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.answer(response, { status: 200, headers: {}, body: withId(capped, id) });
   }
 
+  private written(recording: Recording): string[] {
+    return sessionRecordings(this.sessionsTarget).filter((file) => !recording.earlier.includes(file));
+  }
+
   private discardRecording(recording: Recording): void {
     discard(recording.dir);
-    for (const file of sessionRecordings(this.sessionsTarget)) discard(file);
+    for (const file of this.written(recording)) discard(file);
   }
 
   private finished(recording: Recording, body: Buffer): Buffer {
@@ -1185,7 +1191,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     try {
       for (const entry of readdirSync(recording.dir, { withFileTypes: true }))
         if (entry.isFile()) bytes += statSync(join(recording.dir, entry.name)).size;
-      for (const file of sessionRecordings(this.sessionsTarget)) bytes += statSync(file).size;
+      for (const file of this.written(recording)) bytes += statSync(file).size;
     } catch {}
     if (bytes <= this.options.maxRecordingBytes) return body;
     this.discardRecording(recording);
