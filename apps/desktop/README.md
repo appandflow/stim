@@ -543,10 +543,13 @@ read of a session only records the device's text. Mac items with concealed or tr
 marks (`org.nspasteboard.ConcealedType`, `org.nspasteboard.TransientType` and older password
 manager types), files or images, and empty or over-256 KB text are not sent to the device. Device text
 is written to the Mac marked transient, since its sensitivity is unknown. The popover also has
-**Paste Mac Clipboard**, which presses Command-V on an iOS simulator (iOS asks
-"Allow Paste" for text from another source) and **Copy Device Clipboard**.
-After a paste on an iOS simulator, a notice says to tap the paste suggestion on the device
-if nothing appears. Apps on the device, and agents driving it, can read the text sent to it.
+**Paste Mac Clipboard** and **Copy Device Clipboard**. On an iOS simulator, Paste
+types printable ASCII, line breaks and tabs into the focused field as key presses (about 35
+characters a second, so a long paste takes a while), so iOS shows no paste prompt and a
+simulator slimmed by SimSlim takes it too; the field's own typing rules still apply, such as
+smart quotes and dashes. Text with any other character (accents, emoji) is pasted with
+Command-V, where iOS asks "Allow Paste" for text from another source, and a notice says to tap
+the paste suggestion on the device if nothing appears. Apps on the device, and agents driving it, can read the text sent to it.
 
 A device Desktop shows through stim-server (a hosted iOS or Android session, a device of a paired
 machine, a leased Android phone) has the same section once **Control** is on, and a disabled one that names the server to update when its hello lacks the feature. Sync is on by default, so the current Mac text is sent to the device's machine as soon as Control starts. Sync, **Paste Mac
@@ -556,8 +559,9 @@ is disabled and names the server to update. The device takes at most 8 KiB of UT
 Mac: a larger Mac item is not synced and shows a notice, and **Paste Mac Clipboard** refuses it with
 its size. Each call costs 10 inputs of the connection's budget. Text crosses the network, so a hosted
 device on another Mac receives it over the tailnet. Failures show their server message in a notice
-(sync) or an alert (the buttons). The paste hint above applies to iOS devices reached through the
-server too. A leased iPhone, macOS apps, web pages, remote EAS previews and replay never sync.
+(sync) or an alert (the buttons). Pasting into an iOS simulator reached through the
+server types the text the same way (the server does it), and the paste hint applies only when it
+could not. A leased iPhone, macOS apps, web pages, remote EAS previews and replay never sync.
 
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,

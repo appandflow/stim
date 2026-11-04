@@ -160,8 +160,11 @@ on Android, the hardware arrow and Escape keys on iOS).
 
 With `--control` on an iOS simulator, an Android emulator or an Android phone,
 Command-V (Control-V on Windows and Linux) while the screen has focus pastes the
-text on your computer's clipboard into the focused field on the device. The
-options menu in the top bar has a "Sync clipboard" switch, on by default and
+text on your computer's clipboard into the focused field on the device. On an iOS
+simulator, printable ASCII, line breaks and tabs are typed into the field (about 35
+characters a second, with the field's own smart quotes and dashes), so no paste prompt
+appears; other text is pasted with Command-V, and the page says to tap the paste
+suggestion on the device. The options menu in the top bar has a "Sync clipboard" switch, on by default and
 remembered by your browser. While the page is focused it copies new text from
 the device to your computer's clipboard (a "Copy from device" chip appears when
 the browser refuses), and in Chrome and Edge, after a one-time permission
