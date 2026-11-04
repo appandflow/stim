@@ -285,7 +285,7 @@ final class JpegGate {
   func admit(_ config: Config, pacer: Pacer) -> Bool {
     let now = CFAbsoluteTimeGetCurrent()
     let wait = last + 1 / max(config.jpegFps ?? config.fps, 0.1) - now
-    if wait <= 0.5 / max(config.fps, 0.1) {
+    if wait <= min(0.5 / max(config.fps, 0.1), 0.15 / max(config.jpegFps ?? config.fps, 0.1)) {
       last = now
       return true
     }
