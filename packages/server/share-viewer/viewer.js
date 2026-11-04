@@ -174,7 +174,6 @@ function askForKeyframe() {
   send({ type: 'keyframe' });
 }
 
-/** The newest decoded frame, drawn on the next display refresh; a frame replaced before then is never drawn. */
 let undrawn = null;
 let drawScheduled = 0;
 
@@ -182,6 +181,10 @@ function closeDecoder() {
   if (decoder && decoder.state !== 'closed') decoder.close();
   decoder = null;
   decoderKey = '';
+  dropUndrawn();
+}
+
+function dropUndrawn() {
   undrawn?.close();
   undrawn = null;
 }
@@ -585,12 +588,14 @@ function connect(codec) {
       live = !message.delayed && hasFrame;
       refreshStatus();
     } else if (message.type === 'waiting') {
+      dropUndrawn();
       away = true;
       resuming = false;
       live = false;
       body.dataset.away = 'true';
       refreshStatus();
     } else if (message.type === 'resumed') {
+      dropUndrawn();
       resuming = true;
       live = false;
       waitingForKeyframe = true;
