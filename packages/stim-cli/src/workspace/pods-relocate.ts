@@ -20,7 +20,7 @@ function normalize(text: string): string {
   return text.replace(/\r\n/g, '\n').trimEnd() + '\n';
 }
 
-function splitChecksums(text: string): { before: string; entries: Map<string, string>; after: string } | null {
+export function splitChecksums(text: string): { before: string; entries: Map<string, string>; after: string } | null {
   const start = text.indexOf(`\n${CHECKSUMS_HEADER}`);
   if (start === -1) return null;
   const bodyStart = start + 1 + CHECKSUMS_HEADER.length;
@@ -36,12 +36,12 @@ function splitChecksums(text: string): { before: string; entries: Map<string, st
   return { before: text.slice(0, bodyStart), entries, after: text.slice(bodyStart + used) };
 }
 
-function pathPattern(root: string, flags = ''): RegExp {
+export function pathPattern(root: string, flags = ''): RegExp {
   const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(?:(?<![\\p{L}\\p{N}_.-])|(?<=-[IFL]))${escaped}(?![\\p{L}\\p{N}_.-])`, `u${flags}`);
 }
 
-function sha1(text: string): string {
+export function sha1(text: string): string {
   return createHash('sha1').update(text).digest('hex');
 }
 

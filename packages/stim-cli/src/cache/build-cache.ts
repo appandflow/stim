@@ -16,6 +16,7 @@ import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 import { getExecutor } from '../exec.ts';
 import { git, gitAsync, gitQuiet } from '../workspace/git.ts';
 import { register } from './cache-manifest.ts';
+import { podfileLockHook } from './podfile-lock.ts';
 import { computeSignedTail, writeSignedTail } from '../engine/apk-signed-tail.ts';
 import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from '../engine/asset-manifest.ts';
 import { sharedBuildCache as cacheRoot } from '../workspace/paths.ts';
@@ -295,9 +296,18 @@ export async function fingerprintOptions(
     platform === 'android'
       ? []
       : [...ignoredHere(Object.keys(BUNDLE_OUTPUT_IGNORES), true)].map((path) => BUNDLE_OUTPUT_IGNORES[path]!);
+  const fileHookTransform =
+    platform === 'ios'
+      ? podfileLockHook(
+          projectRoot,
+          iosProjectPath,
+          (await loadFingerprintConfig(projectRoot, true))?.fileHookTransform,
+        )
+      : undefined;
   // With DEBUG set, @expo/fingerprint profiles sourcers on stdout unless silent.
   return {
     ...platforms,
+    ...(fileHookTransform ? { fileHookTransform } : {}),
     ...(ios.extraSources ? { extraSources: ios.extraSources } : {}),
     ignorePaths: [...DEFAULT_FINGERPRINT_IGNORES, ...bundleOutput, ...(ios.ignorePaths ?? [])],
     silent: true,

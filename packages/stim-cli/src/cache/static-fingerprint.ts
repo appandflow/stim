@@ -7,7 +7,9 @@ import { normalizeOptionsAsync } from '@expo/fingerprint/build/Options.js';
 import { isIgnoredPathWithMatchObjects } from '@expo/fingerprint/build/utils/Path.js';
 import { gitAsync } from '../workspace/git.ts';
 import { STIM_VERSION } from '../stim-version.ts';
+import { DEFAULT_IOS_PROJECT_PATH } from '../workspace/settings.ts';
 import { expoEnvFiles, fingerprintOptions, type FingerprintTarget } from './build-cache.ts';
+import { canonicalPodfileLockOf, stimOnlyHooks } from './podfile-lock.ts';
 
 const STATIC_SCHEMA = 1;
 
@@ -447,7 +449,7 @@ async function computeDigest(
 ): Promise<{ digest: string; nativePackages: string[] }> {
   if (existsSync(join(root, '.pnp.cjs'))) throw new Uncertain('Yarn Plug-n-Play installs have no node_modules to read');
   const normalized = await normalizeOptionsAsync(root, await fingerprintOptions(root, target));
-  if (typeof normalized.fileHookTransform === 'function')
+  if (typeof normalized.fileHookTransform === 'function' && !stimOnlyHooks.has(normalized.fileHookTransform))
     throw new Uncertain('fingerprint.config.js sets fileHookTransform');
   if (normalized.nativeModuleSourceType !== 'package' || normalized.configPluginSourceType !== 'package')
     throw new Uncertain('the fingerprint preset hashes package files');
@@ -588,11 +590,14 @@ async function computeDigest(
   const nativePackages = [
     ...new Set([...packages.values()].filter((info) => linkedOn(info, target.platform)).map((info) => info.name)),
   ].toSorted();
+  const podfileLock =
+    target.platform === 'ios' ? canonicalPodfileLockOf(root, target.iosProjectPath ?? DEFAULT_IOS_PROJECT_PATH) : null;
   const digest = sha256(
     JSON.stringify({
       identity,
       files: [...files].toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
       extraContents,
+      podfileLock: podfileLock === null ? null : sha256(podfileLock),
       packages: packageRows,
       lockfile: lockfileDigest(root, top),
       env: [...scan.env].toSorted().map((name) => [name, envValueDigest(root, env[name])]),

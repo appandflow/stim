@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   readFileSync,
   mkdtempSync,
@@ -372,6 +373,68 @@ describe('library example apps in the main checkout', () => {
       for (const dir of [repo, `${repo}-wt`]) rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
+});
+
+describe('Podfile.lock checksums of podspecs that embed the checkout path', () => {
+  const sha1 = (text: string) => createHash('sha1').update(text).digest('hex');
+  let base: string;
+  beforeEach(() => {
+    base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-bc-podlock-')));
+  });
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  function checkout(name: string, { version = '58.0.3', hook = false } = {}): string {
+    const dir = join(base, name);
+    mkdirSync(join(dir, 'ios/Pods/Local Podspecs'), { recursive: true });
+    writeFileSync(join(dir, 'package.json'), '{"name":"app"}');
+    writeFileSync(join(dir, 'ios/Podfile'), 'platform :ios');
+    if (hook) {
+      writeFileSync(
+        join(dir, 'fingerprint.config.js'),
+        'module.exports = { fileHookTransform: (_s, chunk) => chunk };',
+      );
+    }
+    const podspec = `{"name":"ExpoModulesCore","version":"${version}","source":{"http":"file://${dir}/node_modules/expo-modules-core/ExpoModulesCore.tar.gz"}}\n`;
+    writeFileSync(join(dir, 'ios/Pods/Local Podspecs/ExpoModulesCore.podspec.json'), podspec);
+    const filler = Array.from({ length: 80 }, (_, i) => `  Pod${i}: ${sha1(`pod ${i}`)}`).join('\n');
+    writeFileSync(
+      join(dir, 'ios/Podfile.lock'),
+      `PODS:\n  - ExpoModulesCore (${version})\n\nSPEC CHECKSUMS:\n  ExpoModulesCore: ${sha1(podspec)}\n${filler}\n\nPODFILE CHECKSUM: abc\n\nCOCOAPODS: 1.16.2\n`,
+    );
+    getExecutor().runFile('git', ['-C', dir, 'init', '--quiet'], { timeoutMs: 10_000 });
+    return dir;
+  }
+
+  const hashOf = async (dir: string) => (await fingerprintOffline(dir, { platform: 'ios' }))?.hash;
+
+  test.each([false, true])(
+    'two checkouts of one commit that ran pod install fingerprint alike (project hook: %s)',
+    async (hook) => {
+      const first = await hashOf(checkout('trailhead-saved', { hook }));
+      expect(first).toBeTruthy();
+      expect(await hashOf(checkout('trailhead-filters', { hook }))).toBe(first);
+    },
+    30_000,
+  );
+
+  test('a podspec that differs beyond the checkout path still changes the fingerprint', async () => {
+    const first = await hashOf(checkout('one'));
+    expect(await hashOf(checkout('two', { version: '58.0.4' }))).not.toBe(first);
+  }, 30_000);
+
+  test('a checksum that is not its podspec checksum keeps counting as written', async () => {
+    const one = checkout('one');
+    const two = checkout('two');
+    const lock = join(two, 'ios/Podfile.lock');
+    const first = await hashOf(one);
+    writeFileSync(
+      lock,
+      readFileSync(lock, 'utf8').replace(/ExpoModulesCore: [0-9a-f]{40}/, `ExpoModulesCore: ${'1'.repeat(40)}`),
+    );
+    expect(await hashOf(two)).not.toBe(first);
+  }, 30_000);
 });
 
 describe('untracked native files on a first miss', () => {
