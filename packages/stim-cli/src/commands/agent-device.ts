@@ -302,14 +302,15 @@ export function planAgentDevice(
 }
 
 /**
- * The full agent-device arguments for a plan: the selection for a local device, with `stim-<slot>-<platform>` as the
- * session when the agent names none, or the hosted session's remote config. Refuses a device that is not running.
+ * The full agent-device arguments for a plan: the selection for a local device or the hosted session's remote config,
+ * with `stim-<slot>-<platform>` as the session when the agent names none. Refuses a device that is not running.
  */
 export function agentDeviceArgs(
   plan: AgentDevicePlan,
 ): { args: string[]; session: string | null } | { refusal: AgentDeviceRefusal } {
   const { device } = plan;
-  const session = plan.session === undefined ? [] : ['--session', plan.session];
+  const sessionless = plan.command !== null && SESSIONLESS_COMMANDS.has(plan.command);
+  const name = plan.session ?? `stim-${device.slot}-${device.platform}`;
   if (device.kind === 'hosted') {
     if (!device.remoteConfig) {
       return refusal(
@@ -318,7 +319,10 @@ export function agentDeviceArgs(
         'On the hosting Mac, set `hosting.agentDriver` to `agent-device` and install agent-device 0.21.30 or later, then rerun `stim ios|android --remote <machine>`.',
       );
     }
-    return { args: [...plan.args, ...session, '--remote-config', device.remoteConfig], session: null };
+    return {
+      args: [...plan.args, ...(sessionless ? [] : ['--session', name]), '--remote-config', device.remoteConfig],
+      session: null,
+    };
   }
   if (device.id === null) {
     return refusal(
@@ -327,8 +331,6 @@ export function agentDeviceArgs(
       `Run \`stim ${device.platform}${device.slot === 'default' ? '' : ` --slot ${device.slot}`}\` to boot it and launch the app.`,
     );
   }
-  const sessionless = plan.command !== null && SESSIONLESS_COMMANDS.has(plan.command);
-  const name = plan.session ?? `stim-${device.slot}-${device.platform}`;
   return {
     args: [
       ...plan.args,

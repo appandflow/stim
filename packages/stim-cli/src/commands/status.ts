@@ -148,7 +148,8 @@ export default function statusCommand(program: Command): void {
     .action(async (opts: StatusOptions) => {
       if (opts.watch) return watchStatus(Boolean(opts.json));
       const json = Boolean(opts.json);
-      for (const line of renderStatus(await readStatus(), json)) console.log(line);
+      for (const line of renderStatus(await readStatus({ probes: liveProbes({ sharedListing: true }) }), json))
+        console.log(line);
     });
 }
 

@@ -1107,7 +1107,7 @@ check stim logs --source agent.
 ## `share`
 
 ```text
-stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--view-password [value]] [--device] [--slot <name>] [--json]
+stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--view-password [value]] [--slug <name>] [--device] [--slot <name>] [--json]
 stim share stop [--json]
 stim share list [--json]
 ```
@@ -1118,7 +1118,8 @@ runs inside this Stim home's stim-server, which `stim share` starts in the
 background when none runs, and is served through Tailscale Funnel. The
 password is generated unless you set one with `--password` or drop it with
 `--no-password`. With `--control`, `--view-password` adds a second password that
-only watches. Viewers see each other's touches live. Every share expires (60 minutes by default, at most 480) and ends with
+only watches. `--slug <name>` makes the link `/s/<name>/` instead of a random
+token and needs a password. Viewers see each other's touches live. Every share expires (60 minutes by default, at most 480) and ends with
 `stim share stop`, `stim stop` (the workspace, or one slot with `--slot`),
 `stim worktree remove`, or stim-server. A device that goes away, as it does when
 you rebuild or relaunch the app, only makes it wait and resume. It refuses with
@@ -1501,7 +1502,12 @@ stim remote remove janics-mac-mini
 
 The states are the ones `stim doctor --json` reports under `remoteMachines`
 (`build` here) and `deviceHosts` (`deviceHost` here). `list --json` prints
-`{ machines: [{ machine, priority, build, deviceHost }], findings }`; `add
+`{ machines: [{ machine, priority, build, deviceHost, serverKeyFingerprint, reachability, revoke }], findings }`,
+where `serverKeyFingerprint` is the fingerprint of the stim-server key this
+machine pinned for it (`null` before it answered), `reachability` is
+`reachable`, `unreachable`, `key-changed` or `unknown` from this run's contact,
+and `revoke` lists the `stim-server devices revoke <id>` commands a person on
+that machine runs to withdraw its approvals; `add
 --json` prints `{ machine, added, machines, build, deviceHost, findings }`,
 where `machines` is the list after the change; `remove --json` prints
 `{ machine, removed, forgot, machines, revoke, pending }`, where `pending` means a request
@@ -1526,6 +1532,17 @@ behind its upstream, and whether its branch is merged, as a
 only for live environments; `stim status --watch` shows it for every worktree. See
 [Parallel environments](./worktrees.md#parallel-environments) for the JSON
 fields.
+
+One-shot `stim status` takes simulator state and device slot usage from the
+device listing that a boot admission took in the last 10 seconds, when there
+is one, and runs `simctl list` itself otherwise. It also lists itself when that
+listing lacks a simulator or, for the emulator listing, an owned emulator that a
+workspace records. Under a burst of starting workspaces the admissions keep that
+listing fresh, so status does not wait on a slow `simctl`. The listing can be up
+to 10 seconds old plus the time it took, and a boot admission lists before it
+boots a device, so a device that boots or stops after that listing can show its
+earlier state for that long. `stim status --watch` always lists the devices
+itself.
 
 Each workspace is marked with its lifecycle phase: `[warming: <step>]` while
 `stim worktree warm` runs in it, or `[ready]` after a warm until its first run.

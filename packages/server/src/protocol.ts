@@ -7,6 +7,8 @@ import {
   FEATURES,
   type Method,
   PUSH_TOKEN_PATTERN,
+  SHARE_SLUG_PATTERN,
+  RESERVED_SHARE_SLUGS,
   ERROR_CODES,
   LOG_SOURCES,
   LOG_LEVELS,
@@ -2279,6 +2281,7 @@ export function protocolJsonSchema(): JsonSchema {
                 additionalProperties: false,
                 properties: { password: { type: 'string', minLength: 8, maxLength: 128 } },
               },
+              slug: { type: 'string', pattern: SHARE_SLUG_PATTERN, not: { enum: [...RESERVED_SHARE_SLUGS] } },
             },
           }),
           request('share.stop', {

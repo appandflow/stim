@@ -36,6 +36,7 @@ async function main(): Promise<void> {
       'park',
       'inspect',
       'adopt',
+      'resume',
     ].includes(String(input.mode))
   )
     throw new Error('Invalid hosted worker request.');
@@ -106,8 +107,8 @@ async function main(): Promise<void> {
       throw new Error('Invalid hosted Metro port.');
   }
   if (input.mode === 'reverse' && input.platform !== 'android') throw new Error('Metro reverse requires Android.');
-  if (input.platform === 'macos' && ['park', 'inspect', 'adopt'].includes(String(input.mode)))
-    throw new Error('Hosted parking requires iOS or Android.');
+  if (input.platform === 'macos' && ['park', 'inspect', 'adopt', 'resume'].includes(String(input.mode)))
+    throw new Error('Hosted parking and resuming require iOS or Android.');
   if (input.platform === 'macos' && !hostedMacosAppSlot(input.appSlot))
     throw new Error('Invalid hosted macOS app slot.');
   if (input.mode === 'logs') {
@@ -143,7 +144,7 @@ async function main(): Promise<void> {
         )
       : input.platform === 'android'
         ? await runHostedAndroidDevice(
-            input.mode as 'prepare' | 'stop' | 'install' | 'reverse' | 'park' | 'inspect' | 'adopt',
+            input.mode as 'prepare' | 'stop' | 'install' | 'reverse' | 'park' | 'inspect' | 'adopt' | 'resume',
             {
               session: typeof input.session === 'string' ? input.session : '',
               consolePort: input.consolePort,
@@ -159,7 +160,7 @@ async function main(): Promise<void> {
               : undefined,
           )
         : await runHostedDevice(
-            input.mode as 'prepare' | 'stop' | 'install' | 'park' | 'inspect' | 'adopt',
+            input.mode as 'prepare' | 'stop' | 'install' | 'park' | 'inspect' | 'adopt' | 'resume',
             {
               ...(typeof input.deviceType === 'string' ? { deviceType: input.deviceType } : {}),
               ...(typeof input.runtime === 'string' ? { runtime: input.runtime } : {}),
