@@ -30,18 +30,32 @@ export function parseServeProxies(serve: unknown): ServeProxy[] {
     isJsonObject,
   );
   return configs.flatMap((config) => {
-    const funnels = isJsonObject(config.AllowFunnel) ? config.AllowFunnel : {};
-    return Object.entries(isJsonObject(config.Web) ? config.Web : {}).flatMap(([hostPort, web]) => {
+    const funnelPorts = new Set(
+      Object.entries(isJsonObject(config.AllowFunnel) ? config.AllowFunnel : {})
+        .filter(([, allowed]) => allowed === true)
+        .map(([hostPort]) => portOf(hostPort)),
+    );
+    const target = (address: unknown): number | null => {
+      if (typeof address !== 'string') return null;
+      const text = address.includes('://') ? address : `tcp://${address}`;
+      if (!URL.canParse(text)) return null;
+      const url = new URL(text);
+      if (!LOOPBACK.has(url.hostname) && !LOOPBACK.has(`[${url.hostname}]`)) return null;
+      return Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+    };
+    const forwards = Object.entries(isJsonObject(config.TCP) ? config.TCP : {}).flatMap(([port, listener]) => {
+      const to = isJsonObject(listener) ? target(listener.TCPForward) : null;
+      return to === null ? [] : [{ port: Number(port), mount: '/', target: to, funnel: funnelPorts.has(Number(port)) }];
+    });
+    const webs = Object.entries(isJsonObject(config.Web) ? config.Web : {}).flatMap(([hostPort, web]) => {
       const handlers = isJsonObject(web) && isJsonObject(web.Handlers) ? web.Handlers : {};
       return Object.entries(handlers).flatMap(([mount, handler]): ServeProxy[] => {
-        const proxy = isJsonObject(handler) && typeof handler.Proxy === 'string' ? handler.Proxy : null;
-        if (proxy === null || !URL.canParse(proxy.includes('://') ? proxy : `http://${proxy}`)) return [];
-        const url = new URL(proxy.includes('://') ? proxy : `http://${proxy}`);
-        if (!LOOPBACK.has(url.hostname) && !LOOPBACK.has(`[${url.hostname}]`)) return [];
-        const target = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
-        return [{ port: portOf(hostPort), mount, target, funnel: funnels[hostPort] === true }];
+        const to = isJsonObject(handler) ? target(handler.Proxy) : null;
+        const port = portOf(hostPort);
+        return to === null ? [] : [{ port, mount, target: to, funnel: funnelPorts.has(port) }];
       });
     });
+    return forwards.concat(webs);
   });
 }
 
@@ -104,16 +118,14 @@ function tailscaleFindings(setup: ServerSetup): Finding[] {
   }
   if (network.serve === null) return [];
   const proxies = parseServeProxies(network.serve);
-  const ports = stimPorts(setup);
   return setup.servers.flatMap((server): Finding[] => {
     if (server.kind === 'share' || server.health === null || server.health.loopbackOnly) return [];
     if (!sameHome(server.health.stimHome, setup.stimHome)) return [];
+    if (server.kind !== 'service' && server.port !== setup.local?.port) return [];
     if (proxies.some((proxy) => proxy.target === server.port)) return [];
     const service = server.kind === 'service' ? setup.services.find((each) => each.label === server.label) : undefined;
     const recorded = service?.installed.serve?.port;
-    const elsewhere = proxies.find(
-      (proxy) => proxy.port === recorded && proxy.target !== server.port && !ports.has(proxy.target),
-    );
+    const elsewhere = proxies.find((proxy) => proxy.port === recorded && proxy.target !== server.port);
     if (recorded !== undefined && elsewhere) {
       return [
         {

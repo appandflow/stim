@@ -11,7 +11,7 @@ import { labelFlag, type ServerSetup } from './server-setup.ts';
 
 const PATH_VARIABLES = new Set(['JAVA_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'GEM_HOME']);
 
-/** launchd gives a user agent this `PATH`; stim-server runs its tool discovery over it, then applies `--env` and `--path-prepend`. */
+/** launchd gives a user agent this `PATH`. The plist carries `--env` values in its environment, so stim-server's tool discovery starts from them. */
 const LAUNCHD_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
 
 export function servicePaths(service: InstalledService): string[] {
@@ -33,19 +33,14 @@ export function serviceToolchainEntries(
   home: string,
   probe: ToolchainProbe = defaultToolchainProbe(),
 ): ToolchainEntry[] {
-  const launchd = { HOME: home, PATH: LAUNCHD_PATH.join(delimiter) };
-  const { entries } = discoverToolchain(launchd, { ...probe, home, execPath: service.node ?? probe.execPath });
-  const pinned = new Map(
-    service.env.flatMap((entry): Array<[string, string]> => {
-      const equals = entry.indexOf('=');
-      return equals > 0 ? [[entry.slice(0, equals), entry.slice(equals + 1)]] : [];
-    }),
-  );
-  return entries.map((entry) =>
-    pinned.has(entry.name)
-      ? { name: entry.name, value: pinned.get(entry.name) ?? entry.value, source: 'environment' }
-      : entry,
-  );
+  const pinned: Record<string, string> = {};
+  for (const entry of service.env) {
+    const equals = entry.indexOf('=');
+    if (equals > 0) pinned[entry.slice(0, equals)] = entry.slice(equals + 1);
+  }
+  const path = [...service.pathPrepend, pinned.PATH ?? LAUNCHD_PATH.join(delimiter)].join(delimiter);
+  const base = { HOME: home, ...pinned, PATH: path };
+  return discoverToolchain(base, { ...probe, home, execPath: service.node ?? probe.execPath }).entries;
 }
 
 export function serviceToolchainFindings(setup: ServerSetup): Finding[] {

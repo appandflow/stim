@@ -108,6 +108,15 @@ describe('Tailscale and the serve route', () => {
 });
 
 describe('Funnel', () => {
+  it('sees a Funnel TCP forward to stim-server', () => {
+    const forward = {
+      TCP: { '8443': { TCPForward: '127.0.0.1:7788' } },
+      AllowFunnel: { 'mac.tail1234.ts.net:8443': true },
+    };
+    expect(parseServeProxies(forward)).toEqual([{ port: 8443, mount: '/', target: 7788, funnel: true }]);
+    expect(serverNetworkFindings(serveSetup(forward)).map((each) => each.code)).toContain('server-funnel');
+  });
+
   it("does not flag another program's Funnel route because a share has no password", () => {
     const gmail = network({
       serve: SERVE,
@@ -161,6 +170,27 @@ describe('Funnel', () => {
 });
 
 describe('route edge cases', () => {
+  it('asks for a route only for the service or the server that holds the local socket', () => {
+    const manual = reading({ pid: 300, port: 7790, kind: 'manual', label: undefined });
+    const value = serveSetup({}, { services: [], clients: { build: 1, deviceHost: 0 }, servers: [manual] });
+    expect(serverNetworkFindings(value)).toEqual([]);
+    const [finding] = serverNetworkFindings({ ...value, local: { port: 7790, version: '1.41.0', features: [] } });
+    expect(finding?.code).toBe('server-tailscale-route');
+  });
+
+  it('reports a recorded route that points at another stim-server', () => {
+    const [finding] = serverNetworkFindings(
+      serveSetup(
+        { Web: web('h:7443', 'http://127.0.0.1:7787') },
+        {
+          services: [withRecorded(7443)],
+          servers: [reading({ port: 7788 }), reading({ pid: 200, port: 7787, kind: 'desktop', label: undefined })],
+        },
+      ),
+    );
+    expect(finding?.title).toContain('points at port 7787');
+  });
+
   it('leaves a recorded route that is itself a Funnel route to the Funnel finding', () => {
     const findings = serverNetworkFindings(
       serveSetup(

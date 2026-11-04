@@ -1479,7 +1479,7 @@ list, a \`note\` finding only the doctor report:
                          directory that no longer exists
 The doctor toolchain section also lists, for each installed service, where it finds each
 tool the way the server does at start: tool discovery over launchd's default PATH with the
-service's own node, then the service's --env entries. The tailscale checks read \`tailscale
+service's own node, with its --env entries and --path-prepend directories. The tailscale checks read \`tailscale
 status --json\` and \`tailscale serve status --json\` (3 seconds each) only when a service,
 server process or socket exists. A build machine pinned in build-machines.json whose
 tailnet node changed is the existing build-machine finding with state node-changed.
