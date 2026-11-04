@@ -626,7 +626,8 @@ button.primary.small {
 .options-panel[hidden],
 .chip[hidden],
 .options-help[hidden],
-.options-panel .link[hidden] {
+.options-panel .link[hidden],
+.copy-fallback[hidden] {
   display: none;
 }
 .options-panel {
@@ -690,6 +691,20 @@ input.switch:checked::after {
   display: block;
   margin-top: 10px;
   font-size: 12px;
+}
+.copy-fallback {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  resize: none;
 }
 @media (pointer: coarse) {
   .options-panel .link {

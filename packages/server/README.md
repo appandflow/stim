@@ -2285,7 +2285,9 @@ each costing ten inputs. After a `paste: true` on an iOS simulator that was not 
 viewer is told to tap the paste suggestion on the device. The viewer sends `clipboard-set` with `paste: true` on
 Command-V or Control-V while the screen has focus, from the browser's `paste`
 event, and from the options menu's "Paste to device" button, shown where `(pointer: coarse)` matches: the
-button reads `navigator.clipboard.readText()` inside the tap. With its options menu's Sync clipboard switch on (the default) and the
+button reads `navigator.clipboard.readText()` inside the tap. There the viewer has no Sync clipboard switch and never polls
+or reads the clipboard on focus, because a touch browser allows clipboard access only inside a tap; the "Copy from
+device" button writes through a `ClipboardItem` holding a promise and falls back to a selectable field. Elsewhere, with its options menu's Sync clipboard switch on (the default) and the
 page focused, it sends `clipboard-get` with `poll: true` every 2 seconds, backing
 off to 30 seconds after failures, and `clipboard-set` without `paste` when the
 browser clipboard it may read changed on focus. A `poll: true` read is answered

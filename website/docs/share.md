@@ -172,11 +172,14 @@ the device to your browser's clipboard (a "Copy from device" chip appears when
 the browser refuses), and in Chrome and Edge, after a one-time permission
 prompt, it sends text you copied to the device when you return
 to the page. In other desktop browsers press Command-V on the device screen. On a
-phone or tablet (a touch-first browser), the menu has a "Paste to device" button instead:
-tap it to send your clipboard to the device. iOS Safari shows its own small Paste
-button to confirm the read, and Android Chrome asks for clipboard permission once. A
-denied or empty read shows a short note. The text then goes to the device the same way
-as Command-V. The menu's
+phone or tablet (a touch-first browser) there is no automatic sync, because a
+browser lets a page read or write the clipboard only inside a tap, and the menu has
+two buttons instead. "Paste to device" sends your clipboard to the device: iOS Safari
+shows its own small Paste button to confirm the read, and Android Chrome asks for
+clipboard permission once. A denied or empty read shows a short note, and the text
+goes to the device the same way as Command-V. "Copy from device" fetches the device
+clipboard and writes it to your clipboard inside the same tap; when the browser still
+refuses, the text appears in a field to select and copy by hand. On desktop the menu's
 "Copy from device" button copies once. Sending your copied text to the device counts as input and starts the share's
 control session like a paste. Syncing from the device starts after
 someone has tapped, typed or pasted, and does not keep an idle share's control
@@ -494,7 +497,7 @@ reload.
   costs only its listener and route. A share never records anything to disk.
 - **Control is the existing control path.** Input goes through the same
   control session and device lease Stim Desktop and the phone app use, limited
-  to taps, two-finger gestures, text, the arrow keys and Escape, pasting and syncing the clipboard with your computer, rotation and the hardware buttons of the shared device. A device an
+  to taps, two-finger gestures, text, the arrow keys and Escape, pasting and syncing the clipboard with your browser, rotation and the hardware buttons of the shared device. A device an
   agent or another client is driving answers busy; a share never takes it over.
 - **Ephemeral.** Shares live only in stim-server's memory. A share ends at its
   expiry, on `stim share stop`, `stim stop` (the workspace, or one slot with

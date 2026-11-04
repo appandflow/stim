@@ -314,10 +314,13 @@ SECURITY MODEL
   failures) and writes new text to the browser clipboard, with a Copy from device chip when the browser refuses
   the write, and where the browser allows reading its clipboard (Chromium, after one permission prompt) it sends
   the browser's new text to the device when the page regains focus. The menu's Copy from device button copies
-  once. On a touch-first browser (a phone or tablet) the menu also has a Paste to device button: it
-  reads the browser clipboard inside the tap (iOS Safari shows its own Paste button to confirm, Android Chrome asks for
-  clipboard permission once) and sends it as the same paste Command-V sends, with a short note when the read is denied
-  or empty; Command-V still works on a tablet with a keyboard. Sending the browser's new text to the device is an input: it starts the control session like a paste, and on an
+  once. On a touch-first browser (a phone or tablet) there is no automatic sync, because a browser lets a page read
+  or write the clipboard only inside a tap: the switch is replaced by a Paste to device button, which reads the browser
+  clipboard inside the tap (iOS Safari shows its own Paste button to confirm, Android Chrome asks for clipboard
+  permission once) and sends it as the same paste Command-V sends, with a short note when the read is denied or empty,
+  and Copy from device fetches the device text and writes it with a ClipboardItem that holds a promise, which keeps the
+  tap's permission to write; when the browser still refuses, the text shows in a field to select. Command-V still works
+  on a tablet with a keyboard. Sending the browser's new text to the device is an input: it starts the control session like a paste, and on an
   Android phone takes its lease. The polling never starts the control session and never keeps it alive: it reads only while a session runs
   (after a viewer's first tap, key or paste) and does not count as input for the 5 minute idle end. Text a control
   viewer sends reaches the device clipboard and then every other control viewer's browser with sync on. A share without --control, a web page and a macOS app never read or set the device clipboard, and the text is never
