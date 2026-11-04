@@ -622,7 +622,8 @@ measures, plans and logs; with `off` no pass runs. It is `off` in CI unless
 home runs passes like any other.
 Disk and memory are read every minute for `stim status`, Stim-owned directory
 sizes every hour, finished worktrees every 15 minutes and the age sweep once a
-day. Pressure itself is the `stim-daemon`'s level and ladder (see
+day. Trims of the caches over their caps are planned with the size, worktree and
+sweep checks; the minute reading plans nothing. Pressure itself is the `stim-daemon`'s level and ladder (see
 [disk pressure](#disk-pressure)), which `daemon.mode` governs too.
 On macOS the memory signal is the sysctl pressure level, with no signal when
 sysctl fails. Only other platforms use `os.freemem()`. Manual

@@ -210,7 +210,7 @@ test.each([
     .spyOn(preview, 'plannedMaintenance')
     .mockResolvedValue({ actions: [action], skips: [skip], blocked: ['busy'] });
   await runMaintenance('status');
-  now += 60_000;
+  now += 15 * 60_000;
   if (changed)
     planned.mockResolvedValue({
       actions: [action, { ...action, target: 'new-output' }],
@@ -241,6 +241,47 @@ test.each([
     lastPass: { startedAt: now },
     plan: changed ? [action, { ...action, target: 'new-output' }] : [action],
   });
+});
+
+test('a pass where only the minute pressure reading is due keeps the last plan and pass', async () => {
+  let now = Date.now();
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const action = { kind: 'would-clear-outputs' as const, target: join(home, 'a'), bytes: 1024, reason: 'over cap' };
+  const planned = vi
+    .spyOn(preview, 'plannedMaintenance')
+    .mockResolvedValue({ actions: [action], skips: [], blocked: [] });
+  await runMaintenance('status');
+  const first = readMaintenanceState();
+  now += 60_000;
+  planned.mockResolvedValue({ actions: [{ ...action, target: join(home, 'b') }], skips: [], blocked: [] });
+  await runMaintenance('status');
+
+  expect(readMaintenanceState()).toMatchObject({
+    lastAt: { ...first?.lastAt, pressure: now },
+    lastPass: first?.lastPass,
+    plan: [action],
+  });
+});
+
+test('a pass where only the idle check is due keeps the cap trims of the last size check', async () => {
+  let now = Date.now();
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const dir = join(home, 'build-cache');
+  vi.spyOn(measurements, 'measureSizes').mockResolvedValue([
+    { name: 'shared build cache', category: 'build-cache', dir, bytes: 10 * 1024 ** 3, measuredAt: now },
+  ]);
+  process.env.STIM_CACHES_BUILD_CACHE_MAX_GB = '5';
+  onTestFinished(() => {
+    delete process.env.STIM_CACHES_BUILD_CACHE_MAX_GB;
+  });
+  await runMaintenance('status');
+  const trim = expect.objectContaining({ kind: 'would-trim-cache', target: dir });
+  expect(readMaintenanceState()?.plan).toEqual([trim]);
+  process.env.STIM_CACHES_BUILD_CACHE_MAX_GB = '50';
+  now += 5 * 60_000;
+  await runMaintenance('status');
+
+  expect(readMaintenanceState()).toMatchObject({ lastAt: { idle: now }, plan: [trim] });
 });
 
 test('cached Swift CAS observations refresh build protection before each plan', async () => {

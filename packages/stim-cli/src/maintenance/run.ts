@@ -367,9 +367,15 @@ export async function runMaintenance(
     }
     const plannedWorktrees =
       ran.has('worktree') || (ran.has('sweep') && settings.removeFinishedWorktrees && settings.removeIdleWorktrees);
+    const caps = ran.has('size') || ran.has('sweep') || plannedWorktrees;
+    if (!caps && !ran.has('idle')) {
+      writeState(state);
+      return;
+    }
     let result: PlannedMaintenance;
     try {
       result = await plannedMaintenance(state.sizes, settings, {
+        caps,
         sweep: ran.has('sweep'),
         worktrees: plannedWorktrees,
         idle: ran.has('idle'),
@@ -449,6 +455,7 @@ export async function runMaintenance(
     }
     const retained = state.plan.filter(
       (action) =>
+        (action.check === undefined && !caps) ||
         (action.check === 'sweep' && !ran.has('sweep')) ||
         (action.check === 'worktree' && !plannedWorktrees) ||
         (action.check === 'idle' && !ran.has('idle')),

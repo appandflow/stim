@@ -39,6 +39,7 @@ export async function plannedMaintenance(
   settings: MaintenanceSettings,
   {
     devices = true,
+    caps = true,
     sweep = false,
     worktrees = false,
     idle = false,
@@ -48,6 +49,8 @@ export async function plannedMaintenance(
     deviceActivity,
   }: {
     devices?: boolean;
+    /** Plans the cap trims of the recorded sizes. */
+    caps?: boolean;
     sweep?: boolean;
     worktrees?: boolean;
     idle?: boolean;
@@ -60,6 +63,32 @@ export async function plannedMaintenance(
 ): Promise<PlannedMaintenance> {
   const env = operation?.env ?? process.env;
   const root = triggeringRoot(operation);
+  const idleStops = async (): Promise<MaintenancePlan> => {
+    const now = Date.now();
+    try {
+      return await planIdleStop({
+        protectedRoot: background ? '' : root,
+        now,
+        env,
+        operation,
+        hostedOnly: true,
+        devices: operation
+          ? (deviceActivity ?? cachedDeviceActivityAsync(now, env, operation.signal, operation))
+          : cachedDeviceActivity(now),
+      });
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
+      return {
+        actions: [],
+        skips: [],
+        blocked: [`idle stop could not be planned: ${error instanceof Error ? error.message : String(error)}`],
+      };
+    }
+  };
+  if (!caps && !sweep && !worktrees)
+    return idle && devices ? await idleStops() : { actions: [], blocked: [], skips: [] };
   const outputs = await collectWorkspaceOutputs({
     olderThan: null,
     now: Date.now(),
@@ -104,13 +133,15 @@ export async function plannedMaintenance(
     if (value === undefined) pins.set(workspace, (value = maintenancePinned(workspace)));
     return value;
   };
-  const result = plan({
-    sizes: currentSizes,
-    settings,
-    protectedRoot: root,
-    pinned,
-    recentlyUsed: (workspace) => recentUse(workspace, settings),
-  }) as PlannedMaintenance;
+  const result: PlannedMaintenance = caps
+    ? plan({
+        sizes: currentSizes,
+        settings,
+        protectedRoot: root,
+        pinned,
+        recentlyUsed: (workspace) => recentUse(workspace, settings),
+      })
+    : { actions: [], blocked: [], skips: [] };
   const merge = (extra: MaintenancePlan) => {
     for (const action of extra.actions)
       if (
@@ -143,28 +174,7 @@ export async function plannedMaintenance(
     result.worktreeSweep = planned.sweep;
     if (planned.nextRemoval) result.nextRemoval = planned.nextRemoval;
   }
-  if (idle && devices) {
-    const now = Date.now();
-    try {
-      merge(
-        await planIdleStop({
-          protectedRoot: background ? '' : root,
-          now,
-          env,
-          operation,
-          hostedOnly: true,
-          devices: operation
-            ? (deviceActivity ?? cachedDeviceActivityAsync(now, env, operation.signal, operation))
-            : cachedDeviceActivity(now),
-        }),
-      );
-    } catch (error) {
-      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-        throw error;
-      operation?.signal.throwIfAborted();
-      result.blocked.push(`idle stop could not be planned: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
+  if (idle && devices) merge(await idleStops());
   return result;
 }
 
