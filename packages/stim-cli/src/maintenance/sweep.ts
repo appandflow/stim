@@ -81,7 +81,7 @@ export async function planSweep({
     });
   }
   for (const cache of days > 0
-    ? trimmableCaches(operation?.env, operation?.cwd).filter((candidate) => !isInsideWorkspaces(candidate.dir))
+    ? (await trimmableCaches(operation?.env, operation?.cwd)).filter((candidate) => !isInsideWorkspaces(candidate.dir))
     : [])
     actions.push({
       kind: 'would-trim-cache',

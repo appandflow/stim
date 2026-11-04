@@ -14,7 +14,7 @@ import { readVolumeSpace, readVolumeSpaceAsync } from '../budget.ts';
 import { memoryPressure } from '../daemon/pressure.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { readHostMemoryPressure, readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
-import { discoverCaches, type CacheDescriptor } from '../cache/caches.ts';
+import { discoverCaches, discoverCachesAsync, type CacheDescriptor } from '../cache/caches.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
@@ -168,7 +168,7 @@ export async function measureSizes(
       category: 'compilation-cache',
     },
   ];
-  const discovered = discoverCaches();
+  const discovered = await discoverCachesAsync();
   for (const cache of discovered) {
     if (cache.source !== 'registered' && !canonicalPath(cache.dir).startsWith(`${canonicalPath(configDir())}/`))
       continue;

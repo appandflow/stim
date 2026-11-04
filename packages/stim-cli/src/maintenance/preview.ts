@@ -11,7 +11,7 @@ import { findProjectRoot } from '../workspace/project.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs, workspaceDirRemoved } from '../commands/gc/workspaces.ts';
 import { cacheBlocked, measurePressure, measurePressureAsync } from './measure.ts';
-import { discoverCaches } from '../cache/caches.ts';
+import { discoverCachesAsync } from '../cache/caches.ts';
 import { candidateRootsAsync, type WorktreeSweep } from '../commands/gc/worktrees.ts';
 import { listWorktreesAsync } from '../workspace/worktree.ts';
 import { plan, type MaintenancePlan } from './plan.ts';
@@ -97,9 +97,11 @@ export async function plannedMaintenance(
     operation,
   });
   const sizes = recordedSizes.filter((size) => size.category !== 'workspace-outputs' || !workspaceDirRemoved(size.dir));
+  const caches = sizes.some((size) => size.category === 'compilation-cache')
+    ? await discoverCachesAsync(env, operation?.cwd)
+    : [];
   const currentSizes = sizes.map((size) => {
-    if (size.category === 'compilation-cache')
-      return { ...size, blocked: cacheBlocked(size, discoverCaches(env, operation?.cwd), env) };
+    if (size.category === 'compilation-cache') return { ...size, blocked: cacheBlocked(size, caches, env) };
     if (!size.workspace) return size;
     const current = outputs.workspaces.find(
       (entry) => entry.projectRoot && canonicalPath(entry.projectRoot) === size.workspace,
