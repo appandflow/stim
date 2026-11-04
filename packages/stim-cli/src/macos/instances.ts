@@ -127,6 +127,7 @@ async function listProcesses(operation?: StimContext): Promise<ProcessRow[]> {
  */
 export async function startedBy(owners: readonly MacosProcess[], operation?: StimContext): Promise<MacosProcess[]> {
   operation?.signal.throwIfAborted();
+  if (process.platform === 'win32') return [];
   const rows = await listProcesses(operation);
   const parents = new Map(rows.map((row) => [row.pid, row]));
   const protectedPids = new Set([1, process.pid]);
