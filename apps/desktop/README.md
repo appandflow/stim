@@ -1328,8 +1328,8 @@ seconds. When a server the app adopted misses two checks in a row, the app shows
 degraded and keeps checking: it never starts its own server onto that port while the adopted
 server is gone, so a `stim-server service` LaunchAgent that restarts, updates or crashes keeps
 its port. The message names the `dev.stim.server` LaunchAgent when its plist is installed for this
-user. The app starts its own server only when none answers on the port and nothing holds it,
-which is at launch. To use Desktop's own server instead, stop the adopted one and reopen Stim
+user. The app starts its own server only when it adopted none, no server answers on the port and nothing holds it:
+at launch, or later once a port a program that is not a stim-server held at launch is free. To use Desktop's own server instead, stop the adopted one and reopen Stim
 Desktop. With **Allow connections** on, whatever the Phone app flag says, Desktop starts its server without
 `--loopback-only`, so it also listens on this Mac's Tailscale addresses, and restarts the
 server it started when the setting changes. The pairing and device commands use the
