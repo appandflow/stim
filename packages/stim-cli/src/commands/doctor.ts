@@ -61,6 +61,7 @@ import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { readServerSetup } from '../diagnostics/server-setup-probe.ts';
 import { isServerFinding, serverSetupFindings } from '../diagnostics/server-setup.ts';
 import { serverNetworkFindings } from '../diagnostics/server-network.ts';
+import { serverPermissionFindings } from '../diagnostics/server-permissions.ts';
 import { serviceToolchainEntries, serviceToolchainFindings } from '../diagnostics/server-toolchain.ts';
 import { configuredMachines, inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
@@ -677,7 +678,12 @@ async function assembleDoctorReport(
   if (agentDriver) findings.push(agentDriver);
   const setup = await serverSetup;
   if (setup)
-    findings.push(...serverSetupFindings(setup), ...serverNetworkFindings(setup), ...serviceToolchainFindings(setup));
+    findings.push(
+      ...serverSetupFindings(setup),
+      ...serverNetworkFindings(setup),
+      ...serviceToolchainFindings(setup),
+      ...serverPermissionFindings(setup),
+    );
 
   const toolchain = host === 'darwin' ? toolchainReport(root, env) : null;
   if (toolchain && setup?.services.length) {

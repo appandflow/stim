@@ -17,6 +17,9 @@ export const SERVER_FINDING_CODES = [
   'server-share-proxy',
   'server-tcp-lowat',
   'server-service-paths',
+  'server-socket-permissions',
+  'server-macos-permission',
+  'server-linger',
 ] as const;
 
 export const isServerFinding = (finding: Finding): boolean =>
@@ -50,6 +53,7 @@ export interface ServerHealthReading {
   startup?: { state: string };
   keepAwake?: { setting: boolean; held: boolean; reason?: string };
   loopbackOnly?: boolean;
+  host?: { name: string; screenRecording: boolean; accessibility: boolean };
   lan?: boolean;
 }
 
@@ -83,6 +87,29 @@ export interface ServerSetup {
   clients: { build: number; deviceHost: number };
   network: NetworkReading;
   missingPaths: string[];
+  /** The Stim home's local socket and its directory; null on a machine without one. */
+  socket: SocketReading | null;
+  /** External-volume and macOS privacy reads; null off macOS. */
+  permissions: PermissionReading | null;
+  /** Whether systemd keeps this user's services running without a login; null without a systemd service. */
+  linger: { user: string; enabled: boolean } | null;
+}
+
+export interface SocketReading {
+  path: string;
+  dir: { isDirectory: boolean; mode: number; uid: number } | null;
+  socket: { mode: number; uid: number } | null;
+  /** The uid doctor runs as. */
+  uid: number;
+}
+
+export interface PermissionReading {
+  macosMajor: number;
+  doctorApp: string | null;
+  /** Android SDK and AVD roots on an external volume, and whether listing one failed with a privacy denial. */
+  external: Array<{ path: string; blocked: boolean }>;
+  /** Lines of a service's log in which macOS denied a path under /Volumes. */
+  logDenials: Array<{ label: string; line: string }>;
 }
 
 export interface NetworkReading {
