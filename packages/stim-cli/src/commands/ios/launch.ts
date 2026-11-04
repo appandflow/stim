@@ -1147,6 +1147,7 @@ export async function finishIosRun({
       phase('install', `dev client prepared (${formatDuration(installed.devClientPreparationDurationMs)})`);
     }
     if (installed.schemeApprovals) await d.recordIosSchemeApprovals(root, udid, installed.schemeApprovals, slot);
+    if (installed.pasteboardNote) note(chalk.yellow(phaseLine('install', installed.pasteboardNote)));
 
     dropSwapDir();
 

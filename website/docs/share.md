@@ -169,7 +169,9 @@ Command-V (Control-V on Windows and Linux) while the screen has focus pastes the
 text on your browser's clipboard into the focused field on the device. On an iOS
 simulator, printable ASCII, line breaks and tabs are typed into the field (about 35
 characters a second, with the field's own smart quotes and dashes), so no paste prompt
-appears; other text is pasted with Command-V, and the page says to tap the paste
+appears; other text is pasted with Command-V, which lands without a prompt in an
+app Stim installed on an owned simulator (Stim allows its paste permission) and
+can show an iOS prompt in any other app, where the page says to tap the paste
 suggestion on the device. The options menu in the top bar has a "Sync clipboard" switch, on by default and
 remembered by your browser. While the page is focused it copies new text from
 the device to your browser's clipboard (a "Copy from device" chip appears when
