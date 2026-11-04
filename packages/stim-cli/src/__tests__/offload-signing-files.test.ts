@@ -70,6 +70,21 @@ test.each([
   },
   { name: 'an env template', path: '.env.example', text: 'STORE_PASSWORD=changeme\n', found: false },
   { name: 'an API key pass', path: '.env', text: 'GOOGLE_API_KEY_PASS=abc\n', found: false },
+  {
+    name: 'a keystore properties read',
+    path: 'android/app/build.gradle',
+    text: 'storePassword keystoreProperties[\'storePassword\']\nkeyPassword keystoreProperties["keyPassword"]\n',
+    found: false,
+  },
+  {
+    name: 'an empty assignment',
+    path: 'android/gradle.properties',
+    text: 'APP_STORE_PASSWORD=\nAPP_ALIAS=k\n',
+    found: false,
+  },
+  { name: 'a null credential', path: 'credentials.json', text: '{"keyPassword": null}', found: false },
+  { name: 'a docs placeholder', path: 'android/gradle.properties', text: 'APP_STORE_PASSWORD=*****\n', found: false },
+  { name: 'another word ending in key', path: '.env', text: 'MONKEY_PASSWORD=abc\n', found: false },
   { name: 'the debug password', path: 'android/gradle.properties', text: 'storePassword=android\n', found: false },
   {
     name: 'properties with no password',
