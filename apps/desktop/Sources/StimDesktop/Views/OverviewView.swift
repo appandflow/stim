@@ -7,12 +7,14 @@ struct OverviewView: View {
   var metrics: MetricsStore
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
-  var openDevice: (String, String) -> Void
+  var openDevice: (WorkspaceKey, String) -> Void
   var openIdleProject: (Project) -> Void
   @State private var showsAllActive = false
   @State private var showsAllIdle = false
   @State private var showsAllArchived = false
   @State private var contentWidth: CGFloat = 1000
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
+  @AppStorage(AppPreferences.Key.machineScope) private var machineScope = MachineScope.all
 
   private static let projectCardMinimum: CGFloat = 220
 
@@ -34,8 +36,12 @@ struct OverviewView: View {
 
   private var projects: [ProjectSummary] { store.projectList }
 
+  private var machines: [PairedMachine] { store.pairedMachines(pairedSessions.entries) }
+
   private var running: [WallCard] {
-    WallCard.cards(environments: (store.payload?.environments ?? []).filter(\.isActive))
+    WallCard.merged(
+      local: WallCard.cards(environments: (store.payload?.environments ?? []).filter(\.isActive)), machines: machines,
+      scope: machineScope)
   }
 
   @ViewBuilder private var content: some View {
@@ -44,13 +50,20 @@ struct OverviewView: View {
       summaries: projects, environments: store.payload?.environments ?? [], project: store.project(ofPath:))
     let archived = store.newestArchives
     if running.isEmpty && idle.isEmpty && archived.isEmpty {
-      EmptyState(
-        title: "Nothing Here Yet",
-        message: "Projects appear here when an agent warms a worktree or runs stim ios or stim android.",
-        showsHero: true, showsPrompts: true)
+      VStack(spacing: 0) {
+        if !machines.isEmpty {
+          machinesSection(machines)
+            .padding(.horizontal, PageInset.horizontal).padding(.top, Space.xxxl)
+        }
+        EmptyState(
+          title: "Nothing Here Yet",
+          message: "Projects appear here when an agent warms a worktree or runs stim ios or stim android.",
+          showsHero: true, showsPrompts: true)
+      }
     } else {
       ScrollView {
         VStack(alignment: .leading, spacing: Space.xxl) {
+          if !machines.isEmpty { machinesSection(machines) }
           runningSection(running)
           if !idle.isEmpty { idleSection(idle) }
           if !archived.isEmpty { archivedSection(archived) }
@@ -69,6 +82,28 @@ struct OverviewView: View {
     }
   }
 
+  private func machinesSection(_ machines: [PairedMachine]) -> some View {
+    let tallies = MachineTally.list(
+      local: store.payload?.environments ?? [], machines: machines, scope: machineScope)
+    return VStack(alignment: .leading, spacing: Space.lg) {
+      HStack(spacing: Space.lg) {
+        SectionLabel(title: "Machines")
+        Spacer(minLength: 0)
+        if machines.contains(where: \.isAvailable) { MachineScopeControl(scope: $machineScope) }
+      }
+      if !tallies.isEmpty {
+        LazyVGrid(
+          columns: [GridItem(.adaptive(minimum: Self.projectCardMinimum, maximum: 320), spacing: Space.lg, alignment: .top)],
+          alignment: .leading, spacing: Space.lg
+        ) {
+          ForEach(tallies) { MachineTallyCard(tally: $0) }
+        }
+        .finiteAccessibilityFrame()
+      }
+      if machineScope == .all { UnavailableMachinesNote(machines: machines) }
+    }
+  }
+
   private func runningSection(_ cards: [WallCard]) -> some View {
     let columns = WallCard.columns(forWidth: contentWidth)
     let shown = showsAllActive ? cards : Array(cards.prefix(columns))
@@ -84,7 +119,7 @@ struct OverviewView: View {
       } else {
         WorkspaceCardGrid(
           cards: shown, store: store, metrics: metrics,
-          open: { selection = .environment($0.id) }, openDevice: openDevice, openLogs: openLogs)
+          open: { selection = $0.pairedDestination ?? .environment($0.id) }, openDevice: openDevice, openLogs: openLogs)
         if cards.count > columns {
           Button(showsAllActive ? "Show less" : "Show more (\(cards.count - shown.count))") {
             withAnimation(.easeInOut(duration: 0.15)) { showsAllActive.toggle() }
@@ -197,5 +232,36 @@ struct OverviewView: View {
         .foregroundStyle(Palette.primary)
       }
     }
+  }
+}
+
+private struct MachineTallyCard: View {
+  var tally: MachineTally
+
+  var body: some View {
+    Card {
+      VStack(alignment: .leading, spacing: Space.xs) {
+        HStack(spacing: Space.sm) {
+          Text(verbatim: tally.name).font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text).lineLimit(1)
+            .truncationMode(.middle)
+          if let access = tally.access {
+            Pill(tone: access == "View and Control" ? .brand : .neutral, size: .small) { Text(access) }
+          }
+        }
+        Text(verbatim: summary).font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(2)
+          .help("Active workspaces, builds running and devices running")
+      }
+      .padding(.horizontal, Space.lg)
+      .padding(.vertical, Space.md)
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .accessibilityElement(children: .combine)
+  }
+
+  private var summary: String {
+    guard tally.isAvailable else { return "Unavailable" }
+    return [
+      "\(tally.activeWorkspaces.formatted()) active", countLabel(tally.builds, "build"), countLabel(tally.devices, "device"),
+    ].joined(separator: " \u{00B7} ")
   }
 }
