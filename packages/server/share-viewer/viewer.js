@@ -264,7 +264,7 @@ function configure(sps, pps) {
 
 /** Decodes one video packet: the header the server's videoPacket writes, then an Annex-B access unit. */
 let lastSequence = -1;
-const REORDER_MS = 40;
+const REORDER_MS = Number(new URLSearchParams(location.search).get('reorder')) || 40;
 const reordered = new Map();
 let reorderTimer = null;
 
