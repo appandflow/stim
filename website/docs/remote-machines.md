@@ -748,6 +748,8 @@ stim remote remove janics-mac-mini
 placement order and asks nothing new. `stim remote remove` drops the entry and
 forgets this machine's credentials for it; the worker keeps its approval until
 a person there runs the `stim-server devices revoke <id>` command it prints.
+With `--json`, each machine also carries its server key fingerprint, its
+reachability in this run and those revoke commands.
 `stim settings set remote.machines` replaces the whole list; use it to reorder
 machines. `stim doctor --fix` in an app directory still asks every listed
 machine that has not been asked.
@@ -985,7 +987,9 @@ gets the approval. On a tailnet that machine also had to be in your tailnet; on
 a local network it only needs the ticket and a route to the worker. Copy the
 command only to the worker. Afterward, `stim-server devices` on the worker lists
 the address each approved machine connected from; the name in setup's approval
-line is the one the requesting machine chose. The ticket also lands in
+line is the one the requesting machine chose. A person on the worker can give
+a record a clearer name with `stim-server devices rename <id> <name>`; its
+access does not change. The ticket also lands in
 the worker's shell history; it stops working when it expires, within two hours.
 
 On a Mac with the macOS firewall on, setup warns that macOS asks whether the

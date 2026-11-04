@@ -27,6 +27,11 @@ tags are separate from the npm packages' `v*` tags, which follow
 4. The `Desktop release` run starts in the `release` environment. That
    environment has no required reviewers for now, so it needs no approval.
 
+Tag without waiting for a `Desktop next` run. The two workflows build, sign and
+notarize in parallel and take turns only for the few seconds that each `publish`
+job writes the `desktop-latest` appcast (see [Appcast publish](#appcast-publish)),
+so a next build in progress never delays or overwrites a release.
+
 The app bundles the `stim` and `stim-server` packages packed from the tagged
 commit, and `scripts/server-runtime.mjs` only checks that the bundled
 `stim-server --version` equals `packages/server/package.json`. Tagging the
@@ -48,11 +53,13 @@ The workflow, `.github/workflows/desktop-release.yml`:
 5. Creates the `desktop-v<version>` GitHub release, never marked as the
    repository's latest release, and attaches the DMG, the zip and
    `SHA256SUMS`. A version with a prerelease suffix is marked as a prerelease.
-6. For a stable version only, unless `desktop-latest` already serves a newer
-   build: uploads `Stim.dmg` to the `desktop-latest` release, replaces the stable
-   item of its `appcast.xml` while keeping the [next channel](#next-channel)
-   items that are newer, and bumps the Homebrew cask.
-7. Deletes the keychain and the key file.
+6. Deletes the keychain and the key file. This ends the macOS `release` job.
+7. For a stable version only, in the Linux `publish` job and unless
+   `desktop-latest` already serves a newer build: uploads `Stim.dmg` to the
+   `desktop-latest` release, replaces the stable item of its `appcast.xml`
+   while keeping the [next channel](#next-channel) items that are newer, and
+   bumps the Homebrew cask. The job downloads the artifact of step 4 and holds
+   the `desktop-appcast` group described in [Appcast publish](#appcast-publish).
 
 A tag push stops before step 5 when the build is not Developer ID signed and
 notarized, after the artifact upload. Re-running the job after adding the
@@ -89,13 +96,14 @@ composite action `.github/actions/desktop-build`.
   next prerelease was published, then the macOS job builds whatever is the head of `main` then. GitHub keeps
   one run active and one pending under the workflow's own concurrency group, so a burst of merges queues at
   most one build, and a pending stable release is never replaced because the stable workflow has another
-  group. The notarization of a build takes minutes of a macOS runner, which is the cost of each build.
+  group. Next builds never hold a stable release. The notarization of a build takes minutes of a macOS runner, which is the cost of each build.
 - **Version.** `<next minor of the newest stable desktop-v tag>-next.<UTC commit time>.g<short sha>`, so
   `0.3.0-next.20261103170000.gabc1234` while `0.2.16` is the newest stable release. `CFBundleVersion` is the
   commit count of the built head, which is above the stable build tagged before it, so Sparkle ranks the
   prerelease above that stable build and a later stable release above the prerelease.
-- **Publish.** The job creates the GitHub prerelease `desktop-next-<version>` (marked prerelease, never the
-  repository's latest) with the DMG, the zip and `SHA256SUMS`, then adds an item with
+- **Publish.** The macOS `build` job creates the GitHub prerelease `desktop-next-<version>` (marked
+  prerelease, never the repository's latest) with the DMG, the zip and `SHA256SUMS`. The Linux `publish` job
+  then adds an item with
   `<sparkle:channel>next</sparkle:channel>` to the appcast on `desktop-latest`. It never changes the stable
   item, `Stim.dmg` or the Homebrew cask. The tag does not start with `desktop-v`, so the repository's
   `release tags` ruleset, which forbids deleting `desktop-v*` tags, does not apply to it and the job can
@@ -105,7 +113,8 @@ composite action `.github/actions/desktop-build`.
   release supersedes, and the job deletes older `desktop-next-*` prereleases and their tags.
   `scripts/desktop-appcast.mjs` does the merge for both workflows, so a stable release keeps the next items
   that are still newer than it. `scripts/desktop-publish-appcast.sh` uploads the merged file and merges again
-  when another run replaced the appcast in between.
+  when another run replaced the appcast in between; [Appcast publish](#appcast-publish) keeps two runs from
+  doing that at the same time.
 - **In the app.** Sparkle offers a `next` item only to a build that returns `next` from
   `allowedChannels(for:)`: **Settings > App > Updates > Get prerelease updates**, off by default and on for a
   build whose version contains `-next.`. A stable build with it off never sees one. Turning it off keeps the
@@ -120,6 +129,25 @@ composite action `.github/actions/desktop-build`.
 - **Dry run.** Dispatching the workflow on `main` with `publish` off builds the head with the `release`
   environment's secrets and publishes nothing. The environment only runs `main` and the release tags, so
   another branch cannot start it.
+
+## Appcast publish
+
+`desktop-latest` carries one `appcast.xml` that both workflows edit: a stable release replaces the stable
+item and a next build adds a `next` item. Each workflow ends with a `publish` job that downloads the build
+artifact, reads the served appcast, merges its item and uploads the result. Both `publish` jobs run in the
+concurrency group `desktop-appcast` with `cancel-in-progress: false`, so the read-merge-upload steps take
+turns while the builds, signing and notarization of the two workflows run in parallel. Each job merges onto
+the result of the one before it, and `scripts/desktop-publish-appcast.sh` still merges again when something
+else replaced the file, refuses a merged appcast without a stable item and refuses to continue when it
+cannot list the release.
+
+GitHub keeps one running and one pending job per group and cancels an older pending job when a newer one
+queues. That cannot drop a stable publish: each workflow's own group (`desktop-release`, `desktop-next`)
+starts a run only after the previous run of that workflow finished, so `desktop-appcast` never holds more
+than one stable and one next `publish` job. Dispatched dry runs skip `publish`. Do not add another job to
+the group, and re-run a failed `publish` job only while no other Desktop run is publishing. A failed
+`publish` job needs "Re-run failed jobs", not a new build or tag: the artifact is kept for the default retention for
+a stable release and 7 days for a next build.
 
 ## Dry run
 
