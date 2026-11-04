@@ -1,6 +1,7 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { configDir } from '../index.ts';
+import { RESERVED_SHARE_SLUGS, SHARE_SLUG_PATTERN } from '../protocol.ts';
 import { workspaceMetadataFile, workspaceShareLinksFile } from './paths.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
 
@@ -16,8 +17,10 @@ export interface SavedShare {
   platform: 'ios' | 'android';
   slot: string;
   physical: boolean;
-  /** The 43-character URL token: the share's 256-bit secret. */
-  token: string;
+  /** The 43-character URL token: the share's 256-bit secret. Absent for a share with a chosen `slug`. */
+  token?: string;
+  /** The chosen link path of a share started with `--slug`; not a secret, the password is. */
+  slug?: string;
   /** The address the link was served under, up to `/s/`; not a secret. */
   origin?: string;
   control: boolean;
@@ -41,6 +44,7 @@ export interface ShareLinkTarget {
 }
 
 export const SHARE_TOKEN: RegExp = /^[A-Za-z0-9_-]{43}$/;
+const SHARE_SLUG = new RegExp(SHARE_SLUG_PATTERN);
 
 /** The key a target's saved share is filed under: `ios`, `android:device`, `ios@tablet`. */
 export function shareLinkKey(target: ShareLinkTarget): string {
@@ -53,11 +57,22 @@ const isPassword = (value: unknown): value is string =>
 
 function savedShare(value: unknown, now: number): SavedShare | null {
   if (!isJsonObject(value)) return null;
-  const { platform, slot, physical, token, origin, control, password, viewPassword, auth, viewAuth, state } = value;
+  const { platform, slot, physical, token, slug, origin, control, password, viewPassword, auth, viewAuth, state } =
+    value;
   const { createdAt, expiresAt } = value;
   if (platform !== 'ios' && platform !== 'android') return null;
   if (typeof slot !== 'string' || typeof physical !== 'boolean') return null;
-  if (typeof token !== 'string' || !SHARE_TOKEN.test(token) || typeof control !== 'boolean') return null;
+  if (typeof control !== 'boolean') return null;
+  if (slug === undefined) {
+    if (typeof token !== 'string' || !SHARE_TOKEN.test(token)) return null;
+  } else if (
+    token !== undefined ||
+    typeof slug !== 'string' ||
+    !SHARE_SLUG.test(slug) ||
+    RESERVED_SHARE_SLUGS.includes(slug)
+  ) {
+    return null;
+  }
   if (typeof createdAt !== 'string' || typeof expiresAt !== 'string' || !(Date.parse(expiresAt) > now)) return null;
   if (auth !== 'generated' && auth !== 'set' && auth !== 'none') return null;
   if (viewAuth !== null && viewAuth !== 'generated' && viewAuth !== 'set') return null;
@@ -67,7 +82,8 @@ function savedShare(value: unknown, now: number): SavedShare | null {
     platform,
     slot,
     physical,
-    token,
+    ...(typeof token === 'string' ? { token } : {}),
+    ...(typeof slug === 'string' ? { slug } : {}),
     ...(typeof origin === 'string' ? { origin } : {}),
     control,
     ...(password === undefined ? {} : { password: String(password) }),

@@ -78,7 +78,7 @@ struct ServerOwnerTests {
     return try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
   }
 
-  @Test func aHostedSessionTwoServersReportShowsOnceUnderTheFirstAndEachRunNamesWhereItRuns() throws {
+  @Test func workThisMachinePlacesAndWorkAPairedServerPlacesNeverShareAList() throws {
     let floco = ServerOwner.paired("floco-key")
     let workspaces = [
       OwnedWorkspace(owner: .local, workspace: try hosted(path: "/Users/me/app", session: "s-local")),
@@ -86,17 +86,68 @@ struct ServerOwnerTests {
       OwnedWorkspace(owner: .paired("other-key"), workspace: try hosted(path: "/home/bot/app", session: "s-bot")),
     ]
 
-    let work = RemoteWork.list(workspaces)
+    let placed = PlacedWork.list(workspaces)
+    #expect(placed.map(\.workspace) == ["/Users/me/app"])
+    #expect(placed.map(\.host) == ["janics-mac-mini-2"])
 
-    #expect(work.map(\.owner) == [.local, floco, floco])
-    #expect(work.map(\.host) == ["janics-mac-mini-2", "janics-mac-mini-2", "janics-mac-mini-2"])
-    #expect(work.map(\.workspace.path) == ["/Users/me/app", "/home/bot/app", "/home/bot/app"])
-    guard case .offloadedBuild(let build) = work[2].kind else {
+    let theirs = ForeignWork.list(workspaces, server: "floco-key")
+    #expect(theirs.map(\.workspace) == ["/home/bot/app", "/home/bot/app"])
+    #expect(theirs.map(\.host) == ["janics-mac-mini-2", "janics-mac-mini-2"])
+    guard case .offloadedBuild(let build) = theirs[1].kind else {
       Issue.record("the offloaded build is missing")
       return
     }
     #expect(build.platform == "android")
-    #expect(Set(work.map(\.id)).count == 3)
+    #expect(Set(placed.map(\.id) + theirs.map(\.id)).count == 3)
+    #expect(ForeignWork.list(workspaces, server: "other-key").isEmpty)
+  }
+
+  @Test func ownedPlacementAndForeignWorkReadDifferentlyForTheSameMachine() throws {
+    let workspaces = [
+      OwnedWorkspace(owner: .local, workspace: try hosted(path: "/Users/me/app", session: "s-local")),
+      OwnedWorkspace(owner: .paired("floco-key"), workspace: try hosted(path: "/home/bot/app", session: "s-bot", build: true)),
+    ]
+    let mine = try #require(PlacedWork.list(workspaces).first)
+    let theirs = ForeignWork.list(workspaces, server: "floco-key")
+
+    #expect(mine.badge == "on janics-mac-mini-2")
+    #expect(mine.place(now: Date()) == "running on janics-mac-mini-2")
+    #expect(
+      theirs.map { $0.place(serverName: "floco", now: Date()) } == [
+        "floco runs it on janics-mac-mini-2", "floco builds it on janics-mac-mini-2 \u{00B7} Pods",
+      ])
+    let badges = workspaces.compactMap { $0.devices.first?.placementBadge }
+    #expect(badges.map(\.text) == ["on janics-mac-mini-2", "theirs, on janics-mac-mini-2"])
+    #expect(badges.map(\.owned) == [true, false])
+    #expect(
+      badges.map(\.accessibilityLabel) == [
+        "Yours, running on janics-mac-mini-2", "Theirs, running on janics-mac-mini-2",
+      ])
+  }
+
+  @Test func aMachineThatIsBothRemoteAndPairedGetsTwoChipsWithDisjointWork() throws {
+    let workspaces = [
+      OwnedWorkspace(owner: .local, workspace: try hosted(path: "/Users/me/app", session: "s-mine")),
+      OwnedWorkspace(owner: .paired("mini-key"), workspace: try hosted(path: "/home/mini/app", session: "s-theirs")),
+    ]
+
+    let chips = MachineChoices.groups(remote: ["janics-mac-mini-2:7443"], paired: ["mini-key"]).flatMap(\.choices)
+    #expect(chips == [.thisMachine, .remote("janics-mac-mini-2:7443"), .paired("mini-key")])
+
+    let placed = PlacedWork.list(workspaces).filter { $0.isOn("janics-mac-mini-2:7443") }
+    let theirs = ForeignWork.list(workspaces, server: "mini-key")
+    #expect(placed.map(\.workspace) == ["/Users/me/app"])
+    #expect(theirs.map(\.workspace) == ["/home/mini/app"])
+    #expect(Set(placed.map(\.id) + theirs.map(\.id)).count == 2)
+  }
+
+  @Test func placedWorkBelongsToTheRemoteMachineEntryThatNamesItsHost() throws {
+    let mine = try #require(
+      PlacedWork.list([OwnedWorkspace(owner: .local, workspace: try hosted(path: "/Users/me/app", session: "s"))]).first)
+
+    #expect(mine.isOn("janics-mac-mini-2:7443"))
+    #expect(mine.isOn("janics-mac-mini-2.tail1.ts.net"))
+    #expect(!mine.isOn("janics-mac-mini:7443"))
   }
 
   @Test func aPairedServersSidebarIgnoresThisMacsHiddenPathsAndHidesOnlyItsOwn() throws {

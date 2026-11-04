@@ -1,3 +1,4 @@
+import { hkdfSync } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync, watch, type FSWatcher } from 'node:fs';
 import {
   createServer,
@@ -137,6 +138,8 @@ import {
   PUSH_TOKEN_PATTERN,
   REPLAY_RATES,
   RELOAD_PLATFORMS,
+  RESERVED_SHARE_SLUGS,
+  SHARE_SLUG_PATTERN,
   SERVER_UPDATE_METHODS,
   ARCHIVED_PAGE_LIMIT,
   type DesktopReportTarget,
@@ -386,8 +389,12 @@ interface ServerHealth {
   stimBuild: string | null;
   protocol: number;
   stimHome: string;
-  /** The work a restart would cut off: offloaded builds and hosted sessions running now. */
-  busy: { builds: number; hostedSessions: number };
+  /**
+   * The work a restart would cut off: offloaded builds and hosted sessions running now. `hostedWork` counts the hosted
+   * sessions a restart would stop, because a native step is in flight or they cannot be resumed; the others are left
+   * running for the next server, which `resumes` says this one does.
+   */
+  busy: { builds: number; hostedSessions: number; hostedWork: number; resumes: true };
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
   nativeViewerOpened: boolean;
@@ -1241,6 +1248,8 @@ function leaseGrace(leaseFor: string): { leaseGraceMs?: number } {
   return { leaseGraceMs: Number(amount) * (unit === 's' ? 1000 : unit === 'm' ? 60_000 : 3_600_000) };
 }
 
+const SHARE_SLUG = new RegExp(SHARE_SLUG_PATTERN);
+
 /** Validates `share.start` params; returns why they are refused. */
 function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { workspace: string }) | string {
   if (!isJsonObject(params)) return 'params must be an object.';
@@ -1256,6 +1265,7 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     password,
     passwordless,
     view,
+    slug,
     ...rest
   } = params;
   if (Object.keys(rest).length) return `share.start does not take ${Object.keys(rest).join(', ')}.`;
@@ -1282,6 +1292,13 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     if (view.password !== undefined && view.password === password)
       return 'The view password and the control password must differ.';
   }
+  if (slug !== undefined) {
+    if (typeof slug !== 'string' || !SHARE_SLUG.test(slug))
+      return 'params.slug must be 3 to 32 lowercase letters, digits or hyphens, starting and ending with a letter or digit.';
+    if (RESERVED_SHARE_SLUGS.includes(slug)) return `params.slug cannot be ${slug}: the share pages use that path.`;
+    if (passwordless) return 'A share with a slug needs a password: anyone can guess a slug.';
+  }
+  if (token !== undefined && slug !== undefined) return 'A share takes a slug or a token, not both.';
   if (token !== undefined && (typeof token !== 'string' || !SHARE_TOKEN.test(token)))
     return 'params.token must be a 43-character URL token.';
   if (expiresAt !== undefined && expiresMinutes !== undefined)
@@ -1308,6 +1325,7 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     ...(typeof password === 'string' ? { password } : {}),
     ...(passwordless ? { passwordless } : {}),
     ...(view ? { view: typeof view.password === 'string' ? { password: view.password } : {} } : {}),
+    ...(typeof slug === 'string' ? { slug } : {}),
   };
 }
 
@@ -1653,6 +1671,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     approved: (client, from) =>
       ('client' in from ? from.client === client : from.node !== null && agentNodes.get(client) === from.node) &&
       approved().deviceHost.some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+    tokenFor: (session) =>
+      Buffer.from(hkdfSync('sha256', serverIdentity().privateKey, session, 'stim hosted agent token v1', 32)).toString(
+        'base64url',
+      ),
     withdrawn: (session) => {
       hostedPresence.forget(session);
       for (const stream of agentStreams.get(session) ?? []) stream.destroy();
@@ -1963,9 +1985,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS,
     ).unref();
     push.refresh();
-    retireOnce ??= hostedDevices.reconcileStopped().catch((error: unknown) => {
-      process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
-    });
+    retireOnce ??= hostedDevices
+      .resumeSessions()
+      .then(() => hostedDevices.reconcileStopped())
+      .catch((error: unknown) => {
+        process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
+      });
     if (options.frameHelper === undefined && !helperPath && !helperBuilding) buildHelper();
     if (options.statusAtBoot !== false) statusFeed.hold();
     if (options.record !== false) {
@@ -2093,7 +2118,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         );
       }
       device = chosen;
-      if (!local) touchDevice(device.id);
+      if (!local) touchDevice(device.id, params.client);
       if (access === 'device-host' && !local) {
         hostedDevices.clientSeen(device.id);
         let heardAt = Date.now();
@@ -5353,7 +5378,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ...health,
       startup,
       ...(options.host ? { host: await hostHealth() } : {}),
-      busy: { builds: builds.running(), hostedSessions: hostedDevices.active() },
+      busy: {
+        builds: builds.running(),
+        hostedSessions: hostedDevices.active(),
+        hostedWork: hostedDevices.working(),
+        resumes: true,
+      },
       tailscale: healthTailscale(state),
       route,
       nativeViewerOpened,
@@ -5396,8 +5426,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       presence.close();
       hostedPresence.close();
       await settle(control.close());
-      await settle(agentDrivers.close());
       await settle(hostedDevices.close());
+      await settle(agentDrivers.close({ keep: hostedDevices.detached() }));
       updates.close();
       recorder?.close();
       await Promise.all(

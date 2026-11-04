@@ -53,6 +53,9 @@ export interface PairedDevice {
   push?: PushRegistration;
   /** The setup journal of the `stim-server setup` run that approved this client. */
   setupJournal?: string;
+  /** The app and version this client named in its last `hello`, cleaned like a name. For display only. */
+  clientApp?: string;
+  clientVersion?: string;
 }
 
 export interface PushRegistration {
@@ -201,14 +204,25 @@ const MAX_CLIENT_NAME = 64;
  * refusing it. U+200D stays because emoji sequences join with it.
  */
 function pairingName(name: string, fallback: string): string {
-  const clean = name
-    .replace(/(?![\u200d\s])[\p{Cc}\p{Cf}]/gu, '')
+  return cleanClientText(name) || fallback;
+}
+
+function cleanClientText(text: string): string {
+  return text
+    .replace(/(?![\u200d\s])[\p{Cc}\p{Cf}\p{Cs}]/gu, '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, MAX_CLIENT_NAME)
     .replace(/[\ud800-\udbff]$/, '')
     .trim();
-  return clean || fallback;
+}
+
+/** What Stim Desktop names itself in `hello`: `Stim Desktop` for the release app and `Stim Dev` for a development build. */
+const DESKTOP_CLIENT_APPS: readonly string[] = ['Stim Desktop', 'Stim Dev'];
+
+/** Whether a record's recorded client app is Stim Desktop. A client names itself, so this is for display only. */
+export function isDesktopClient(device: PairedDevice): boolean {
+  return device.clientApp !== undefined && DESKTOP_CLIENT_APPS.includes(device.clientApp);
 }
 
 function newDeviceId(): string {
@@ -243,7 +257,7 @@ const JOURNAL_PATTERN = /^[a-f0-9]{64}$/;
 
 function parseDevice(value: unknown): PairedDevice | null {
   if (!isJsonObject(value)) return null;
-  const { id, name, publicKey, pairedAt, lastSeenAt, from, setupJournal } = value;
+  const { id, name, publicKey, pairedAt, lastSeenAt, from, setupJournal, clientApp, clientVersion } = value;
   if (typeof id !== 'string' || typeof name !== 'string' || typeof pairedAt !== 'string') return null;
   if (typeof publicKey !== 'string' || !KEY_PATTERN.test(publicKey)) return null;
   const push = parsePush(value.push);
@@ -257,6 +271,8 @@ function parseDevice(value: unknown): PairedDevice | null {
     capabilities: parseCapabilities(value.capabilities),
     ...(push ? { push } : {}),
     ...(typeof setupJournal === 'string' && JOURNAL_PATTERN.test(setupJournal) ? { setupJournal } : {}),
+    ...(typeof clientApp === 'string' && clientApp ? { clientApp } : {}),
+    ...(typeof clientVersion === 'string' && clientVersion ? { clientVersion } : {}),
   };
 }
 
@@ -565,15 +581,32 @@ export function spendSecret(
 
 const TOUCH_INTERVAL_MS = 60_000;
 
-/** Notes that a record's key authenticated now, at most once per `TOUCH_INTERVAL_MS`. */
-export function touchDevice(id: string, now: number = Date.now()): void {
+/** The `client` of a `hello`, whose values the client chose. */
+export interface HelloClient {
+  name?: unknown;
+  version?: unknown;
+}
+
+/**
+ * Notes that a record's key authenticated now, at most once per `TOUCH_INTERVAL_MS`, and records the app and version
+ * the client named in `hello`. A record with no app yet takes it at once, so a record fills in on its first
+ * connection after an upgrade, and a new pairing on the hello that follows it.
+ */
+export function touchDevice(id: string, client: HelloClient = {}, now: number = Date.now()): void {
+  const app = typeof client.name === 'string' ? cleanClientText(client.name) : '';
+  const version = typeof client.version === 'string' ? cleanClientText(client.version) : '';
   transaction(() => {
     for (const file of [devicesFile(), clientsFile('build'), clientsFile('device-host')]) {
       const records = readRecords(file);
       const found = records.find((entry) => entry.id === id);
       if (!found) continue;
-      if (found.lastSeenAt !== null && Math.abs(now - Date.parse(found.lastSeenAt)) < TOUCH_INTERVAL_MS) return;
-      found.lastSeenAt = new Date(now).toISOString();
+      const due = found.lastSeenAt === null || Math.abs(now - Date.parse(found.lastSeenAt)) >= TOUCH_INTERVAL_MS;
+      const missing = app !== '' && found.clientApp === undefined;
+      if (!due && !missing) return;
+      if (due) found.lastSeenAt = new Date(now).toISOString();
+      if (app) found.clientApp = app;
+      if (app && version) found.clientVersion = version;
+      else if (app) delete found.clientVersion;
       writeRecords(file, records);
       return;
     }
@@ -628,6 +661,32 @@ export function dropPushToken(token: string): void {
       changed = true;
     }
     if (changed) writeRecords(devicesFile(), devices);
+  });
+}
+
+export type RenameOutcome = 'renamed' | 'unknown' | 'invalid-name';
+
+/** A name a person typed for a record: 1 to 64 characters after trimming, without control, format or separator characters. */
+function personName(name: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > MAX_CLIENT_NAME) return null;
+  return /(?!\u200d)[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(trimmed) ? null : trimmed;
+}
+
+/** Renames the record `id` in whichever registry holds it. Its key and capabilities stay as they are. */
+export function renameDevice(id: string, name: string): RenameOutcome {
+  const clean = personName(name);
+  if (clean === null) return 'invalid-name';
+  return transaction<RenameOutcome>(() => {
+    for (const file of [devicesFile(), clientsFile('build'), clientsFile('device-host')]) {
+      const records = readRecords(file);
+      const found = records.find((entry) => entry.id === id);
+      if (!found) continue;
+      found.name = clean;
+      writeRecords(file, records);
+      return 'renamed';
+    }
+    return 'unknown';
   });
 }
 

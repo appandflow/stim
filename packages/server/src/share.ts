@@ -10,7 +10,13 @@ import { FRAME_RETRY_MS, LatestFrames } from './frame-delivery.ts';
 import type { FrameHint } from './frame-helper.ts';
 import { deviceKey, ownedDevice, type Device, type Frame, type FramePool, type LeaseLookup } from './frames.ts';
 import { presenceKey, type PresenceHub } from './presence.ts';
-import { FRAME_FPS, type DeviceFrameArtwork, type PresenceParticipant, type ServerMessage } from './protocol.ts';
+import {
+  FRAME_FPS,
+  SHARE_SLUG_PATTERN,
+  type DeviceFrameArtwork,
+  type PresenceParticipant,
+  type ServerMessage,
+} from './protocol.ts';
 import { targetKey } from './recorder.ts';
 import { hostedOf, type HostedTarget, type ShareSource } from './share-hosted.ts';
 import { endedPage, loginPage, SHARE_ASSETS, viewerPage } from './share-page.ts';
@@ -44,6 +50,8 @@ export interface ShareRequest {
   passwordless?: boolean;
   /** A second, view-only password; with `control` and a password. Without its own `password`, one is generated. */
   view?: { password?: string };
+  /** The link path, `/s/<slug>/`, in place of the random URL token; never with `passwordless`. */
+  slug?: string;
 }
 
 /** How a share admits viewers: a generated password, one the person set, or the URL token alone. */
@@ -62,6 +70,7 @@ export interface ShareRow {
   state: ShareState;
   auth: ShareAuth;
   viewAuth: ViewAuth;
+  slug?: string;
 }
 
 /** `password` and `viewPassword` are present only when generated: a password the person set is never sent back. */
@@ -137,6 +146,7 @@ export interface StatusListener {
 
 type Refusal = { code: 'bad-request' | 'action-failed'; message: string };
 
+const SLUG = new RegExp(SHARE_SLUG_PATTERN);
 const COOKIE = 'stim_share';
 const PASSWORD_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const PASSWORD_LENGTH = 16;
@@ -163,6 +173,8 @@ const VIEWER_TEXT = {
   controlRefused: 'Control is not available right now. Try again in a moment.',
   inputRefused: 'That input was not accepted.',
   clipboardRefused: 'The device did not take or return its clipboard.',
+  pasteBusy: 'The device is still typing the previous paste.',
+  pasteSuggestion: 'If nothing appears, tap the paste suggestion on the device.',
   controlEnded: 'Control ended.',
 };
 const CSP =
@@ -449,6 +461,11 @@ export class ShareHub {
         return { code: 'bad-request', message: 'The view password and the control password must differ.' };
       }
     }
+    if (request.slug !== undefined && request.passwordless) {
+      return { code: 'bad-request', message: 'A share with a slug needs a password: anyone can guess a slug.' };
+    }
+    const taken = this.slugTaken(request.slug);
+    if (taken) return taken;
     if (request.expiresAt !== undefined && request.expiresAt <= Date.now()) {
       return { code: 'bad-request', message: 'That link has expired.' };
     }
@@ -472,8 +489,15 @@ export class ShareHub {
         message: this.closed ? 'stim-server is stopping.' : 'The share listener closed while starting. Try again.',
       };
     }
+    const late = this.slugTaken(request.slug);
+    if (late) {
+      source.close();
+      void this.teardown();
+      return late;
+    }
     const { password: chosen, view, token: given, expiresAt: until, ...kept } = request;
     if (this.reusedLive(request)) {
+      source.close();
       void this.teardown();
       return { code: 'bad-request', message: 'That link is live now.' };
     }
@@ -481,7 +505,7 @@ export class ShareHub {
     const shown = auth === 'generated' ? password() : null;
     const viewAuth: ViewAuth = view ? (view.password !== undefined ? 'set' : 'generated') : null;
     const viewShown = viewAuth === 'generated' ? password() : null;
-    const secret = given ?? token();
+    const secret = request.slug ?? given ?? token();
     const id = `w${this.next++}`;
     const expiresAt = until ?? Date.now() + request.expiresMinutes * 60_000;
     const share: Share = {
@@ -533,6 +557,17 @@ export class ShareHub {
       ...(shown ? { password: shown } : {}),
       ...(viewShown ? { viewPassword: viewShown } : {}),
       ...(this.warning ? { warning: this.warning } : {}),
+    };
+  }
+
+  /** The refusal for a slug a live share already uses: a share never takes over another's link. */
+  private slugTaken(slug: string | undefined): Refusal | null {
+    if (slug === undefined) return null;
+    const holder = this.shares.get(digest(slug).toString('hex'));
+    if (!holder) return null;
+    return {
+      code: 'action-failed',
+      message: `The slug ${slug} is in use by live share ${holder.id} of ${holder.request.workspace}. Stop that share or choose another slug.`,
     };
   }
 
@@ -675,6 +710,7 @@ export class ShareHub {
       state: share.state,
       auth: share.auth,
       viewAuth: share.viewAuth,
+      ...(share.request.slug !== undefined ? { slug: share.request.slug } : {}),
     };
   }
 
@@ -975,7 +1011,7 @@ export class ShareHub {
       url = url.slice(prefix.length);
     }
     const [, secret, rest] = /^\/s\/([^/?#]+)\/([^?#]*)(?:\?.*)?$/.exec(url) ?? [];
-    if (secret === undefined || rest === undefined || !SHARE_TOKEN.test(secret)) return null;
+    if (secret === undefined || rest === undefined || !(SHARE_TOKEN.test(secret) || SLUG.test(secret))) return null;
     const share = this.shares.get(digest(secret).toString('hex'));
     return share && !share.ended ? { share, rest } : null;
   }
@@ -1410,9 +1446,21 @@ export class ShareHub {
       if (method === 'input.clipboard.get') {
         viewer.socket.send(JSON.stringify({ type: 'clipboard', id: fields.id, error: VIEWER_TEXT.clipboardRefused }));
       } else {
-        const notice = clipboard ? VIEWER_TEXT.clipboardRefused : VIEWER_TEXT.inputRefused;
+        const notice = !clipboard
+          ? VIEWER_TEXT.inputRefused
+          : refused.code === 'device-busy'
+            ? VIEWER_TEXT.pasteBusy
+            : VIEWER_TEXT.clipboardRefused;
         viewer.socket.send(JSON.stringify({ type: 'control', message: notice }));
       }
+    } else if (
+      open &&
+      method === 'input.clipboard.set' &&
+      fields.paste === true &&
+      share.request.platform === 'ios' &&
+      !(isJsonObject(refused) && refused.typed === true)
+    ) {
+      viewer.socket.send(JSON.stringify({ type: 'control', message: VIEWER_TEXT.pasteSuggestion }));
     } else if (method === 'input.clipboard.get' && open) {
       const text = isJsonObject(refused) ? refused.text : undefined;
       viewer.socket.send(

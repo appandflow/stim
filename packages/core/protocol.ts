@@ -103,6 +103,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
  * `share-reuse` is `share.start`'s `token` and `expiresAt`, which start a share under a URL token a stopped share had.
  * `share-waiting` is the rows' `state` (a share waits for its device instead of ending) and `share.stop`'s `slot`.
+ * `share-slug` is `share.start`'s `slug` parameter and the rows' `slug`.
  * `hosted-presence` is `device-host.presence.subscribe`: the `presence` events of a hosted session, which carry what the
  * agent drives on it. A host lists it only with `presence`.
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
@@ -178,8 +179,9 @@ export const FEATURES = [
   'device-clipboard',
   'share-view-password',
   'share-waiting',
-  'share-reuse',
   'hosted-presence',
+  'share-slug',
+  'share-reuse',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -361,6 +363,14 @@ export const DEVICE_HOST_METHODS = [
 ] as const;
 
 export type Method = (typeof METHODS)[number];
+
+/**
+ * A web share's chosen link path, `/s/<slug>/`: 3 to 32 lowercase letters, digits and hyphens, starting and ending with
+ * a letter or digit. Always shorter than the 43-character URL token, so a slug never reads as one.
+ */
+export const SHARE_SLUG_PATTERN = '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$';
+/** Slugs a share cannot take: `/s/assets/` serves the viewer's bundled files. */
+export const RESERVED_SHARE_SLUGS: readonly string[] = ['assets'];
 
 export const PUSH_TOKEN_PATTERN = '^(Expo|Exponent)PushToken\\[[^\\]\\s]{1,256}\\]$';
 
@@ -1024,11 +1034,22 @@ export const MAX_CLIPBOARD_READ_BYTES = 65536;
  * (Command-V on an iOS simulator, a paste key event on Android). A web page, a native macOS app and a physical iPhone
  * refuse it. It takes ten inputs of a connection's input budget, not the characters of `input.text`. Stim never logs
  * or records `text`.
+ *
+ * On an iOS simulator, `paste` text made only of printable ASCII, line breaks and tabs is typed into the focused
+ * field as `input.text` pieces instead of pasted, because iOS asks before an app reads text another process put on
+ * the clipboard, and a slimmed simulator cannot ask. The typed text takes the field's own typing rules (smart
+ * quotes and dashes), the request answers once the first piece is sent, and a second typed paste is refused with
+ * `device-busy` until the first has been typed. Other text is pasted with Command-V.
  */
 export interface InputClipboardSetParams {
   session: string;
   text: string;
   paste?: boolean;
+}
+
+/** `typed` is true when `paste` typed the text instead of pasting it; absent otherwise, so no paste prompt was avoided. */
+export interface InputClipboardSetResult {
+  typed?: true;
 }
 
 /** Reads the device clipboard's text; a clipboard over {@link MAX_CLIPBOARD_READ_BYTES} bytes of UTF-8 is refused, not cut. */
@@ -1722,6 +1743,8 @@ export interface WebShareRow {
   auth: 'generated' | 'set' | 'none';
   /** How a separate view-only password was made; null when the share has none. */
   viewAuth: 'generated' | 'set' | null;
+  /** The link path the person chose; absent when the link carries a random token. */
+  slug?: string;
 }
 
 export interface WebShareStartParams {
@@ -1740,6 +1763,8 @@ export interface WebShareStartParams {
   passwordless?: boolean;
   /** A second, view-only password next to the control one; only with `control` and a password. Never sent back. */
   view?: { password?: string };
+  /** The link path, `/s/<slug>/`, in place of the random token; {@link SHARE_SLUG_PATTERN}, never with `passwordless`. */
+  slug?: string;
 }
 
 export interface Methods {
@@ -1910,7 +1935,7 @@ export interface Methods {
   'input.scroll': { params: InputScrollParams; result: Record<string, never> };
   'input.key': { params: InputKeyParams; result: Record<string, never> };
   'input.window': { params: InputWindowParams; result: Record<string, never> };
-  'input.clipboard.set': { params: InputClipboardSetParams; result: Record<string, never> };
+  'input.clipboard.set': { params: InputClipboardSetParams; result: InputClipboardSetResult };
   'input.clipboard.get': { params: InputClipboardGetParams; result: InputClipboardGetResult };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };

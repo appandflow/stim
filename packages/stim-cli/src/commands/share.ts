@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
-import type { Methods, WebShareRow } from '@stim-cli/core/protocol';
+import { RESERVED_SHARE_SLUGS, SHARE_SLUG_PATTERN, type Methods, type WebShareRow } from '@stim-cli/core/protocol';
 import { shareLinkKey } from '@stim-cli/core/state';
 import {
   LocalServerUnavailable,
@@ -20,6 +20,7 @@ import { repoRootAsync } from '../workspace/worktree.ts';
 const DEFAULT_MINUTES = 60;
 const MAX_MINUTES = 480;
 const SLOT = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const SLUG = new RegExp(SHARE_SLUG_PATTERN);
 
 interface ShareFailure {
   code: string;
@@ -40,6 +41,7 @@ interface ShareOptions {
   viewPassword?: string | true;
   /** Both `--password` and `--no-password` were passed. */
   bothPasswords?: boolean;
+  slug?: string;
   /** Start the saved link of this target again. */
   reuse?: boolean;
   /** With `stop`, delete the workspace's saved links. */
@@ -123,10 +125,12 @@ async function ask<M extends ShareMethod>(
     );
   }
   if ('result' in answer) return answer;
-  if (answer.error.code === 'unknown-method') {
+  if (answer.error.code === 'unknown-method' || /does not take slug\b/.test(answer.error.message)) {
     return failure(
       'STIM_SHARE_REFUSED',
-      'The running stim-server does not serve web shares.',
+      answer.error.code === 'unknown-method'
+        ? 'The running stim-server does not serve web shares.'
+        : 'The running stim-server does not take --slug.',
       'Update stim-server to the version of this stim (`stim-server service update`), then run stim share again.',
     );
   }
@@ -161,7 +165,8 @@ function describeRow(row: ShareRow): string {
   const target = `${row.platform}${row.physical ? ' device' : ''}${row.slot === 'default' ? '' : ` (slot ${row.slot})`}`;
   const mode = `${row.control ? 'view and control' : 'view only'}${row.auth === 'none' ? ', no password' : ''}${row.viewAuth ? ', view password' : ''}`;
   const waiting = row.state === 'waiting' ? ', waiting for the device' : '';
-  return `${target} of ${row.workspace}: ${mode}${waiting}, ${row.viewers} viewer${row.viewers === 1 ? '' : 's'}, expires ${row.expiresAt}`;
+  const link = row.slug !== undefined ? `, link /s/${row.slug}/` : '';
+  return `${target} of ${row.workspace}: ${mode}${link}${waiting}, ${row.viewers} viewer${row.viewers === 1 ? '' : 's'}, expires ${row.expiresAt}`;
 }
 
 type ShareResult = { ok: true; output: object; text: string } | { ok: false; error: ShareFailure };
@@ -198,10 +203,12 @@ function secretLines(
   ];
 }
 
-/** The URL's token and the address it is served under, up to `/s/`. */
-function splitUrl(url: string): { token: string; origin: string } | null {
-  const [, origin, token] = /^(.*\/s\/)([A-Za-z0-9_-]{43})\/?$/.exec(url) ?? [];
-  return origin !== undefined && token !== undefined ? { token, origin } : null;
+/** The URL's token or slug and the address it is served under, up to `/s/`. */
+function splitUrl(url: string, slug: string | undefined): { token?: string; origin: string } | null {
+  const [, origin, path] = /^(.*\/s\/)([^/?#]+)\/?$/.exec(url) ?? [];
+  if (origin === undefined || path === undefined) return null;
+  if (slug !== undefined) return path === slug ? { origin } : null;
+  return /^[A-Za-z0-9_-]{43}$/.test(path) ? { token: path, origin } : null;
 }
 
 /** Starts the workspace's saved link of this target again, with the passwords and setup it was first started with. */
@@ -253,7 +260,7 @@ async function reuseShare(
       ...(opts.slot && opts.slot !== 'default' ? { slot: opts.slot } : {}),
       ...(opts.device ? { physical: true } : {}),
       control: saved.control,
-      token: saved.token,
+      ...(saved.slug === undefined ? { token: saved.token } : { slug: saved.slug }),
       ...(minutes === null ? { expiresAt: saved.expiresAt } : { expiresMinutes: minutes }),
       ...(saved.password === undefined ? { passwordless: true } : { password: saved.password }),
       ...(saved.viewPassword === undefined ? {} : { view: { password: saved.viewPassword } }),
@@ -264,9 +271,9 @@ async function reuseShare(
   if ('code' in answer) return { ok: false, error: answer };
   const started = answer.result;
   if (started.warning) deps.note(`Warning: ${started.warning}`);
-  const link = splitUrl(started.url);
+  const link = splitUrl(started.url, saved.slug);
   if (link && saved.origin && link.origin !== saved.origin) {
-    deps.note(`The link is served under a different address than before; its token is the same: ${link.origin}`);
+    deps.note(`The link is served under a different address than before; the link path is the same: ${link.origin}`);
   }
   try {
     saveShareLink(root, key, {
@@ -479,6 +486,30 @@ export async function runShare(
       };
     }
   }
+  if (opts.slug !== undefined) {
+    if (!SLUG.test(opts.slug) || RESERVED_SHARE_SLUGS.includes(opts.slug)) {
+      return {
+        ok: false,
+        error: failure(
+          'STIM_BAD_ARG',
+          `--slug ${JSON.stringify(opts.slug)} is not a share slug.`,
+          RESERVED_SHARE_SLUGS.includes(opts.slug)
+            ? `${opts.slug} is reserved for the share pages; choose another slug.`
+            : 'Use 3 to 32 lowercase letters, digits and hyphens, starting and ending with a letter or digit, such as --slug pokedex.',
+        ),
+      };
+    }
+    if (passwordless) {
+      return {
+        ok: false,
+        error: failure(
+          'STIM_BAD_ARG',
+          '--slug and --no-password cannot be used together: anyone can guess a slug, so the password is what keeps the share private.',
+          'Leave --no-password out to have a password generated, or leave --slug out to get a random link.',
+        ),
+      };
+    }
+  }
   if (passwordless) {
     deps.note(
       `Warning: this share has no password. Anyone with the link can ${opts.control ? 'watch and control' : 'watch'} the device until it expires.`,
@@ -497,6 +528,7 @@ export async function runShare(
       ...(chosen !== undefined ? { password: chosen } : {}),
       ...(passwordless ? { passwordless: true } : {}),
       ...(view !== undefined ? { view: typeof view === 'string' ? { password: view } : {} } : {}),
+      ...(opts.slug !== undefined ? { slug: opts.slug } : {}),
     },
     version,
     true,
@@ -504,7 +536,7 @@ export async function runShare(
   if ('code' in answer) return { ok: false, error: answer };
   const started = answer.result;
   if (started.warning) deps.note(`Warning: ${started.warning}`);
-  const link = splitUrl(started.url);
+  const link = splitUrl(started.url, started.slug);
   const password = chosen ?? started.password;
   const viewPassword = typeof view === 'string' ? view : started.viewPassword;
   let saved = false;
@@ -518,7 +550,7 @@ export async function runShare(
         platform: action,
         slot: opts.slot ?? 'default',
         physical: opts.device === true,
-        token: link.token,
+        ...(link.token === undefined ? { slug: started.slug } : { token: link.token }),
         origin: link.origin,
         control: started.control,
         ...(started.auth === 'none' || password === undefined ? {} : { password }),
@@ -544,6 +576,9 @@ export async function runShare(
       `Shared ${describeRow(started)}.`,
       `URL:${started.viewAuth ? '              ' : '      '}${started.url}`,
       ...secret,
+      ...(started.slug !== undefined
+        ? ['The link uses a chosen slug, so anyone can guess it: only the password keeps the share private.']
+        : []),
       saved
         ? 'Stop it with: stim share stop (add --forget to make the link unusable)'
         : 'Stop it with: stim share stop',
@@ -577,6 +612,10 @@ export function registerShare(program: Command, version: string, deps: Partial<S
     .option(
       '--view-password [value]',
       'With --control, a second password that only watches (8 to 128 characters, generated without a value)',
+    )
+    .option(
+      '--slug <name>',
+      'Use /s/<name>/ as the link instead of a random token (3 to 32 lowercase letters, digits and hyphens; needs a password)',
     )
     .option(
       '--reuse',

@@ -17,6 +17,7 @@ asks for it.
   stim share ios --slot tablet        # the device of another slot
   stim share ios --password '<value>' # a password you choose, 8 to 128 characters
   stim share ios --no-password        # no login: the link alone opens it
+  stim share ios --slug pokedex       # link /s/pokedex/ instead of a random token
   stim share android --control --view-password   # a second, watch-only password, generated
   stim share android --control --view-password '<value>'   # or one you choose
   stim share list                     # shares: target, control, state, viewers, expiry
@@ -49,7 +50,8 @@ passwords, in clear, in share-links.json in the workspace's directory under
 $STIM_HOME/workspaces (mode 0600; written when a share starts; deleted with the
 workspace, by stim share stop --forget, and when stim share, starting, reusing or
 stopping in the workspace, finds it expired). stim share ios|android --reuse starts that
-target's saved link again (--device and --slot pick the target) until it
+target's saved link again (a share started with --slug is saved and started again
+by its slug, with its password; --device and --slot pick the target) until it
 expires: the same URL token, passwords and setup, the same expiry. The control,
 view-only and password setup comes from the saved share, so --reuse with
 --control, --password, --no-password or --view-password fails with
@@ -125,6 +127,21 @@ screen. A view-only viewer sees the same and sends nothing. Hosted sessions
 machine's stim-server, and the agent's actions on the hosted device come from
 the host Mac (a host on an older Stim shows none; stim agent-device still shows
 the agent's command).
+
+A READABLE LINK (--slug)
+
+--slug <name> makes the link <public url>/s/<name>/ instead of a random
+256-bit token, for a demo link someone can type or read aloud. A slug is 3 to
+32 lowercase letters, digits and hyphens, starting and ending with a letter or
+digit; assets is reserved. Anyone can guess a slug, so the password is the
+share's only secret: --slug refuses with STIM_BAD_ARG with --no-password, and
+anyone who knows the link reaches the login page and can spend the share's
+wrong-password budget (10 wrong passwords in 10 minutes lock new logins for
+that share; signed-in viewers stay). Keep the generated password, or set a
+long one. A slug a live share uses is refused with STIM_SHARE_REFUSED, naming
+that share; stim share stop in its workspace, or its expiry, frees it. Nothing
+reserves a slug after its share ends. share list and --json show slug. A
+stim-server older than this stim refuses --slug; update it.
 
 With --no-password, anyone with the link can watch, or control with
 --control; stim share warns about it on stderr, and share list shows such a
@@ -327,7 +344,7 @@ SECURITY MODEL
   Android phone only. A device an agent or another client drives answers
   busy instead of being taken over.
 - Clipboard, with --control on an iOS simulator, Android emulator or Android phone: Command-V or Control-V while
-  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field. The
+  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field; an iOS simulator types printable ASCII, line breaks and tabs, and pastes other text with Command-V, where iOS can ask first. The
   top bar's options menu has a Sync clipboard switch, on by default for control viewers and remembered in the
   browser: while the page is focused and visible it polls the device clipboard every two seconds (slower after
   failures) and writes new text to the browser clipboard, with a Copy from device chip when the browser refuses
