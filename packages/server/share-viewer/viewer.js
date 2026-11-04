@@ -1123,6 +1123,7 @@ if (control) {
   };
   releaseInput = () => {
     down = false;
+    touching = false;
     busy = false;
     queuedMove = null;
     clearTimeout(settle);
