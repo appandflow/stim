@@ -1,11 +1,17 @@
 import { delimiter } from 'node:path';
 import type { InstalledService } from '@stim-cli/core/state';
+import {
+  defaultToolchainProbe,
+  discoverToolchain,
+  type ToolchainEntry,
+  type ToolchainProbe,
+} from '@stim-cli/core/toolchain';
 import type { Finding } from './doctor.ts';
 import { labelFlag, type ServerSetup } from './server-setup.ts';
 
 const PATH_VARIABLES = new Set(['JAVA_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'GEM_HOME']);
 
-/** The default `PATH` launchd gives a user agent, and so the job's before the server reads the login shell. */
+/** launchd gives a user agent this `PATH`; stim-server runs its tool discovery over it, then applies `--env` and `--path-prepend`. */
 const LAUNCHD_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
 
 export function servicePaths(service: InstalledService): string[] {
@@ -22,13 +28,24 @@ export function servicePaths(service: InstalledService): string[] {
   ];
 }
 
-export function serviceToolchainEnv(service: InstalledService, home: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { HOME: home, PATH: [...service.pathPrepend, ...LAUNCHD_PATH].join(delimiter) };
-  for (const entry of service.env) {
-    const equals = entry.indexOf('=');
-    if (equals > 0) env[entry.slice(0, equals)] = entry.slice(equals + 1);
-  }
-  return env;
+export function serviceToolchainEntries(
+  service: InstalledService,
+  home: string,
+  probe: ToolchainProbe = defaultToolchainProbe(),
+): ToolchainEntry[] {
+  const launchd = { HOME: home, PATH: LAUNCHD_PATH.join(delimiter) };
+  const { entries } = discoverToolchain(launchd, { ...probe, home, execPath: service.node ?? probe.execPath });
+  const pinned = new Map(
+    service.env.flatMap((entry): Array<[string, string]> => {
+      const equals = entry.indexOf('=');
+      return equals > 0 ? [[entry.slice(0, equals), entry.slice(equals + 1)]] : [];
+    }),
+  );
+  return entries.map((entry) =>
+    pinned.has(entry.name)
+      ? { name: entry.name, value: pinned.get(entry.name) ?? entry.value, source: 'environment' }
+      : entry,
+  );
 }
 
 export function serviceToolchainFindings(setup: ServerSetup): Finding[] {

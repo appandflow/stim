@@ -4,7 +4,7 @@ import type { PermissionReading, SocketReading } from '../diagnostics/server-set
 import { health, reading, service, setup } from './_server-setup.ts';
 
 const DIR_OK = { isDirectory: true, mode: 0o40700, uid: 501 };
-const SOCKET_OK = { isSocket: true, mode: 0o140600, uid: 501 };
+const SOCKET_OK = { mode: 0o140600, uid: 501 };
 const socketReading = (over: Partial<SocketReading> = {}): SocketReading => ({
   path: '/Users/me/.stim/server/local.sock',
   dir: DIR_OK,
