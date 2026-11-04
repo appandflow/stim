@@ -669,6 +669,8 @@ test.skipIf(process.platform === 'win32')(
     try {
       await recover({ env: {}, stateDir, claimRoot: join(home, 'claims') });
       expect(process.kill).toHaveBeenCalledWith(child.pid, 'SIGINT');
+      await vi.waitFor(() => expect(readClaimSet(join(stateDir, 'recorder.claims')).live).toEqual([]));
+      await recover({ env: {}, stateDir, claimRoot: join(home, 'claims') });
       expect(readClaimSet(join(stateDir, 'recorder.claims'))).toMatchObject({ live: [], dead: [], unresolved: [] });
     } finally {
       await killKeptChild(child);
@@ -725,7 +727,8 @@ test('stop still stops the daemon when the recorder is unresolved, then refuses'
 
 test('recovery leaves alone a recorder whose stim-server is alive', async () => {
   const root = join(home, 'agent', 'recorder.claims');
-  const claim = tryAcquireClaim({ root, mode: 'exclusive' }).acquired!;
+  const claim = tryAcquireClaim({ root, mode: 'exclusive' }).acquired;
+  if (!claim) throw new Error('The test recorder claim was not acquired.');
   setClaimChild(claim, { pid: 888892, processToken: 'runner-888892' });
   fixture.identities = { 888892: 'same' };
   try {
