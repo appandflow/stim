@@ -45,6 +45,18 @@ stim settings set server.devicesPaused false`} />
 Both settings default to `false`. Pausing does not make the machine idle: let
 existing work finish or stop the relevant sessions before timing benchmarks.
 
+## Keep the worker awake
+
+A worker that sleeps stops answering the machines that build or host simulators on it, paired phones and share links. On the worker machine, turn on:
+
+<StimTabs code={`stim settings set server.keepAwake true`} />
+
+In Stim Desktop on the worker, the same switch is **Keep this machine awake** in **Settings > Connections > Using this machine**.
+
+The setting defaults to `false`. While it is true on a Mac, stim-server prevents idle system sleep (the same as `caffeinate -s`), so the Mac stays reachable while plugged in; on battery it can still sleep, and the display may still sleep. stim-server holds this only while it accepts connections from other machines: its Tailscale or `server.lanAddresses` listener is up and it is not a `--loopback-only` server. It lets go when the setting turns off, when those listeners go away, and when the server stops, and it reads the setting without a restart.
+
+`stim-server service status` prints a `keep awake:` line, and the local `/health` answer carries `keepAwake`, saying whether the assertion is held. If `caffeinate` cannot start or stops, the status reads `failed` and stim-server does not retry by itself: restart stim-server. Turning the setting off and on also retries, but stim-server polls the setting every 5 seconds, so wait more than 5 seconds between the two and confirm with `stim-server service status`. On Linux and Windows workers the setting has no effect and the status line says so.
+
 ## Choose where to build and run
 
 `remote.machines` names your remote machines; a build needs the machine's build approval.
@@ -168,7 +180,7 @@ Android also accepts these backends. The [macOS prototype](./macos.md) takes the
 
 ## Automatic machine pools
 
-In **Settings > Remote Machines**, **Builds enabled** and **Simulators enabled**
+In **Settings > Connections > This machine uses**, **Builds enabled** and **Simulators enabled**
 control this machine and each configured remote independently; a remote that Tailscale reports
 as Linux or Windows shows only **Builds enabled**. All members start enabled.
 Turning a switch off keeps pairing and active builds or sessions intact. It only
@@ -202,6 +214,31 @@ Pods flow. If local is excluded and no enabled machine can take the work, Stim r
 instead of compiling or booting here. Disabling local alone never triggers billed
 EAS fallback; an existing `remote.easFallback` opt-in still needs the physical device
 cap or queue condition.
+
+## Reverse ports on hosted devices
+
+`stim ports reverse <label|port>` also works for a hosted simulator or emulator, so an app on the host reaches a server on your machine at the same `localhost:<port>`. The machine you run Stim on can be a Linux sandbox that accepts no inbound connections: the host never connects to it.
+
+<StimTabs code={`stim start
+stim ios --remote janics-mac-mini
+stim ports reverse 4318`} />
+
+Your Metro supervisor, started by `stim start`, keeps idle connections open to the host, one set per reversed port. The host listens on its own loopback and hands each connection the device makes to one of them, and your machine forwards it only to the same port on its own loopback. The port list comes from your workspace, so the host cannot ask for another port. This needs the same `device-host` approval as the hosted session and a host stim-server that advertises `hosted-reverse-ports`.
+
+- A hosted iOS simulator shares the host's loopback, so the host listens on the same port number. A port another process holds on the host is refused; reverse another port or free it there.
+- A hosted Android emulator has its own loopback, so the host listens on a private loopback port and points the emulator's `adb reverse` at it. Two sessions can reverse the same port.
+- Any process on the host Mac can connect to those loopback ports while the session lasts. Reverse only servers you would let that Mac's users reach.
+- `stim ios --remote` and `stim android --remote` set the reversed ports up again when they place an app, `stim reload android` restores an emulator's, and a host restart resumes them with the session. Stopping or losing the session, or `ports reverse --remove`, closes them.
+
+Copy this prompt into your agent:
+
+```text
+My agent runs in a sandbox and the app runs on the hosted simulator on
+janics-mac-mini. Read stim guide ports, reverse the port of the server the app
+must reach, and confirm the app connects at localhost:<port>.
+```
+
+For Appduct, set `advertisedIp` in `~/.appduct/config.json` to `127.0.0.1`, run `stim ports reverse <daemon port>`, and deliver its link with `stim agent-device open <app> "<link>"`.
 
 ## Hosted parking and restart
 
@@ -239,10 +276,13 @@ Records no longer listed in their session ledger are already removed and skipped
 The CLI leaves the journal unchanged, and the server clears the parked marker
 when it reconciles the empty ledger.
 
-A clean `stim-server` close parks eligible devices, which persist across restart
-and can be adopted by the next reserve. The server never re-attaches to a booted
-device after restart. A running session left by a crashed server stays `unknown`
-until an explicit `stim stop` reconciles it, or until its client has been gone for
+A `stim-server` restart leaves ready iOS and Android sessions running, and the
+restarted server resumes them once their ownership claim is provably free,
+verified against the session's private ledger. A device that cannot be verified
+is stopped. Parked devices persist across restart and can be adopted by the next
+reserve. A running session whose owner is still held by a live process stays
+`unknown` until an explicit `stim stop` reconciles it, and a resumed session is
+stopped after its client has been gone for
 [`maintenance.idleStopHours`](./dev-server-and-logs.md#idle-workspace-stop) and the
 server proves the session's ownership claim is free.
 
@@ -355,7 +395,7 @@ with the placement reason as hover text. Local devices show no placement label.
 
 Stim Desktop shows the machine's name and the phone app an **on &lt;machine&gt;** label; both view and control
 hosted Android through the client machine's local stim-server relay. Turn on
-**Serve to phones** in Desktop and pair the phone with the client machine. Named
+**Allow connections** in Desktop and pair the phone with the client machine. Named
 slots stream independently. Touch, text and hardware buttons reach the exact
 hosted emulator through the host's compiled `stim-frames` helper and scrcpy jar;
 its temporary jar and adb forward are removed when capture stops. Desktop
@@ -538,11 +578,11 @@ remote machines on this Mac's Stim version** never installs on such a worker.
 
 ## Use the Desktop wizard
 
-Open **Stim > Settings > Remote Machines** on your main machine. It lists your
-remote machines, each with a status (**Approved**, **Waiting for approval**,
-the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading, with the reason and a fix under it), what it does and **Remove...**. Readiness covers every platform of the app: a Linux machine that matches for Android shows as approved even though it cannot build iOS, and a Mac without an Android SDK shows that reason for an app with Android. Choose **Add Remote Machine...** to start the wizard,
+Open **Stim > Settings > Connections > This machine uses** on your main machine. It lists your
+remote machines, each with a status (**Approved**, **Waiting for approval**, **Key not confirmed**, **Server is outdated**,
+the layer that stopped an unreachable machine (such as **Server not ready** or **Machine is offline**), **Needs update** or the reason it is not offloading, with the reason and a fix under it), its access (**Build**, **Run devices**) and **Remove...**. A machine this one also paired with to view or control its work shares its row when both pinned the same stim-server key. Readiness covers every platform of the app: a Linux machine that matches for Android shows as approved even though it cannot build iOS, and a Mac without an Android SDK shows that reason for an app with Android. Choose **Add... > Build or Run Simulators There...** to start the wizard,
 which finds the Macs, Linux and Windows machines on your tailnet itself. **Remove** takes the machine out of
-`remote.machines` and shows the optional commands to run on that machine: `stim-server devices revoke <id>` for each
+`remote.machines` and shows the commands to run on that machine, since removing it here never revokes this machine there: `stim-server devices revoke <id>` for each
 request and `stim-server service uninstall`.
 
 The wizard has five steps. It refreshes in the background every few seconds,
@@ -560,11 +600,11 @@ so there is no Check again button:
    appears by itself when that machine joins. When every listed machine is
    offline, a line under the list tells you to turn on Tailscale on it.
    A machine you already added is marked **Added** and shows the same status as
-   the Remote Machines list (**Approved**, **Unreachable**, a Tailscale or
+   the Connections list (**Approved**, **Unreachable**, a Tailscale or
    stim-server problem and what to do about it) instead of Tailscale's
    online flag. Choosing it does not start setup again; it says the machine is
    already added and offers to close the wizard so you can use its row in
-   Remote Machines.
+   Connections.
    `stim-server setup` on the worker Mac gives the same three answers when it
    cannot read Tailscale: install it from `https://tailscale.com/download/mac`,
    turn the app on from its menu bar icon, or run `tailscale up`.
@@ -582,6 +622,9 @@ so there is no Check again button:
    mirrors setup progress live and sends the requests by itself until the
    command's ticket expires. Already approved capabilities are omitted from the
    command. When every chosen capability is approved and setup finished, Desktop moves to Tools by itself.
+   When Stim Desktop runs on the worker Mac, you can paste the command there instead of
+   Terminal and answer each grant in Desktop; see
+   [Approve in Stim Desktop on the worker](#approve-in-stim-desktop-on-the-worker).
    A skipped permission keeps this step open and shows its fix. There is no SSH option.
    For a Linux machine the command first runs `sudo tailscale set --operator=$USER`
    and `sudo loginctl enable-linger $USER` (see [Linux worker](#linux-worker)),
@@ -596,7 +639,7 @@ so there is no Check again button:
    tools when **Builds** is chosen. A problem that stops the chosen
    capability is shown in red and never disables **Next**; the machine stays added,
    builds that cannot run there stay on this machine, and the machine's page in
-   Settings > Remote Machines lists every problem and note by platform. Red problems are an incompatible Stim build
+   Settings > Connections lists every problem and note by platform. Red problems are an incompatible Stim build
    or no Xcode for Builds, and no iOS simulator runtime for Hosted simulators. **Install This Mac's Build**
    fixes an incompatible Stim build. A Linux or Windows machine shows only the Stim build and
    Android rows, and a missing Android SDK or any JDK difference is red
@@ -634,6 +677,36 @@ setup. Closing the wizard before Done puts the previous value back. An expired t
 
 Agents never run `stim-server setup`, edit `remote.*`, `server.*` or `hosting.*` for you,
 or approve requests; use Desktop or perform the setup yourself.
+
+## Approve in Stim Desktop on the worker
+
+A person at the worker Mac can approve a request in Stim Desktop instead of a terminal:
+
+1. On the requesting machine, start **Settings > Connections > This machine uses > Add... >
+   Build or Run Simulators There** and pick the worker, or run `stim remote add <worker>`. Copy
+   the `stim-server setup` command it shows.
+2. On the worker, open **Settings > Connections > Using this machine > Add... > Machine to Build
+   or Run Simulators Here** and paste the command. Desktop shows what it asks for and when its
+   ticket expires.
+3. Choose **Continue**. Desktop asks about each grant, as setup asks Y/n in a terminal:
+   **Allow** or **Don't Allow** for builds, then for hosted simulators. Nothing is approved
+   before you answer.
+4. Keep the window open until the requesting machine connects. Stim Desktop there connects by
+   itself; after `stim remote add`, run `stim remote list` there. Closing the window withdraws
+   the request.
+5. The last screen names the machine, the direction (**Using this machine**), its access
+   (**Build**, **Run devices**) and the `stim-server devices revoke` commands that end it.
+   **Revoke Access** in the Connections list does the same.
+
+The same setup runs with the same rules: one ticket, one expiry at most two hours ahead, one
+record per approved capability for the key that spends the ticket, and one setup at a time on
+the worker. Desktop takes only `--expires`, `--build` and `--device-host`; a command with any
+other option, such as `--yes`, `--port` or `--label`, runs only in a terminal. Desktop never
+installs or changes a service, Stim Host or a route: on a worker with a `stim-server service`,
+or where Desktop uses a server it did not start, run the command in a terminal instead. Only the
+Stim Desktop that started the worker's server can use this approval; another machine, a paired
+phone, an SSH session and any other program on the worker are refused. Running the command in a
+terminal on the worker still approves as before.
 
 ## CLI equivalent
 
@@ -748,6 +821,8 @@ stim remote remove janics-mac-mini
 placement order and asks nothing new. `stim remote remove` drops the entry and
 forgets this machine's credentials for it; the worker keeps its approval until
 a person there runs the `stim-server devices revoke <id>` command it prints.
+With `--json`, each machine also carries its server key fingerprint, its
+reachability in this run and those revoke commands.
 `stim settings set remote.machines` replaces the whole list; use it to reorder
 machines. `stim doctor --fix` in an app directory still asks every listed
 machine that has not been asked.
@@ -757,9 +832,10 @@ A worker whose stim-server predates protocol 2 cannot authenticate this machine.
 `stim-server service update --release <version>` there with this machine's
 Stim version, then `stim remote add <machine>` here.
 
-If active builds or hosted simulators prevent that update, add `--no-wait` to
-the service update command. This interrupts the server's active work during
-restart instead of waiting for it to finish; shutdown, health checks and rollback
+If active builds or a hosted native step (an install, for example) prevent that
+update, add `--no-wait` to the service update command. This interrupts that work
+during restart instead of waiting for it to finish; a server that resumes its hosted
+sessions leaves its other ready simulators and emulators running through the restart; shutdown, health checks and rollback
 still apply. Setup also accepts `--no-wait` for its managed-service update.
 
 ### Linux worker
@@ -985,7 +1061,9 @@ gets the approval. On a tailnet that machine also had to be in your tailnet; on
 a local network it only needs the ticket and a route to the worker. Copy the
 command only to the worker. Afterward, `stim-server devices` on the worker lists
 the address each approved machine connected from; the name in setup's approval
-line is the one the requesting machine chose. The ticket also lands in
+line is the one the requesting machine chose. A person on the worker can give
+a record a clearer name with `stim-server devices rename <id> <name>`; its
+access does not change. The ticket also lands in
 the worker's shell history; it stops working when it expires, within two hours.
 
 On a Mac with the macOS firewall on, setup warns that macOS asks whether the
@@ -1084,9 +1162,10 @@ An exact npm release needs no extra setting. Installing this checkout's own
 build requires `server.acceptClientBuilds=true` on the worker; it defaults to
 false. A failed server health check restores the previous version.
 
-The worker restarts only once its offloaded builds and hosted sessions end, and
-the card says what it waits for, such as "Waiting for 1 hosted simulator to
-end...". When this Mac's own workspaces hold those hosted simulators, **Stop and
+The worker restarts only once its offloaded builds and hosted native steps end (a
+worker that resumes its hosted sessions leaves ready iOS and Android sessions running
+and does not wait for them), and the card says what it waits for. When a worker that
+does not resume holds this Mac's hosted simulators, **Stop and
 Update...** stops them with `stim stop` after a confirmation that names each
 device and workspace; another machine's sessions can only be stopped on the worker.
 The update shows as finished once the worker runs this machine's Stim build, even
@@ -1120,8 +1199,8 @@ until the next wizard reuses it or its removal succeeds.
 
 **Cancel** removes only entries the wizard added, restores the mode only if
 it changed it, and runs doctor to forget removed pairings. Worker grants
-remain until revoked there. After finishing, use **Settings > Remote Machines >
-Remove** on the main machine, or run `stim remote remove <machine>`, which also
+remain until revoked there. After finishing, use **Settings > Connections > This
+machine uses > Remove** on the main machine, or run `stim remote remove <machine>`, which also
 forgets this machine's credentials for it.
 
 On the worker, run the summary's `stim-server devices revoke <id>` for each
@@ -1196,32 +1275,32 @@ under the name. `stim doctor --json` carries it as `diagnosis` (`layer`, `code`,
 `unreachable`, `tailscale-off` or `not-on-tailnet`, so an older Desktop or phone
 app still shows its short label.
 
-Stim records the tailnet this Mac is signed in to (`tailnet`: `name`, `suffix`, `id`) when it first asks a machine
+Stim records the tailnet this machine is signed in to (`tailnet`: `name`, `suffix`, `id`) when it first asks a machine
 for access, in the machine's entry in `build-machines.json` and `device-host-machines.json`. A machine that is
-missing from the tailnet this Mac is signed in to now, and recorded another one, gets `peer-wrong-tailnet`,
+missing from the tailnet this machine is signed in to now, and recorded another one, gets `peer-wrong-tailnet`,
 which names both. A pairing from before Stim kept the field gets it the next time the machine answers
 `stim doctor`; until then the generic `peer-not-found` message applies. A node shared in from another tailnet
 stays reachable wherever it is shared, since the check runs only when the peer is missing.
 
-| Layer                 | Code                                | What it means                                                                                                                                                                                                                      | What to do                                                                                                                                                          |
-| --------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tailscale on this Mac | `tailscale-stopped`                 | Tailscale is turned off.                                                                                                                                                                                                           | Turn it on in the menu bar app, or run `tailscale up`.                                                                                                              |
-|                       | `tailscale-logged-out`              | Tailscale is signed out.                                                                                                                                                                                                           | Sign in, then run `stim doctor` again.                                                                                                                              |
-|                       | `tailscale-unavailable`             | No Tailscale answered: it is not running or not installed.                                                                                                                                                                         | Install or open Tailscale and sign in.                                                                                                                              |
-| The peer              | `peer-not-found` / `peer-ambiguous` | No peer, or several, match the `remote.machines` name.                                                                                                                                                                             | Check the name with `tailscale status`, or use the full MagicDNS name.                                                                                              |
-|                       | `peer-wrong-tailnet`                | No peer is named so, and this Mac is signed in to another Tailscale account than the one it was on when it asked the Mac for access. The message names both tailnets.                                                              | Switch Tailscale on this Mac to the tailnet the message names, then run `stim doctor` again.                                                                        |
-|                       | `peer-offline`                      | Tailscale lists the Mac as offline and nothing answered; the message says when it was last seen.                                                                                                                                   | Wake it, check its network, and check that Tailscale runs there.                                                                                                    |
-|                       | `peer-no-answer`                    | The connection got no reply and `tailscale ping` does not reach the Mac either.                                                                                                                                                    | Check that it is awake and its network is up; run `tailscale ping <name>` here.                                                                                     |
-| The serve route       | `route-missing`                     | The Mac answers, but nothing accepts connections on the serve port.                                                                                                                                                                | On that Mac, run `stim-server service status`; `stim-server service install --serve` creates the route.                                                             |
-|                       | `route-tls`                         | The route's certificate was not accepted.                                                                                                                                                                                          | On that Mac, run `tailscale serve status`, then `stim-server service install --serve`.                                                                              |
-|                       | `route-http-error`                  | The route answered an HTTP status stim-server never sends (not 502 or 503).                                                                                                                                                        | On that Mac, run `tailscale serve status` and check what the port points to.                                                                                        |
-| stim-server           | `server-not-running`                | The route answers 502: nothing listens behind it.                                                                                                                                                                                  | On that Mac, run `stim-server service status`; `stim-server service install --serve` starts it.                                                                     |
-|                       | `server-not-ready`                  | The route answers 503, or stim-server refuses with `home-unavailable`: it runs but does not serve. The message gives the cause when the server reports one, such as a Stim home it cannot read because its disk stopped answering. | Check the disk that holds the Stim home on that Mac; stim-server serves again by itself once it answers. `stim-server service status` there shows the exact reason. |
-|                       | `server-no-answer`                  | `tailscale ping` reaches the Mac, but the serve route and stim-server sent no reply in time: stim-server may be starting, stalled or restarting.                                                                                   | On that Mac, run `stim-server service status`; it reports a restart loop or a Stim home it is still reading, and the log file to read.                              |
-|                       | `connect-failed`                    | The connection failed in a way none of the other codes names.                                                                                                                                                                      | On that Mac, run `stim-server service status`.                                                                                                                      |
-| Local network         | `lan-not-listening`                 | The worker answers, but nothing accepts connections on its stim-server port.                                                                                                                                                       | On that machine, run `stim-server service status` and check `server.lanAddresses`; the server log names each entry it cannot use.                                   |
-|                       | `lan-no-answer`                     | Nothing answered the connection.                                                                                                                                                                                                   | Check that the machine is awake and on this network, and that its firewall allows stim-server's `node`.                                                             |
-| Compatibility         | `server-outdated`                   | stim-server speaks an older protocol.                                                                                                                                                                                              | Run the update command the finding prints.                                                                                                                          |
+| Layer                     | Code                                | What it means                                                                                                                                                                                                                      | What to do                                                                                                                                                              |
+| ------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tailscale on this machine | `tailscale-stopped`                 | Tailscale is turned off.                                                                                                                                                                                                           | Turn it on in the menu bar app, or run `tailscale up`.                                                                                                                  |
+|                           | `tailscale-logged-out`              | Tailscale is signed out.                                                                                                                                                                                                           | Sign in, then run `stim doctor` again.                                                                                                                                  |
+|                           | `tailscale-unavailable`             | No Tailscale answered: it is not running or not installed.                                                                                                                                                                         | Install or open Tailscale and sign in.                                                                                                                                  |
+| The peer                  | `peer-not-found` / `peer-ambiguous` | No peer, or several, match the `remote.machines` name.                                                                                                                                                                             | Check the name with `tailscale status`, or use the full MagicDNS name.                                                                                                  |
+|                           | `peer-wrong-tailnet`                | No peer is named so, and this machine is signed in to another Tailscale account than the one it was on when it asked the remote machine for access. The message names both tailnets.                                               | Switch Tailscale on this machine to the tailnet the message names, then run `stim doctor` again.                                                                        |
+|                           | `peer-offline`                      | Tailscale lists the machine as offline and nothing answered; the message says when it was last seen.                                                                                                                               | Wake it, check its network, and check that Tailscale runs there.                                                                                                        |
+|                           | `peer-no-answer`                    | The connection got no reply and `tailscale ping` does not reach the machine either.                                                                                                                                                | Check that it is awake and its network is up; run `tailscale ping <name>` here.                                                                                         |
+| The serve route           | `route-missing`                     | The machine answers, but nothing accepts connections on the serve port.                                                                                                                                                            | On that machine, run `stim-server service status`; `stim-server service install --serve` creates the route.                                                             |
+|                           | `route-tls`                         | The route's certificate was not accepted.                                                                                                                                                                                          | On that machine, run `tailscale serve status`, then `stim-server service install --serve`.                                                                              |
+|                           | `route-http-error`                  | The route answered an HTTP status stim-server never sends (not 502 or 503).                                                                                                                                                        | On that machine, run `tailscale serve status` and check what the port points to.                                                                                        |
+| stim-server               | `server-not-running`                | The route answers 502: nothing listens behind it.                                                                                                                                                                                  | On that machine, run `stim-server service status`; `stim-server service install --serve` starts it.                                                                     |
+|                           | `server-not-ready`                  | The route answers 503, or stim-server refuses with `home-unavailable`: it runs but does not serve. The message gives the cause when the server reports one, such as a Stim home it cannot read because its disk stopped answering. | Check the disk that holds the Stim home on that machine; stim-server serves again by itself once it answers. `stim-server service status` there shows the exact reason. |
+|                           | `server-no-answer`                  | `tailscale ping` reaches the machine, but the serve route and stim-server sent no reply in time: stim-server may be starting, stalled or restarting.                                                                               | On that machine, run `stim-server service status`; it reports a restart loop or a Stim home it is still reading, and the log file to read.                              |
+|                           | `connect-failed`                    | The connection failed in a way none of the other codes names.                                                                                                                                                                      | On that machine, run `stim-server service status`.                                                                                                                      |
+| Local network             | `lan-not-listening`                 | The worker answers, but nothing accepts connections on its stim-server port.                                                                                                                                                       | On that machine, run `stim-server service status` and check `server.lanAddresses`; the server log names each entry it cannot use.                                       |
+|                           | `lan-no-answer`                     | Nothing answered the connection.                                                                                                                                                                                                   | Check that the machine is awake and on this network, and that its firewall allows stim-server's `node`.                                                                 |
+| Compatibility             | `server-outdated`                   | stim-server speaks an older protocol.                                                                                                                                                                                              | Run the update command the finding prints.                                                                                                                              |
 
 `stim ios|android|macos --remote` prints the same message and remedy when the
 machine does not connect, for example `mini is offline on Tailscale (last seen

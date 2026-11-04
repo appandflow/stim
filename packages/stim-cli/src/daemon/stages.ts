@@ -1,4 +1,5 @@
 import { existsSync, readdirSync } from 'node:fs';
+import type { StimContext } from '@stim-cli/core';
 import {
   currentStage,
   DORMANT_STAGE_KEY,
@@ -32,8 +33,13 @@ import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { existingBuildDirs } from '../workspace/regenerable-dirs.ts';
-import { idleMinutesSetting, maintenanceKeepSetting, resolveProjectSettings } from '../workspace/settings.ts';
+import { existingBuildDirsAsync } from '../workspace/regenerable-dirs.ts';
+import {
+  idleMinutesSetting,
+  maintenanceKeepSetting,
+  resolveProjectSettings,
+  resolveProjectSettingsAsync,
+} from '../workspace/settings.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { deleteOutputs, idleOutputs, revivable, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 
@@ -60,6 +66,14 @@ export interface DeviceReading {
   simsFailed: boolean;
   /** The workspace of the command that runs this pass, which no stage takes. */
   protectedRoot?: string;
+  /** The context whose reads run without blocking the event loop: the daemon tick's or a command's. */
+  operation?: StimContext;
+}
+
+function projectSettings(path: string, operation: StimContext | undefined) {
+  return operation
+    ? resolveProjectSettingsAsync(path, { env: operation.env, signal: operation.signal, declareFor: operation })
+    : resolveProjectSettings(path);
 }
 
 function sameRoot(path: string, root: string | undefined): boolean {
@@ -97,20 +111,25 @@ async function runsSomething(path: string, project: ProjectRecord, reading: Devi
   const avds = slots.flatMap(({ platforms }) =>
     platforms.android?.owned && platforms.android.avdName ? [platforms.android.avdName] : [],
   );
-  return avds.length > 0 && (await unseenEmulatorError(avds)) !== null;
+  return avds.length > 0 && (await unseenEmulatorError(avds, reading.operation)) !== null;
 }
 
 /**
  * How long a workspace with nothing running has had no activity, when that is at least `thresholdMs` and nothing
  * keeps it: a blocker, unreadable evidence, `maintenance.keep`, or `idle.minutes` 0.
  */
-async function idleFor(path: string, thresholdMs: number, setting: string, locked = false): Promise<number | null> {
+async function idleFor(
+  path: string,
+  thresholdMs: number,
+  setting: string,
+  { locked = false, operation }: { locked?: boolean; operation?: StimContext } = {},
+): Promise<number | null> {
   const now = Date.now();
-  const evidence = await idleStopEvidence(path, [], { now, idleMs: thresholdMs, locked });
+  const evidence = await idleStopEvidence(path, [], { now, idleMs: thresholdMs, locked, operation });
   const decision = decideIdleStop(evidence, { idleMs: thresholdMs, now, setting });
   if (!decision.stop) return null;
   try {
-    const { settings } = resolveProjectSettings(path);
+    const { settings } = await projectSettings(path, operation);
     if (maintenanceKeepSetting(settings) || idleMinutesSetting(settings) === 0) return null;
   } catch {
     return null;
@@ -123,33 +142,33 @@ async function idleWorkspaces(
   reading: DeviceReading,
   thresholdMs: number,
   setting: string,
-  worthIt: (path: string, project: ProjectRecord) => boolean,
+  worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
 ): Promise<StageCandidate[]> {
   const found: StageCandidate[] = [];
   for (const [path, project] of Object.entries(config.projects)) {
-    if (sameRoot(path, reading.protectedRoot) || !worthIt(path, project)) continue;
+    if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
     const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
     if (Number.isFinite(used) && Date.now() - used < thresholdMs) continue;
     try {
       if (await runsSomething(path, project, reading)) continue;
-      const idleMs = await idleFor(path, thresholdMs, setting);
+      const idleMs = await idleFor(path, thresholdMs, setting, { operation: reading.operation });
       if (idleMs !== null) found.push({ path, project, idleMs });
     } catch {}
   }
   return found.toSorted((a, b) => b.idleMs - a.idleMs);
 }
 
-function hasOutputs(path: string): boolean {
+async function hasOutputs(path: string): Promise<boolean> {
   return (
     workspaceOutputPaths(workspaceDir(path)).length > 0 ||
-    existingBuildDirs(path).length > 0 ||
+    (await existingBuildDirsAsync(path)).length > 0 ||
     existsSync(metroStoreRoot(path))
   );
 }
 
 /** Whether the workspace is still idle `thresholdMs`, for a caller that holds its native-run claim. */
-export async function stillIdle(path: string, thresholdMs: number): Promise<boolean> {
-  return (await idleFor(path, thresholdMs, 'the pressure idle threshold', true)) !== null;
+export async function stillIdle(path: string, thresholdMs: number, operation?: StimContext): Promise<boolean> {
+  return (await idleFor(path, thresholdMs, 'the pressure idle threshold', { locked: true, operation })) !== null;
 }
 
 /** Workspaces with nothing running, idle `thresholdMs` by the activity definition, longest-idle first. */
@@ -180,6 +199,7 @@ export async function clearStoppedOutputs(
   candidate: StageCandidate,
   config: Config,
   thresholdMs: number,
+  operation?: StimContext,
 ): Promise<StageResult | null> {
   const { path } = candidate;
   const run = await withIdleWorkspace(
@@ -190,7 +210,7 @@ export async function clearStoppedOutputs(
           workspaceDir(path),
           'metro-start',
           async (): Promise<StageResult | null> => {
-            if ((await idleFor(path, thresholdMs, 'the pressure idle threshold', true)) === null)
+            if ((await idleFor(path, thresholdMs, 'the pressure idle threshold', { locked: true, operation })) === null)
               return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
             const outputs = await idleOutputs(path, config);
             if (!outputs.paths.length) return null;
@@ -201,7 +221,13 @@ export async function clearStoppedOutputs(
               detail: `deleted ${formatBytes(bytes)} of regenerable build outputs${outputs.kept.length ? `; ${outputs.kept.join('; ')}` : ''}`,
             };
           },
-          { external: true, waitMs: 0, ownerPurpose: 'pressure ladder' },
+          {
+            external: true,
+            waitMs: 0,
+            ownerPurpose: 'pressure ladder',
+            signal: operation?.signal,
+            declareSpawnsFor: operation,
+          },
         );
       } catch (error) {
         if (workspaceProcessLockError(error))
@@ -209,7 +235,7 @@ export async function clearStoppedOutputs(
         throw error;
       }
     },
-    { purpose: 'pressure ladder', devServer: false, hosted: false, hostedMacos: false },
+    { purpose: 'pressure ladder', devServer: false, hosted: false, hostedMacos: false, operation },
   );
   return run.ran ? run.value : { outcome: 'kept', bytes: 0, detail: `in use: ${run.reasons.join('; ')}` };
 }
@@ -252,11 +278,11 @@ function recordedActivityAt(path: string): number {
  * time is unknown, and none that the dormant pass keeps skipping whatever the daemon does: `maintenance.keep`, `idle.minutes` 0, a hosted placement, an unreadable state, or an owned
  * simulator while the tick's simulator listing failed. Null when there is none or the stage is off.
  */
-export function pendingDormant(
+export async function pendingDormant(
   config: Config | null,
   reading: Pick<DeviceReading, 'simsFailed'>,
   { now = Date.now(), graceMs }: { now?: number; graceMs: number },
-): string | null {
+): Promise<string | null> {
   const afterMs = dormantAfterMs(config);
   if (!config || afterMs <= 0) return null;
   for (const [path, project] of Object.entries(config.projects)) {
@@ -266,7 +292,7 @@ export function pendingDormant(
     const hosted = hostedFacts(path);
     if (hosted.placements.length || hosted.unreadable.length) continue;
     try {
-      const { settings } = resolveProjectSettings(path);
+      const { settings } = await resolveProjectSettingsAsync(path);
       if (maintenanceKeepSetting(settings) || idleMinutesSetting(settings) === 0) continue;
     } catch {
       continue;
@@ -314,12 +340,13 @@ export async function enterDormantStage(
   config: Config,
   thresholdMs: number,
   why: string,
+  operation?: StimContext,
 ): Promise<StageResult & { deleted: string[]; restore: string }> {
   const { path, project } = candidate;
   const run = await withIdleWorkspace(
     path,
     async (): Promise<StageResult & { deleted: string[]; restore: string }> => {
-      if ((await idleFor(path, thresholdMs, 'idle.dormantDays', true)) === null)
+      if ((await idleFor(path, thresholdMs, 'idle.dormantDays', { locked: true, operation })) === null)
         return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle', deleted: [], restore: '' };
       const owns = (kind: 'ios' | 'android') =>
         projectDeviceSlots(project).some(({ platforms }) => platforms[kind]?.owned === true);
@@ -327,8 +354,8 @@ export async function enterDormantStage(
       let avds: string[] = [];
       try {
         if (owns('ios') && process.platform === 'darwin')
-          sims = await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS });
-        if (owns('android')) avds = await listAvdsAsync();
+          sims = await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS, signal: operation?.signal, operation });
+        if (owns('android')) avds = await listAvdsAsync({ signal: operation?.signal, operation });
       } catch (error) {
         return {
           outcome: 'failed',
@@ -350,17 +377,23 @@ export async function enterDormantStage(
       const deleted: string[] = [];
       const unmeasured: string[] = [];
       let bytes = 0;
-      const failures = await deleteProjectDevices([], devices, [], {
-        log: () => {},
-        error: () => {},
-        fail: () => {},
-        record: (_kind, status, label, result) => {
-          if (status !== 'done') return;
-          deleted.push(label);
-          if (typeof result?.bytes === 'number') bytes += result.bytes;
-          else unmeasured.push(label);
+      const failures = await deleteProjectDevices(
+        [],
+        devices,
+        [],
+        {
+          log: () => {},
+          error: () => {},
+          fail: () => {},
+          record: (_kind, status, label, result) => {
+            if (status !== 'done') return;
+            deleted.push(label);
+            if (typeof result?.bytes === 'number') bytes += result.bytes;
+            else unmeasured.push(label);
+          },
         },
-      });
+        operation,
+      );
       const logs = hasLogs(path);
       if (logs) await archiveWorkspace(path, 'maintenance', readWorkspaceState(path));
       const archived = logs && !hasLogs(path);
@@ -381,7 +414,7 @@ export async function enterDormantStage(
       });
       return { outcome: failures ? 'failed' : 'done', bytes, detail, deleted, restore };
     },
-    { purpose: 'dormant stage', devServer: false, hosted: false, hostedMacos: false },
+    { purpose: 'dormant stage', devServer: false, hosted: false, hostedMacos: false, operation },
   );
   return run.ran
     ? run.value
@@ -402,7 +435,7 @@ export async function runDormantPass(
   for (const candidate of await dormantCandidates(config, input, afterMs)) {
     const why = `idle.dormantDays is ${afterMs / DAY_MS}`;
     const result = input.act
-      ? await enterDormantStage(candidate, config, afterMs, why)
+      ? await enterDormantStage(candidate, config, afterMs, why, input.operation)
       : {
           outcome: 'would' as const,
           bytes: 0,

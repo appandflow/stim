@@ -81,6 +81,30 @@ describe('a share of a hosted device', () => {
     expect(f.requests.at(-1)).toEqual({ method: 'device-host.unsubscribe', params: { subscription: 'up' } });
   });
 
+  it('relays a WebRTC offer to the host and ends the peer when the host or the viewer does', async () => {
+    const f = fixture({ 'device-host.webrtc.offer': { subscription: 'rtc1', sdp: 'answer-sdp' } }, ['hosted-webrtc']);
+    const closed = vi.fn<(reason: string) => void>();
+    const peer = await f.source.webrtc!('offer-sdp', closed);
+    expect(peer.answer).toBe('answer-sdp');
+    expect(f.requests).toEqual([
+      { method: 'device-host.webrtc.offer', params: { session: 'host-session', sdp: 'offer-sdp' } },
+    ]);
+    f.routes.get('s:rtc1')!.event({ event: 'webrtc-closed', subscription: 'rtc1', message: 'WebRTC failed' });
+    expect(closed).toHaveBeenCalledWith('WebRTC failed');
+
+    peer.close();
+    expect(f.routes.has('s:rtc1')).toBe(false);
+    await vi.waitFor(() => expect(f.released).toHaveBeenCalledTimes(1));
+    expect(f.requests.at(-1)).toEqual({ method: 'device-host.unsubscribe', params: { subscription: 'rtc1' } });
+  });
+
+  it('refuses a WebRTC offer to a host that does not list hosted-webrtc, without holding the connection', async () => {
+    const f = fixture();
+    await expect(f.source.webrtc!('offer-sdp', () => {})).rejects.toThrow('mini cannot send WebRTC');
+    expect(f.requests).toEqual([]);
+    expect(f.released).toHaveBeenCalledTimes(1);
+  });
+
   it('asks the host for the device frame only when a viewer wants it, and replays the artwork to a late viewer', async () => {
     const f = fixture({ 'device-host.frames.subscribe': { subscription: 'up' } });
     const art = vi.fn<(artwork: unknown) => void>();
@@ -191,6 +215,9 @@ describe('a share of a hosted device', () => {
       code: 'action-failed',
     });
 
+    f.source.end(owner, 'older', 'The share ended.');
+    expect(f.source.targetOf(owner, 'hc1')).not.toBeNull();
+
     f.source.endFor(owner, 'The last viewer left.');
     expect(f.requests.at(-1)).toEqual({ method: 'device-host.control.end', params: { session: 'hc1' } });
     expect(f.audit.map((record) => [record.action, record.ok])).toEqual([
@@ -218,6 +245,20 @@ describe('a share of a hosted device', () => {
     expect(await f.source.input(owner, 'hc1', 'input.clipboard.get', {}, unusedCommand, viewer)).toEqual({
       text: 'host text',
     });
+  });
+
+  it('returns only the typed flag of a hosted clipboard set', async () => {
+    const f = fixture(
+      {
+        'device-host.control.begin': { session: 'hc1', postures: [] },
+        'device-host.input.clipboard.set': { typed: true, extra: 1 },
+      },
+      ['device-clipboard'],
+    );
+    await f.source.begin(owner, { workspace: '/w', platform: 'ios' }, '/w', () => true);
+    expect(
+      await f.source.input(owner, 'hc1', 'input.clipboard.set', { text: 'abc', paste: true }, unusedCommand, viewer),
+    ).toEqual({ typed: true });
   });
 
   it('refuses the clipboard calls for a host without device-clipboard, without sending them', async () => {
@@ -259,7 +300,7 @@ describe('presence on a share of a hosted device', () => {
   const bob: PresenceParticipant = { id: 's1-v2', kind: 'viewer', name: 'Bob', color: 3 };
   const touch = (phase: 'down' | 'move' | 'up', x = 0.5) => ({ input: 'touch', phase, x, y: 0.25 }) as never;
 
-  async function shared() {
+  async function shared(replies: Record<string, unknown> = {}) {
     const hub = {
       subscribe: vi.fn<(key: string, listener: unknown) => () => void>(() => vi.fn<() => void>()),
       join: vi.fn<(key: string, who: unknown) => void>(),
@@ -268,7 +309,7 @@ describe('presence on a share of a hosted device', () => {
     };
     const unfollow = vi.fn<() => void>();
     const follow = vi.fn<(key: string) => () => void>(() => unfollow);
-    const f = fixture({ 'device-host.control.begin': { session: 'hc1', postures: [] } }, [], {
+    const f = fixture({ 'device-host.control.begin': { session: 'hc1', postures: [] }, ...replies }, [], {
       hub,
       key: 'device',
       follow,
@@ -325,6 +366,14 @@ describe('presence on a share of a hosted device', () => {
       ['Ann', 'up'],
       ['Bob', 'down'],
     ]);
+  });
+
+  it("names the host when another client there holds the device's pointer, and frees the share's pointer", async () => {
+    const answers = [{ error: { code: 'device-busy', message: 'Host is using the screen.' } }, {}];
+    const f = await shared({ 'device-host.input.touch': () => answers.shift() });
+    expect(await f.send(ann, touch('down'))).toMatchObject({ code: 'device-busy', busy: 'Host' });
+    expect(f.hub.touch.mock.calls.at(-1)?.slice(1)).toEqual([ann, expect.objectContaining({ phase: 'up' })]);
+    expect(await f.send(bob, touch('down', 0.9))).toBeNull();
   });
 
   it('lifts the pointer for a holder that went quiet for 10 s or left, so the device is not stuck pressed', async () => {

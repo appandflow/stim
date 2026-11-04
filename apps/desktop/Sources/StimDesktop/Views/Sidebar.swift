@@ -157,7 +157,9 @@ struct Sidebar: View {
   private func migrateHidden(_ payload: StatusPayload?) {
     let legacyPaths = prefs.hiddenWorkspaces.paths
     migratedHidden = migratedHidden.filter { legacyPaths.contains($0.key) }
-    guard let payload, ServerSession.shared.localActionConnection?.home == store.stimHome else { return }
+    guard let payload, let connection = ServerSession.shared.statsConnection, connection.client.hasDesktopAuthority,
+      connection.home == store.stimHome
+    else { return }
     for item in prefs.hiddenWorkspaces.migrations(environments: payload.environments) {
       guard migratedHidden[item.path] != item.hidden else { continue }
       let run = prefs.setHidden(item.hidden, apps: item.apps, actions: actions, migrating: true)
@@ -429,6 +431,7 @@ struct WorkspaceRowContent: View {
   var openLogs: ((String) -> Void)?
   var archive: ArchivedPage? = nil
   var isHidden = false
+  var owner: ServerOwner = .local
 
   var body: some View {
     let status = archive?.rowStatus ?? env.rowStatus(now: now)
@@ -438,14 +441,9 @@ struct WorkspaceRowContent: View {
       StatusDot(color: Color(status.tone), filled: live)
         .padding(.top, Space.sm - 1)
       VStack(alignment: .leading, spacing: Space.xs) {
-        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-          Text(env.names.title).foregroundStyle(live ? Palette.text : Palette.secondary)
-            .lineLimit(1).truncationMode(.middle).layoutPriority(1)
-          Spacer(minLength: 0)
-          if isHidden { HiddenIndicator() }
-          Text(status.text).font(.stim(.caption, weight: .medium)).foregroundStyle(Color(status.tone))
-            .lineLimit(1).fixedSize()
-        }
+        RowTitleLine(
+          title: env.names.title, titleColor: live ? Palette.text : Palette.secondary, status: status.text,
+          statusColor: Color(status.tone), isHidden: isHidden)
         if let archive {
           RowDetailLine(
             context: RowDetailLine.joined(
@@ -460,8 +458,9 @@ struct WorkspaceRowContent: View {
           RowDetailLine(context: context(env.rowDevices(now: now)), git: showsGit ? GitChip(env.worktree) : nil)
         }
         if archive == nil {
-          ForEach(env.orderedDevices.filter { $0.placement != nil }) { device in
-            DevicePlacementView(device: device)
+          ForEach(env.orderedDevices.map { OwnedDevice(owner: owner, ref: $0) }.filter { $0.placementBadge != nil }) {
+            device in
+            if let badge = device.placementBadge { PlacementBadgeView(badge: badge) }
           }
         }
       }
@@ -517,12 +516,9 @@ struct NoEnvironmentRow: View {
       StatusDot(color: Palette.tertiary, filled: false)
         .padding(.top, Space.sm - 1)
       VStack(alignment: .leading, spacing: Space.xs) {
-        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-          Text(names.title).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle).layoutPriority(1)
-          Spacer(minLength: 0)
-          if isHidden { HiddenIndicator() }
-          Text("Not set up").font(.stim(.caption, weight: .medium)).foregroundStyle(Palette.tertiary).fixedSize()
-        }
+        RowTitleLine(
+          title: names.title, titleColor: Palette.secondary, status: "Not set up", statusColor: Palette.tertiary,
+          isHidden: isHidden)
         RowDetailLine(
           context: RowDetailLine.joined(place.map { Text($0).foregroundStyle(Palette.tertiary) }), git: git)
       }
@@ -560,7 +556,7 @@ struct NoEnvironmentRow: View {
 
 /// AppKit draws the selected source-list row as emphasized, which turns its disclosure chevron white on the
 /// light `Palette.selection` background. The row background already marks the selection.
-private struct PlainSelectionHighlight: NSViewRepresentable {
+struct PlainSelectionHighlight: NSViewRepresentable {
   func makeNSView(context: Context) -> NSView { NSView() }
 
   func updateNSView(_ view: NSView, context: Context) {

@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
 import {
   DEVICE_IDLE_SHUTDOWN_KEY,
   DEVICE_METRO_IDLE_STOP_REASON,
@@ -17,6 +17,7 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { runIdleStop } from '../commands/stop.ts';
 import { isStimOwnedAvd, isStimOwnedSim } from '../devices/device-ownership.ts';
+import { holdsDeferredShutdown } from '../devices/deferred-shutdown.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
@@ -35,8 +36,13 @@ import { MODE_COMMAND } from '../supervisor/state.ts';
 import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { existingBuildDirs, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
-import { idleMinutesSetting, maintenanceKeepSetting, resolveProjectSettings } from '../workspace/settings.ts';
+import { existingBuildDirsAsync, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
+import {
+  idleMinutesSetting,
+  maintenanceKeepSetting,
+  resolveProjectSettings,
+  resolveProjectSettingsAsync,
+} from '../workspace/settings.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 
 const MINUTE_MS = 60_000;
@@ -59,6 +65,8 @@ export interface IdlePassInput {
   unsupervised?: boolean;
   /** A workspace the pass never takes: the one the running command belongs to. */
   protectedRoot?: string;
+  /** The daemon tick's context, whose reads run without blocking its event loop. */
+  operation?: StimContext;
   log: (level: 'info' | 'warn' | 'error', event: string, msg: string, fields?: Record<string, unknown>) => void;
 }
 
@@ -109,6 +117,9 @@ async function candidate(path: string, project: ProjectRecord, input: IdlePassIn
   if (input.unsupervised && serving) return { runs: false };
   if (ownsIos && input.sims === null)
     return { runs: true, kept: `its simulators cannot be listed (${input.simsError ?? 'unknown error'})` };
+  const deferredHere = (device: OwnedDeviceActivity) =>
+    device.kind === 'ios' && holdsDeferredShutdown(state, device.slot, device.id, input.now);
+  if (!serving && booted.length > 0 && booted.every(deferredHere)) return { runs: false };
   if (!serving && booted.length === 0) {
     const foreign = input.devices.filter((device) => device.project === path && !ownedHere(device));
     if (!foreign.length) return { runs: false };
@@ -119,7 +130,10 @@ async function candidate(path: string, project: ProjectRecord, input: IdlePassIn
   }
   let minutes: number;
   try {
-    const { settings } = resolveProjectSettings(path);
+    const { operation } = input;
+    const { settings } = operation
+      ? await resolveProjectSettingsAsync(path, { env: operation.env, signal: operation.signal, declareFor: operation })
+      : resolveProjectSettings(path);
     if (maintenanceKeepSetting(settings)) return { runs: true, kept: 'pinned by maintenance.keep' };
     minutes = idleMinutesSetting(settings);
   } catch (error) {
@@ -152,7 +166,7 @@ async function candidate(path: string, project: ProjectRecord, input: IdlePassIn
       ? [platforms.android.avdName]
       : [],
   );
-  const emulators = unseen.length ? await unseenEmulatorError(unseen) : null;
+  const emulators = unseen.length ? await unseenEmulatorError(unseen, input.operation) : null;
   if (emulators) return { runs: true, kept: emulators };
   const idleMs = input.pressure ? Math.min(minutes * MINUTE_MS, PRESSURE_IDLE_MS) : minutes * MINUTE_MS;
   return {
@@ -179,6 +193,7 @@ async function decide(
     locked,
     serving: found.serving,
     driversBlock: true,
+    operation: input.operation,
   });
   return {
     candidate: found,
@@ -190,7 +205,7 @@ async function decide(
 export async function idleOutputs(path: string, config: Config): Promise<{ paths: string[]; kept: string[] }> {
   const paths = workspaceOutputPaths(workspaceDir(path));
   const kept: string[] = [];
-  for (const dir of existingBuildDirs(path)) {
+  for (const dir of await existingBuildDirsAsync(path)) {
     const problem = await regenerableDirProblem(path, dir);
     if (problem) kept.push(`kept ${dir}: ${problem}`);
     else paths.push(dir);
@@ -283,7 +298,12 @@ async function enterIdleStage(
             const minutes = again.candidate.minutes;
             const booted = new Set(again.candidate.booted.map((device) => `${device.kind}:${device.slot}`));
             const lines: string[] = [];
-            const stopped = await runIdleStop({ root: path, idleMinutes: minutes, report: (line) => lines.push(line) });
+            const stopped = await runIdleStop({
+              root: path,
+              idleMinutes: minutes,
+              report: (line) => lines.push(line),
+              operation: input.operation,
+            });
             if (!stopped.ok) return { outcome: 'failed' as const, detail: stopped.summary };
             const shutDown = Object.entries(stopped.outcomes.device).flatMap(([key, outcome]) => {
               const [kind, slot = 'default'] = key.split(':');
@@ -298,7 +318,13 @@ async function enterIdleStage(
             writeWorkspaceEvent(path, 'info', 'workspace_idle', msg, { freedBytes: freed, restore });
             return { outcome: 'idle' as const, detail: msg, freedBytes: freed };
           },
-          { external: true, waitMs: 0, ownerPurpose: 'idle stage' },
+          {
+            external: true,
+            waitMs: 0,
+            ownerPurpose: 'idle stage',
+            signal: input.operation?.signal,
+            declareSpawnsFor: input.operation,
+          },
         );
       } catch (error) {
         if (workspaceProcessLockError(error))
@@ -306,7 +332,7 @@ async function enterIdleStage(
         throw error;
       }
     },
-    { purpose: 'idle stage', devServer: false, hosted: false, hostedMacos: false },
+    { purpose: 'idle stage', devServer: false, hosted: false, hostedMacos: false, operation: input.operation },
   );
   return run.ran ? run.value : { outcome: 'kept', detail: `in use: ${run.reasons.join('; ')}` };
 }

@@ -32,6 +32,7 @@ import {
   readHostedMacosApp,
   readHostedDeviceLedger,
   readNdjsonGenerations,
+  MAX_REVERSE_PORTS,
   type HostedDeviceSession,
 } from '@stim-cli/core/state';
 import {
@@ -46,6 +47,7 @@ import * as processIdentity from '@stim-cli/core/process-identity';
 import { takeHostedInputClaim } from '../src/hosted-input.ts';
 import { DeviceHost } from '../src/device-host.ts';
 import { formatHostedSessions } from '../src/hosted-sessions.ts';
+import { changeHostedApp } from '../src/hosted-app.ts';
 import { setupClient } from './noise-client.ts';
 import { readPid } from './pid-file.ts';
 import { AgentDeviceDriver } from '../../agent-driver-agent-device/driver.ts';
@@ -121,6 +123,12 @@ if(input.mode === 'inspect') {
   const adopted=input.platform === 'android' ? {...stored,consolePort:input.consolePort,serial:'emulator-'+input.consolePort} : stored;
   writeFileSync(join(home,'hosted-device.json'),JSON.stringify(adopted));
   out({state:input.deviceType === 'adopt-failure'?'unknown':'ready',device:adopted});
+} else if(input.mode === 'resume') {
+  writeFileSync(join(home,'resume-entered'),String(process.pid));
+  while(existsSync(join(home,'hold-resume'))) await new Promise(resolve=>setTimeout(resolve,20));
+  const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
+  if(existsSync(join(home,'unresumable'))) { out({state:'unknown',device:stored,notice:'the simulator is no longer Booted'}); process.exit(0); }
+  out({state:'ready',device:stored});
 } else if(input.mode === 'park') {
   const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
   out({state:input.deviceType === 'park-failure'?'unknown':'parked',device:input.deviceType === 'wrong-park'?{...stored,udid:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'}:stored});
@@ -168,6 +176,11 @@ if(input.mode === 'inspect') {
   appendFileSync(join(home,'reversed'),JSON.stringify({port:input.metroPort,clientPort:input.clientMetroPort,attempt:input.attempt})+'\\n');
   if(input.deviceProfile === 'delayed-reverse') await new Promise(resolve=>setTimeout(resolve,300));
   if(input.deviceProfile === 'failing-reverse' && existsSync(join(home,'fail-reverse'))) { out({state:'unknown',device:null,notice:'adb is restarting'}); process.exit(0); }
+  out({state:'ready',device:JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'))});
+} else if(input.mode === 'reverse-ports') {
+  appendFileSync(join(home,'reversed-ports'),JSON.stringify({reverses:input.reverses,removed:input.removed})+'\\n');
+  if(input.deviceProfile === 'delayed-reverse-ports') await new Promise(resolve=>setTimeout(resolve,800));
+  if(input.deviceProfile === 'failing-reverse-ports' && input.reverses.length) { out({state:'unknown',device:null,notice:'adb is restarting'}); process.exit(0); }
   out({state:'ready',device:JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'))});
 } else if(input.mode === 'install') {
   appendFileSync(join(home,'installed'),input.attempt+'\\n');
@@ -310,6 +323,31 @@ function linkMetro(session: string, metroPort: number): void {
     close: () => {},
   };
   host.metroLink('client', { session }, link);
+}
+
+function linkReverse(session: string, port: number, clientPort = port): void {
+  const link: MetroLink = {
+    open: (socket) => {
+      linkReverse(session, port, clientPort);
+      const upstream = connect(clientPort, '127.0.0.1');
+      upstream.on('error', () => upstream.destroy());
+      socket.once('close', () => upstream.destroy());
+      upstream.once('close', () => socket.destroy());
+      socket.pipe(upstream).pipe(socket);
+      socket.resume();
+      return true;
+    },
+    close: () => {},
+  };
+  host.metroLink('client', { session, port }, link);
+}
+
+async function freePort(): Promise<number> {
+  const probe = createServer();
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+  const port = boundPort(probe);
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  return port;
 }
 
 test('keeps HTTP and WebSocket Metro on the owned session port across reconnect and closes it on revocation', async () => {
@@ -834,6 +872,405 @@ function recordAbsence(id: string, absentMs: number) {
   for (const record of journal.sessions) if (record.id === id) record.clientAbsentMs = absentMs;
   writeFileSync(file, JSON.stringify(journal));
 }
+
+describe('reverse ports', () => {
+  const closeServer = async (server: ReturnType<typeof createServer>) => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  };
+  let client: ReturnType<typeof createServer>;
+  beforeEach(async () => {
+    client = createServer((_request, response) => response.end('client daemon'));
+    await new Promise<void>((resolve) => client.listen(0, '127.0.0.1', resolve));
+  });
+  afterEach(() => closeServer(client));
+  const reversed = (id: string) => readHostedSessions().find((entry) => entry.id === id)?.reverses;
+
+  test('a simulator reaches the client server at the same loopback port until the port is removed', async () => {
+    const session = await reserve();
+    await state(session.id, 'ready');
+    const port = await freePort();
+    expect(await host.reverseSet('other', { session: session.id, ports: [port] })).toHaveProperty('error');
+    const set = await host.reverseSet('client', { session: session.id, ports: [port] });
+    expect(set).toEqual({ result: { ports: [{ port, workerPort: port }] } });
+    expect(reversed(session.id)).toEqual({ [port]: port });
+    linkReverse(session.id, port, boundPort(client));
+    expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe('client daemon');
+    expect(
+      host.metroLink('client', { session: session.id, port: port + 1 }, { open: () => false, close() {} }),
+    ).toHaveProperty('error');
+    expect(await host.reverseSet('client', { session: session.id, ports: [] })).toEqual({ result: { ports: [] } });
+    expect(reversed(session.id)).toBeUndefined();
+    await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow('fetch failed');
+  });
+
+  test('a port another listener holds on the host is refused, and a revoked client keeps no listener', async () => {
+    const session = await reserve();
+    await state(session.id, 'ready');
+    expect(await host.reverseSet('client', { session: session.id, ports: [boundPort(client)] })).toMatchObject({
+      error: { code: 'device-busy', message: expect.stringContaining(`Port ${boundPort(client)} is in use`) },
+    });
+    expect(reversed(session.id)).toBeUndefined();
+    const port = await freePort();
+    expect(await host.reverseSet('client', { session: session.id, ports: [port] })).toHaveProperty('result');
+    allowed.delete('client');
+    host.revoke();
+    await state(session.id, 'stopped');
+    await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow('fetch failed');
+  });
+
+  test('a set that cannot bind one port closes the ports it opened and keeps the earlier set', async () => {
+    const session = await reserve();
+    await state(session.id, 'ready');
+    const first = await freePort();
+    const second = await freePort();
+    expect(await host.reverseSet('client', { session: session.id, ports: [first] })).toHaveProperty('result');
+    expect(
+      await host.reverseSet('client', { session: session.id, ports: [first, second, boundPort(client)] }),
+    ).toHaveProperty('error.code', 'device-busy');
+    expect(reversed(session.id)).toEqual({ [first]: first });
+    linkReverse(session.id, first, boundPort(client));
+    expect(await (await fetch(`http://127.0.0.1:${first}/`)).text()).toBe('client daemon');
+    await expect(fetch(`http://127.0.0.1:${second}/`)).rejects.toThrow('fetch failed');
+  });
+
+  test('an emulator gets an adb reverse to a private bridge port, and the session Metro port is refused', async () => {
+    const session = await reserve({ platform: 'android', attempt: 'android-reverse-ports' });
+    await state(session.id, 'ready');
+    const port = await freePort();
+    expect(await host.metroOpen('client', { session: session.id, clientMetroPort: 8082 })).toHaveProperty(
+      'result.port',
+    );
+    expect(await host.reverseSet('client', { session: session.id, ports: [8082] })).toHaveProperty(
+      'error.code',
+      'action-failed',
+    );
+    const set = await host.reverseSet('client', { session: session.id, ports: [port] });
+    if ('error' in set) throw new Error(set.error.message);
+    const workerPort = set.result.ports[0]?.workerPort ?? 0;
+    expect(workerPort).not.toBe(port);
+    const log = () =>
+      readFileSync(join(deviceHostArea(session.id), 'home', 'reversed-ports'), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+    expect(log()).toEqual([{ reverses: [{ devicePort: port, bridgePort: workerPort }], removed: [] }]);
+    linkReverse(session.id, port, boundPort(client));
+    expect(await (await fetch(`http://127.0.0.1:${workerPort}/`)).text()).toBe('client daemon');
+    await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow('fetch failed');
+    expect(await host.reverseSet('client', { session: session.id, ports: [] })).toEqual({ result: { ports: [] } });
+    expect(log().at(-1)).toEqual({ reverses: [], removed: [workerPort] });
+    await expect(fetch(`http://127.0.0.1:${workerPort}/`)).rejects.toThrow('fetch failed');
+  });
+
+  interface ReverseLogEntry {
+    reverses: { devicePort: number; bridgePort: number }[];
+    removed: number[];
+  }
+  const reverseLog = (id: string) =>
+    readFileSync(join(deviceHostArea(id), 'home', 'reversed-ports'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line): ReverseLogEntry => JSON.parse(line));
+
+  test('a failed adb reverse closes the bridge it opened and takes the reverse back off the emulator', async () => {
+    const session = await reserve({
+      platform: 'android',
+      attempt: 'android-reverse-rollback',
+      deviceProfile: 'failing-reverse-ports',
+    });
+    await state(session.id, 'ready');
+    const port = await freePort();
+    expect(await host.reverseSet('client', { session: session.id, ports: [port] })).toHaveProperty(
+      'error.code',
+      'action-failed',
+    );
+    expect(reversed(session.id)).toBeUndefined();
+    const [attempt, rollback] = reverseLog(session.id);
+    const bridgePort = attempt?.reverses[0]?.bridgePort;
+    expect(bridgePort).toBeDefined();
+    expect(rollback).toEqual({ reverses: [], removed: [bridgePort] });
+    await expect(fetch(`http://127.0.0.1:${bridgePort}/`)).rejects.toThrow('fetch failed');
+  });
+
+  test('a stop that lands while ports are being reversed leaves no bridge listening', async () => {
+    const session = await reserve({
+      platform: 'android',
+      attempt: 'android-reverse-stop',
+      deviceProfile: 'delayed-reverse-ports',
+    });
+    await state(session.id, 'ready');
+    const pending = host.reverseSet('client', { session: session.id, ports: [await freePort()] });
+    await vi.waitFor(() => expect(reverseLog(session.id)).toHaveLength(1));
+    host.stop('client', { session: session.id });
+    expect(await pending).toHaveProperty('error');
+    await state(session.id, 'stopped');
+    const bridgePort = reverseLog(session.id)[0]?.reverses[0]?.bridgePort;
+    expect(bridgePort).toBeDefined();
+    await expect(fetch(`http://127.0.0.1:${bridgePort}/`)).rejects.toThrow('fetch failed');
+  });
+
+  test('the wire accepts at most the workspace cap of valid ports', () => {
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    validator.addSchema(protocolJsonSchema(), 'protocol');
+    const validate = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+    const params = (ports: unknown[]) => ({
+      id: 1,
+      method: 'device-host.reverse.set',
+      params: { session: 's', ports },
+    });
+    expect(validate(params([8900, 65535]))).toBe(true);
+    expect(validate(params(Array.from({ length: MAX_REVERSE_PORTS + 1 }, (_, i) => 9000 + i)))).toBe(false);
+    expect(validate(params([0]))).toBe(false);
+    expect(validate(params([70000]))).toBe(false);
+  });
+});
+
+describe('a hosted session across a server restart', () => {
+  const modes = (id: string) =>
+    readFileSync(join(deviceHostArea(id), 'home', 'modes'), 'utf8')
+      .split('\n')
+      .filter(Boolean);
+  const nextServer = () =>
+    new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents,
+      allowed: (client) => allowed.has(client),
+      connected: (client) => connected.has(client),
+      limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
+    });
+  async function installed(platform = 'ios') {
+    const session = await reserve({ platform });
+    await state(session.id, 'ready');
+    const app = appOffer(session.id, 'app-first', platform);
+    host.appOffer('client', app.params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      ...app.params,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+    return { session, app };
+  }
+
+  test('close leaves a ready session ready with its device running, and the next server resumes it', async () => {
+    const { session, app } = await installed();
+    await host.close();
+    const left = await state(session.id, 'ready');
+    expect(left.device).not.toBeNull();
+    expect(modes(session.id)).not.toContain('stop');
+    expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toHaveLength(0);
+
+    host = nextServer();
+    expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'unknown');
+    agentCalls = [];
+    await host.resumeSessions();
+
+    expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'ready');
+    expect(modes(session.id)).toContain('resume');
+    expect(modes(session.id)).not.toContain('stopped');
+    expect(agentCalls).toEqual([['running', expect.objectContaining({ session: session.id }), 'installed']]);
+    const next = appOffer(session.id, 'app-second');
+    expect(host.appOffer('client', next.params)).toHaveProperty('result');
+    expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed');
+  });
+
+  test('listens its Metro bridge on the recorded port again, and a reopen from the client finds it', async () => {
+    const { session } = await installed();
+    const metro = createServer((_request, response) => response.end('workspace bundle'));
+    await new Promise<void>((resolve) => metro.listen(0, '127.0.0.1', resolve));
+    try {
+      linkMetro(session.id, boundPort(metro));
+      const opened = await host.metroOpen('client', { session: session.id });
+      if ('error' in opened) throw new Error(opened.error.message);
+      const port = opened.result.port;
+      await host.close();
+      await expect(fetch(`http://127.0.0.1:${port}/status`)).rejects.toThrow('fetch failed');
+
+      host = nextServer();
+      await host.resumeSessions();
+      linkMetro(session.id, boundPort(metro));
+      expect(await (await fetch(`http://127.0.0.1:${port}/index.bundle`)).text()).toBe('workspace bundle');
+      expect(await host.metroOpen('client', { session: session.id })).toHaveProperty('result.port', port);
+    } finally {
+      await host.metroClose('client', { session: session.id });
+      metro.closeAllConnections();
+      await new Promise<void>((resolve) => metro.close(() => resolve()));
+    }
+  });
+
+  test('listens its reverse bridges on the recorded ports again after a restart', async () => {
+    const { session } = await installed();
+    const client = createServer((_request, response) => response.end('client daemon'));
+    await new Promise<void>((resolve) => client.listen(0, '127.0.0.1', resolve));
+    try {
+      const port = await freePort();
+      expect(await host.reverseSet('client', { session: session.id, ports: [port] })).toHaveProperty('result');
+      await host.close();
+      await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow('fetch failed');
+
+      host = nextServer();
+      await host.resumeSessions();
+      linkReverse(session.id, port, boundPort(client));
+      expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe('client daemon');
+    } finally {
+      client.closeAllConnections();
+      await new Promise<void>((resolve) => client.close(() => resolve()));
+    }
+  });
+
+  test('resumes a session a crashed server left ready, and the same session stops normally afterwards', async () => {
+    const crashed = seedHosted({ state: 'ready', attempt: 'crashed' });
+    await host.resumeSessions();
+    expect(host.attach('client', { session: crashed.id })).toHaveProperty('result.state', 'ready');
+    host.stop('client', { session: crashed.id });
+    await state(crashed.id, 'stopped');
+    expectRetired(crashed.id);
+  });
+
+  test('stops a session whose device is not verified as running instead of resuming it', async () => {
+    const crashed = seedHosted({ state: 'ready', attempt: 'lost-device' });
+    writeFileSync(join(deviceHostArea(crashed.id), 'home', 'unresumable'), '');
+    const written = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      await host.resumeSessions();
+      await state(crashed.id, 'stopped');
+      expect(modes(crashed.id)).toEqual(['resume', 'stop']);
+      expect(written.mock.calls.some(([line]) => String(line).includes('no longer Booted'))).toBe(true);
+    } finally {
+      written.mockRestore();
+    }
+  });
+
+  test('leaves a session alone while another process still holds its claim', async () => {
+    const held = seedHosted({ state: 'ready', attempt: 'held' });
+    const claim = tryAcquireClaim({
+      root: join(deviceHostRoot(), `${held.id}.claims`),
+      mode: 'exclusive',
+      label: 'hosted device session',
+      details: { session: held.id, client: 'client' },
+    });
+    if (!claim.acquired) throw new Error('the test claim was not taken');
+    const written = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      await host.resumeSessions();
+      expect(existsSync(join(deviceHostArea(held.id), 'home', 'modes'))).toBe(false);
+      expect(readHostedSessions().find((record) => record.id === held.id)).toMatchObject({ state: 'ready' });
+      expect(host.attach('client', { session: held.id })).toHaveProperty('result.state', 'unknown');
+    } finally {
+      releaseClaim(claim.acquired);
+      written.mockRestore();
+    }
+  });
+
+  test('does not resume a session of a client that lost its approval, or a macOS session', async () => {
+    const revoked = seedHosted({ state: 'ready', attempt: 'revoked' });
+    const macos = seedHosted({ state: 'ready', attempt: 'macos', platform: 'macos' }, 'missing');
+    allowed.delete('client');
+    await host.resumeSessions();
+    for (const { id } of [revoked, macos]) expect(existsSync(join(deviceHostArea(id), 'home', 'modes'))).toBe(false);
+  });
+
+  test('marks an install a restart interrupted as unknown so the next offer is accepted', async () => {
+    const { session, app } = await installed();
+    await host.close();
+    changeHostedApp(session.id, 'app-first', (current) => {
+      current.state = 'installing';
+    });
+    host = nextServer();
+    await host.resumeSessions();
+
+    expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'ready');
+    expect(host.appAttach('client', app.params)).toMatchObject({
+      result: { state: 'unknown', notice: expect.stringContaining('interrupted by a server restart') },
+    });
+    expect(host.appOffer('client', appOffer(session.id, 'app-second').params)).toHaveProperty('result');
+  });
+
+  test('refuses client requests until the resume verified the device, and a close then waits and still detaches it', async () => {
+    const { session, app } = await installed();
+    await host.close();
+    host = nextServer();
+    const workerHome = join(deviceHostArea(session.id), 'home');
+    writeFileSync(join(workerHome, 'hold-resume'), '');
+    const resuming = host.resumeSessions();
+    await vi.waitFor(() => expect(existsSync(join(workerHome, 'resume-entered'))).toBe(true));
+
+    expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'unknown');
+    expect(host.appOffer('client', appOffer(session.id, 'app-second').params)).toHaveProperty('error');
+    expect(await host.metroOpen('client', { session: session.id })).toHaveProperty('error');
+    expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed');
+
+    const closing = host.close();
+    rmSync(join(workerHome, 'hold-resume'));
+    await resuming;
+    await closing;
+    expect(readHostedSessions().find((record) => record.id === session.id)?.state).toBe('ready');
+    expect(modes(session.id)).not.toContain('stop');
+    expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toHaveLength(0);
+  });
+
+  test('a stop that began during the resume leaves its claim to the stop and starts no agent control', async () => {
+    const { session } = await installed();
+    await host.close();
+    host = nextServer();
+    agentCalls = [];
+    const workerHome = join(deviceHostArea(session.id), 'home');
+    writeFileSync(join(workerHome, 'hold-resume'), '');
+    const resuming = host.resumeSessions();
+    await vi.waitFor(() => expect(existsSync(join(workerHome, 'resume-entered'))).toBe(true));
+    host.stop('client', { session: session.id });
+    rmSync(join(workerHome, 'hold-resume'));
+    await resuming;
+    await state(session.id, 'stopped');
+    expect(agentCalls.filter(([kind]) => kind === 'running')).toEqual([]);
+    expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toHaveLength(0);
+  });
+
+  test('working counts the sessions a close would stop, not the ones it leaves running', async () => {
+    hostEnv.STIM_MAX_DEVICES = '2';
+    const { session } = await installed();
+    expect(host.active()).toBe(1);
+    expect(host.working()).toBe(0);
+    const hanging = await reserve({ deviceType: 'install-hang', attempt: 'second', slot: 'other' });
+    await state(hanging.id, 'ready');
+    const app = appOffer(hanging.id);
+    host.appOffer('client', app.params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      ...app.params,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    host.appLaunch('client', app.params);
+    expect(host.active()).toBe(2);
+    expect(host.working()).toBe(1);
+    expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'ready');
+  });
+
+  test('a session with an install in flight keeps the stop path on close', async () => {
+    const session = await reserve({ deviceType: 'install-hang' });
+    await state(session.id, 'ready');
+    const app = appOffer(session.id);
+    host.appOffer('client', app.params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      ...app.params,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(existsSync(join(deviceHostArea(session.id), 'home', 'installed'))).toBe(true));
+    await host.close();
+    expect(readHostedSessions().find((record) => record.id === session.id)?.state).not.toBe('ready');
+  });
+});
 
 describe('a hosted session whose client is gone', () => {
   beforeEach(() => {
@@ -2177,7 +2614,7 @@ test('a throttled backlog query reads saved logs after stop without starting ano
 });
 
 test.each(['ios', 'android'].flatMap((platform) => ['stop', 'close', 'revoke'].map((ending) => [platform, ending])))(
-  'a bounded %s log worker is cancelled and settled before %s deletes its device',
+  'a bounded %s log worker is cancelled and settled before %s ends the session',
   { skip: process.platform === 'win32' },
   async (platform, ending) => {
     const session = await reserve({
@@ -2206,9 +2643,9 @@ test.each(['ios', 'android'].flatMap((platform) => ['stop', 'close', 'revoke'].m
       host.revoke();
     } else host.stop('client', { session: session.id });
     expect(await pending).toHaveProperty('error');
-    await state(session.id, 'stopped');
+    await state(session.id, ending === 'close' ? 'ready' : 'stopped');
+    expect(existsSync(join(workerHome, 'stopped'))).toBe(ending !== 'close');
     expect(processGroupAlive(pid)).toBe(false);
-    expect(existsSync(join(workerHome, 'stopped'))).toBe(true);
   },
 );
 
@@ -2320,7 +2757,8 @@ test.each(['fail-stop', 'uncertain-stop', 'wrong-stop'])(
   async (deviceType) => {
     const failed = seedHosted({ deviceType });
     const next = seedHosted();
-    const journal = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+    const withoutStamp = () => readHostedSessions().map(({ stoppedAt: _stoppedAt, ...record }) => record);
+    const journal = withoutStamp();
     const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
     try {
       await host.reconcileStopped();
@@ -2331,7 +2769,7 @@ test.each(['fail-stop', 'uncertain-stop', 'wrong-stop'])(
         JSON.parse(readFileSync(join(deviceHostArea(failed.id), 'home', 'created-devices.json'), 'utf8')).ios,
       ).toHaveLength(1);
       expectRetired(next.id);
-      expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
+      expect(withoutStamp()).toEqual(journal);
     } finally {
       stderr.mockRestore();
     }
@@ -2975,3 +3413,138 @@ test.each(['ios', 'android'])(
     expect(readClaimSet(join(deviceHostRoot(), `${id}.claims.input`)).live).toEqual([]);
   },
 );
+
+describe('the home of an ended hosted session', () => {
+  const OLD = new Date(Date.now() - 2 * 3_600_000).toISOString();
+
+  beforeEach(async () => {
+    await host.close();
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents,
+      allowed: (client) => allowed.has(client),
+      limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
+      homeGraceMs: 3_600_000,
+    });
+  });
+
+  const area = (id: string) => deviceHostArea(id);
+  const stoppedAt = (id: string) => readHostedSessions().find((record) => record.id === id)?.stoppedAt;
+
+  test('stays through the grace period after a stop so the client can copy the final logs, then goes', async () => {
+    const session = await reserve();
+    await state(session.id, 'ready');
+    host.stop('client', { session: session.id });
+    await state(session.id, 'stopped');
+    expect(stoppedAt(session.id)).toBeDefined();
+    await host.reclaimEndedHomes();
+    expect(existsSync(area(session.id))).toBe(true);
+    const journal = JSON.parse(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8'));
+    for (const entry of journal.sessions) entry.stoppedAt = OLD;
+    writeFileSync(join(deviceHostRoot(), 'sessions.json'), JSON.stringify(journal));
+    await host.reclaimEndedHomes();
+    expect(existsSync(area(session.id))).toBe(false);
+    expect(readHostedSessions().find((record) => record.id === session.id)?.state).toBe('stopped');
+    expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toEqual([]);
+  });
+
+  test('is kept when the ledger lists a device, is unreadable or absent for a simulator, or the session is parked', async () => {
+    const listed = seedHosted({ stoppedAt: OLD }, 'listed');
+    const missing = seedHosted({ stoppedAt: OLD }, 'missing');
+    const parked = seedHosted({ stoppedAt: OLD, parked: { at: OLD } }, 'empty');
+    const malformed = seedHosted({ stoppedAt: OLD }, 'empty');
+    writeFileSync(join(area(malformed.id), 'home', 'created-devices.json'), '{');
+    const removable = [
+      seedHosted({ stoppedAt: OLD }, 'empty'),
+      seedHosted({ stoppedAt: OLD, platform: 'macos' }, 'missing'),
+    ];
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    await host.reclaimEndedHomes();
+    await host.reclaimEndedHomes();
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(String(stderr.mock.calls[0]?.[0])).toContain(malformed.id);
+    for (const kept of [listed, missing, parked, malformed]) expect(existsSync(area(kept.id))).toBe(true);
+    for (const gone of removable) expect(existsSync(area(gone.id))).toBe(false);
+  });
+
+  test('of a session that stopped before it created a device goes, while a home with an unread device record stays', async () => {
+    const never = seedHosted({ stoppedAt: OLD }, 'missing');
+    rmSync(join(area(never.id), 'home', 'hosted-device.json'));
+    const recorded = seedHosted({ stoppedAt: OLD }, 'missing');
+    await host.reclaimEndedHomes();
+    expect(existsSync(area(never.id))).toBe(false);
+    expect(existsSync(area(recorded.id))).toBe(true);
+  });
+
+  test('is not removed when the journal cannot be read, even for a home it does not list', async () => {
+    const orphan = randomUUID();
+    mkdirSync(join(area(orphan), 'home'), { recursive: true });
+    writeFileSync(
+      join(area(orphan), 'home', 'created-devices.json'),
+      JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
+    );
+    mkdirSync(deviceHostRoot(), { recursive: true });
+    writeFileSync(join(deviceHostRoot(), 'sessions.json'), '{');
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    await host.reclaimEndedHomes(true);
+    expect(existsSync(area(orphan))).toBe(true);
+  });
+
+  test('without a journal entry stays when a device record exists but no ledger, and goes for a macOS record', async () => {
+    seedHosted({ stoppedAt: OLD }, 'empty');
+    const ios = randomUUID();
+    const macos = randomUUID();
+    for (const [id, record] of [
+      [ios, { udid: '12345678-1234-1234-1234-123456789abc', name: 'stim-hosted' }],
+      [macos, { appSlot: 1, architecture: 'arm64', macosVersion: '27.0' }],
+    ] as const) {
+      mkdirSync(join(area(id), 'home'), { recursive: true });
+      writeFileSync(join(area(id), 'home', 'hosted-device.json'), JSON.stringify(record));
+    }
+    await host.reclaimEndedHomes(true);
+    expect(existsSync(area(ios))).toBe(true);
+    expect(existsSync(area(macos))).toBe(false);
+  });
+
+  test('is kept while the agent driver or another process holds a claim on the session', async () => {
+    const agent = seedHosted({ stoppedAt: OLD }, 'empty');
+    const claim = tryAcquireClaim({ root: join(area(agent.id), 'agent-device.claims'), mode: 'exclusive' });
+    const held = seedHosted({ stoppedAt: OLD }, 'empty');
+    const session = tryAcquireClaim({ root: join(deviceHostRoot(), `${held.id}.claims`), mode: 'exclusive' });
+    try {
+      await host.reclaimEndedHomes();
+      expect(existsSync(area(agent.id))).toBe(true);
+      expect(existsSync(area(held.id))).toBe(true);
+    } finally {
+      releaseClaim(claim.acquired);
+      releaseClaim(session.acquired);
+    }
+  });
+
+  test('of a session stopped before stoppedAt existed is removed one grace period after it is first seen', async () => {
+    const legacy = seedHosted({}, 'empty');
+    expect(stoppedAt(legacy.id)).toBeUndefined();
+    await host.reclaimEndedHomes();
+    expect(stoppedAt(legacy.id)).toBeDefined();
+    expect(existsSync(area(legacy.id))).toBe(true);
+  });
+
+  test('is removed on start when the journal does not list it, unless its ledger lists a device', async () => {
+    seedHosted({ stoppedAt: OLD }, 'empty');
+    const orphan = randomUUID();
+    const listed = randomUUID();
+    for (const [id, ledger] of [
+      [orphan, { version: 1, ios: [], android: [], web: [] }],
+      [listed, { version: 1, ios: ['12345678-1234-1234-1234-123456789abc'], android: [], web: [] }],
+    ] as const) {
+      mkdirSync(join(area(id), 'home'), { recursive: true });
+      writeFileSync(join(area(id), 'home', 'created-devices.json'), JSON.stringify(ledger));
+    }
+    await host.reclaimEndedHomes();
+    expect(existsSync(area(orphan))).toBe(true);
+    await host.reconcileStopped();
+    expect(existsSync(area(orphan))).toBe(false);
+    expect(existsSync(area(listed))).toBe(true);
+  });
+});

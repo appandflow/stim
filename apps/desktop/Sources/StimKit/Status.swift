@@ -352,10 +352,13 @@ public struct PullRequestFacts: Decodable, Hashable, Sendable {
 }
 
 /// `worktreeBytes` is the git worktree folder with node_modules, `nodeModulesBytes` is part of it, and `buildBytes`
-/// is Stim's own folder for the workspace.
+/// is Stim's own folder for the workspace. `nodeModulesPrivateBytes` is the part of `nodeModulesBytes` that no
+/// copy-on-write clone or hard link shares, which is what deleting it would free; nil when Stim could not tell or
+/// is older than the measurement.
 public struct WorkspaceDisk: Decodable, Hashable, Sendable {
   public var worktreeBytes: Double?
   public var nodeModulesBytes: Double?
+  public var nodeModulesPrivateBytes: Double?
   public var buildBytes: Double?
   public var measuredAt: String?
 }

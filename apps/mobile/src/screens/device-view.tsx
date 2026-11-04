@@ -12,6 +12,7 @@ import {
   useWindowDimensions,
   View,
   type GestureResponderEvent,
+  type NativeTouchEvent,
   type TextInputInstance,
   type ViewInstance,
 } from 'react-native';
@@ -66,6 +67,7 @@ import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { CLIPBOARD_LIMIT_KIB, clipboardAvailable, copyDeviceClipboard, pasteFromPhone } from '@/lib/device-clipboard';
 import { framePoint, orientationOf, otherDriver } from '@/lib/device-control';
 import { matchingDeviceFrame } from '@/lib/device-frame';
+import { createTouchTracker, type TouchMessage } from '@/lib/touch-tracker';
 import { deviceUnavailable } from '@/lib/device-unavailable';
 import { foldOf } from '@/lib/fold';
 import { buildTimeline, clampReplayTime } from '@/lib/replay';
@@ -85,6 +87,7 @@ import type {
 const LIVE_FPS = 60;
 const MAX_EDGE = 1600;
 const MOVE_INTERVAL_MS = 16;
+const SECOND_FINGER_WAIT_MS = 40;
 
 const DATA_SAVER_FPS = 10;
 const DATA_SAVER_MAX_EDGE = 640;
@@ -399,6 +402,73 @@ export function DeviceView({
     },
   };
 
+  const takesTwoFingers =
+    (platform === 'ios' || platform === 'android') &&
+    !stream.frame?.duo &&
+    !(control.state.kind === 'on' && platform === 'ios' && control.state.postures.length > 0);
+  const [fingers] = useState(createTouchTracker);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearSettle = () => {
+    if (settleTimer.current) clearTimeout(settleTimer.current);
+    settleTimer.current = null;
+  };
+  const sendFingers = (messages: TouchMessage[]) => {
+    for (const { phase, first, second } of messages) {
+      if (phase === 'move') {
+        const now = Date.now();
+        if (now - touches.current.lastMove < MOVE_INTERVAL_MS) continue;
+        touches.current.lastMove = now;
+      }
+      control.touch(phase, first.x, first.y, undefined, second);
+    }
+  };
+  useEffect(() => {
+    if (controlling) return;
+    clearSettle();
+    fingers.cancel();
+  }, [controlling, fingers]);
+  useEffect(() => clearSettle, []);
+  const fingerDown = (changed: readonly NativeTouchEvent[]) => {
+    for (const finger of changed) {
+      const at = point(finger.locationX, finger.locationY, false);
+      if (at) sendFingers(fingers.down(finger.identifier, at));
+    }
+    if (fingers.pending && !settleTimer.current) {
+      settleTimer.current = setTimeout(() => {
+        settleTimer.current = null;
+        sendFingers(fingers.settle());
+      }, SECOND_FINGER_WAIT_MS);
+    }
+  };
+  const multiTouchHandlers = {
+    onStartShouldSetResponder: () => true,
+    onMoveShouldSetResponder: () => true,
+    onResponderGrant: (event: GestureResponderEvent) => fingerDown(event.nativeEvent.changedTouches),
+    onResponderStart: (event: GestureResponderEvent) => fingerDown(event.nativeEvent.changedTouches),
+    onResponderMove: (event: GestureResponderEvent) => {
+      const updates: [number, { x: number; y: number }][] = [];
+      for (const finger of event.nativeEvent.touches) {
+        const at = point(finger.locationX, finger.locationY, true);
+        if (at) updates.push([finger.identifier, at]);
+      }
+      sendFingers(fingers.move(updates));
+    },
+    onResponderEnd: (event: GestureResponderEvent) => {
+      for (const finger of event.nativeEvent.changedTouches) {
+        const at = point(finger.locationX, finger.locationY, true);
+        sendFingers(fingers.up(finger.identifier, at ?? undefined));
+      }
+    },
+    onResponderRelease: () => {
+      clearSettle();
+      sendFingers(fingers.cancel());
+    },
+    onResponderTerminate: () => {
+      clearSettle();
+      sendFingers(fingers.cancel());
+    },
+  };
+
   const takeOver = () => control.begin(true);
   const seek = (at: number, rate: ReplayRate) => {
     setOpened(true);
@@ -437,7 +507,7 @@ export function DeviceView({
             });
           setNote({
             text:
-              platform === 'ios'
+              platform === 'ios' && outcome === 'pasted'
                 ? t`Pasted. If nothing appears, tap the paste suggestion on the device.`
                 : t`Pasted from the phone.`,
             success: true,
@@ -842,7 +912,7 @@ export function DeviceView({
                           }}
                           style={[styles.overlay, controlling && styles.overlayActive]}
                           pointerEvents={controlling ? 'auto' : 'none'}
-                          {...(controlling ? touchHandlers : {})}
+                          {...(controlling ? (takesTwoFingers ? multiTouchHandlers : touchHandlers) : {})}
                         />
                       ) : null}
                     </DeviceScreen>

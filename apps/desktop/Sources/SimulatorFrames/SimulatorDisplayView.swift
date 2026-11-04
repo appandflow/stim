@@ -29,13 +29,15 @@ public struct SimulatorDisplayView: NSViewRepresentable {
   public var artworkScale: CGFloat?
   public var accurateScreenSize: CGSize?
   public var onInput: (() -> Void)?
+  public var hardwareKeyboard: Bool
 
   public init(
     udid: String, screenID: UInt32 = 1, interactive: Bool = false,
     onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, onLitChange: ((Bool) -> Void)? = nil,
     buttons: SimulatorButtons? = nil, hingeAngle: Double? = nil, showsDeviceFrame: Bool = false,
     onFrameSizeChange: ((CGSize?) -> Void)? = nil, duoFrame: SimulatorDuoFrame? = nil, activeScreenID: UInt32? = nil,
-    duoHingeAngle: Double? = nil, artworkScale: CGFloat? = nil, accurateScreenSize: CGSize? = nil, onInput: (() -> Void)? = nil
+    duoHingeAngle: Double? = nil, artworkScale: CGFloat? = nil, accurateScreenSize: CGSize? = nil, onInput: (() -> Void)? = nil,
+    hardwareKeyboard: Bool = false
   ) {
     self.udid = udid
     self.screenID = screenID
@@ -52,6 +54,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     self.artworkScale = artworkScale
     self.accurateScreenSize = accurateScreenSize
     self.onInput = onInput
+    self.hardwareKeyboard = hardwareKeyboard
   }
 
   @MainActor public static func frameSize(udid: String) -> CGSize? {
@@ -78,6 +81,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
       canvas?.quarterTurns = orientation == 3 ? 1 : orientation == 4 ? 3 : orientation == 2 ? 2 : 0
     }
     view.onInput = onInput
+    view.hardwareKeyboard = hardwareKeyboard
     view.onPixelSizeChange = onPixelSizeChange
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
@@ -102,6 +106,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     canvas.artworkScale = artworkScale
     canvas.accurateScreenSize = accurateScreenSize
     view.onInput = onInput
+    view.hardwareKeyboard = hardwareKeyboard
     view.onPixelSizeChange = onPixelSizeChange
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
@@ -126,8 +131,9 @@ public final class SimulatorButtons {
 
   public init() {}
 
-  /// Copies text to the controlled guest pasteboard and presses Command-V.
-  public func paste(_ text: String) async -> Bool { await view?.paste(text) ?? false }
+  /// Copies text to the controlled guest pasteboard, then types it into the focused field, or presses Command-V when
+  /// the HID keyboard cannot type it.
+  public func paste(_ text: String) async -> SimulatorPasteOutcome { await view?.paste(text) ?? .failed }
 
   /// Replaces the controlled guest pasteboard's text without pasting it.
   public func setClipboard(_ text: String) async -> Bool { await view?.setClipboard(text) ?? false }
@@ -146,6 +152,7 @@ private final class SimulatorInputStatusLabel: NSTextField {
 
 public final class SimulatorDisplayNSView: NSView {
   var onInput: (() -> Void)?
+  var hardwareKeyboard = false
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
   var onOrientationChange: (UInt32) -> Void = { _ in }
   var onLitChange: ((Bool) -> Void)? {
@@ -164,6 +171,7 @@ public final class SimulatorDisplayNSView: NSView {
   private var retryTimer: Timer?
   private var interactive = false
   private var hid: SimulatorHID?
+  private var typing: Task<Void, Never>?
   private var inputTask: Task<Void, Never>?
   private var inputTimer: Timer?
   private var nextInputAttempt = Date.distantPast
@@ -445,10 +453,11 @@ public final class SimulatorDisplayNSView: NSView {
     }
     guard inputTask == nil, Date() >= nextInputAttempt else { return }
     if !acceptsInput { showInputStatus("Connecting input...") }
+    let keyboard = hardwareKeyboard
     inputTask = Task { [weak self] in
       do {
         let hid = try await SimulatorLookup.run(udid: udid) {
-          guard let hid = SimulatorHID(udid: udid) else { throw SimulatorLookup.Failure.unavailable }
+          guard let hid = SimulatorHID(udid: udid, hardwareKeyboard: keyboard) else { throw SimulatorLookup.Failure.unavailable }
           while !hid.isReady, hid.isConnected { Thread.sleep(forTimeInterval: 0.05) }
           guard hid.isReady else { throw SimulatorLookup.Failure.unavailable }
           return hid
@@ -485,12 +494,17 @@ public final class SimulatorDisplayNSView: NSView {
     return hid
   }
 
-  func paste(_ text: String) async -> Bool {
+  func paste(_ text: String) async -> SimulatorPasteOutcome {
+    let keys = SimulatorTyping.keys(for: text)
     guard acceptsInput, let udid, let hid = inputClient(), hid.isConnected,
       (SimulatorKit.usageForKeyCode?(0x37) ?? 0) != 0, (SimulatorKit.usageForKeyCode?(0x09) ?? 0) != 0
-    else { return false }
+    else { return .failed }
     guard await setClipboard(text), !Task.isCancelled, acceptsInput, self.udid == udid, self.hid === hid, hid.isConnected else {
-      return false
+      return .failed
+    }
+    if let keys {
+      type(keys, on: hid, udid: udid)
+      return .typed
     }
     let command: UInt16 = 0x37
     let v: UInt16 = 0x09
@@ -498,7 +512,25 @@ public final class SimulatorDisplayNSView: NSView {
     hid.hardwareKey(code: v, down: true)
     hid.hardwareKey(code: v, down: false)
     hid.hardwareKey(code: command, down: false)
-    return true
+    return .pasted
+  }
+
+  private func type(_ keys: [(code: UInt16, shift: Bool)], on hid: SimulatorHID, udid: String) {
+    let earlier = typing
+    typing = Task { [weak self] in
+      await earlier?.value
+      for key in keys {
+        guard !Task.isCancelled, let self, self.acceptsInput, self.udid == udid, self.hid === hid, hid.isConnected else {
+          return
+        }
+        if key.shift { hid.hardwareKey(code: 0x38, down: true) }
+        hid.hardwareKey(code: key.code, down: true)
+        try? await Task.sleep(for: .milliseconds(10), tolerance: .zero)
+        hid.hardwareKey(code: key.code, down: false)
+        if key.shift { hid.hardwareKey(code: 0x38, down: false) }
+        try? await Task.sleep(for: .milliseconds(15), tolerance: .zero)
+      }
+    }
   }
 
   func setClipboard(_ text: String) async -> Bool {

@@ -242,18 +242,18 @@ const leftBehind = [];
 let active = null;
 
 /** Removes one bench worktree through stim, which also releases its device, Metro port and registration. */
-function removeTree({ cli, tree, app }) {
+function removeTree({ cli, tree }) {
   if (!existsSync(tree)) return;
-  let removed = run(process.execPath, [cli, 'worktree', 'remove'], { cwd: app });
+  let removed = run(process.execPath, [cli, 'worktree', 'remove'], { cwd: tree });
   if (removed.status !== 0) {
     log(
       `stim worktree remove failed (${removed.stderr.trim().split('\n').at(-1)}); retrying with --force on the bench worktree`,
     );
-    removed = run(process.execPath, [cli, 'worktree', 'remove', '--force'], { cwd: app });
+    removed = run(process.execPath, [cli, 'worktree', 'remove', '--force'], { cwd: tree });
   }
   if (removed.status !== 0 || existsSync(tree)) {
     leftBehind.push(tree);
-    log(`could not remove ${tree}; remove it with: cd ${app} && stim worktree remove --force`);
+    log(`could not remove ${tree}; remove it with: cd ${tree} && stim worktree remove --force`);
   }
 }
 

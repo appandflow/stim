@@ -25,9 +25,11 @@ import {
 import type { DeviceRecord } from '@stim-cli/core/state';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { workspaceId, workspaceLogsDir } from '../workspace/paths.ts';
-import { decodeStats, statsFile } from '@stim-cli/core/state';
+import { decodeStats, readDeferredShutdowns, statsFile } from '@stim-cli/core/state';
 import * as iosDevices from '../devices/ios.ts';
 import { createIosSimSnapshot, ownedSimName } from '../devices/ios.ts';
 import { makeAdbDevices, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
@@ -1027,6 +1029,35 @@ describe('ensureOwnedDevice: ios', () => {
     },
   );
 
+  test('a run reuses the simulator stop left booted, without a boot, and forgets its deferred shutdown', async () => {
+    const root = projectDir();
+    try {
+      const name = 'stim-app (iPhone 17 Pro 26.2)';
+      setDevice(root, 'ios', { deviceUdid: 'U1', deviceName: name, owned: true });
+      recordCreatedDevice('ios', 'U1');
+      await recordDeferredShutdown(root, 'default', {
+        udid: 'U1',
+        until: new Date(Date.now() + 600_000).toISOString(),
+      });
+      const { files, exec } = iosExecutor([
+        { udid: 'U1', name, state: 'Booted', isAvailable: true, deviceTypeIdentifier: TYPE_17_PRO.identifier },
+      ]);
+      setExecutor(exec);
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+      });
+      expect(device.deviceUdid).toBe('U1');
+      expect(files.some((call) => call.includes('create') || call.includes(' boot'))).toBe(false);
+      expect(readDeferredShutdowns(readWorkspaceState(root))).toEqual({});
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('concurrent allocations disambiguate names after truncation and preserve the suffix on reuse', async () => {
     const roots = [projectDir(), projectDir()];
     const label = 'same-worktree-name-'.repeat(5);
@@ -1447,6 +1478,61 @@ describe('ensureOwnedDevice: ios', () => {
       }
     },
   );
+
+  test('adopts a parked simulator that is still booted without booting it and still resets its state', async () => {
+    const root = projectDir();
+    process.env.STIM_POOL_IOS_PARKED_MAX = '3';
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true });
+      parkSim({
+        platform: 'ios',
+        projectPath: root,
+        max: 3,
+        record: {
+          udid: 'U1',
+          name: 'stim-parked (iPhone 17 Pro 26.2) u1',
+          deviceTypeIdentifier: TYPE_17_PRO.identifier,
+          runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
+          parkedAt: '2026-09-01T10:00:00.000Z',
+          bootedUntil: new Date(Date.now() + 60_000).toISOString(),
+          simslimManaged: false,
+          cacheKey: 'fingerprint-debug-sim',
+        },
+      });
+      const { run, files, exec } = iosExecutor([
+        {
+          udid: 'U1',
+          name: 'stim-parked (iPhone 17 Pro 26.2) u1',
+          state: 'Booted',
+          isAvailable: true,
+          deviceTypeIdentifier: TYPE_17_PRO.identifier,
+        },
+      ]);
+      setExecutor(exec);
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+      });
+      expect(device).toMatchObject({
+        deviceUdid: 'U1',
+        booted: 'U1',
+        adopted: true,
+        adoptionPending: true,
+        parkedCacheKey: 'fingerprint-debug-sim',
+      });
+      expect(device.booting).toBeUndefined();
+      expect(readParked('ios')).toEqual([]);
+      expect(run).not.toContain('xcrun simctl boot U1');
+      expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
+      expect(files).toContainEqual(['xcrun', 'simctl', 'keychain', 'U1', 'reset']);
+    } finally {
+      delete process.env.STIM_POOL_IOS_PARKED_MAX;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   test('keeps a parked record renamed away from Stim ownership and creates a fresh simulator', async () => {
     const root = projectDir();

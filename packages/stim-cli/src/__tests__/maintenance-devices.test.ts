@@ -7,7 +7,7 @@ import { collectFinishedDevices, deleteFinishedDevices } from '../commands/gc/fi
 import type { WorktreeSkipCode, WorktreeSweep } from '../commands/gc/worktrees.ts';
 import * as ios from '../devices/ios.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { planDeviceDeletion } from '../maintenance/devices.ts';
+import { planDeviceDeletion, planDeviceDeletionAsync } from '../maintenance/devices.ts';
 import { maintenanceLine } from '../maintenance/status.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
@@ -197,14 +197,33 @@ test('gc lists the owned devices of a finished worktree it keeps once its grace 
   ]);
 });
 
-test('a workspace holding a device lease or its native-run lock keeps its devices', () => {
+test.each([
+  ['planDeviceDeletion', (roots: string[]) => plan(roots)],
+  [
+    'planDeviceDeletionAsync',
+    (roots: string[]) =>
+      planDeviceDeletionAsync(
+        {
+          roots: roots.map((root) => ({ root })),
+          windowMs: 10 * MINUTE_MS,
+          reason: 'disk pressure level 2',
+          protectedRoot: '',
+          pinned: () => false,
+          sizes: roots.map((root) => deviceSize(root, 1024)),
+          now: Date.now(),
+          extra: { level: 2 },
+        },
+        new AbortController().signal,
+      ),
+  ],
+])('%s: a workspace holding a device lease or its native-run lock keeps its devices', async (_name, planFor) => {
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
   const leased = workspaceWithSim('leased', 30);
   const running = workspaceWithSim('running', 30);
   expect(takeLease({ root: leased, platform: 'ios', id: 'PHONE-1', kind: 'declared' }).status).toBe('taken');
   plantClaim(join(workspaceDir(running), 'native-run.lock'), 'exclusive', liveClaimOwner());
 
-  const result = plan([leased, running]);
+  const result = await planFor([leased, running]);
 
   expect(result.actions).toEqual([]);
   expect(result.skips).toEqual([

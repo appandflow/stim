@@ -10,6 +10,7 @@ import {
   countLiveOwnedDevices,
   countLiveOwnedDevicesByPlatform,
   deviceSlotUsages,
+  readFreshDeviceListing,
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
@@ -256,6 +257,48 @@ describe('per-platform device caps', () => {
     } finally {
       releaseClaim(head);
     }
+  });
+});
+
+describe('a waiting run re-reads the device caps each round', () => {
+  const writeConcurrency = (concurrency: Record<string, number>) =>
+    writeFileSync(join(root, 'config.json'), JSON.stringify({ concurrency }));
+  const waitThen = (change: () => void, sims: typeof occupied) => {
+    let slept = 0;
+    let now = Date.now();
+    return withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => 'booted', {
+      root,
+      waitMs: 60_000,
+      sources: { ...empty, sims },
+      memory: () => null,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+        if (++slept === 1) change();
+      },
+    });
+  };
+
+  test('a raised concurrency.maxDevices admits the run that was already waiting', async () => {
+    writeConcurrency({ maxDevices: 1 });
+    await expect(waitThen(() => writeConcurrency({ maxDevices: 2 }), occupied)).resolves.toBe('booted');
+  });
+
+  test('a raised environment override and a raised per-platform cap admit it too', async () => {
+    writeConcurrency({ maxDevices: 1 });
+    await expect(waitThen(() => vi.stubEnv('STIM_MAX_DEVICES', '2'), occupied)).resolves.toBe('booted');
+    vi.unstubAllEnvs();
+    writeConcurrency({ maxDevices: 30, maxIosDevices: 1 });
+    await expect(waitThen(() => writeConcurrency({ maxDevices: 30, maxIosDevices: 2 }), occupied)).resolves.toBe(
+      'booted',
+    );
+  });
+
+  test('a cap that stays low keeps the run waiting until its ceiling', async () => {
+    writeConcurrency({ maxDevices: 1 });
+    await expect(waitThen(() => writeConcurrency({ maxDevices: 1 }), occupied)).rejects.toMatchObject({
+      code: 'STIM_AT_CAPACITY',
+    });
   });
 });
 
@@ -759,4 +802,42 @@ test('concurrency settings override the derived caps, and 0 means derived', () =
   expect(
     admissionLimits({ env: { STIM_MAX_BUILDS: '3', STIM_MAX_DEVICES: '0' }, cores: 10, totalBytes: 16 * 1024 ** 3 }),
   ).toEqual({ maxBuilds: 3, maxDevices: 8, derived: { builds: false, devices: true } });
+});
+
+describe('the shared device listing status reads', () => {
+  const listingFile = () => join(root, 'device-listing.json');
+  const sims = [
+    makeIosSim({ udid: 'a', name: 'stim-a', state: 'Booted', dataPathSize: 123 }),
+    makeIosSim({ udid: 'b', name: 'stim-b', state: 'Shutdown' }),
+  ];
+
+  test('a boot admission publishes the simulator records it listed', async () => {
+    await withDeviceBootAdmission({ platform: 'ios', key: 'a' }, async () => {}, {
+      root,
+      sources: { ...empty, sims },
+    });
+    expect(readFreshDeviceListing(null)?.sims).toEqual(sims);
+  });
+
+  test.each([
+    ['older than 10 s', { schema: 1, listedAt: Date.now() - 11_000, sims }],
+    ['from the future', { schema: 1, listedAt: Date.now() + 60_000, sims }],
+    ['written before records carried a schema', { listedAt: Date.now(), sims }],
+    ['a record missing its runtime', { schema: 1, listedAt: Date.now(), sims: [{ ...sims[0], runtime: undefined }] }],
+    ['not an array of records', { schema: 1, listedAt: Date.now(), sims: 'booted' }],
+  ])('a listing that is %s is not used', (_name, record) => {
+    writeFileSync(listingFile(), JSON.stringify(record));
+    expect(readFreshDeviceListing(null)).toBeNull();
+  });
+
+  test('a corrupt or missing file is not used', () => {
+    expect(readFreshDeviceListing(null)).toBeNull();
+    writeFileSync(listingFile(), '{"schema":1,"listedAt":');
+    expect(readFreshDeviceListing(null)).toBeNull();
+  });
+
+  test('a listing 9 s old is still used', () => {
+    writeFileSync(listingFile(), JSON.stringify({ schema: 1, listedAt: Date.now() - 9_000, sims }));
+    expect(readFreshDeviceListing(null)).toEqual({ sims, adb: null });
+  });
 });

@@ -815,6 +815,7 @@ describe('device idle shutdown', () => {
       setExecutor({
         ...real,
         runFileQuiet: (file, args, opts) => (file === 'ps' ? '' : real.runFileQuiet(file, args, opts)),
+        runFileQuietAsync: async (file, args, opts) => (file === 'ps' ? '' : real.runFileQuietAsync(file, args, opts)),
       });
       vi.stubEnv('HOME', tmpHome);
       vi.stubEnv('USERPROFILE', tmpHome);
@@ -839,7 +840,7 @@ describe('device idle shutdown', () => {
     });
 
     function bootedSims(...udids: string[]) {
-      vi.spyOn(ios, 'listAllIosSims').mockImplementation(() =>
+      const listed = () =>
         udids
           .filter((udid) => !tornDown.includes(udid))
           .map((udid) => ({
@@ -849,8 +850,9 @@ describe('device idle shutdown', () => {
             runtime: 'iOS 27.0',
             deviceTypeIdentifier: 'iPhone',
             available: true,
-          })),
-      );
+          }));
+      vi.spyOn(ios, 'listAllIosSims').mockImplementation(listed);
+      vi.spyOn(ios, 'listAllIosSimsAsync').mockImplementation(async () => listed());
     }
 
     function writeDeviceLogs(slots: (string | undefined)[]) {

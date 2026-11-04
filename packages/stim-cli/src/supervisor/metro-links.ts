@@ -47,13 +47,15 @@ export interface MetroLinkPool {
  * host pairs one with each connection the hosted device makes; this side then pipes it to loopback `metroPort` and
  * opens a replacement. `onReady` runs when the host holds a link after holding none, and `onLost` when no linked
  * connection to the host is left. Failures that a retry can fix are retried. A host that turns this machine away calls
- * `onError` and stops the pool, and so does a refused link before the host ever held one; after that, refused links
- * are retried, since a session the host restarted refuses links until its client attaches again.
+ * `onError` and stops the pool, and so does a refused link before the host ever held one, except for a `reverse` pool,
+ * whose port the host may not bridge yet; after that, refused links are retried, since a session the host restarted
+ * refuses links until its client attaches again.
  */
 export function openMetroLinks({
   machine,
   session,
   metroPort,
+  reverse = false,
   onReady,
   onLost,
   onError,
@@ -61,6 +63,7 @@ export function openMetroLinks({
   machine: string;
   session: string;
   metroPort: number;
+  reverse?: boolean;
   onReady: () => void;
   onLost: () => void;
   onError: (message: string) => void;
@@ -95,7 +98,7 @@ export function openMetroLinks({
 
   const failed = (message: string, refused: 'host' | 'link' | null) => {
     if (closed) return;
-    if (refused === 'host' || (refused === 'link' && !linkedOnce)) {
+    if (refused === 'host' || (refused === 'link' && !linkedOnce && !reverse)) {
       stop();
       onError(message);
       return;
@@ -126,9 +129,11 @@ export function openMetroLinks({
       connection = await connect();
       if (closed) return void connection.close();
       live.add(connection);
-      if (!connection.supports('hosted-metro-link'))
+      if (!connection.supports(reverse ? 'hosted-reverse-ports' : 'hosted-metro-link'))
         throw Object.assign(
-          new Error(`${machine} runs a stim-server that cannot link Metro. Update stim-server there, then retry.`),
+          new Error(
+            `${machine} runs a stim-server that cannot link ${reverse ? 'reverse ports' : 'Metro'}. Update stim-server there, then retry.`,
+          ),
           { code: 'STIM_HOSTING_REFUSED' },
         );
       const each = connection;
@@ -151,7 +156,7 @@ export function openMetroLinks({
         gone(each);
         fill();
       });
-      const reply = await each.request('device-host.metro.link', { session });
+      const reply = await each.request('device-host.metro.link', reverse ? { session, port: metroPort } : { session });
       if ('error' in reply)
         throw Object.assign(new Error(`${machine} refused the Metro link: ${reply.error.message}`), {
           linkRefused: reply.error.code !== 'closed' && reply.error.code !== 'timeout',

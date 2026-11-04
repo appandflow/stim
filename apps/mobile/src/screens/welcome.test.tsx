@@ -37,7 +37,7 @@ it('opens pairing or dismisses the welcome through its buttons', async () => {
     </GestureHandlerRootView>,
   );
 
-  await fireEvent.press(screen.getByRole('button', { name: 'Pair with Your Mac' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Pair with a Machine' }));
   expect(mockPush).toHaveBeenCalledWith('/pair');
   expect(dismiss).not.toHaveBeenCalled();
 

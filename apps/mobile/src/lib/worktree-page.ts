@@ -1,5 +1,12 @@
 import { workspaceAgentSessions } from '@/lib/agents';
-import { metroHealth, supportedPlatforms, workspaceStage, workspaceUsage, type Usage } from '@/lib/workspace-view';
+import {
+  diskSharedBytes,
+  metroHealth,
+  supportedPlatforms,
+  workspaceStage,
+  workspaceUsage,
+  type Usage,
+} from '@/lib/workspace-view';
 import { devicesOf, orderDevices, platformName, type DeviceRef } from '@/lib/workspaces';
 import type {
   AgentSession,
@@ -143,13 +150,20 @@ export function worktreeDisk(apps: EnvironmentState[]): EnvironmentState['disk']
   };
 }
 
+function ownWorktreeBytes(apps: EnvironmentState[]): number | null {
+  const own = apps.flatMap((env) =>
+    env.disk?.worktreeBytes == null ? [] : [env.disk.worktreeBytes - (diskSharedBytes(env) ?? 0)],
+  );
+  return own.length ? Math.max(...own) : null;
+}
+
 export function worktreeUsage(apps: EnvironmentState[], machine: MachineUsageState | null | undefined): Usage {
   const usages = apps.map((env) => workspaceUsage(env, machine));
   const disk = worktreeDisk(apps);
   return {
     cpuPercent: sumMeasured(usages.map((usage) => usage.cpuPercent)),
     memoryMb: sumMeasured(usages.map((usage) => usage.memoryMb)),
-    diskBytes: sumMeasured([disk?.worktreeBytes, disk?.buildBytes]),
+    diskBytes: sumMeasured([ownWorktreeBytes(apps), disk?.buildBytes]),
   };
 }
 

@@ -50,6 +50,7 @@ let tailscale: string[][];
 let ready: number;
 let lost: number;
 let errors: string[];
+let features: string[];
 
 function fakeLink(): FakeLink {
   let event: ((message: Record<string, unknown>) => void) | null = null;
@@ -72,7 +73,7 @@ function fakeLink(): FakeLink {
     connection: Object.create(
       BuildConnection.prototype,
       Object.getOwnPropertyDescriptors({
-        supports: (feature: string) => feature === 'hosted-metro-link',
+        supports: (feature: string) => features.includes(feature),
         request: async (method: string, params: unknown) => {
           link.requests.push({ method, params });
           if (openOnRequest > 0) {
@@ -106,11 +107,12 @@ function fakeLink(): FakeLink {
   return link;
 }
 
-function start(): void {
+function start(reverse = false): void {
   pool = openMetroLinks({
     machine: 'mini',
     session,
     metroPort,
+    reverse,
     onReady: () => ready++,
     onLost: () => lost++,
     onError: (message) => errors.push(message),
@@ -147,6 +149,7 @@ beforeEach(async () => {
   ready = 0;
   lost = 0;
   errors = [];
+  features = ['hosted-metro-link', 'hosted-reverse-ports'];
   setExecutor({
     ...getExecutor(),
     runFileAsync: async (_file: string, args: string[]) => {
@@ -297,4 +300,38 @@ test('a link whose loopback Metro refuses the connection closes with a reset cod
   assert(link);
   link.open();
   await vi.waitFor(() => expect(link.closeCode).toBe(4410));
+});
+
+test('a reverse pool registers each link for its port and pipes the stream to that loopback port only', async () => {
+  start(true);
+  await vi.waitFor(() => expect(ready).toBe(1));
+  const link = links[0];
+  assert(link);
+  expect(link.requests).toEqual([{ method: 'device-host.metro.link', params: { session, port: metroPort } }]);
+  link.open();
+  await vi.waitFor(() => expect(link.watched).toBe(false));
+  link.receive(Buffer.from('GET /hello HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n'));
+  await vi.waitFor(() => expect(Buffer.concat(link.sent).toString()).toContain('served /hello'));
+});
+
+test('a host without reverse ports refuses a reverse pool and not a Metro pool', async () => {
+  features = ['hosted-metro-link'];
+  start(true);
+  await vi.waitFor(() => expect(errors).toHaveLength(1));
+  expect(errors[0]).toContain('cannot link reverse ports');
+  pool?.close();
+  errors = [];
+  start();
+  await vi.waitFor(() => expect(ready).toBe(1));
+  expect(errors).toEqual([]);
+});
+
+test('a reverse pool keeps retrying while the host does not reverse its port yet, and links once it does', async () => {
+  refusal = 'This session does not reverse port 8901.';
+  start(true);
+  await vi.waitFor(() => expect(links.length).toBeGreaterThan(4), { timeout: 3000 });
+  expect(errors).toEqual([]);
+  refusal = null;
+  await vi.waitFor(() => expect(ready).toBe(1), { timeout: 6000 });
+  expect(errors).toEqual([]);
 });

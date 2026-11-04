@@ -26,6 +26,8 @@ import type {
   WorktreeRow,
   SettingScope,
   SettingWriteResult,
+  SetupCapability,
+  SetupJournal,
 } from './state/index.ts';
 
 export const PROTOCOL_VERSION = 2;
@@ -55,6 +57,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * and the app's other windows.
  * `hosted-congestion` is `device-host.frames.congested`, which lowers the bitrate of a hosted video subscription
  * whose client is behind.
+ * `hosted-webrtc` is `device-host.webrtc.offer`, which answers a viewer's WebRTC offer with a data-channel peer on the host that
+ * sends a hosted session's video straight to the viewer. Experimental, behind `share.webrtc`.
  * `macos-window-select` is `input.window`, which pins the view to a macOS app window named by `macos-windows`,
  * bringing it to the front, or with null resumes following the front window.
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
@@ -63,6 +67,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
  * `hosted-metro-link` carries hosted Metro over `device-host.metro.link` connections the client opens, so the host never
  * connects to the client.
+ * `hosted-reverse-ports` is `device-host.reverse.set`, which makes servers on the client's loopback reachable from a
+ * hosted device at the same `localhost` ports, over `device-host.metro.link` connections registered for one `port`.
  * `hosted-agent-link` is `device-host.agent.link`, which carries one HTTP connection to a session's agent route over a
  * connection its client opened and authenticated, so agent control needs no tailnet node.
  * `hosted-metro-ports` is `device-host.metro.ports`, which names the listed ports that already accept loopback
@@ -89,6 +95,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
  * `desktop-machine-history` adds machine-wide build and cleanup history to those reports.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
+ * `desktop-report-remote` serves `{ "report": "remote" }`, the remote machines as `stim remote list --json` prints them.
  * `desktop-report-invalidate-target` accepts a report target in `desktop.reports.invalidate`, which then invalidates only it.
  * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
  * `desktop-settings-schema` supplies this server's registry-derived settings schema to local Desktop clients.
@@ -98,14 +105,24 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-run` streams platform build/install/launch progress and facts on the proved local Desktop connection.
  * `desktop-build` streams build-only progress and artifact facts on the proved local Desktop connection.
  * `desktop-plan` reads next-build reports for selected folders on the proved local Desktop connection.
+ * `desktop-setup` runs `stim-server setup` for a pasted request on the proved local Desktop connection, which answers
+ * each grant with `desktop.setup.answer`.
  * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
  * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
+ * `share-reuse` is `share.start`'s `token` and `expiresAt`, which start a share under a URL token a stopped share had.
+ * `share-starting` is `share.list`'s `starting`: the `share.start` requests the server has not yet answered.
+ * `shared-control` is several clients controlling one device at once: `control.begin` and
+ * `device-host.control.begin` refuse no other client or driver, and no session ends with `taken-over`.
+ * `share-waiting` is the rows' `state` (a share waits for its device instead of ending) and `share.stop`'s `slot`.
+ * `share-slug` is `share.start`'s `slug` parameter and the rows' `slug`.
  * `hosted-presence` is `device-host.presence.subscribe`: the `presence` events of a hosted session, which carry what the
  * agent drives on it. A host lists it only with `presence`.
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
  * `device-clipboard` is `input.clipboard.set` and `input.clipboard.get` (and `device-host.input.clipboard.*`): set the clipboard
  * of an iOS simulator, an Android emulator or an Android phone, optionally pasting it, and read it back.
+ * `device-keyboard` is `input.key` on an iOS simulator or an Android emulator (and `device-host.input.key`) with every
+ * `INPUT_KEYS` key and its modifiers; before it, an iOS or Android device took only the arrows and Escape.
  */
 export const FEATURES = [
   'physical-ios',
@@ -125,6 +142,7 @@ export const FEATURES = [
   'duo-frames',
   'workspace-diff',
   'hosted-congestion',
+  'hosted-webrtc',
   'hosted-ios-data',
   'hosted-ios-process',
   'hosted-app-state',
@@ -145,6 +163,7 @@ export const FEATURES = [
   'hosted-android-process',
   'hosted-metro-ports',
   'hosted-metro-link',
+  'hosted-reverse-ports',
   'hosted-agent-link',
   'server-update',
   'build-compat',
@@ -153,6 +172,7 @@ export const FEATURES = [
   'desktop-reports',
   'desktop-machine-history',
   'desktop-report-platform',
+  'desktop-report-remote',
   'desktop-report-invalidate-target',
   'desktop-settings',
   'desktop-settings-schema',
@@ -171,11 +191,19 @@ export const FEATURES = [
   'desktop-worktree-remove',
   'desktop-worktree-warm',
   'desktop-plan',
+  'desktop-setup',
+  'desktop-local-authority',
   'share-stop-id',
   'presence',
   'device-clipboard',
+  'device-keyboard',
   'share-view-password',
+  'share-waiting',
   'hosted-presence',
+  'share-slug',
+  'share-reuse',
+  'share-starting',
+  'shared-control',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -203,6 +231,8 @@ export const METHODS = [
   'desktop.worktree.warm.subscribe',
   'desktop.plan.get',
   'desktop.plan.cancel',
+  'desktop.setup.subscribe',
+  'desktop.setup.answer',
   'route.setup',
   'workspaces.subscribe',
   'workspace.subscribe',
@@ -270,10 +300,12 @@ export const METHODS = [
   'device-host.metro.ports',
   'device-host.metro.close',
   'device-host.metro.link',
+  'device-host.reverse.set',
   'device-host.agent.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
+  'device-host.webrtc.offer',
   'device-host.presence.subscribe',
   'device-host.unsubscribe',
   'device-host.control.begin',
@@ -336,10 +368,12 @@ export const DEVICE_HOST_METHODS = [
   'device-host.metro.ports',
   'device-host.metro.close',
   'device-host.metro.link',
+  'device-host.reverse.set',
   'device-host.agent.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
+  'device-host.webrtc.offer',
   'device-host.presence.subscribe',
   'device-host.unsubscribe',
   'device-host.control.begin',
@@ -357,6 +391,14 @@ export const DEVICE_HOST_METHODS = [
 ] as const;
 
 export type Method = (typeof METHODS)[number];
+
+/**
+ * A web share's chosen link path, `/s/<slug>/`: 3 to 32 lowercase letters, digits and hyphens, starting and ending with
+ * a letter or digit. Always shorter than the 43-character URL token, so a slug never reads as one.
+ */
+export const SHARE_SLUG_PATTERN = '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$';
+/** Slugs a share cannot take: `/s/assets/` serves the viewer's bundled files. */
+export const RESERVED_SHARE_SLUGS: readonly string[] = ['assets'];
 
 export const PUSH_TOKEN_PATTERN = '^(Expo|Exponent)PushToken\\[[^\\]\\s]{1,256}\\]$';
 
@@ -519,7 +561,7 @@ export interface DesktopPlanRefusal {
 
 export type DesktopReportTarget =
   | { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' }
-  | { report: 'gc' | 'gc-history' | 'builds' };
+  | { report: 'gc' | 'gc-history' | 'builds' | 'remote' };
 
 export interface DesktopReportSnapshot {
   pending: boolean;
@@ -1020,11 +1062,22 @@ export const MAX_CLIPBOARD_READ_BYTES = 65536;
  * (Command-V on an iOS simulator, a paste key event on Android). A web page, a native macOS app and a physical iPhone
  * refuse it. It takes ten inputs of a connection's input budget, not the characters of `input.text`. Stim never logs
  * or records `text`.
+ *
+ * On an iOS simulator, `paste` text made only of printable ASCII, line breaks and tabs is typed into the focused
+ * field as `input.text` pieces instead of pasted, because iOS asks before an app reads text another process put on
+ * the clipboard, and a slimmed simulator cannot ask. The typed text takes the field's own typing rules (smart
+ * quotes and dashes), the request answers once the first piece is sent, and a second typed paste is refused with
+ * `device-busy` until the first has been typed. Other text is pasted with Command-V.
  */
 export interface InputClipboardSetParams {
   session: string;
   text: string;
   paste?: boolean;
+}
+
+/** `typed` is true when `paste` typed the text instead of pasting it; absent otherwise, so no paste prompt was avoided. */
+export interface InputClipboardSetResult {
+  typed?: true;
 }
 
 /** Reads the device clipboard's text; a clipboard over {@link MAX_CLIPBOARD_READ_BYTES} bytes of UTF-8 is refused, not cut. */
@@ -1700,7 +1753,10 @@ export interface HostedSessionRow {
   workspace: string;
 }
 
-/** A live web share, as `share.list` lists it; never its URL token or password. */
+/**
+ * A web share, as `share.list` lists it; never its URL token or password. It is `live` while its device streams and
+ * `waiting` while the device is away; a server before `share-waiting` sends no `state`, which means `live`.
+ */
 export interface WebShareRow {
   id: string;
   workspace: string;
@@ -1710,10 +1766,13 @@ export interface WebShareRow {
   control: boolean;
   expiresAt: string;
   viewers: number;
+  state?: 'live' | 'waiting';
   /** How viewers get in: a generated password, one the person set, or the URL alone. */
   auth: 'generated' | 'set' | 'none';
   /** How a separate view-only password was made; null when the share has none. */
   viewAuth: 'generated' | 'set' | null;
+  /** The link path the person chose; absent when the link carries a random token. */
+  slug?: string;
 }
 
 export interface WebShareStartParams {
@@ -1723,11 +1782,17 @@ export interface WebShareStartParams {
   physical?: boolean;
   control?: boolean;
   expiresMinutes?: number;
+  /** The URL token to register instead of a generated one, as `stim share --reuse` restarts a stopped share. */
+  token?: string;
+  /** The share's exact expiry (an ISO time within the next 480 minutes) instead of `expiresMinutes`. */
+  expiresAt?: string;
   /** 8 to 128 characters; never sent back. Without it, and without `passwordless`, the server generates one. */
   password?: string;
   passwordless?: boolean;
   /** A second, view-only password next to the control one; only with `control` and a password. Never sent back. */
   view?: { password?: string };
+  /** The link path, `/s/<slug>/`, in place of the random token; {@link SHARE_SLUG_PATTERN}, never with `passwordless`. */
+  slug?: string;
 }
 
 export interface Methods {
@@ -1735,8 +1800,15 @@ export interface Methods {
     params: WebShareStartParams;
     result: WebShareRow & { url: string; password?: string; viewPassword?: string; warning?: string };
   };
-  'share.stop': { params: { workspace: string; id?: string }; result: { stopped: WebShareRow[] } };
-  'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
+  'share.stop': {
+    params: { workspace: string; id?: string; slot?: string };
+    result: { stopped: WebShareRow[] };
+  };
+  'share.list': {
+    params?: Record<string, never>;
+    /** `starting` counts the starts not yet answered, which no row shows yet; a server without `share-starting` omits it. */
+    result: { shares: WebShareRow[]; starting?: number };
+  };
   'presence.publish': { params: PresencePublishParams; result: Record<string, never> };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };
   'device-host.sessions.stop': { params: { session: string }; result: { id: string; state: 'stopping' | 'stopped' } };
@@ -1781,7 +1853,11 @@ export interface Methods {
   };
   'device-host.metro.ports': { params: { ports: number[] }; result: { busy: number[] } };
   'device-host.metro.close': { params: { session: string }; result: { port: null } };
-  'device-host.metro.link': { params: { session: string }; result: Record<string, never> };
+  'device-host.metro.link': { params: { session: string; port?: number }; result: Record<string, never> };
+  'device-host.reverse.set': {
+    params: { session: string; ports: number[] };
+    result: { ports: { port: number; workerPort: number }[] };
+  };
   'device-host.agent.link': { params: { session: string }; result: Record<string, never> };
   'device-host.frames.subscribe': {
     params: { session: string; fps?: number; maxEdge?: number; video?: string[] };
@@ -1789,6 +1865,10 @@ export interface Methods {
   };
   'device-host.frames.keyframe': Methods['frames.keyframe'];
   'device-host.frames.congested': Methods['frames.keyframe'];
+  'device-host.webrtc.offer': {
+    params: { session: string; sdp: string };
+    result: { subscription: string; sdp: string };
+  };
   'device-host.presence.subscribe': { params: { session: string }; result: { subscription: string } };
   'device-host.unsubscribe': Methods['unsubscribe'];
   'device-host.control.begin': { params: { session: string; takeOver?: boolean }; result: ControlBeginResult };
@@ -1843,6 +1923,16 @@ export interface Methods {
     result: BuildPlanPayload | MacosBuildPlanPayload | DesktopPlanRefusal;
   };
   'desktop.plan.cancel': { params: { request: string }; result: { cancelled: boolean; refusal?: DesktopPlanRefusal } };
+  'desktop.setup.subscribe': {
+    params: { ticket: string; expires: string; capabilities: SetupCapability[] };
+    result: SubscribeResult;
+  };
+  'desktop.setup.answer': {
+    params:
+      | { journal: string; answer: 'approve' | 'refuse'; capability: SetupCapability }
+      | { journal: string; answer: 'skip'; permission: 'screenRecording' | 'deviceControl' };
+    result: Record<string, never>;
+  };
   'desktop.build.subscribe': {
     params: { cwd: string; options: PlatformBuildOptions };
     result: SubscribeResult;
@@ -1895,7 +1985,7 @@ export interface Methods {
   'input.scroll': { params: InputScrollParams; result: Record<string, never> };
   'input.key': { params: InputKeyParams; result: Record<string, never> };
   'input.window': { params: InputWindowParams; result: Record<string, never> };
-  'input.clipboard.set': { params: InputClipboardSetParams; result: Record<string, never> };
+  'input.clipboard.set': { params: InputClipboardSetParams; result: InputClipboardSetResult };
   'input.clipboard.get': { params: InputClipboardGetParams; result: InputClipboardGetResult };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
@@ -2061,6 +2151,13 @@ export interface FrameDelayedEvent {
   subscription: string;
   delayed: boolean;
   reason?: string;
+}
+
+/** A hosted WebRTC peer ended on its own; its subscription is gone. */
+export interface WebrtcClosedEvent {
+  event: 'webrtc-closed';
+  subscription: string;
+  message: string;
 }
 
 /** A point or rectangle as fractions 0-1 of the screen, in the orientation the agent measured it. */
@@ -2300,6 +2397,22 @@ export interface DesktopBuildEndedEvent {
   message: string;
 }
 
+/** A Desktop-approved setup's journal after each write, and the grant it is asking the person about. */
+export interface DesktopSetupProgressEvent {
+  event: 'desktop-setup-progress';
+  subscription: string;
+  journal: SetupJournal;
+  asking: SetupCapability | null;
+}
+
+/** The setup's exit code (as `stim-server setup` exits) and its `--json` payload, null when it printed none. */
+export interface DesktopSetupEndedEvent {
+  event: 'desktop-setup-ended';
+  subscription: string;
+  exitCode: number;
+  output: unknown;
+}
+
 /** Progress from private Desktop garbage collection, before its terminal event. */
 export interface DesktopGcProgressEvent {
   event: 'desktop-gc-progress';
@@ -2411,6 +2524,8 @@ export type ServerEvent =
   | DesktopGcEndedEvent
   | DesktopBuildProgressEvent
   | DesktopBuildEndedEvent
+  | DesktopSetupProgressEvent
+  | DesktopSetupEndedEvent
   | DesktopRunProgressEvent
   | DesktopRunEndedEvent
   | DesktopStartProgressEvent
@@ -2431,6 +2546,7 @@ export type ServerEvent =
   | DeviceFrameEvent
   | MacosWindowsEvent
   | FrameDelayedEvent
+  | WebrtcClosedEvent
   | PresenceEvent
   | ReplayEndedEvent
   | ErrorEvent

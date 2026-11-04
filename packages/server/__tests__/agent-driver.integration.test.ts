@@ -275,6 +275,25 @@ test('restarts a crashed daemon, issues new grants and invalidates the old ones'
   await agents.close();
 });
 
+test('a native device session keeps its token when its daemon restarts, so the client config written at launch stays valid', async () => {
+  const driver = new FakeDriver();
+  const agents = new HostedAgentHost({
+    resolve: () => null,
+    resolveDevice: () => driver,
+    approved: () => true,
+    restartDelayMs: 0,
+  });
+  const before = await agents.appRunning({ session: A, client: 'client-1', udid: 'SIM-1', bundleId: 'dev.app' });
+  driver.crash();
+  await vi.waitFor(() => expect(driver.starts).toBe(2));
+  await vi.waitFor(() => expect(agents.access(A)?.grant.driver).toBe('agent-device'));
+  const after = agents.access(A);
+  expect(after && tokenOf(after.grant)).toBe(tokenOf(before.grant));
+  expect(agents.authorize(A, tokenOf(before.grant))).toBe('ok');
+  expect(agents.authorize(A, 'another-token')).toBe('forbidden');
+  await agents.close();
+});
+
 test('asks the approval about where an agent request came from, for the session client', async () => {
   const driver = new FakeDriver();
   const agents = host(driver, (client, from) => client === 'client-1' && 'node' in from && from.node === 'nLaptop');
@@ -284,4 +303,37 @@ test('asks the approval about where an agent request came from, for the session 
   expect(agents.authorize(A, token, { node: null })).toBe('forbidden');
   expect(agents.holder(A)).toBe('client-1');
   await agents.close();
+});
+
+describe('a grant that outlives a server restart', () => {
+  const derived = (session: string) => `derived-${session}-token-`.padEnd(43, 'x');
+
+  test('carries the host-derived token, and the same one after the daemon restarts', async () => {
+    const driver = new FakeDriver();
+    const agents = new HostedAgentHost({
+      resolve: () => driver,
+      approved: () => true,
+      restartDelayMs: 0,
+      tokenFor: derived,
+    });
+    const first = await agents.appRunning(app(A, 10, 'client-1'));
+    expect(tokenOf(first.grant)).toBe(derived(A));
+    expect(agents.authorize(A, derived(A))).toBe('ok');
+    expect(agents.authorize(A, derived(B))).toBe('forbidden');
+    driver.crash();
+    await vi.waitFor(() => expect(driver.starts).toBe(2));
+    await vi.waitFor(() => expect(driver.running).toBe(true));
+    expect(agents.access(A)?.grant).toMatchObject({ token: derived(A) });
+    await agents.close();
+  });
+
+  test('close keeps the leases of the sessions it is told to keep and revokes the others', async () => {
+    const driver = new FakeDriver();
+    const agents = host(driver);
+    await agents.appRunning(app(A, 10, 'client-1'));
+    await agents.appRunning(app(B, 11, 'client-2'));
+    await agents.close({ keep: new Set([A]) });
+    expect(driver.revoked).toEqual([B]);
+    expect(driver.running).toBe(false);
+  });
 });

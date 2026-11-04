@@ -90,6 +90,9 @@ const TURNED_AWAY = new Set(['unauthorized', 'forbidden', 'protocol-unsupported'
 const RESUME_WINDOW_MS = 3 * 60_000;
 const RESUME_DELAY_MS = 2000;
 const RESUME_MAX_DELAY_MS = 15_000;
+/** What `build.attach` answers for a job its stim-server does not hold, which is the case after the server restarted. */
+const BUILD_JOB_UNKNOWN = /No such build job/;
+const MAX_WORKER_RESTARTS = 2;
 const PAGE_BYTES = 48 * 1024;
 const CHUNK_BYTES = 60 * 1024;
 const MAX_BUFFERED = 8 * 1024 * 1024;
@@ -818,7 +821,7 @@ function nativeTransferInput(
 }
 
 type MachineProbe =
-  | { credential: BuildMachineCredential; failure: string }
+  | { credential: BuildMachineCredential; failure: string; refused?: boolean }
   | { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };
 
 /** Connects to one paired machine and asks it for an offer; the caller closes the connection it returns. */
@@ -844,7 +847,8 @@ async function probeMachine(
     'build',
     reportSignal(ambientContext()),
   );
-  if (!(connection instanceof BuildConnection)) return { credential, failure: connection.failure };
+  if (!(connection instanceof BuildConnection))
+    return { credential, failure: connection.failure, refused: connection.refused };
   if (identity.native && !connection.supports(NATIVE_BUILD_FEATURE[identity.native])) {
     connection.close();
     return { credential, failure: unsupportedNative(identity.native) };
@@ -1260,7 +1264,11 @@ async function resumeJob(
   abandoned: () => boolean,
   signal: AbortSignal | undefined,
   native?: 'xcode' | 'gradle',
-): Promise<{ connection: BuildConnection; outcome: Record<string, unknown> | null; early: ProgressEvent[] } | string> {
+): Promise<
+  | { connection: BuildConnection; outcome: Record<string, unknown> | null; early: ProgressEvent[] }
+  | string
+  | { lost: string }
+> {
   const deadline = Date.now() + RESUME_WINDOW_MS;
   let delay = RESUME_DELAY_MS;
   let last = 'no attempt';
@@ -1299,6 +1307,7 @@ async function resumeJob(
       last = replyError(reply)!;
       if (reply.error.code !== 'closed' && reply.error.code !== 'timeout') {
         connection.close();
+        if (reply.error.code === 'bad-request' && BUILD_JOB_UNKNOWN.test(last)) return { lost: last };
         return `the machine did not hand the build back (${last})`;
       }
       connection.drop();
@@ -1563,6 +1572,7 @@ export async function offloadBuild(
     note: (line: string) => void;
     /** The fingerprint sources behind `expectedFingerprint` and the gitignored files they read, as absolute paths. */
     fingerprintInputs?: () => Promise<FingerprintInputs>;
+    restarts?: number;
   } & (
     | { request: Extract<BuildRequest, { platform: 'macos' }>; expectedFingerprint?: never }
     | { request: Exclude<BuildRequest, { platform: 'macos' }>; expectedFingerprint: string | null }
@@ -1594,6 +1604,59 @@ export async function offloadBuild(
     closeOffload(choice);
   };
   signal?.addEventListener('abort', cancel, { once: true });
+  let jobLost = false;
+  const reprobe = async (patient = false): Promise<Extract<OffloadOutcome, { ok: false }> | null> => {
+    choice.connection.close();
+    const probeAgain = () =>
+      probeMachine(choice.credential, {
+        ...identity,
+        dependencies: dependencySelection(identity, choice.target),
+        ...(native ? { native: native.provider } : {}),
+      });
+    const deadline = Date.now() + RESUME_WINDOW_MS;
+    let delay = RESUME_DELAY_MS;
+    let probe = await probeAgain();
+    while ('failure' in probe && !probe.refused && Date.now() + delay < deadline) {
+      if (!patient) break;
+      await wait(delay, undefined, { signal }).catch(() => {});
+      checkCancelled();
+      delay = Math.min(delay * 2, RESUME_MAX_DELAY_MS);
+      probe = await probeAgain();
+    }
+    checkCancelled();
+    if ('failure' in probe) return fail(probe.failure);
+    const placement = pickOffer({
+      here: choice.here,
+      target: choice.target,
+      selected: choice.selected,
+      localEnabled: buildPlacementCandidates(choice.selected).localEnabled,
+      offers: [{ machine: choice.machine, offer: probe.offer }],
+    });
+    if (placement.order.length === 0) {
+      probe.connection.close();
+      return fail(placement.reasons.join('; '));
+    }
+    Object.assign(choice, probe, { offer: { ...probe.offer, artifact: null } });
+    return null;
+  };
+  const retryAfterLoss = async (reason: string, lost: string): Promise<OffloadOutcome> => {
+    const restarts = input.restarts ?? 0;
+    if (restarts >= MAX_WORKER_RESTARTS) return fail(reason);
+    note(`offload: ${choice.machine} ${lost} (${reason}); starting the build again there`);
+    const refused = await reprobe(true);
+    if (refused) return refused;
+    const retried = await offloadBuild({ ...input, restarts: restarts + 1 });
+    keepStaging = retried.ok;
+    return retried;
+  };
+  const syncFailed = async (failure: string): Promise<OffloadOutcome> =>
+    typeof choice.connection.failure === 'string'
+      ? await retryAfterLoss(failure, 'dropped the connection')
+      : fail(failure);
+  const workerFailed = async (result: Record<string, unknown>): Promise<OffloadOutcome> =>
+    jobLost
+      ? await retryAfterLoss(String(result.message), 'restarted and lost the build')
+      : keepCorruptCacheMessage(fail(workerFailureReason(result.code, result.message)), result);
   const retryCachedMiss = async (reason: string): Promise<OffloadOutcome> => {
     checkCancelled();
     note(`cache: ${choice.machine}: ${reason}`);
@@ -1603,25 +1666,8 @@ export async function offloadBuild(
       Object.assign(choice, next);
     } else {
       if (choice.cacheOnly) return fail(reason);
-      choice.connection.close();
-      const probe = await probeMachine(choice.credential, {
-        ...identity,
-        dependencies: dependencySelection(identity, choice.target),
-        ...(native ? { native: native.provider } : {}),
-      });
-      if ('failure' in probe) return fail(probe.failure);
-      const placement = pickOffer({
-        here: choice.here,
-        target: choice.target,
-        selected: choice.selected,
-        localEnabled: buildPlacementCandidates(choice.selected).localEnabled,
-        offers: [{ machine: choice.machine, offer: probe.offer }],
-      });
-      if (placement.order.length === 0) {
-        probe.connection.close();
-        return fail(placement.reasons.join('; '));
-      }
-      Object.assign(choice, probe, { offer: { ...probe.offer, artifact: null } });
+      const refused = await reprobe();
+      if (refused) return refused;
     }
     const retried = await offloadBuild(input);
     keepStaging = retried.ok;
@@ -1644,10 +1690,14 @@ export async function offloadBuild(
       const resumed = await resumeJob(choice.credential, job!, () => settled, signal, native?.provider);
       resuming = false;
       if (settled) {
-        if (typeof resumed !== 'string') resumed.connection.close();
+        if (typeof resumed !== 'string' && 'connection' in resumed) resumed.connection.close();
         return;
       }
       if (typeof resumed === 'string') return settle({ ok: false, code: 'closed', message: `${why}; ${resumed}` });
+      if ('lost' in resumed) {
+        jobLost = true;
+        return settle({ ok: false, code: 'closed', message: `${why}; ${resumed.lost}` });
+      }
       choice.connection = resumed.connection;
       resumed.connection.watch();
       note(`offload: reattached to the build on ${choice.machine}`);
@@ -1719,7 +1769,7 @@ export async function offloadBuild(
       checkCancelled();
       if ('failure' in synced) {
         if (moveOn(synced.failure)) continue;
-        return fail(synced.failure);
+        return await syncFailed(synced.failure);
       }
       ({ syncMs, uploadedBytes } = synced);
       sourceDigest = synced.digest;
@@ -1798,8 +1848,7 @@ export async function offloadBuild(
     const { connection, machine } = choice;
     connection.onProgress(null);
     const workerMs = cacheHit ? 0 : Date.now() - workerStarted;
-    if (result.ok !== true)
-      return keepCorruptCacheMessage(fail(workerFailureReason(result.code, result.message)), result);
+    if (result.ok !== true) return await workerFailed(result);
     if (!cacheHit && native && (result.sourceDigest !== sourceDigest || result.fingerprint !== expectedFingerprint))
       return fail('The worker returned a different native source or artifact identity.');
     const rebuilt = rebuiltFingerprint(choice, request, result.fingerprint, expectedFingerprint);

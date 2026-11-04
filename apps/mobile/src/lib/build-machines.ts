@@ -11,9 +11,9 @@ export interface MachineReadiness {
   tone: 'success' | 'warning' | 'error' | 'tertiary';
 }
 
-type State = { title: string; tone: MachineReadiness['tone'] };
+type State = { title: string; tone: MachineReadiness['tone']; remedy?: string };
 
-function pairingState(state: string): State {
+function pairingState(state: string, machine: string): State {
   switch (state) {
     case 'approved':
       return { title: t`Approved`, tone: 'success' };
@@ -25,8 +25,24 @@ function pairingState(state: string): State {
       return { title: t`Revoked`, tone: 'error' };
     case 'lapsed':
       return { title: t`Request lapsed`, tone: 'error' };
-    case 'node-changed':
-      return { title: t`Different machine`, tone: 'error' };
+    case 'key-changed':
+      return {
+        title: t`Different machine`,
+        tone: 'error',
+        remedy: t`if ${machine} or its Stim home was replaced, run stim remote remove ${machine}, then stim remote add ${machine} on the computer this phone is paired with`,
+      };
+    case 'key-unconfirmed':
+      return {
+        title: t`Key not confirmed`,
+        tone: 'warning',
+        remedy: t`run stim remote list in a terminal on the computer this phone is paired with, and answer y only if the fingerprint matches the one stim-server setup printed on ${machine}`,
+      };
+    case 'outdated':
+      return {
+        title: t`Server is outdated`,
+        tone: 'warning',
+        remedy: t`on ${machine}, run stim-server service update --release <version>, then run stim remote add ${machine} on the computer this phone is paired with`,
+      };
     case 'not-on-tailnet':
       return { title: t`Not on the tailnet`, tone: 'warning' };
     case 'tailscale-off':
@@ -50,9 +66,9 @@ function knownProblem(code: string): [string, string | null] | undefined {
     case 'stim-build':
       return [t`Stim build differs`, t`update the remote machine`];
     case 'arch':
-      return [t`Other CPU`, t`use a Mac with the same CPU`];
+      return [t`Other CPU`, t`use a machine with the same CPU`];
     case 'platform':
-      return [t`Not a Mac`, t`iOS and macOS builds need a Mac`];
+      return [t`Not macOS`, t`iOS and macOS builds need macOS`];
     case 'xcode':
       return [t`Xcode differs`, t`select the same Xcode on both`];
     case 'simulator-sdk':
@@ -88,9 +104,11 @@ function knownProblem(code: string): [string, string | null] | undefined {
 export function machineReadiness(report: BuildMachineReport): MachineReadiness {
   const id = report.machine;
   const name = machineName(id);
-  const state = pairingState(report.state);
+  const state = pairingState(report.state, id);
   if (report.state !== 'approved' || report.offloadable === undefined) {
-    return { id, name, ...state, remedy: null };
+    const { diagnosis } = report;
+    if (diagnosis) return { id, name, title: diagnosis.title, tone: state.tone, remedy: diagnosis.remedy };
+    return { id, name, ...state, remedy: state.remedy ?? null };
   }
   if (report.offloadable) return { id, name, title: t`Ready`, tone: 'success', remedy: null };
   const first = report.problems?.[0];

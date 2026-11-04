@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
 import {
   DEVICE_IDLE_SHUTDOWN_KEY,
   DEVICE_METRO_IDLE_STOP_REASON,
@@ -9,15 +9,21 @@ import {
   type DeviceIdleShutdownRecord,
 } from '@stim-cli/core/state';
 import { formatLongDuration } from '../command-output.ts';
-import { collectOwnedDeviceActivity, workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
+import {
+  collectOwnedDeviceActivity,
+  collectOwnedDeviceActivityAsync,
+  workspaceBuildInProgress,
+  type OwnedDeviceActivity,
+} from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { loadConfig } from '../workspace/config.ts';
+import { loadConfig, type Config } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { workspaceDeviceLastUseAt } from './activity.ts';
 import { deviceSlotKey } from './device-slots.ts';
-import { listAllIosSims, type IosSimRecord } from './ios.ts';
+import { listAllIosSims, listAllIosSimsAsync, type IosSimRecord } from './ios.ts';
 import { teardownOwnedAvd, teardownOwnedIosSim } from './teardown.ts';
 
 const SIM_LIST_TIMEOUT_MS = 10_000;
@@ -67,9 +73,19 @@ function listSims(): IosSimRecord[] {
   }
 }
 
-function idleDecisions(root: string | undefined, idleMs: number, now: number): IdleDecision[] {
+async function listSimsAsync(operation: StimContext | undefined): Promise<IosSimRecord[]> {
+  try {
+    return await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS, signal: operation?.signal, operation });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    operation?.signal.throwIfAborted();
+    return [];
+  }
+}
+
+function idleConfig(root: string | undefined, idleMs: number, now: number): Config | null {
   const config = loadConfig();
-  if (!config) return [];
+  if (!config) return null;
   const self = root === undefined ? undefined : canonicalPath(root);
   const projects = Object.fromEntries(
     Object.entries(config.projects).filter(([path]) => {
@@ -78,9 +94,17 @@ function idleDecisions(root: string | undefined, idleMs: number, now: number): I
       return !Number.isFinite(usedAt) || now - usedAt >= idleMs;
     }),
   );
-  if (!Object.keys(projects).length) return [];
-  const builds = new Map(Object.keys(projects).map((path) => [path, workspaceBuildInProgress(path)]));
-  return collectOwnedDeviceActivity({ ...config, projects }, listSims(), now).map((device) => {
+  return Object.keys(projects).length ? { ...config, projects } : null;
+}
+
+function decisionsFor(
+  config: Config,
+  devices: readonly OwnedDeviceActivity[],
+  idleMs: number,
+  now: number,
+): IdleDecision[] {
+  const builds = new Map(Object.keys(config.projects).map((path) => [path, workspaceBuildInProgress(path)]));
+  return devices.map((device) => {
     const buildInProgress = builds.get(device.project) ?? true;
     return {
       device,
@@ -93,6 +117,24 @@ function idleDecisions(root: string | undefined, idleMs: number, now: number): I
           : `it is not idle for ${formatLongDuration(idleMs)}`,
     };
   });
+}
+
+function idleDecisions(root: string | undefined, idleMs: number, now: number): IdleDecision[] {
+  const config = idleConfig(root, idleMs, now);
+  return config ? decisionsFor(config, collectOwnedDeviceActivity(config, listSims(), now), idleMs, now) : [];
+}
+
+async function idleDecisionsAsync(
+  root: string,
+  idleMs: number,
+  now: number,
+  operation: StimContext | undefined,
+): Promise<IdleDecision[]> {
+  const config = idleConfig(root, idleMs, now);
+  if (!config) return [];
+  const sims = await listSimsAsync(operation);
+  const devices = await collectOwnedDeviceActivityAsync(config, sims, now, undefined, operation?.signal, operation);
+  return decisionsFor(config, devices, idleMs, now);
 }
 
 /** Booted owned devices idle for `idleMs`, in one workspace or all registered workspaces when root is absent. */
@@ -130,14 +172,16 @@ export async function shutDownIdleDevices(
     only,
     reason,
     kept,
+    operation,
   }: {
     only?: OwnedDeviceActivity;
     reason?: DeviceIdleShutdownRecord['reason'];
     kept?: (line: string) => void;
+    operation?: StimContext;
   } = {},
 ): Promise<number> {
   let shutDown = 0;
-  for (const { device, idleForMs, keptBecause } of idleDecisions(root, idleMs, now)) {
+  for (const { device, idleForMs, keptBecause } of await idleDecisionsAsync(root, idleMs, now, operation)) {
     if (
       only &&
       (device.kind !== only.kind ||
@@ -153,10 +197,11 @@ export async function shutDownIdleDevices(
     }
     const outcome =
       device.kind === 'ios'
-        ? await teardownOwnedIosSim(device.id, { label: device.name, workspace: root })
+        ? await teardownOwnedIosSim(device.id, { label: device.name, workspace: root, operation })
         : await teardownOwnedAvd(device.id, {
             owner: { projectPath: device.project, slot: device.slot },
             workspace: root,
+            operation,
           });
     if (outcome.status === 'torn-down') {
       shutDown++;

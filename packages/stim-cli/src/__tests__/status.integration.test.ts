@@ -11,7 +11,7 @@ import { createServer } from 'http';
 import { Command } from 'commander';
 import { type ExecOptions, getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
-import { admissionLimits, saveConfig, loadConfig } from '../workspace/config.ts';
+import { admissionLimits, saveConfig, loadConfig, type ProjectRecord } from '../workspace/config.ts';
 import type { AddressInfo } from 'node:net';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
@@ -30,6 +30,7 @@ import { recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 import { startBuildProgress } from '../engine/build-progress.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { quotedPath } from '@stim-cli/core';
+import { listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
 
 const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | null): void =>
   writeHostedNative(root, slot, host, 'ios');
@@ -1309,11 +1310,12 @@ test('status lists worktrees with no environment for every registered repository
     });
 
     await runStatusJson();
-    checkoutReads.length = 0;
-    const payload = await runStatusJson();
     expect(checkoutReads.toSorted()).toEqual(
       [first, second, inner, separate, nested, nestedRepo, loose, idleWorktree, bogusGit].toSorted(),
     );
+    checkoutReads.length = 0;
+    const payload = await runStatusJson();
+    expect(checkoutReads).toEqual([bogusGit]);
     const checkout = (path: string) => payload.environments.find((e: { path: string }) => e.path === path);
     for (const path of [
       first,
@@ -1331,6 +1333,7 @@ test('status lists worktrees with no environment for every registered repository
     expect(checkout(standalone)?.checkout).toBeNull();
     expect(checkout(bogusGit)?.checkout).toBeNull();
     expect(checkout(join(base, 'gone'))?.checkout).toBeNull();
+    writeFileSync(join(nestedRepo, '.git', 'touched'), '');
     refusedCheckout = nestedRepo;
     const refused = await runStatusJson();
     expect(
@@ -1645,3 +1648,95 @@ test.each([undefined, 'idle' as const, 'reclaimed for a waiting run' as const, "
     ).toEqual(record);
   },
 );
+
+describe('status reads the shared device listing', () => {
+  const listingFile = () => join(tmpHome, 'device-listing.json');
+  const iosProjects = {
+    '/proj/a': { label: 'agent-1', platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } },
+    '/proj/b': { label: 'agent-2', platforms: { ios: { deviceUdid: 'UDID-DEF', owned: true } } },
+  };
+  const emulatorProject = {
+    '/proj/e': { label: 'agent-3', platforms: { android: { avdName: 'stim-app', owned: true, consolePort: 5554 } } },
+  };
+  const adbWith = (ports: number[]) => ({
+    emulators: ports.map((consolePort) => ({ serial: `emulator-${consolePort}`, consolePort })),
+    physical: [],
+    unhealthy: [],
+  });
+
+  async function statusWithListing(
+    listing: ((sims: IosSimRecord[]) => string) | null,
+    projects: Record<string, ProjectRecord> = iosProjects,
+  ) {
+    saveConfig(makeConfig({ version: 2, concurrency: { maxDevices: 3 }, projects }));
+    setBootedSims(null);
+    const base = getExecutor();
+    const listings: string[] = [];
+    const adbCalls: string[] = [];
+    setExecutor({
+      ...base,
+      runFileAsync: async (file, args = [], options) => {
+        if (args.join(' ').includes('simctl list devices --json')) listings.push(args.join(' '));
+        if (args.join(' ') === 'devices') {
+          adbCalls.push(file);
+          return 'List of devices attached\nemulator-5554\tdevice\n';
+        }
+        return (await base.runFileAsync?.(file, args, options)) ?? '';
+      },
+    });
+    const sims = await listAllIosSimsAsync();
+    listings.length = 0;
+    rmSync(listingFile(), { force: true });
+    if (listing) writeFileSync(listingFile(), listing(sims));
+    return { payload: await runStatusJson(), listings, adbCalls };
+  }
+
+  const file = (record: object) => (sims: IosSimRecord[]) =>
+    JSON.stringify({ schema: 1, listedAt: Date.now(), sims, adb: null, ...record });
+  const fresh = file({});
+
+  test('a fresh listing answers the simulator state and device slots without running simctl, and the payload is unchanged', async () => {
+    const own = await statusWithListing(null);
+    expect(own.listings).toHaveLength(1);
+    expect(own.payload.capacity.devices.inUse).toBe(2);
+
+    const shared = await statusWithListing(fresh);
+    expect(shared.listings).toEqual([]);
+    expect(shared.payload).toEqual(own.payload);
+  });
+
+  test('a fresh listing that lacks a recorded simulator is not used, so a simulator created after it is not reported missing', async () => {
+    const result = await statusWithListing((sims) => file({ sims: sims.slice(0, 1) })(sims));
+    expect(result.listings).toHaveLength(1);
+    expect(result.payload.capacity.devices.inUse).toBe(2);
+    expect(result.payload.environments.map((env: { ios: { state: string } }) => env.ios.state)).toEqual([
+      'Booted',
+      'Booted',
+    ]);
+  });
+
+  test.each([
+    ['stale', (sims: IosSimRecord[]) => JSON.stringify({ schema: 1, listedAt: Date.now() - 30_000, sims, adb: null })],
+    ['corrupt', () => '{"schema":1,"listedAt":'],
+    ['older schema', (sims: IosSimRecord[]) => JSON.stringify({ listedAt: Date.now(), sims, adb: null })],
+    ['missing', null],
+  ])('a %s listing makes status list the devices itself', async (_name, listing) => {
+    const result = await statusWithListing(listing);
+    expect(result.listings).toHaveLength(1);
+    expect(result.payload.capacity.devices.inUse).toBe(2);
+  });
+
+  test.each([
+    ['carries the emulator listing', file({ adb: adbWith([5554]) }), 0],
+    ['carries no emulator listing', fresh, 1],
+    ['does not list a recorded owned emulator', file({ adb: adbWith([5556]) }), 1],
+  ])(
+    'a fresh listing that %s is used for the emulators only when it covers the recorded ones',
+    async (_name, listing, adbRuns) => {
+      const result = await statusWithListing(listing, emulatorProject);
+      expect(result.listings).toEqual([]);
+      expect(result.adbCalls).toHaveLength(adbRuns);
+      expect(result.payload.capacity.devices.inUse).toBe(3);
+    },
+  );
+});

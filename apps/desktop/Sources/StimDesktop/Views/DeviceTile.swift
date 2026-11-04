@@ -212,11 +212,11 @@ struct DeviceTile: View {
     .task(id: clipboardRequest) {
       guard let request = clipboardRequest, request.target == clipboardTarget else { return }
       defer { if clipboardRequest == request { clipboardRequest = nil } }
-      let failure = await pasteToDevice(request.text)
+      let pasted = await pasteToDevice(request.text)
       guard !Task.isCancelled, request.target == clipboardTarget else { return }
-      if let failure {
+      if let failure = pasted.failure {
         clipboardError = failure
-      } else if case .ios = device {
+      } else if case .ios = device, !pasted.typed {
         clipboardNotice = "If nothing appears, tap the paste suggestion on the device."
       }
     }
@@ -592,7 +592,7 @@ struct DeviceTile: View {
       .labelStyle(.iconOnly)
       .buttonStyle(DeviceControlButtonStyle())
       .disabled(!interactive)
-      .help(interactive ? "Press the device's \(title) button" : "Take over the device to press its \(title) button")
+      .help(interactive ? "Press the device's \(title) button" : "Control the device to press its \(title) button")
       .accessibilityLabel("Press \(title)")
   }
 
@@ -851,22 +851,26 @@ struct DeviceTile: View {
     }
   }
 
-  /// The failure to show, or nil once the text is pasted.
-  private func pasteToDevice(_ text: String) async -> String? {
+  /// The failure to show, nil once the text is pasted, and whether an iOS simulator typed it instead of pasting it.
+  private func pasteToDevice(_ text: String) async -> (failure: String?, typed: Bool) {
     let localFailure = "Could not paste into the device. Check that it is connected and a text field is focused."
     switch clipboardRoute {
-    case .simulator: return await simulatorButtons.paste(text) ? nil : localFailure
-    case .emulator: return await emulatorButtons.paste(text) ? nil : localFailure
+    case .simulator:
+      switch await simulatorButtons.paste(text) {
+      case .typed: return (nil, true)
+      case .pasted: return (nil, false)
+      case .failed: return (localFailure, false)
+      }
+    case .emulator: return (await emulatorButtons.paste(text) ? nil : localFailure, false)
     case .server:
       do {
-        try await serverClipboard.set(text, paste: true)
-        return nil
+        return (nil, try await serverClipboard.set(text, paste: true))
       } catch is CancellationError {
-        return nil
+        return (nil, false)
       } catch {
-        return "Could not paste into the device. \(error.localizedDescription)"
+        return ("Could not paste into the device. \(error.localizedDescription)", false)
       }
-    case nil: return nil
+    case nil: return (nil, false)
     }
   }
 
@@ -1229,7 +1233,8 @@ struct DeviceTile: View {
             showsDeviceFrame: viewer && showsDeviceFrame, onFrameSizeChange: viewer ? { frameSizes[screenID] = $0 } : nil,
             duoFrame: viewer && device.formFactor == .dual ? duoFrame : nil, activeScreenID: mainScreenID,
             duoHingeAngle: observedHingeAngle, artworkScale: pixelScale.map { $0 * framePixelsPerUnit },
-            accurateScreenSize: accurateScreenSize(screenID), onInput: onInput
+            accurateScreenSize: accurateScreenSize(screenID), onInput: onInput,
+            hardwareKeyboard: sim.owned
           )
           .frame(
             width: displayedScreenIDs.contains(screenID) ? screenWidth(screenID) : 0,

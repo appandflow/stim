@@ -112,17 +112,20 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   public var pairedAt: Date
   public var lastSeenAt: Date?
   public var capabilities: [String]
+  /// `phone` for a pairing from `stim-server pair`, `desktop` for Stim Desktop on another machine, `build-client` or
+  /// `device-host-client`; absent from an older stim-server.
+  public var kind: String?
 
   /// Whether the device may run actions and drive devices, not only read.
   public var canControl: Bool { capabilities.contains("control") }
 
-  /// A Mac that may build here, rather than a phone or app that reads.
+  /// A machine that may build here, rather than a phone or app that reads.
   public var isBuildClient: Bool { capabilities.contains("build") }
 
-  /// A Mac that may run hosted devices here.
+  /// A machine that may run hosted devices here.
   public var isDeviceHostClient: Bool { capabilities.contains("device-host") }
 
-  /// A paired phone or app that reads and may control, as the Paired Devices list shows it.
+  /// A pairing from `stim-server pair` that reads and may control: a phone, or Stim Desktop on another machine.
   public var isPhone: Bool { !isBuildClient && !isDeviceHostClient }
 }
 
@@ -256,6 +259,10 @@ public struct StimServerCLI: Sendable {
     _ = try await run(["devices", "revoke", id])
   }
 
+  public func rename(_ id: String, to name: String) async throws {
+    _ = try await run(["devices", "rename", id, name])
+  }
+
   /// Starts the server on `port`; it runs until terminated.
   public func serve(
     port: Int = defaultPort,
@@ -269,34 +276,33 @@ public struct StimServerCLI: Sendable {
     let run = DebugLog.CLIRun(tool: "stim-server", arguments: arguments, cwd: NSHomeDirectory())
     var environment = environment
     environment.removeValue(forKey: "STIM_DESKTOP_BOOTSTRAP_FD")
-    let input: Pipe?
+    environment.removeValue(forKey: "STIM_DESKTOP_LIFETIME_FD")
+    let input = Pipe()
     if let bootstrap {
       guard bundled != nil else {
         throw ServerError(code: "forbidden", message: "Private Desktop bootstrap requires the bundled server.")
       }
-      let pipe = Pipe()
-      try pipe.fileHandleForWriting.write(contentsOf: bootstrap.input)
-      input = pipe
+      try input.fileHandleForWriting.write(contentsOf: bootstrap.input)
       environment["STIM_DESKTOP_BOOTSTRAP_FD"] = "0"
     } else {
-      input = nil
+      environment["STIM_DESKTOP_LIFETIME_FD"] = "0"
     }
-    defer { try? input?.fileHandleForReading.close() }
+    defer { try? input.fileHandleForReading.close() }
     environment["STIM_RUN_ID"] = run.runID
     if bundled != nil, let cache = Self.compileCache { environment["NODE_COMPILE_CACHE"] = cache }
     let tail = LockedValue([String]())
-    let lifetime = input?.fileHandleForWriting
+    let lifetime = input.fileHandleForWriting
     do {
       return try ProcessStream.start(
         executable: command.program, arguments: command.arguments, cwd: NSHomeDirectory(),
         environment: environment,
-        standardInput: input?.fileHandleForReading,
+        standardInput: input.fileHandleForReading,
         onLine: { line in
           if line.channel == .stderr { tail.withLock { $0 = Array(($0 + [line.text]).suffix(3)) } }
           onLine(line)
         },
         onExit: { status in
-          try? lifetime?.close()
+          try? lifetime.close()
           DebugLog.info(
             .server,
             "stim-server process exited status=\(status) run=\(run.runID) stderr: \(tail.withLock { $0.joined(separator: " | ") })"
@@ -304,7 +310,7 @@ public struct StimServerCLI: Sendable {
           onExit(status)
         })
     } catch {
-      try? lifetime?.close()
+      try? lifetime.close()
       throw error
     }
   }
@@ -324,6 +330,37 @@ public struct StimServerCLI: Sendable {
       let response = response as? HTTPURLResponse
     else { return nil }
     return decodeHealth(data, statusCode: response.statusCode)
+  }
+
+  /// Whether something accepts a connection on `port` of this Mac's loopback, such as a stim-server too busy to answer
+  /// `/health`. A connection that is neither accepted nor refused within half a second counts as held.
+  public static func portIsHeld(_ port: Int) async -> Bool {
+    await Task.detached { () -> Bool in
+      let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+      guard descriptor >= 0 else { return false }
+      defer { close(descriptor) }
+      _ = fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK)
+      var address = sockaddr_in()
+      address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+      address.sin_family = sa_family_t(AF_INET)
+      address.sin_port = in_port_t(UInt16(truncatingIfNeeded: port)).bigEndian
+      address.sin_addr.s_addr = inet_addr("127.0.0.1")
+      let result = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+          connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
+      }
+      if result == 0 { return true }
+      guard errno == EINPROGRESS else { return false }
+      var wait = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
+      let ready = poll(&wait, 1, 500)
+      if ready == 0 { return true }
+      guard ready > 0 else { return false }
+      var failure: Int32 = 0
+      var length = socklen_t(MemoryLayout<Int32>.size)
+      getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &failure, &length)
+      return failure == 0
+    }.value
   }
 
   static func decodeHealth(_ data: Data, statusCode: Int) -> ServerHealthProbe? {

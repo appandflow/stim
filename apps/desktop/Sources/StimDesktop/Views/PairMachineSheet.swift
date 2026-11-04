@@ -74,7 +74,7 @@ struct PairMachineSheet: View {
         .font(.stim(.footnote)).foregroundStyle(Palette.warning)
     }
     Text(
-      "A pairing lets this Mac see what the machine's server shows a phone: workspace paths, status and logs, changed files including .env files, the doctor report and the live screens of its devices. A code from a plain stim-server pair can only read."
+      "A pairing lets this machine see what the machine's server shows a phone: workspace paths, status and logs, changed files including .env files, the doctor report and the live screens of its devices. A code from a plain stim-server pair can only read."
     )
     .font(.stim(.footnote)).foregroundStyle(Palette.tertiary).fixedSize(horizontal: false, vertical: true)
   }
@@ -86,6 +86,12 @@ struct PairMachineSheet: View {
       fact("Fingerprint", payload.fingerprint, mono: true)
       Text("Desktop pairs only with the machine whose key has this fingerprint.")
         .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+      if payload.network == .localNetwork {
+        Text(
+          "This is a local network address, not a Tailscale one. Pair only with a code you copied directly from the machine's own terminal."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.warning).fixedSize(horizontal: false, vertical: true)
+      }
     }
     .padding(Space.lg)
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -113,8 +119,8 @@ struct PairMachineSheet: View {
     VStack(alignment: .leading, spacing: Space.lg) {
       Label("Paired with \(pairing.name.isEmpty ? "the machine" : pairing.name)", systemImage: "checkmark.circle.fill")
         .font(.stim(.headline)).foregroundStyle(Palette.success)
+      ConnectionConfirmationView(confirmation: .paired(pairing))
       VStack(alignment: .leading, spacing: Space.sm) {
-        fact("Access", PairedServerWording.access(pairing.capabilities))
         fact("Endpoint", pairing.endpoint.absoluteString, mono: true)
         fact("Fingerprint", pairing.id, mono: true)
       }

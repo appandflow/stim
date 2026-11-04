@@ -225,7 +225,9 @@ returns; --scope and setsid do not escape a runner that reaps descendants.
 The service uses the user's login-shell environment. Check its journal if it
 cannot find stim or the project's Node version.
 
-Stim does not detect these runners or manage the transient unit. At the end of
+Stim does not detect these runners or manage this transient unit. The stim-daemon
+needs no recipe: it starts as its own transient user service when a user systemd
+manager answers (guide settings, THE STIM DAEMON). At the end of
 the workflow, stop the workspace and the specific unit you created:
 
   stim stop
@@ -255,15 +257,15 @@ the workflow, stop the workspace and the specific unit you created:
   logs, in-app console logs, dev server output and log file times never count, so an open app that only hot-reloads or logs
   is idle, and a live view that only streams frames does not keep it. It
   stays running while a bundle response is in flight, while a build in the
-  workspace is in progress, while a stim ios, android or stop run holds the
+  workspace is in progress, while a stim ios, android, share or stop run holds the
   workspace's native-run lock, while the workspace holds an unexpired device
   lease (\`stim device lock\` or a --device run, physical devices included),
   while one of its devices is driven, a live agent-device session included,
   or its activity is unknown (\`guide facts status\`; on Windows, which has
   no ps, the host driver-process probe is skipped), while simctl or adb cannot
   list its devices, while its owned Chrome or a hosted device runs, while a
-  web share of it is live (\`guide share\`; stim share stop or its expiry
-  ends that), while maintenance.keep pins it, and while a \`stim start\`
+  web share of it is live or waiting (\`guide share\`; stim share stop or its
+  expiry ends that), while maintenance.keep pins it, and while a \`stim start\`
   holds its metro-start lock. A dev server whose requests Stim cannot see
   (metro.command, or an Expo SDK before 54) never stops for being idle. The
   pass records workspace_idle and supervisor_stopped lines in metro.ndjson,

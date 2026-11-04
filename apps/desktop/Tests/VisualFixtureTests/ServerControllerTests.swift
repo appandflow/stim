@@ -37,6 +37,31 @@ import XCTest
         probe: .notReady(.pending, stimHome: nil), resolvedHome: "/custom/stim", loopbackOnly: true, explicitPort: false))
   }
 
+  func testARunningServerThatRefusesDesktopsConnectionIsAProblemButAStartingOneIsNot() throws {
+    let health = try JSONDecoder().decode(
+      ServerHealth.self,
+      from: Data(
+        #"{"server":"stim-server","name":"Mac","version":"1","stim":"1","protocol":2,"stimHome":"/server/stim","tailscale":{"state":"running"}}"#
+          .utf8))
+    let refusal = "Another stim-server owns this Stim home's socket, not the one on port 7787."
+    XCTAssertEqual(
+      ServerController.problem(state: .running(health, owned: true), connectionRefusal: refusal), refusal)
+    XCTAssertNil(ServerController.problem(state: .running(health, owned: true), connectionRefusal: nil))
+    XCTAssertNil(ServerController.problem(state: .starting, connectionRefusal: refusal))
+    XCTAssertEqual(
+      ServerController.problem(state: .failed("Port in use."), connectionRefusal: refusal), "Port in use.")
+  }
+
+  func testASilentAdoptedServerIsWaitedForAndTheLaunchAgentIsNamedOnlyWhenInstalled() {
+    let service = ServerController.adoptedServerSilentReason(port: 7787, serviceInstalled: true)
+    let other = ServerController.adoptedServerSilentReason(port: 7787, serviceInstalled: false)
+    XCTAssertTrue(service.contains("dev.stim.server"))
+    XCTAssertFalse(other.contains("dev.stim.server"))
+    for reason in [service, other] {
+      XCTAssertTrue(reason.contains("port 7787") && reason.contains("does not start its own server"))
+    }
+  }
+
   func testAnAutomaticPortUsesOnlyTheChildsLoopbackListenerAnnouncement() {
     XCTAssertEqual(ServerController.announcedLoopbackPort(OutputLine(.stdout, "listening on ws://127.0.0.1:49152")), 49152)
     XCTAssertNil(ServerController.announcedLoopbackPort(OutputLine(.stderr, "listening on ws://127.0.0.1:49152")))

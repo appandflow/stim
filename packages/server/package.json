@@ -1,6 +1,6 @@
 {
   "name": "@stim-cli/server",
-  "version": "1.39.0",
+  "version": "1.40.0",
   "description": "Serves Stim status to paired clients over Tailscale, and runs reload and stop for clients granted control.",
   "license": "MIT",
   "repository": {
@@ -42,6 +42,9 @@
   },
   "devDependencies": {
     "@types/ws": "^8.18.1"
+  },
+  "optionalDependencies": {
+    "node-datachannel": "0.33.6"
   },
   "engines": {
     "node": ">=22.12.0"

@@ -361,11 +361,12 @@ app's other windows are allowed; input goes to the captured window, and a sheet
 attached to it takes focus and pointer input. Input that arrives while the view
 moves to another window is dropped and Control continues. A modal dialog window
 refuses input. A sheet larger than the captured window is not supported.
-The server holds one exclusive session per app, ending
-on disconnect, revocation, takeover or five idle minutes, without a CLI device
+Several clients can control the app at once, sharing one input session per app
+that lasts while any of them controls it; each client's Control ends on
+disconnect, revocation or five idle minutes, without a CLI device
 lock. Existing **Device Control and Data Access** permission (**Accessibility** on
 macOS 26 and earlier) is required. Stim never requests
-or resets permissions. An input refusal ends Control with its reason while
+or resets permissions. An input refusal ends every client's Control with its reason while
 viewing and logs remain usable; older servers stay view-only.
 
 Native Control uses dynamically resolved private CoreGraphics input SPI in the

@@ -120,7 +120,10 @@ graphql lookup gc uses, one call per repository, for a worktree whose lookup
 is over 5 minutes old or whose branch or HEAD moved. It runs git in the
 repository, never in the worktree. It caches each answer
 under $STIM_HOME/pull-requests, which one-shot status only reads, and never
-warns when gh is unavailable.
+warns when gh is unavailable. That cache is the one every pull request lookup
+shares: stim-server's finished-worktree notifications read it while it is under
+5 minutes old and ask GitHub only for the rest, and gc and \`worktree remove\`
+write their answers to it.
 
 status's remoteDevices lists each environment's recorded EAS Simulator
 session. The session is billable while it runs, and it makes the environment
@@ -602,7 +605,7 @@ leased until <time>" for each one.`,
                   (deviceHosts carries it too); the codes are
                   tailscale-stopped, tailscale-logged-out, tailscale-unavailable
                   (this machine's Tailscale), peer-not-found, peer-ambiguous,
-                  peer-wrong-tailnet (no peer is named so, and this Mac is
+                  peer-wrong-tailnet (no peer is named so, and this machine is
                   signed in to another tailnet than the one it was on when it
                   asked the machine for access; both are named; tailnet is
                   { name, suffix?, id? }),
@@ -655,7 +658,7 @@ leased until <time>" for each one.`,
                   memory-culprit is a costs-time finding naming a process
                   with an abnormally large footprint and, when it is safe to
                   restart, the command
-                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Remote Machines > Add
+                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Connections > This machine uses > Add
                   readiness-markers-missing is a note when no JS or TS source under the app directory contains [stim:readiness]; the scan skips node_modules, native and build output directories and dot-directories, and reports nothing past 5000 source files; see stim guide lifecycle readiness
 
 ON FAILURE
@@ -676,7 +679,9 @@ ON FAILURE
   exits 130 with no payload.
 
   \`stop --json\` prints { root, ok, supervisor, collectors, metro, device,
-  port, metroTunnel, releasedLeases, macos? }. macos is { status: stopped | failed,
+  port, metroTunnel, releasedLeases, macos? }. device.ios is { status:
+  "kept-booted", label, until } when the owned simulator stays booted until
+  the ISO time \`until\` (guide lifecycle pool); ok stays true. macos is { status: stopped | failed,
   reason? } when a macOS app is recorded. When it cannot end the \`ios\` or
   \`android\` run holding the workspace, it prints the error contract with
   root and ok: false instead, plus device.remote when it ended a recorded EAS
@@ -987,8 +992,10 @@ RULES
                               measured within 10 seconds; sizes are cached
                               for up to an hour while no entry of the
                               directory was added or removed (for
-                              node_modules and Pods, while their install
-                              signature is unchanged). null
+                              node_modules and Pods, for up to six hours
+                              while their install signature is unchanged,
+                              the same measurement status and the daemon
+                              use). null
                               for a root outside git. Without --worktrees,
                               the source checkout and roots outside git
                               are left out
@@ -1371,7 +1378,10 @@ RULES
                                     Metro, but the adb reverse for that Metro
                                     port is gone, so the app cannot reach
                                     Metro; the remedy stim reload android
-                                    restores it
+                                    restores it. It also fires for a port
+                                    reversed with stim ports reverse that the
+                                    emulator lost; the remedy is then
+                                    stim ports reverse <port>
              avd-not-detected       adb does not see the owned emulator while
                                     the workspace expects it: it holds an
                                     unexpired lease on its serial, or it
@@ -1832,12 +1842,17 @@ RULES
                       workspace, node_modules included; the linked
                       worktrees nested inside a checkout are not counted
     nodeModulesBytes  node_modules at that root and at the workspace path;
-                      part of worktreeBytes; du counts APFS clones in full
+                      part of worktreeBytes; du counts APFS clones in full;
+                      null until measured, and again after a reinstall or
+                      a fresh clone until the next measurement
     nodeModulesPrivateBytes
                       what deleting that node_modules would free on APFS:
                       blocks no copy-on-write clone (worktree warm clones
                       it) or hard link outside it shares; null off APFS,
-                      without the Command Line Tools, or until measured
+                      without the Command Line Tools, or like
+                      nodeModulesBytes until measured. gc's node_modules
+                      privateBytes and the daemon's cleanup read the same
+                      measurement
     buildBytes        Stim's folder for the workspace: Xcode derived data,
                       Gradle outputs and logs
     measuredAt        the oldest of the three measurements; a figure not
@@ -1847,11 +1862,12 @@ RULES
 
   \`status --watch\` runs one disk walk at a time on the whole machine, at low
   priority, off its refresh path, and measures a folder at most every 5
-  minutes while its environment is active and every hour otherwise. A walk
-  that fails or times out is not repeated by any watcher for that period. It
-  caches each size under $STIM_HOME/disk-usage, which one-shot status only
-  reads, so the fields appear once a watcher, such as stim-server or Stim
-  Desktop, has measured.
+  minutes while its environment is active and every hour otherwise. A
+  node_modules is measured again when its install changes and after 6 hours,
+  as the daemon and gc do. A walk that fails or times out is not repeated by
+  any watcher for that period. It caches each size under $STIM_HOME/disk-usage,
+  which one-shot status only reads, so the fields appear once a watcher, such
+  as stim-server or Stim Desktop, has measured.
 
   An environment carries agents when coding-agent sessions work in it, most
   recently active first:

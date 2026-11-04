@@ -51,14 +51,10 @@ public struct ServerRemedyResult: Sendable {
   feature: String, json: Bool, onLine: @escaping @MainActor (OutputLine) -> Void = { _ in }
 ) async throws -> ServerRemedyResult {
   try Task.checkCancellation()
-  guard let client = readCapableServer(connection, stimHome: stimHome), client.hasDesktopAuthority else {
-    throw ServerError(
-      code: "not-connected",
-      message: "The bundled local stim-server is not ready to run this Desktop action from this Stim home.")
-  }
+  let client = try desktopActionServer(connection, stimHome: stimHome, action: "run this Desktop action from this Stim home")
   guard case .open(let hello) = client.state, hello.features?.contains(feature) == true else {
     throw ServerError(
-      code: "unsupported", message: "Update the bundled stim-server to run this Desktop action.")
+      code: "unsupported", message: "Update stim-server to run this Desktop action.")
   }
   let (events, continuation) = AsyncThrowingStream<ServerEvent, Error>.makeStream()
   var terminal: ServerEvent?

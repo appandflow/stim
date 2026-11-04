@@ -20,7 +20,11 @@ export type MaintenanceActionKind =
   | 'would-stop-gradle-daemons'
   | 'would-delete-gradle-version'
   | 'would-delete-temp-leftovers'
-  | 'would-delete-trash';
+  | 'would-delete-trash'
+  | 'would-delete-status-caches'
+  | 'would-delete-process-locks'
+  | 'would-delete-device-lease'
+  | 'would-delete-expired-archives';
 
 /** Disk pressure: 0 above every threshold, 1 under the budget floor, 2 under the urgent threshold, 3 under the critical threshold or the hard floor. */
 export type DiskPressureLevel = 0 | 1 | 2 | 3;
@@ -103,6 +107,8 @@ export interface MaintenanceRecord extends NdjsonRecord {
   mode: 'report' | 'on';
 }
 
+export type MaintenancePlanPart = 'caps' | 'sweep' | 'worktree' | 'idle';
+
 export interface MaintenanceState {
   version: 1;
   lastAt: Partial<Record<MaintenanceCheck, number>>;
@@ -113,6 +119,16 @@ export interface MaintenanceState {
   recent: MaintenanceRecord[];
   plan: MaintenanceAction[];
   skipKeys?: string[];
+  /**
+   * The blocked reasons and skipped targets of each part of the plan, from the last pass that planned it: the cap trims
+   * and the sweep, worktree and idle checks. A pass keeps the entries of the parts it does not plan.
+   */
+  byCheck?: Partial<Record<MaintenancePlanPart, { blocked: string[]; skipKeys: string[] }>>;
+  /**
+   * The finished worktree the last worktree check kept only for its grace period that becomes removable first, and
+   * when. The daemon stays alive until a later check removes it or keeps it for another reason.
+   */
+  nextRemoval?: { target: string; at: number };
 }
 
 export interface MaintenanceStatus {
@@ -148,6 +164,10 @@ const KINDS: readonly string[] = [
   'would-delete-gradle-version',
   'would-delete-temp-leftovers',
   'would-delete-trash',
+  'would-delete-status-caches',
+  'would-delete-process-locks',
+  'would-delete-device-lease',
+  'would-delete-expired-archives',
 ];
 
 /** Rejects missing, corrupt or unsupported payloads without throwing. */
@@ -155,6 +175,19 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
   if (!isJsonObject(value) || value.version !== 1 || !isJsonObject(value.lastAt)) return null;
   if (!Object.values(value.lastAt).every(finite)) return null;
   if (value.skipKeys !== undefined && !strings(value.skipKeys)) return null;
+  if (
+    value.byCheck !== undefined &&
+    (!isJsonObject(value.byCheck) ||
+      !Object.values(value.byCheck).every(
+        (part) => isJsonObject(part) && strings(part.blocked) && strings(part.skipKeys),
+      ))
+  )
+    return null;
+  if (
+    value.nextRemoval !== undefined &&
+    (!isJsonObject(value.nextRemoval) || typeof value.nextRemoval.target !== 'string' || !finite(value.nextRemoval.at))
+  )
+    return null;
   if (
     value.deferredAt !== undefined &&
     (!isJsonObject(value.deferredAt) || !Object.values(value.deferredAt).every(finite))

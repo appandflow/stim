@@ -53,6 +53,11 @@ export function workspaceEndedAgentsLock(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'ended-agents.lock');
 }
 
+/** The claim a native run, a stop, an automatic shutdown or a web share start holds on one workspace's devices. */
+export function workspaceNativeRunClaim(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'native-run.lock');
+}
+
 export function supervisorPidFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'supervisor.pid');
 }
@@ -64,6 +69,11 @@ export function workspaceStateFile(projectRoot: string): string {
 /** The dependency directories `gc --delete` deleted from the workspace's worktree, apart from state.json so writing it is not workspace activity. */
 export function workspaceLightenedFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'lightened.json');
+}
+
+/** The links `stim share` started in the workspace that `stim share --reuse` can start again; holds secrets, mode 0600. */
+export function workspaceShareLinksFile(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'share-links.json');
 }
 
 export function workspaceStateLock(projectRoot: string): string {
@@ -113,6 +123,11 @@ export function agentSessionsCacheFile(): string {
 /** The last device listing a boot admission took, which queued runs reuse while it is fresh instead of listing again. */
 export function deviceListingCacheFile(): string {
   return join(configDir(), 'device-listing.json');
+}
+
+/** The checkouts `status` confirmed as repository roots. */
+export function checkoutRootsCacheFile(): string {
+  return join(configDir(), 'checkout-roots.json');
 }
 
 export function diskUsageCacheDir(): string {
@@ -284,6 +299,11 @@ export function daemonDir(): string {
 /** The ownership claim the running home daemon holds for its lifetime. */
 export function daemonClaimRoot(): string {
   return join(daemonDir(), 'claim');
+}
+
+/** The ownership claim a starting daemon holds while it takes over from a running daemon of another build. */
+export function daemonHandoverClaimRoot(): string {
+  return join(daemonDir(), 'handover');
 }
 
 export function daemonSocket(): string {

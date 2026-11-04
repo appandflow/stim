@@ -4,18 +4,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { runStop, stopWorkspaceNow } from '../commands/stop.ts';
+import { workspaceNativeRunClaim } from '@stim-cli/core/state';
 import {
   decideStopAction,
+  NATIVE_RUN_LOCK,
   nativeRunWaitNotice,
   runCancellation,
   withNativeBuildRun,
   type NativeRunHolder,
 } from '../engine/native-run.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
+import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { testContext } from './_context.ts';
 import { getExecutor } from '../exec.ts';
 import { type ClaimHolder } from '../ownership-claim.ts';
 import { upsertProject } from '../workspace/config.ts';
+import { workspaceDir } from '../workspace/paths.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 const ios = (slot = 'default'): Omit<NativeRunHolder, 'takesSignals'> => ({ command: 'ios', platform: 'ios', slot });
@@ -35,6 +39,14 @@ describe('decideStopAction', () => {
       'another stop is waited on',
       undefined,
       { command: 'stop', platform: null, slot: 'default' },
+      'same',
+      ['default'],
+      'wait',
+    ],
+    [
+      'a web share start in stim-server is waited on, never interrupted',
+      undefined,
+      { command: 'share', platform: null, slot: 'default' },
       'same',
       ['default'],
       'wait',
@@ -294,5 +306,11 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
       const [code] = await holder.exited;
       expect(code).toBe(0);
     },
+  );
+});
+
+test("the claim a web share start takes in stim-server is the workspace's native-run lock", () => {
+  expect(workspaceNativeRunClaim('/work/app')).toBe(
+    workspaceProcessLockPath(workspaceDir('/work/app'), NATIVE_RUN_LOCK, true),
   );
 });

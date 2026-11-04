@@ -1786,7 +1786,7 @@
           "platform": "android",
           "decision": "offloaded",
           "machine": "janics-mac-mini:7869",
-          "reason": "this Mac is busy: 3 of 3 build slots busy (load 2.4/core, 3 of 3 build slots busy); load 0.4/core, 0 builds there",
+          "reason": "this machine is busy: 3 of 3 build slots busy (load 2.4/core, 3 of 3 build slots busy); load 0.4/core, 0 builds there",
           "buildMs": 171000,
           "localEstimateMs": 262000
         },
@@ -1804,7 +1804,7 @@
           "platform": "ios",
           "decision": "offloaded",
           "machine": "janics-mac-mini:7869",
-          "reason": "this Mac is busy: load 2.1/core over 2; load 0.3/core, 0 builds there",
+          "reason": "this machine is busy: load 2.1/core over 2; load 0.3/core, 0 builds there",
           "buildMs": 198000,
           "localEstimateMs": 241000
         }

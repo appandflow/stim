@@ -1,6 +1,6 @@
 import { isJsonObject, type StatusPayload } from '@stim-cli/core/state';
 import type { AuditRecord } from './actions.ts';
-import type { Controller, InputCommand, SessionTarget } from './control.ts';
+import { isExtendedDeviceKey, type Controller, type InputCommand, type SessionTarget } from './control.ts';
 import type { FrameHint } from './frame-helper.ts';
 import type { Frame, FrameListener } from './frames.ts';
 import { GRAB_IDLE_MS, PointerGrab } from './pointer-grab.ts';
@@ -41,6 +41,11 @@ export interface ShareSource {
   keyframe: () => void;
   /** A video listener is behind; called until its socket drains, it lowers the bitrate. */
   congested: () => void;
+  /**
+   * Answers a viewer's WebRTC offer with a peer on the machine that owns the device, which sends the video
+   * straight to the viewer. `closed` runs once when the peer ends on its own; rejects when the source cannot offer one.
+   */
+  webrtc?: (offer: string, closed: (reason: string) => void) => Promise<{ answer: string; close: () => void }>;
   begin: (
     owner: Controller,
     target: ControlBeginParams,
@@ -69,6 +74,8 @@ export interface ShareSource {
     leave: (id: string) => void;
   };
   endFor: (owner: Controller, message: string) => void;
+  /** Ends only `session`, which may already be gone or replaced by a newer one. */
+  end: (owner: Controller, session: string, message: string) => void;
   close: () => void;
 }
 
@@ -186,6 +193,49 @@ export class HostedShareSource implements ShareSource {
     void open.lease.connection
       .request('device-host.frames.congested', { subscription: open.subscription })
       .catch(() => {});
+  }
+
+  async webrtc(offer: string, closed: (reason: string) => void): Promise<{ answer: string; close: () => void }> {
+    const lease = await this.hosts.acquire(this.host);
+    let subscription: string;
+    let answer: string;
+    try {
+      if (!lease.connection.supports('hosted-webrtc')) {
+        throw new Error(`${this.host.machine} cannot send WebRTC: update its Stim.`);
+      }
+      const reply = await lease.connection.request('device-host.webrtc.offer', {
+        session: this.host.session,
+        sdp: offer,
+      });
+      if ('error' in reply) throw new Error(reply.error.message);
+      if (
+        !isJsonObject(reply.result) ||
+        typeof reply.result.subscription !== 'string' ||
+        typeof reply.result.sdp !== 'string'
+      )
+        throw new Error('the host sent no WebRTC answer');
+      subscription = reply.result.subscription;
+      answer = reply.result.sdp;
+    } catch (cause) {
+      lease.release();
+      throw cause;
+    }
+    const unroute = lease.connection.route(`s:${subscription}`, {
+      event: (event) => {
+        if (!Buffer.isBuffer(event) && event.event === 'webrtc-closed') closed(String(event.message));
+      },
+      closed: (error) => closed(error.message),
+    });
+    let done = false;
+    return {
+      answer,
+      close: () => {
+        if (done) return;
+        done = true;
+        unroute();
+        release(lease, 'device-host.unsubscribe', { subscription });
+      },
+    };
   }
 
   private async openFrames(stream: Stream, hint: FrameHint, video: boolean): Promise<void> {
@@ -376,10 +426,27 @@ export class HostedShareSource implements ShareSource {
         message: `${this.host.machine} cannot set or read a clipboard: update its Stim.`,
       };
     }
+    if (
+      command.input === 'key' &&
+      isExtendedDeviceKey(command.key, command.modifiers) &&
+      !control.lease.connection.supports('device-keyboard')
+    ) {
+      return {
+        code: 'action-failed',
+        message: `${this.host.machine} takes only the arrows and Escape as keys: update its Stim.`,
+      };
+    }
     try {
       const reply = await control.lease.connection.request(`device-host.${method}`, { ...params, session });
+      if ('error' in reply && command.input === 'touch' && reply.error.code === 'device-busy') {
+        this.grab.release(participant.id);
+        this.show(participant, { ...command, phase: 'up' });
+        return { ...reply.error, busy: 'Host' };
+      }
       if ('error' in reply) return reply.error;
-      return method === 'input.clipboard.get' && isJsonObject(reply.result) ? reply.result : null;
+      if (!isJsonObject(reply.result)) return null;
+      if (method === 'input.clipboard.get') return reply.result;
+      return method === 'input.clipboard.set' && reply.result.typed === true ? { typed: true } : null;
     } catch (cause) {
       return { code: 'action-failed', message: `${this.host.machine}: ${messageOf(cause)}` };
     }
@@ -420,6 +487,10 @@ export class HostedShareSource implements ShareSource {
 
   endFor(_owner: Controller, message: string): void {
     this.endControl(null, message, 'end');
+  }
+
+  end(_owner: Controller, session: string, message: string): void {
+    if (this.control?.session === session) this.endControl(null, message, 'end');
   }
 
   private endControl(reason: string | null, message: string, host: 'ended' | 'end'): void {

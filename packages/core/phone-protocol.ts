@@ -491,6 +491,8 @@ export type PhoneMethods = Omit<
   | 'desktop.worktree.warm.subscribe'
   | 'desktop.plan.get'
   | 'desktop.plan.cancel'
+  | 'desktop.setup.subscribe'
+  | 'desktop.setup.answer'
   | 'machines.update.start'
   | 'machines.update.status'
   | 'device-host.sessions'

@@ -75,7 +75,7 @@ struct NoiseInteropTests {
   static func payload(port: Int, token: String, fingerprint: String) throws -> PairingPayload {
     PairingPayload(
       name: "", endpoint: try #require(URL(string: "ws://127.0.0.1:\(port)")),
-      secret: try #require(Noise.decodeSecret(token)), fingerprint: fingerprint)
+      secret: try #require(Noise.decodeSecret(token)), fingerprint: fingerprint, network: .localNetwork)
   }
 
   static func outcome(_ payload: PairingPayload, _ store: PairedServerStore) async -> Result<PairedServer, ServerError> {

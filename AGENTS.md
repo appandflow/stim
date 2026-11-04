@@ -17,7 +17,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 ```
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
-`ios`, `android`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove`, `settings [get|set|unset]`,
+`ios`, `android`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release|reverse]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove`, `settings [get|set|unset]`,
 `status`, `stats`, `gc`, and `guide`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
@@ -57,6 +57,21 @@ real-tool and app verification requirements below. Candidate version commits
 follow the preflight in [`RELEASE.md`](./RELEASE.md), which leaves the checks
 that CI runs on the release commit to CI.
 
+A pull request, the merge queue and a push to `main` run only Linux jobs and,
+when Desktop files change, `swift build -Xswiftc -warnings-as-errors`.
+The macOS and Windows unit suites, native process inspection, Desktop `swift
+test` and Release compile, the mobile license check and the native E2E smoke run
+in the `Full suite` workflow: nightly, on dispatch, and before a stable release
+(`RELEASE.md`). A failing nightly files a `Nightly failure:` issue labeled
+`source: nightly`; read those issues first when `main` looks broken on one
+platform. Run platform-specific changes on that platform before committing:
+the vitest files that branch on `process.platform` on macOS, and `swift build`
+and `swift test` with warnings-as-errors for Desktop. Add the `ci-full` label
+to a pull request that changes native tool calls (invariant 9), Desktop Swift,
+the frames helper or other macOS or Windows code paths, and wait for `Full
+suite` before the fresh review; for a branch without a pull request run
+`gh workflow run full-suite.yml --ref <branch>`.
+
 Filter unit tests with `pnpm test <file> -t "case name"`. Do not insert `--`
 before the file: pnpm forwards it to Vitest, which then ignores the filter and
 runs the full suite.
@@ -91,8 +106,8 @@ route. A remote server grants it only the capabilities recorded for its key:
 treats every remote message as untrusted input, never turns a remote path into a
 local file or process, and never stores another machine's workspace data on
 disk. Build and test it with `swift build` and
-`swift test` from that directory, both with `-Xswiftc -warnings-as-errors` in
-CI. Format and lint its Swift sources with `scripts/format.sh` and
+`swift test` from that directory, both with `-Xswiftc -warnings-as-errors`; a
+pull request's CI runs the build, the `Full suite` runs the tests. Format and lint its Swift sources with `scripts/format.sh` and
 `scripts/format.sh --check`. Its design tokens and empty-state agent prompts are generated from
 `apps/mobile/src/design/tokens.ts` and `apps/mobile/src/lib/agent-prompts.ts`; run
 `node apps/desktop/scripts/generate-tokens.mjs` after changing either file. Keep
@@ -255,23 +270,28 @@ new checks.
 
 The fresh reviewer records the outcome with labels. When the review is clear, it
 adds `review: ai-approved` and marks the pull request ready with `gh pr ready`.
-When the diff has a change in one of these that no maintainer has approved, it
-adds `review: needs-human` and removes any `review: human-approved`:
+When the diff contains a product decision the maintainer has not stated, it adds
+`review: needs-human` and removes any `review: human-approved`. A product
+decision is a new, removed or renamed command, flag or setting; a changed
+default; or a change to user-visible behavior beyond what the linked issue
+asked for. This is the "explicit product decision" that new commands and flags
+require. Only a decision the maintainer stated counts as approved: an issue or
+comment that quotes the maintainer's words as a decision, in a line such as
+`Maintainer decision: "<words>", <date>`, or one the maintainer wrote directly.
+Every agent posts as the maintainer's account, so an agent's own proposal,
+design section or "Fix idea" never counts, whoever posted it. The reviewer looks
+for the quoted decision before treating a new command, flag, setting or default
+as approved.
 
-- what another machine can reach or do on this machine: a new or wider network
-  listener, authentication or pairing path, or stim-server capability;
-- how secrets, tokens or signing keys are stored, passed or exposed;
-- deleting or killing something Stim does not own, or a new way to decide that
-  Stim owns it;
-- a release or publishing workflow that holds secrets;
-- a breaking change to on-disk state or a published contract that existing
-  installs or clients cannot read.
-
-Refactors, hardening, stricter validation and bug fixes inside those areas do
-not qualify unless they widen what is exposed or deleted, expose a secret, or
-break what existing installs or clients can read. When it is unclear, leave the
-label off and name the concern in the review; that alone does not block
-`review: ai-approved`.
+Other concerns do not add the label. The reviewer still names them in its
+review: a new or wider way for another machine to reach or act on this one (a
+network listener, an authentication or pairing path, a stim-server capability),
+how secrets, tokens or signing keys are stored, passed or exposed, deleting or
+killing something Stim does not own, a new ownership rule, a release or
+publishing workflow that holds secrets, and a breaking change to on-disk state
+or a published contract. The Required invariants and `RELEASE.md` govern them.
+When it is unclear, leave the label off and name the concern in the review;
+that alone does not block `review: ai-approved`.
 
 With that label, the reviewer posts a comment that starts with `Human review:`
 and lists each unapproved `path:lines`, linked at the reviewed commit, with one
@@ -383,7 +403,15 @@ outside it moves to its own issue and pull request.
   Running setup is the worker-side approval: a person on the
   worker approves the key holding one ticket, once per capability, until one
   expiry, with a per-grant Y/n confirmation (Enter approves) in
-  a terminal (`--yes` otherwise). An SSH-driven run is not offered. Setup
+  a terminal (`--yes` otherwise). Stim Desktop on the worker is the other
+  approver: the person pastes the setup command there, and the server Desktop
+  started runs the same setup in process (`desktop.setup.subscribe`), asking
+  each grant through `desktop.setup.answer` instead of the terminal, and
+  refuses rather than install or change a service, Stim Host or a route. Only
+  the connection that proved Desktop's private bootstrap key may call either;
+  another machine, a paired client, an SSH session and any other local client
+  get `forbidden` on those methods. The terminal command, `--yes` included,
+  approves as before. An SSH-driven run is not offered. Setup
   never enables Funnel or changes TCC. There is no pairing code for build, and
   `stim-server devices grant` never grants it.
   It never comes with `read` or `control`. Build clients live in
@@ -454,7 +482,9 @@ outside it moves to its own issue and pull request.
   stim-server writes and prunes (it never creates a workspace directory). The CLI
   moves closed segments into `archive/` during removal under `native-run.lock`.
   stim-server never writes or prunes under `archive/` and reads archived segments
-  through core's recording readers. The other exceptions are
+  through core's recording readers. Another exception: stim-server takes the
+  workspace's native-run claim (`workspaceNativeRunClaim`) while a web share
+  starts, and releases it after. The other exceptions are
   the build worker root (`server.workerRoot`, default `build-worker/`),
   with its Windows short directories, which stim-server and the builds it runs own, and the build slot
   stim-server takes under `build-slots/` for each offloaded build it runs,
@@ -464,7 +494,8 @@ outside it moves to its own issue and pull request.
   A person on the worker approves it by running `stim-server setup` there with
   the requesting machine's setup ticket: the key holding one ticket, once per
   capability, until one expiry, with a per-grant Y/n confirmation (Enter approves) in a terminal (`--yes`
-  otherwise). An SSH-driven run is not offered. Setup never changes TCC or
+  otherwise), or in Stim Desktop on the worker under the same rules, as Build
+  access describes. An SSH-driven run is not offered. Setup never changes TCC or
   enables Funnel; the person approves normal macOS permission prompts.
   The server owns its opaque journal under `server/device-host-sessions/` and
   app receipts under `device-host/sessions/<id>/apps/`; core owns the readers. A hosted native worker
@@ -473,7 +504,11 @@ outside it moves to its own issue and pull request.
   Parked hosted devices stay ledger-owned in their session home and are adopted
   only by the same client.
   Keep a child-aware ownership claim across native work and a claim for the
-  session lifetime. Serialize hosted admission, including unresolved sessions;
+  session lifetime. Server close leaves a ready iOS or Android session ready
+  and its device booted when no native work is in flight, and the next server
+  resumes it only after taking its exclusive claim (a live child keeps it held)
+  and the worker's `resume` verifies the exact ledger-owned, recorded, running
+  device; anything unproven takes the stop path, and macOS apps always do. Serialize hosted admission, including unresolved sessions;
   ordinary local producers do not participate, so it is not a machine-wide hard
   capacity guarantee. Reconnect to the recorded attempt/session after a lost
   reply. Unknown creation, journal, owner or shutdown state refuses replacement;
@@ -487,7 +522,19 @@ outside it moves to its own issue and pull request.
   `device-host.metro.link` connection the session's own client opened and
   authenticated, and the client forwards it only to its verified loopback Metro.
   Stop and revocation close the bridge, idle links and active streams. Keep the
-  recorded worker port on reconnect; refuse an occupied port. Agent control of a
+  recorded worker port on reconnect; refuse an occupied port. Reverse ports
+  (`stim ports reverse`, `device-host.reverse.set`) use the same transport and
+  rules for the workspace's own servers: one worker bridge per reversed client
+  port, listening only on worker loopback, never connecting to the client. A
+  simulator shares the host's loopback, so its bridge listens on the same port
+  number and an occupied port is refused; an emulator's bridge listens on a
+  loopback port of the host's choosing and the exact owned emulator's
+  `adb reverse` targets it. The client's Metro supervisor opens the links, each
+  registered for one port taken from the workspace's record; the host pairs a
+  link only with that port's bridge, and the client forwards it only to its own
+  loopback on that port, so the host cannot name a client port. The session
+  record keeps the bridge ports for resume, and parking, stop and revocation
+  drop them. `device-host` approval is enough; it widens nothing else. Agent control of a
   session on a `local:` machine rides `device-host.agent.link` connections its
   own client opened and authenticated, which the client's supervisor feeds from
   a loopback port; the host serves only that client's session and still checks
@@ -520,11 +567,33 @@ outside it moves to its own issue and pull request.
   `share.publicUrl`, and the frame socket accepts exactly that URL's origin,
   never Host or `X-Forwarded-*`. The CLI asks this Stim home's stim-server over its Unix socket
   (`share.start|stop|list`, refused on every network connection); a share
-  lives only in that server's memory and always expires. The server serves
+  lives only in that server's memory and always expires. The CLI saves each
+  share it starts, with its URL token and passwords, in the workspace's
+  `share-links.json` (mode 0600, written under the workspace state lock, removed
+  with the workspace, by `share stop --forget` and once expired) so that
+  `share ios|android --reuse` can start the same link again through
+  `share.start`'s `token` and `expiresAt`; stim-server writes nothing to disk and
+  an expired link is never extended or reused. Each saved entry has a `state`:
+  `live` from when `share` starts or reuses it, `stopped` after a deliberate
+  `share stop`, `stim stop` or reclaim of its workspace. A restart or crash
+  leaves `live`, and a full stim-server (not the CLI's `--share` server) starts
+  every live, unexpired entry of its home again when it starts, through
+  `share.start`'s own path with the saved token or slug, passwords and expiry
+  (`@stim-cli/core/state`'s `readLiveShareLinks`); one whose device is not there
+  yet starts waiting, a refused one is logged and stays `live`. The only write
+  stim-server makes is `share.stop` marking the entry stopped through the CLI's
+  own `pauseShareLinks`, exported as `stim/share-links`; a share started from
+  Desktop is not saved and does not come back. A share outlives its
+  device: when the device goes away on its own (frames fail, the device or hosted
+  session changes or is not ready) the share waits, keeping its token, passwords,
+  viewer sessions and expiry, and resumes on the slot's device when it is back.
+  Only `share.stop` (which `stim stop`, `stim worktree remove` and Desktop's Stop
+  send), expiry and the server stopping end it. The server serves
   shares on a separate loopback listener, not the Noise protocol: per share
   the viewer page, the frames of its one device and, with control, input to
   that device through `ControlHub` (on a simulator, emulator or Android phone that includes
-  its clipboard: a viewer's paste and a copy of the device's text, never logged), behind a 256-bit URL token, a generated
+  its clipboard: a viewer's paste, and the viewer's own sync or copy of the device's text, never logged; a sync poll
+  never starts a control session or keeps one alive), behind a 256-bit URL token, a generated
   password and an HttpOnly Secure SameSite=Strict session cookie. A control
   share can also have a second, view-only password (`--view-password`): login
   compares both digests, always both, with `timingSafeEqual`; the cookie stays an
@@ -554,6 +623,9 @@ outside it moves to its own issue and pull request.
   stim-server, which forwards only the touches the grab admits. The password is
   generated by default, set with `--password`, or dropped with
   `--no-password`, which leaves the URL token as the only secret;
+  `--slug` puts a chosen name in the path in place of the token, so the password
+  is then the only secret and it refuses `--no-password`; a slug a live share
+  holds is refused, never taken over;
   `--view-password` refuses without `--control`, with `--no-password` and when
   it equals `--password`. When no
   stim-server answers, `stim share` starts `stim-server --share` (loopback
@@ -658,6 +730,21 @@ disk pressure, or automatic maintenance's age sweep after
 `maintenance.olderThanDays`; erase them only with `gc --cache parked
 --delete`. Every route uses centralized teardown and ownership revalidation.
 `gc --delete` deletes parked hosted devices through their owning session home.
+Park keeps a simulator that is booted when it parks it booted for
+`pool.bootedGraceMinutes`, only while memory pressure is normal and a device slot
+is free, and records `bootedUntil`; adoption of it still resets and verifies as
+above, without the boot. The stim-daemon shuts a booted parked simulator down
+through teardown at expiry, under memory pressure before any workspace's device,
+and before it reclaims a workspace's device for a waiting run.
+`stop` applies the same gates to the workspace's owned iOS simulator: it ends
+the app and the agent-device sessions, leaves the simulator booted and assigned
+to the workspace, and records a deferred shutdown in the workspace state with the
+expiry. A later `ios` run uses the booted simulator and forgets the record; a
+later `worktree remove` parks it booted. The stim-daemon shuts a deferred
+simulator down through teardown at expiry or under memory pressure, under the
+workspace's native-run lock, unless the workspace serves again. A stopped
+workspace holding one is outside the idle stage until the expiry. Android
+emulators are shut down by `stop`.
 
 `stim web` launches the installed Chrome only with a profile Stim created under
 `$STIM_HOME/workspaces/<id>/web/`, listed under `web` in the created-devices
@@ -674,7 +761,8 @@ state a physical device leaves is its lease: the file under
 `$STIM_HOME/device-locks/` and the holder's token in that workspace's
 `state.json`, plus, for Android, the serial and Metro port of the `adb reverse`
 the run added, recorded in that `state.json` so `stop` and `worktree remove`
-remove the reverses that point at that Metro port and nothing else on the phone. For live view and control of a leased Android phone, stim-server pushes the
+remove the reverses that point at that Metro port or at a port the workspace
+reversed with `ports reverse`, and nothing else on the phone. For live view and control of a leased Android phone, stim-server pushes the
 scrcpy server jar to `/data/local/tmp`, runs it with `app_process` over an
 `adb forward`, and removes the jar and the forward when the stream stops; it
 changes no setting. A serial or UDID never enters the project registry, and
@@ -735,7 +823,9 @@ All shutdown and deletion flows must use `src/devices/teardown.ts`, and so do pa
 which is the flow that gives a simulator up without deleting it, and the erase
 and wipe of an owned device's data. Re-resolve
 ownership before each destructive command. Contain per-device failures so batch cleanup
-can continue. `stop` shuts down devices; it never deletes them.
+can continue. `stop` shuts down devices and never deletes them; the owned iOS
+simulator is shut down at the expiry of `pool.bootedGraceMinutes` or under memory
+pressure when the gates in invariant 2 hold, and at once otherwise.
 
 ### 5. Redirect test state
 

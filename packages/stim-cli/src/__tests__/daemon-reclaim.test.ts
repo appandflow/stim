@@ -10,13 +10,20 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { INTERACTIONS_KEY, readDeviceIdleShutdowns } from '@stim-cli/core/state';
-import { collectOwnedDeviceActivity, workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
+import { INTERACTIONS_KEY, readDeferredShutdowns, readDeviceIdleShutdowns } from '@stim-cli/core/state';
+import { processContext } from '../cli-operation.ts';
+import {
+  collectOwnedDeviceActivityAsync,
+  workspaceBuildInProgress,
+  type OwnedDeviceActivity,
+} from '../commands/gc/idle.ts';
 import { resetExecutor } from '../exec.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
-import { teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
+import { shutDownBootedParkedIosSim, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
+import { parkSim } from '../devices/sim-pool.ts';
 import { tryAcquireClaim, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { liveWaiters, takeWaitTicket } from '../engine/wait-queue.ts';
 import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
@@ -26,16 +33,17 @@ import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-
 import { serveShareList, shareRow } from './_share-list-server.ts';
 
 vi.mock('../commands/gc/idle.ts', () => ({
-  collectOwnedDeviceActivity: vi.fn<typeof import('../commands/gc/idle.ts').collectOwnedDeviceActivity>(),
+  collectOwnedDeviceActivityAsync: vi.fn<typeof import('../commands/gc/idle.ts').collectOwnedDeviceActivityAsync>(),
   workspaceBuildInProgress: vi.fn<typeof import('../commands/gc/idle.ts').workspaceBuildInProgress>(() => false),
 }));
 vi.mock('../devices/ios.ts', async (original) => ({
   ...(await original<typeof import('../devices/ios.ts')>()),
-  listAllIosSims: () => [],
+  listAllIosSimsAsync: async () => [],
 }));
 vi.mock('../devices/teardown.ts', () => ({
   teardownOwnedIosSim: vi.fn<typeof import('../devices/teardown.ts').teardownOwnedIosSim>(),
   teardownOwnedAvd: vi.fn<typeof import('../devices/teardown.ts').teardownOwnedAvd>(),
+  shutDownBootedParkedIosSim: vi.fn<typeof import('../devices/teardown.ts').shutDownBootedParkedIosSim>(),
 }));
 
 const NOW = Date.parse('2026-10-07T12:00:00Z');
@@ -45,12 +53,14 @@ let waiter: string;
 let devices: OwnedDeviceActivity[];
 let otherSims: IosSimRecord[];
 let ticket: ClaimHandle | undefined;
+let operation: ReturnType<typeof processContext>;
 const log = vi.fn<(level: string, event: string, msg: string) => void>();
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-reclaim-')));
   process.env.STIM_HOME = home;
   waiter = join(home, 'waiter');
+  operation = processContext(home);
   mkdirSync(waiter);
   devices = [];
   otherSims = [];
@@ -59,9 +69,9 @@ beforeEach(() => {
   process.env.STIM_MAX_DEVICES = '2';
   ticket = takeWaitTicket('boot', { platform: 'ios', key: 'new', root: waiter, displayName: 'waiter' }, []);
   vi.mocked(workspaceBuildInProgress).mockReset().mockReturnValue(false);
-  vi.mocked(collectOwnedDeviceActivity)
+  vi.mocked(collectOwnedDeviceActivityAsync)
     .mockReset()
-    .mockImplementation((config) => devices.filter((device) => Boolean(config?.projects[device.project])));
+    .mockImplementation(async (config) => devices.filter((device) => Boolean(config?.projects[device.project])));
   vi.mocked(teardownOwnedIosSim)
     .mockReset()
     .mockImplementation(async (id) => {
@@ -103,6 +113,7 @@ function add(id: string, idleMinutes: number, root = join(home, id), owned = tru
 const reclaim = (act = true) =>
   reclaimForBootWaiters({
     devices,
+    operation,
     sims: [
       ...devices.filter((device) => device.kind === 'ios').map((device) => bootedSim(device.id, device.name)),
       ...otherSims,
@@ -111,6 +122,43 @@ const reclaim = (act = true) =>
     log,
     now: NOW,
   });
+
+test('shuts a parked simulator kept booted down before any workspace device, however long that one idled', async () => {
+  add('idle', 90);
+  upsertProject(join(home, 'parker'), { platforms: { ios: { deviceUdid: 'PARKED', owned: true } } });
+  parkSim({
+    platform: 'ios',
+    projectPath: join(home, 'parker'),
+    max: 3,
+    record: {
+      udid: 'PARKED',
+      name: 'stim-parked (iPhone) park',
+      deviceTypeIdentifier: 'iPhone',
+      runtimeIdentifier: 'iOS 27.0',
+      parkedAt: new Date(NOW - MINUTE).toISOString(),
+      bootedUntil: new Date(NOW + 10 * MINUTE).toISOString(),
+      simslimManaged: false,
+    },
+  });
+  otherSims.push(bootedSim('PARKED', 'stim-parked (iPhone) park'));
+  vi.mocked(shutDownBootedParkedIosSim).mockResolvedValue({ status: 'torn-down', label: 'stim-parked' });
+  await expect(reclaim()).resolves.toMatchObject({ kind: 'reclaim-device', target: 'PARKED', outcome: 'done' });
+  expect(shutDownBootedParkedIosSim).toHaveBeenCalledWith('PARKED', expect.objectContaining({ operation }));
+  expect(teardownOwnedIosSim).not.toHaveBeenCalled();
+});
+
+test('shuts a simulator that stop left booted down before any workspace device, however recently its workspace stopped', async () => {
+  add('idle', 90);
+  const stopped = add('stopped', 1);
+  await recordDeferredShutdown(stopped.project, 'default', {
+    udid: 'stopped',
+    until: new Date(NOW + 10 * MINUTE).toISOString(),
+  });
+  await expect(reclaim()).resolves.toMatchObject({ kind: 'reclaim-device', target: 'stopped', outcome: 'done' });
+  expect(teardownOwnedIosSim).toHaveBeenCalledTimes(1);
+  expect(teardownOwnedIosSim).toHaveBeenCalledWith('stopped', expect.objectContaining({ workspace: stopped.project }));
+  expect(readDeferredShutdowns(readWorkspaceState(stopped.project))).toEqual({});
+});
 
 test('shuts down exactly the longest-idle device of another workspace and records the reason and log', async () => {
   add('younger', 4);
@@ -121,7 +169,11 @@ test('shuts down exactly the longest-idle device of another workspace and record
   add('own-alias', 100, alias);
   await expect(reclaim()).resolves.toMatchObject({ kind: 'reclaim-device', target: 'oldest', outcome: 'done' });
   expect(teardownOwnedIosSim).toHaveBeenCalledTimes(1);
-  expect(teardownOwnedIosSim).toHaveBeenCalledWith('oldest', { label: 'stim-oldest', workspace: oldest.project });
+  expect(teardownOwnedIosSim).toHaveBeenCalledWith('oldest', {
+    label: 'stim-oldest',
+    workspace: oldest.project,
+    operation,
+  });
   expect(readDeviceIdleShutdowns(readWorkspaceState(oldest.project))).toEqual({
     ios: { at: new Date(NOW).toISOString(), idleMinutes: 25, reason: 'reclaimed for a waiting run' },
   });
@@ -152,7 +204,7 @@ test('a device of another Stim home counts toward the cap, and only a device thi
   const mine = add('mine', 30);
   devices = devices.filter((device) => device.id !== 'unledgered');
   await expect(reclaim()).resolves.toMatchObject({ target: 'mine', outcome: 'done' });
-  expect(teardownOwnedIosSim).toHaveBeenCalledWith('mine', { label: 'stim-mine', workspace: mine.project });
+  expect(teardownOwnedIosSim).toHaveBeenCalledWith('mine', { label: 'stim-mine', workspace: mine.project, operation });
 
   vi.mocked(teardownOwnedIosSim).mockClear();
   otherSims = [];
@@ -226,7 +278,7 @@ test.skipIf(process.platform === 'win32')(
 test('a failed simulator listing reclaims nothing', async () => {
   add('idle', 30);
   add('other', 40);
-  await expect(reclaimForBootWaiters({ devices, sims: null, act: true, log, now: NOW })).resolves.toBeNull();
+  await expect(reclaimForBootWaiters({ devices, sims: null, act: true, log, operation, now: NOW })).resolves.toBeNull();
   expect(teardownOwnedIosSim).not.toHaveBeenCalled();
 });
 
@@ -281,7 +333,11 @@ test('a live native-run lock keeps the device, and the next tick takes the next 
     devices = devices.filter((device) => device !== locked);
     process.env.STIM_MAX_DEVICES = '1';
     await expect(reclaim()).resolves.toMatchObject({ target: 'next', outcome: 'done' });
-    expect(teardownOwnedIosSim).toHaveBeenCalledWith('next', { label: 'stim-next', workspace: next.project });
+    expect(teardownOwnedIosSim).toHaveBeenCalledWith('next', {
+      label: 'stim-next',
+      workspace: next.project,
+      operation,
+    });
   } finally {
     releaseClaim(attempt.acquired);
   }

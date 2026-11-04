@@ -38,6 +38,8 @@ import {
   type WorktreeFacts,
 } from '../commands/gc/worktrees.ts';
 import { planWorktrees } from '../maintenance/sweep.ts';
+import * as maintenanceMeasure from '../maintenance/measure.ts';
+import { runMaintenance } from '../maintenance/run.ts';
 import { mergeState, type MergeState } from '../workspace/merge-state.ts';
 import {
   parseRemoteRepo,
@@ -63,12 +65,20 @@ import {
   type ClaimHandle,
 } from '../ownership-claim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
 import { registerCollector } from '../collector/state.ts';
 import { LOG_ROTATE_BYTES, buildCacheRoot, withAmbientContext } from '@stim-cli/core';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
-import { diskUsageCacheFile, gitMergeCacheFile, pullRequestCacheFile, worktreeArchiveRoot } from '@stim-cli/core/state';
+import {
+  diskUsageCacheFile,
+  gitMergeCacheFile,
+  maintenanceStateFile,
+  pullRequestCacheFile,
+  readMaintenanceState,
+  worktreeArchiveRoot,
+} from '@stim-cli/core/state';
 import { liveClaimOwner, plantClaim, writeDerivedData } from './_factories.ts';
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
@@ -1883,9 +1893,10 @@ function countDu(calls: string[][], fail?: (args: string[]) => string | null) {
   setExecutor({
     ...real,
     runFileAsync: async (file, args: string[], opts) => {
-      if (file === 'du') {
-        calls.push(args);
-        const stdout = fail?.(args);
+      const walk = file === 'nice' ? args.slice(2) : [file, ...args];
+      if (walk[0] === 'du') {
+        calls.push(walk.slice(1));
+        const stdout = fail?.(walk.slice(1));
         if (stdout != null)
           throw Object.assign(new Error('Command timed out after 10000ms: du'), { signal: 'SIGTERM', stdout });
       }
@@ -2253,6 +2264,15 @@ test('one gc report lists simulators and AVDs once for its report and once more 
   expect(byName.two).toMatchObject({ willRemove: false, reason: 'in-use' });
   expect(byName.two.detail).toContain('its owned simulator stim-two is Booted');
   expect(byName.one.reason).not.toBe('in-use');
+
+  await recordDeferredShutdown(byName.two.path, 'default', {
+    udid: 'U-two',
+    until: new Date(Date.now() + 600_000).toISOString(),
+  });
+  const afterStop = (await gcJson({})).payload.sections.linkedWorktrees.find(
+    (w: { path: string }) => basename(w.path) === 'two',
+  );
+  expect(afterStop.reason).not.toBe('in-use');
 }, 60_000);
 
 test('worktree remove accepts local-only commits that a merged pull request holds, not a closed one', async () => {
@@ -2270,9 +2290,10 @@ test('worktree remove accepts local-only commits that a merged pull request hold
   const current = getExecutor();
   const runFile: typeof current.runFile = (file, args, opts) => {
     if (file !== 'gh') return current.runFile(file, args, opts);
-    const branch = args[args.indexOf('--head') + 1]!;
+    const branch = args.find((arg) => arg.startsWith('b0='))!.slice(3);
     const pull = { number: 7, url: 'https://github.com/o/r/pull/7', state: state[branch], headRefOid: heads[branch] };
-    return JSON.stringify([{ ...pull, mergedAt: '2026-09-01T00:00:00Z', closedAt: '2026-09-01T00:00:00Z' }]);
+    const nodes = [{ ...pull, mergedAt: '2026-09-01T00:00:00Z', closedAt: '2026-09-01T00:00:00Z' }];
+    return JSON.stringify({ data: { repository: { b0: { nodes } } } });
   };
   setExecutor({
     ...current,
@@ -2527,6 +2548,31 @@ test('plain gc --delete removes merged worktrees, squash merges included, after 
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
   expect(git('branch --list squashed')).toContain('squashed');
   expect(process.exitCode).not.toBe(1);
+}, 240_000);
+
+test('the maintenance worktree check records a merged worktree it keeps for its grace period, and the check after the grace removes it and clears the record', async () => {
+  const { merged, open } = repoWithTwoBranches().worktrees;
+  if (!merged || !open) throw new Error('The fixture worktrees are missing');
+  vi.stubEnv('STIM_DAEMON', 'on');
+  const deferred = vi.spyOn(maintenanceMeasure, 'sizeScanDeferred').mockReturnValue(false);
+  onTestFinished(() => deferred.mockRestore());
+  process.env.STIM_GC_WORKTREE_GRACE_MINUTES = '120';
+  const started = Date.now();
+
+  await runMaintenance('daemon');
+
+  const waiting = readMaintenanceState()?.nextRemoval;
+  expect(waiting?.target).toBe(merged);
+  expect(waiting?.at).toBeGreaterThanOrEqual(started + 119 * 60_000);
+  expect(existsSync(merged)).toBe(true);
+
+  process.env.STIM_GC_WORKTREE_GRACE_MINUTES = '0';
+  writeFileSync(maintenanceStateFile(), JSON.stringify({ ...readMaintenanceState(), lastAt: {} }));
+  await runMaintenance('daemon');
+
+  expect(existsSync(merged)).toBe(false);
+  expect(existsSync(open)).toBe(true);
+  expect(readMaintenanceState()?.nextRemoval).toBeUndefined();
 }, 240_000);
 
 async function checkWorktrees() {

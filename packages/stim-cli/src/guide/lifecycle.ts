@@ -6,7 +6,14 @@ agent-device record start [path] --remote-config <file> records the ${noun};
 record stop downloads the video to path, or ./recording-<time>.mp4, on this
 machine. The host writes it only in a private directory for the session in its
 temporary directory and deletes the files after the download, on stim stop or session teardown and
-when its daemon restarts. One recording runs per session; a second start, a host output
+when its daemon restarts.${
+  noun === 'simulator'
+    ? `
+The host stops the recorder before it parks or deletes the simulator, and a
+stim-server that restarts stops a recorder its previous run left.`
+    : ''
+}
+One recording runs per session; a second start, a host output
 path, record inside batch and a record stop from another agent-device session
 are refused. The host stops a recording after 10 minutes; a record stop within
 the next 15 minutes downloads it. A finished recording over 512 MiB is deleted
@@ -119,6 +126,8 @@ a seed belongs to this workflow.
 
   # 7. Remove this linked worktree and its environment. This also works for
   #    unwarmed worktrees with no Stim registry entry. Git-created branches stay.
+  #    Run it from the worktree root: from an app folder such as apps/mobile it
+  #    reclaims only that app and leaves the worktree.
   stim worktree remove
 
 A React Native or Expo Debug \`ios\` or \`android\` run checks the reserved port before the device
@@ -179,7 +188,7 @@ most 30. When the device tool still does not answer, Stim sends the reload anywa
 
 An Android reload first lists \`adb reverse\` on each live owned emulator
 launched against this Metro and re-applies the Metro port's reverse where it is
-missing. adb ties a reverse to its transport, and a transport that drops and
+missing, and the same for each port reversed with \`stim ports reverse\`. adb ties a reverse to its transport, and a transport that drops and
 reconnects comes back without it and without any error, which leaves the app
 cut off from Metro and Fast Refresh. After restoring one, Stim waits up to 8
 seconds, sending nothing, until the app on every emulator it checked is
@@ -269,7 +278,9 @@ DESTRUCTIVE COMMANDS -- ask the user first
 
 Permanent local deletion lives in exactly TWO commands: \`worktree remove\`
 (the workspace you name) and \`gc --delete\` (the machine). For a local device,
-\`stop\` shuts it down and never deletes it. For a recorded EAS session,
+\`stop\` shuts it down and never deletes it (an owned iOS simulator first stays
+booted for \`pool.bootedGraceMinutes\` when memory permits, \`guide lifecycle pool\`).
+For a recorded EAS session,
 \`stop\` irreversibly ends the session. Externally started servers are left
 alone, even when they use the reserved port, and the reservation is kept while
 one answers from the project. A dev server whose supervisor died is stopped
@@ -304,7 +315,10 @@ CAPACITY
 TWO REPORTS, TWO QUESTIONS
   "What is running" is \`stim status\`: live state, right now, including
   each running ios or android build's phase and time left (see
-  \`guide facts status\`). "How much the
+  \`guide facts status\`). One-shot status reads simulator state from the
+  device listing a boot admission took in the last 10 seconds, when there is
+  one that covers every recorded simulator, so it can lag a device that booted
+  or stopped after that listing by that long plus the listing time; \`stim status --watch\` always lists itself. "How much the
   cache saved" is \`stim stats\`: aggregate counters for this project and for
   the machine, with a hit rate and an estimate of the time saved (see
   \`guide facts stats\`).
@@ -630,10 +644,11 @@ stop and worktree remove wait for device-host.stop, park the host's eligible own
 emulator within pool.androidParkedMax (delete otherwise), close the Metro links and clear placement. stop --json reports
 outcomes.device["android:host:<slot>"]. Forbidden or unknown-session also clears
 placement; an unreachable host keeps it and fails cleanup. A clean host restart
-parks eligible devices; a later reserve by the same client adopts a compatible
-parked emulator with all third-party apps removed. Running sessions left by a
-crash stay unknown until explicit stop; booted devices are never re-attached
-after restart. See hosted-ios for retention and eviction. JavaScript logs
+leaves a ready session and its running emulator in place and the restarted server
+resumes it, verified against its private ledger; a later reserve by the same client
+adopts a compatible parked emulator with all third-party apps removed. A session the
+restarted server cannot verify is stopped, or stays unknown when that is unprovable.
+See hosted-ios for retention and eviction. JavaScript logs
 arrive through local Metro.
 
 AGENT CONTROL
@@ -672,7 +687,8 @@ Screenshots use only remote artifacts.
 
 ${HOSTED_RECORDING('emulator')}
 
-Stop closes the matching agent-device connection and removes the slot file only
+Stop closes the agent-device connection of the session \`stim agent-device\` names
+by default (end one you named with \`--session\` yourself) and removes the slot file only
 once the host confirms stop or revocation. Reinstall, stop, revocation and server
 close stop the daemon before native work or device deletion. An unresolved
 proxy, daemon or helper retains the child-aware daemon claim and refuses
@@ -820,6 +836,23 @@ independent and selects a compatible build worker for a cache miss.
 The host's own owned devices count toward concurrency.maxDevices and its per-platform cap
 (concurrency.maxIosDevices, concurrency.maxAndroidDevices; macOS apps use concurrency.maxMacosApps).
 
+Each record in stim-server devices --json carries kind (phone or desktop for
+a pairing from stim-server pair, build-client or device-host-client), access
+(view, control, build or run-devices), owner (this-machine for a phone or
+desktop, theirs-running-here for a build or device-host client) and
+keyFingerprint, the client key one machine's build and device-host records
+share. clientApp and clientVersion are the app and version the client named in
+its last hello, shown once it has connected; a pairing is desktop when
+clientApp is Stim Desktop or Stim Dev and phone otherwise. They are display
+only and never change access. A person on the host renames a record
+with stim-server devices rename <id> <name>; the client sees the name on its
+next connection, and its access does not change. An entry of a registry file
+that this stim-server cannot read is never dropped: every write keeps it as the
+text it had, it grants nothing, and devices --json lists it in unreadable as
+{ file, index, id? }. A file with a registry version newer than 2 is listed as
+{ file, version }, its records are not read, and writes to it are refused.
+Rename, grant and revoke refuse an unreadable id; the person edits the file.
+
 The host's person sees Hosted here rows in stim-server devices; --json adds
 hostedSessions beside devices. Rows show client, platform, device, installed
 app, state and since, newest first. Plain stopped sessions are omitted;
@@ -866,9 +899,15 @@ The default slot appears only in ios, never in slots[]. No host UDID enters loca
 status. Hosted ios --json results use udid: null and the actual simulator name as
 deviceName; host.agent.command addresses the hosted app. Ready is normal;
 stopped has a rerun hint; unknown or unreachable is
-unverified. A clean host server restart stops its sessions and retains eligible
-parked devices. A running session left by a crash stays unknown until explicit
-stop; the restarted server never re-attaches to a booted device.
+unverified. A host server restart leaves ready iOS and Android sessions running and
+the restarted server resumes them once their ownership claim is provably free: the
+journal stays ready, the simulator or emulator stays booted, the Metro bridge listens
+on its recorded port again and the agent-device grant keeps the same token, so the
+Metro links and remote config of the client keep working and a rerun reattaches. A
+session whose device is not verified as the recorded, ledger-owned, running one is
+stopped, as are sessions with an install in flight at shutdown, revoked sessions and
+macOS apps. An install a restart interrupted is marked unknown for that attempt only.
+A session whose owner is still held by a live process stays unknown until explicit stop.
 
 stop and worktree remove wait for the host to stop, park its eligible owned
 simulator within pool.iosParkedMax (delete otherwise), close the Metro links and clear placement. stop --json
@@ -931,8 +970,10 @@ rebuilt; it never blocks reading collected records. The client waits up to
 park and worker termination paths fit within
 that wait; an in-flight handoff copy and closing Metro or view transports are
 outside those worker bounds.
-Collected records remain in the session home after parking or deletion;
-app blobs and materialized bundles are removed. Native queries read persisted
+Collected records remain in the session home after parking or deletion, for the
+client to copy, until the host removes the home an hour after the session stopped
+(a parked session's home stays while it lists the device); app blobs and
+materialized bundles are removed at stop. Native queries read persisted
 entries, overlap by five seconds and de-duplicate; info-level or later-persisted
 entries may be unavailable. JavaScript logs arrive through Metro.
 The host advertises hosted-ios-data for iOS handoff and native logs. An older
@@ -970,8 +1011,8 @@ the simulator automatically with ios-instance and the proxy provider, scoped
 to this session's tenant. Close releases it; Stim still owns the simulator.
 The config names daemonBaseUrl, daemonAuthToken, tenant, sessionIsolation,
 runId, clientId, deviceKey, leaseBackend, leaseProvider and platform; it carries
-no preallocated leaseId. stim stop closes the matching agent-device connection
-and removes that slot's config after the host confirms stop or revocation.
+no preallocated leaseId. stim stop closes the agent-device connection of the default session name
+(not one you named with \`--session\`) and removes that slot's config after the host confirms stop or revocation.
 The host stops the session daemon and identity-checked agent-device runners
 targeting its exact simulator UDID before deleting the simulator, even without close.
 
@@ -1003,7 +1044,7 @@ daemon startup or grant issuance on client support. The client checks the host's
 hosted-ios-agent feature before using a grant.
 
 Stim Desktop and the phone app view and control the simulator through this
-machine's stim-server relay, with an "on <machine>" label. Turn on Serve to phones
+machine's stim-server relay, with an "on <machine>" label. Turn on Allow connections
 in Desktop; pair the phone with this machine, not the hosting Mac. frames.subscribe
 and control.begin address workspace, platform ios and slot, including named
 slots. The relay shares one authenticated host connection with hosted macOS
@@ -1334,7 +1375,10 @@ result as proof instead of requiring an unrelated screenshot.`,
   environment -- the same \`device\`, \`lease\` and \`workspace\` lines, ending
   with a sentence instead of a \`removed\` line, because the checkout itself
   is never touched: \`Reclaimed the environment; the working tree stays (it
-  is the source checkout).\`
+  is the source checkout).\` In a linked worktree, run from a subfolder such as
+  apps/mobile, it likewise reclaims only the project at or above that folder and
+  leaves the tree; run it from the worktree root, or pass the root, to remove
+  the worktree.
 
   A worktree deleted outside Stim stays registered. Pass its path to
   \`worktree remove\`: when the folder is gone from a mounted volume, the
@@ -1374,7 +1418,9 @@ result as proof instead of requiring an unrelated screenshot.`,
     at park       shut down and renamed
                   \`stim-parked (<model> <runtime>) <4 hex>\`; nothing is
                   erased, and the pool record names the installed app's
-                  bundle id and build cache key
+                  bundle id and build cache key. A simulator that is booted
+                  when \`worktree remove\` parks it is kept booted, see
+                  KEEPING A PARKED SIMULATOR BOOTED
     at adoption   renamed for the adopting workspace, then, inside the boot
                   the run pays anyway, \`simctl privacy reset all\` and
                   \`simctl keychain reset\`; at install, every other user app
@@ -1392,16 +1438,73 @@ result as proof instead of requiring an unrelated screenshot.`,
   containers, the pasteboard, photos, Safari data and Simulator settings are
   not cleared; \`gc --cache parked --delete\` erases a parked simulator when a
   clean system image is needed.
+  Every install \`stim ios\` makes on a local owned iOS simulator, an adopted one included, also allows
+  "Paste from Other Apps" for the installed bundle id alone, so a Command-V from
+  Desktop, the phone app or a share lands in that app without an "Allow Paste"
+  prompt. Stim writes that app's \`kTCCServicePasteboard\` row (Allow) in the
+  simulator's own TCC.db after the install and before the launch, once it has
+  checked the simulator is still Stim-owned. No setting turns it off. \`stim ios\` prints a warning for a failure and the install stands. Other apps on the simulator, Safari
+  included, keep iOS's own prompt.
 
   A parked simulator keeps its apps and data, so it can hold gigabytes. It
   uses the Mac's disk, not a fixed partition, so there is no free-space check
   on iOS; \`stim gc\` lists each parked simulator's app and size.
 
-  Park takes only a simulator that reports Shutdown. It waits up to 15s for
+  Park takes only a simulator that reports Shutdown, or a booted one kept booted as above. It waits up to 15s for
   the shutdown to settle, retries the shutdown once, and waits up to 15s more.
   A simulator that is still booted after that is deleted instead, and
   \`worktree remove\` prints
   \`could not park <name>: ... -- deleted it instead\`.
+
+  KEEPING A PARKED SIMULATOR BOOTED
+  \`pool.bootedGraceMinutes\` (default 15; 0 shuts down at park) keeps a
+  simulator that is booted when \`worktree remove\` parks it booted for that
+  long, so the next adoption of the same model and runtime skips the boot. The
+  pool record carries \`bootedUntil\`. Stim keeps it booted only while macOS
+  memory pressure reads normal and a device slot besides this simulator is
+  free under \`concurrency.maxDevices\` and \`concurrency.maxIosDevices\`;
+  otherwise it shuts the simulator down as before. It also shuts it down
+  unless \`daemon.mode\` is \`on\` on a platform with a daemon, because only
+  the stim-daemon ends the grace period. The leftover app is
+  terminated at park. \`stim stop\` applies the same gates to the workspace's
+  own simulator (STOP AND THE GRACE PERIOD), so \`stop\` then \`worktree
+  remove\` keeps it booted too.
+  Adopting a booted parked simulator runs the same cleanup as any adoption
+  (privacy and keychain reset, other user apps removed, app data cleared, the
+  install verified by bytes) without the boot, and prefers it over a shut-down
+  one. The stim-daemon shuts a booted parked simulator down, through
+  teardown, when its grace period passes, under any macOS memory pressure
+  (before it touches a workspace's device), and before it reclaims another
+  workspace's device for a run waiting on a device slot; the simulator stays
+  parked. Booted parked simulators count against the device caps. \`stim
+  status\` shows how many are booted. Android emulators are shut down at park.
+
+  STOP AND THE GRACE PERIOD
+  While the same gates hold (\`pool.bootedGraceMinutes\` above 0, macOS memory
+  pressure normal, a device slot free, \`daemon.mode\` \`on\` on a platform with
+  a daemon), \`stim stop\` leaves the workspace's owned iOS simulator booted
+  instead of shutting it down. It still stops Metro, the collectors and the
+  app, and ends agent-device sessions on the simulator. The simulator stays
+  assigned to the workspace; \`stop\` records a deferred shutdown with its
+  expiry in the workspace state and makes sure the stim-daemon runs. \`stop\`
+  prints \`<name> stays booted for N minutes\`, and \`stop --json\` reports
+  \`device.ios\` as { status: "kept-booted", label, until } with \`ok\` true.
+  If any gate fails, \`stop\` shuts the simulator down as before.
+    - \`ios\` in the workspace before the expiry uses the booted simulator, with
+      no boot, and forgets the record.
+    - \`worktree remove\` parks it booted under the park gates, or shuts it
+      down.
+    - The stim-daemon shuts it down, through teardown under the workspace's
+      native-run lock, when the expiry passes or macOS memory pressure is not
+      normal. A workspace whose dev server runs again only loses the record.
+    - To shut it down now run \`STIM_POOL_BOOTED_GRACE_MINUTES=0 stim stop\`;
+      the setting at 0 turns the deferral off. There is no \`stop\` flag.
+  Until the expiry the idle stage leaves the stopped workspace alone, and
+  \`gc\` does not count the simulator as a reason to keep its worktree.
+  A repeated \`stop\` keeps the first expiry. Android emulators are shut down
+  by \`stop\`; \`stop --slot\` shuts the slot's simulator down at once, because
+  the dev server it leaves running ends the deferral; and the daemon's idle stop
+  and automatic maintenance never defer.
 
   Adoption matches the device type AND the runtime EXACTLY: a ticket that asks
   for an iPad never gets an iPhone, and a request for iOS 18.5 never gets 26.5.
@@ -1953,7 +2056,8 @@ THE BUILD CACHE HAS THREE LEVELS
   patches change; undo the edit with another --no-build-cache build.
 
   A KNOWN TREE SKIPS THE FULL FINGERPRINT. After a full fingerprint at the
-  first lookup of a React Native or Expo run, Stim records it in
+  first lookup of a React Native or Expo run, or ahead of the run by the daemon
+  (below), Stim records it in
   $STIM_HOME/fingerprint-memo (~/.stim by default) under a static digest of
   the tree: git blob ids of the native inputs git tracks, the contents of the
   untracked, modified and ignored ones, the app config's sources and the files
@@ -1972,6 +2076,30 @@ THE BUILD CACHE HAS THREE LEVELS
   warning naming both hashes at the end of the run and writes a
   fingerprint_memo_stale record to the build log; run the command again to use
   the current tree.
+
+  THE DAEMON RECORDS IT AHEAD OF THE RUN. While daemon.mode is on, the daemon
+  looks at each workspace that is running and not idle, and has an iOS or
+  Android device recorded, on every minute tick. When its git HEAD, its
+  lockfile (pnpm-lock.yaml, yarn.lock, package-lock.json or bun.lock) or the
+  install stamp in node_modules (.modules.yaml, .package-lock.json or
+  .yarn-integrity) changed since the last look, and a run's own digest finds no record, it computes the
+  digest and the full fingerprint in a low-priority child process, one at a
+  time and at most two per tick, and records them as a run would. The next
+  stim ios or stim android of that tree then reads the record and starts its
+  background check as above. A record is read only when the run's own digest
+  of the tree equals the recorded one, so a precompute never makes a run use a
+  fingerprint of other inputs: an edit made after it, a different .env, or an
+  environment variable the config reads that has another value in the
+  command's shell than in the daemon's leaves the record unread, and the run
+  fingerprints in full. Nothing starts while daemon.mode is report, the
+  pressure level is above normal or the host load exceeds 4 per core, and a
+  tree whose child ended, whether it recorded, skipped, failed or timed out
+  (2 minutes), is not looked at again until one of those changes. It never records for a pod install alone: a run
+  after one fingerprints in full once. The record written is the same one a
+  run writes, so the 256-record cap and gc pruning apply to it. The daemon
+  logs one daemon_fingerprint_precompute record to daemon.ndjson per child,
+  with its outcome (recorded, present, skipped or failed) and duration, and
+  one line when a hold starts or ends.
 
   A config the digest cannot follow always fingerprints in full: a dynamic
   require or import, process.env used other than by literal name, file,
@@ -2114,9 +2242,14 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
 
   \`.fingerprintignore\` at the project root (same syntax as .gitignore) is the
   answer. Put in it only what genuinely cannot change the native build: a
-  generated report, a local env file, a lockfile whose checksums embed absolute
-  machine paths (\`ios/Podfile.lock\` is the usual one -- pod checksums can bake
-  in a machine path, and \`pod install\` rewrites it on a plain re-install).
+  generated report, a local env file, a lockfile that embeds absolute machine
+  paths. Not \`ios/Podfile.lock\`: its checksum of a podspec that names the
+  checkout's path (the precompiled ExpoModulesCore) changes with the path, and
+  the fingerprint counts that checksum as the checksum of the podspec with the
+  path left out, so checkouts of one commit that each ran \`pod install\` get
+  one key. It does so only for a checksum that equals the sha1 of the pod's
+  file in ios/Pods/Local Podspecs, so any other change to the podspec, or to
+  the lock, still changes the key.
   Never ignore a real native input -- a Podfile, a gradle file, the app config
   -- to force a hit: that trades a slow build for a wrong one.
 
@@ -2222,10 +2355,17 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   $STIM_HOME/build-waits, boots in $STIM_HOME/device-waits. A waiter takes a
   freed slot only when every run ahead of it has one, and the stim-daemon
   wakes the oldest waiter as soon as a build or boot finishes; without a
-  daemon each waiter polls (1s for builds, 2s for boots). Runs behind the
-  head of the boot queue reuse the last device listing while it is under 10s
-  old instead of listing again, and a boot starts only on a listing taken
-  under the admission lock. Every 10s a waiting
+  daemon each waiter polls (1s for builds, 2s for boots). A waiter keeps its
+  position when the daemon hands over to one from an installed upgrade: the
+  order lives in those directories, and it reconnects on its next poll. Runs
+  behind the head of the boot queue reuse the last device listing while it
+  is under 10s old instead of listing again, and a boot starts only on a
+  listing taken under the admission lock. A waiting boot reads the device caps
+  again on every poll, so raising concurrency.maxDevices or a per-platform cap
+  admits it on its next poll, and lowering one holds back boots not yet
+  admitted but never stops a device that is already booted. A waiting build
+  reads concurrency.maxBuilds again on every poll the same way, and a lowered
+  cap never stops a build that holds a slot. Every 10s a waiting
   run prints its queue position and what it waits for:
 
     build       waiting for a build slot: queue position 2 of 3, all 1 in use, 40s elapsed -- stim guide lifecycle concurrency
@@ -2858,7 +2998,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   \`stop\` releases this workspace's leases and stops its log collectors.
   On a physical iPhone that also closes the app, because its collector owns
-  the devicectl launch session. \`gc --delete\` removes expired lease files;
+  the devicectl launch session. \`gc --delete\` and the daily maintenance sweep remove expired lease files;
   neither command shuts down the phone or uninstalls the app.
 
   WATCHING THE PHONE: while this workspace holds the lease, stim-server

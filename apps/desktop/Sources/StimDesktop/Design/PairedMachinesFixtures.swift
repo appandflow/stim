@@ -115,7 +115,8 @@
           ScrollView {
             PairedMachineSection(
               entry: entry, session: nil, status: status,
-              work: RemoteWork.list((payload?.environments ?? []).map { OwnedWorkspace(owner: key.owner, workspace: $0) })
+              work: ForeignWork.list(
+                (payload?.environments ?? []).map { OwnedWorkspace(owner: key.owner, workspace: $0) }, server: entry.id)
             )
             .padding(Space.xxl)
           }

@@ -54,7 +54,9 @@ export function isExpectedHost(host: string): boolean {
 function checkEndpoint(endpoint: string): string | null {
   const match = ENDPOINT.exec(endpoint);
   if (!match) return t`The endpoint is not a ws:// or wss:// URL.`;
-  const [, scheme, host] = match;
+  const [, scheme, host, port] = match;
+  if (port && (Number(port.slice(1)) < 1 || Number(port.slice(1)) > 65535))
+    return t`The endpoint port must be between 1 and 65535.`;
   if (scheme.toLowerCase() === 'wss') return null;
   if (isPrivateAddress(host.toLowerCase())) return null;
   return t`The endpoint must start with wss://, or use ws:// with a private IP address.`;
@@ -70,7 +72,10 @@ export function parsePairingCode(text: string): PairingResult {
   if (!value || typeof value !== 'object') return { ok: false, error: t`This QR code is not a Stim pairing code.` };
   const { v, name, endpoint, pairingToken, fingerprint } = value as Record<string, unknown>;
   if (v === 1)
-    return { ok: false, error: t`This pairing code is from an older stim-server. Update stim-server on this Mac.` };
+    return {
+      ok: false,
+      error: t`This pairing code is from an older stim-server. Update stim-server on the machine that showed it.`,
+    };
   if (v !== 2) return { ok: false, error: t`This pairing code needs a newer version of the app.` };
   if (typeof endpoint !== 'string' || typeof pairingToken !== 'string' || typeof fingerprint !== 'string') {
     return { ok: false, error: t`This QR code is not a Stim pairing code.` };

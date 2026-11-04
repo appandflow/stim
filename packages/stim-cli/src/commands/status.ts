@@ -61,7 +61,7 @@ import {
   tightVolumes,
 } from '../status.ts';
 import { createStatusMeasurer, type StatusMeasurer } from '../status-measures.ts';
-import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
+import { isBootedParked, parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type { EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
 import { physicalDeviceLine } from '../physical-devices.ts';
 import { hostedAgentLine } from '../device-host/hosted-agent.ts';
@@ -148,7 +148,8 @@ export default function statusCommand(program: Command): void {
     .action(async (opts: StatusOptions) => {
       if (opts.watch) return watchStatus(Boolean(opts.json));
       const json = Boolean(opts.json);
-      for (const line of renderStatus(await readStatus(), json)) console.log(line);
+      for (const line of renderStatus(await readStatus({ probes: liveProbes({ sharedListing: true }) }), json))
+        console.log(line);
     });
 }
 
@@ -212,7 +213,16 @@ function renderStatus(
   };
   const pools = (['ios', 'android'] as const).map((platform) => {
     const { max, error } = parkedMaxSetting(platform);
-    return { error, line: poolLine({ platform, parked: readParked(platform).length, max }) };
+    const records = readParked(platform);
+    return {
+      error,
+      line: poolLine({
+        platform,
+        parked: records.length,
+        booted: records.filter((record) => isBootedParked(record)).length,
+        max,
+      }),
+    };
   });
 
   const maintenance = maintenanceStatus();

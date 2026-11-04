@@ -29,6 +29,7 @@ import {
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { runProcessOperation } from '../cli-operation.ts';
+import { hostedAgentSessionName } from '../device-host/agent-connection.ts';
 import { resolveOwnedAvdSerialAsync } from '../devices/android.ts';
 import { deviceSlotKey, parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } from '../engine/device-lease.ts';
@@ -302,14 +303,28 @@ export function planAgentDevice(
 }
 
 /**
- * The full agent-device arguments for a plan: the selection for a local device, with `stim-<slot>-<platform>` as the
- * session when the agent names none, or the hosted session's remote config. Refuses a device that is not running.
+ * The session name when the agent names none. A hosted session's name carries the workspace id because agent-device
+ * keeps one saved remote connection per name for the whole machine; a local device's sessions live in the workspace's
+ * own state directory.
+ */
+function defaultSessionName(root: string, device: WorkspaceDevice): string {
+  return device.kind === 'hosted'
+    ? hostedAgentSessionName(root, device.platform, device.slot)
+    : `stim-${device.slot}-${device.platform}`;
+}
+
+/**
+ * The full agent-device arguments for a plan: the selection for a local device or the hosted session's remote config,
+ * with `stim-<slot>-<platform>` (`-<workspace id>` for a hosted session) as the session when the agent names none.
+ * Refuses a device that is not running.
  */
 export function agentDeviceArgs(
   plan: AgentDevicePlan,
+  root: string,
 ): { args: string[]; session: string | null } | { refusal: AgentDeviceRefusal } {
   const { device } = plan;
-  const session = plan.session === undefined ? [] : ['--session', plan.session];
+  const sessionless = plan.command !== null && SESSIONLESS_COMMANDS.has(plan.command);
+  const name = plan.session ?? defaultSessionName(root, device);
   if (device.kind === 'hosted') {
     if (!device.remoteConfig) {
       return refusal(
@@ -318,7 +333,10 @@ export function agentDeviceArgs(
         'On the hosting Mac, set `hosting.agentDriver` to `agent-device` and install agent-device 0.21.30 or later, then rerun `stim ios|android --remote <machine>`.',
       );
     }
-    return { args: [...plan.args, ...session, '--remote-config', device.remoteConfig], session: null };
+    return {
+      args: [...plan.args, ...(sessionless ? [] : ['--session', name]), '--remote-config', device.remoteConfig],
+      session: null,
+    };
   }
   if (device.id === null) {
     return refusal(
@@ -327,8 +345,6 @@ export function agentDeviceArgs(
       `Run \`stim ${device.platform}${device.slot === 'default' ? '' : ` --slot ${device.slot}`}\` to boot it and launch the app.`,
     );
   }
-  const sessionless = plan.command !== null && SESSIONLESS_COMMANDS.has(plan.command);
-  const name = plan.session ?? `stim-${device.slot}-${device.platform}`;
   return {
     args: [
       ...plan.args,
@@ -583,7 +599,7 @@ async function runAgentDevice(argv: string[], version: string): Promise<void> {
     plan = planAgentDevice(await resolveDevices(root, project, state), argv);
     if ('refusal' in plan) return refuse(plan.refusal, json);
   }
-  const built = agentDeviceArgs(plan);
+  const built = agentDeviceArgs(plan, root);
   if ('refusal' in built) return refuse(built.refusal, json);
   await execute(invocation, argv, { plan, ...built }, root, version);
 }
@@ -622,6 +638,84 @@ interface Run {
   session: string | null;
 }
 
+const SESSION_LOST =
+  /Error \(SESSION_NOT_FOUND\)|"code":\s*"SESSION_NOT_FOUND"|requires an active app session on the target device|No active proxy device lease for this session/;
+
+function lostSession(exit: AgentDeviceExit): boolean {
+  const text = `${exit.stdout}${exit.stderr}`;
+  return exit.signal === null && exit.code !== 0 && SESSION_LOST.test(text) && !NO_AGENT_CONTROL.test(text);
+}
+
+const NO_AGENT_CONTROL = /has no agent control for this hosted session/;
+
+/** Single-action commands that did nothing when they answered that the session was gone, so running them again is safe. */
+const REOPENABLE_COMMANDS = new Set(
+  'snapshot screenshot press tap click scroll swipe longpress long-press type fill back home get is find wait hover focus'.split(
+    ' ',
+  ),
+);
+
+function hostedReopen(root: string, plan: AgentDevicePlan, args: readonly string[]): string[] | null {
+  const { device } = plan;
+  if (device.kind !== 'hosted' || !device.remoteConfig || !plan.command || !REOPENABLE_COMMANDS.has(plan.command))
+    return null;
+  if (args.includes('--text-stdin')) return null;
+  const appId = readWorkspaceLaunches(root)[deviceSlotKey(device.platform, device.slot)]?.appId;
+  if (!appId) return null;
+  const session = plan.session ?? defaultSessionName(root, device);
+  return ['open', appId, '--session', session, '--remote-config', device.remoteConfig];
+}
+
+interface AgentDeviceExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  /** What agent-device printed, when the run was captured instead of passed through. */
+  stdout: Buffer;
+  stderr: Buffer;
+}
+
+/**
+ * Runs agent-device with this terminal's stdin. `tee` also hands its stdout to `onStdout`; `capture` keeps both
+ * streams instead of passing them through.
+ */
+async function spawnAgentDevice(
+  invocation: { command: string; args: string[] },
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  mode: { tee?: boolean; capture?: boolean } = {},
+  onStdout: (chunk: Buffer) => void = () => {},
+): Promise<AgentDeviceExit> {
+  const child = getExecutor().spawn(invocation.command, [...invocation.args, ...args], {
+    stdio: ['inherit', mode.tee || mode.capture ? 'pipe' : 'inherit', mode.capture ? 'pipe' : 'inherit'],
+    env,
+  });
+  const handlers = [
+    ...FORWARDED_SIGNALS.map((signal) => [signal, () => child.kill(signal)] as const),
+    ['SIGINT', () => {}] as const,
+  ];
+  for (const [signal, handler] of handlers) process.on(signal, handler);
+  const out: Buffer[] = [];
+  const err: Buffer[] = [];
+  if (mode.tee && child.stdout) {
+    process.stdout.on('error', () => {});
+    child.stdout.pipe(process.stdout, { end: false });
+    child.stdout.on('data', onStdout);
+  }
+  if (mode.capture) {
+    child.stdout?.on('data', (chunk: Buffer) => out.push(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => err.push(chunk));
+  }
+  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.once('error', (error) => {
+      console.error(chalk.red(phaseLine('error', `agent-device could not start: ${error.message}`)));
+      resolve({ code: 127, signal: null });
+    });
+    child.once('close', (code, signal) => resolve({ code, signal }));
+  });
+  for (const [signal, handler] of handlers) process.off(signal, handler);
+  return { ...exit, stdout: Buffer.concat(out), stderr: Buffer.concat(err) };
+}
+
 async function execute(
   invocation: { command: string; args: string[] },
   argv: string[],
@@ -653,33 +747,29 @@ async function execute(
     : null;
   const started = target && command ? publish(version, { ...target, command, phase: 'start' }) : null;
   const tee = Boolean(tracked) && command === 'snapshot' && argv.includes('--json') && !process.stdout.isTTY;
-  const child = getExecutor().spawn(invocation.command, [...invocation.args, ...(run?.args ?? argv)], {
-    stdio: ['inherit', tee ? 'pipe' : 'inherit', 'inherit'],
-    env,
-  });
-  const handlers = [
-    ...FORWARDED_SIGNALS.map((signal) => [signal, () => child.kill(signal)] as const),
-    ['SIGINT', () => {}] as const,
-  ];
-  for (const [signal, handler] of handlers) process.on(signal, handler);
+  const args = run?.args ?? argv;
+  const reopen = run && hosted ? hostedReopen(hosted.root, run.plan, args) : null;
   const chunks: Buffer[] = [];
   let bytes = 0;
-  if (tee && child.stdout) {
-    process.stdout.on('error', () => {});
-    child.stdout.pipe(process.stdout, { end: false });
-    child.stdout.on('data', (chunk: Buffer) => {
-      bytes += chunk.length;
-      if (bytes <= MAX_SNAPSHOT_BYTES) chunks.push(chunk);
-    });
+  const onStdout = (chunk: Buffer) => {
+    bytes += chunk.length;
+    if (bytes <= MAX_SNAPSHOT_BYTES) chunks.push(chunk);
+  };
+  let exit = await spawnAgentDevice(invocation, args, env, { tee, capture: reopen !== null }, onStdout);
+  if (reopen && lostSession(exit)) {
+    console.error(
+      phaseLine('agent-device', `the host no longer holds this agent-device session; opening ${reopen[1]} again`),
+    );
+    const opened = await spawnAgentDevice(invocation, reopen, env, { capture: true });
+    if (opened.code === 0) exit = await spawnAgentDevice(invocation, args, env, { capture: true });
+    else exit = opened.signal === null ? { ...exit, stderr: Buffer.concat([exit.stderr, opened.stderr]) } : opened;
   }
-  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-    child.once('error', (error) => {
-      console.error(chalk.red(phaseLine('error', `agent-device could not start: ${error.message}`)));
-      resolve({ code: 127, signal: null });
-    });
-    child.once('close', (code, signal) => resolve({ code, signal }));
-  });
-  for (const [signal, handler] of handlers) process.off(signal, handler);
+  if (reopen) {
+    process.stdout.on('error', () => {});
+    process.stderr.on('error', () => {});
+    process.stdout.write(exit.stdout);
+    process.stderr.write(exit.stderr);
+  }
   process.exitCode = exit.signal ? 128 + (constants.signals[exit.signal] ?? 0) : (exit.code ?? 1);
   if (hosted && target) {
     await started;

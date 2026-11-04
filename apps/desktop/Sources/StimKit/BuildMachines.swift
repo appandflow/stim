@@ -172,12 +172,15 @@ public enum Tailnet {
   }
 }
 
-/// Where this Mac stands with one `remote.machines` entry, as `stim doctor --json` reports it.
+/// Where this machine stands with one `remote.machines` entry, as `stim doctor --json` and `stim remote list --json`
+/// report it.
 public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public enum State: String, Decodable, Sendable {
-    case approved, pending, revoked, lapsed, invalid, unreachable, unknown
+    case approved, pending, revoked, lapsed, invalid, unreachable, outdated, busy, unknown
     case notAsked = "not-asked"
     case keyChanged = "key-changed"
+    case keyUnconfirmed = "key-unconfirmed"
+    case credentialsUnavailable = "credentials-unavailable"
     case notOnTailnet = "not-on-tailnet"
     case tailscaleOff = "tailscale-off"
 
@@ -193,6 +196,10 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       case .revoked: return "Revoked"
       case .lapsed: return "Request lapsed"
       case .keyChanged: return "Different machine"
+      case .keyUnconfirmed: return "Key not confirmed"
+      case .outdated: return "Server is outdated"
+      case .credentialsUnavailable: return "Credentials unreadable"
+      case .busy: return "Check in progress"
       case .notOnTailnet: return "Not on the tailnet"
       case .tailscaleOff: return "Tailscale is off"
       case .unreachable: return "Unreachable"
@@ -204,9 +211,9 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     var readinessTone: Tone {
       switch self {
       case .approved: return .success
-      case .pending, .notOnTailnet, .tailscaleOff, .unreachable: return .warning
-      case .revoked, .lapsed, .keyChanged, .invalid: return .error
-      case .notAsked, .unknown: return .neutral
+      case .pending, .notOnTailnet, .tailscaleOff, .unreachable, .keyUnconfirmed, .outdated: return .warning
+      case .revoked, .lapsed, .keyChanged, .invalid, .credentialsUnavailable: return .error
+      case .notAsked, .busy, .unknown: return .neutral
       }
     }
 
@@ -327,8 +334,8 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public var host: Host?
   public var machine: String
   public var state: State
-  /// Present for the states that stop below approval (`tailscale-off`, `not-on-tailnet`, `unreachable`) and for a
-  /// state this Desktop does not know, such as `outdated`; absent from an older `stim`.
+  /// Present for the states that stop below approval (`tailscale-off`, `not-on-tailnet`, `unreachable`, `outdated`)
+  /// and possibly for a state this Desktop does not know; absent from an older `stim`.
   public var diagnosis: Diagnosis?
   public var dnsName: String?
   public var deviceId: String?
@@ -399,7 +406,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   /// The diagnosis, for the states it explains.
   var diagnosed: Diagnosis? {
     switch state {
-    case .unreachable, .tailscaleOff, .notOnTailnet, .unknown: return diagnosis
+    case .unreachable, .tailscaleOff, .notOnTailnet, .outdated, .unknown: return diagnosis
     default: return nil
     }
   }
@@ -466,15 +473,25 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     switch state {
     case .approved:
       if offloadable != false { return "Builds can run there." }
-      return readiness.remedy.map { $0.prefix(1).uppercased() + $0.dropFirst() + "." } ?? "Builds stay on this Mac for now."
+      return readiness.remedy.map { $0.prefix(1).uppercased() + $0.dropFirst() + "." } ?? "Builds stay on this machine for now."
     case .pending:
       return "\(approvalPrompt). \(lapseLine())"
-    case .notAsked: return "This Mac has not asked it yet."
-    case .revoked: return "It revoked this Mac or denied the request."
+    case .notAsked: return "This machine has not asked it yet."
+    case .revoked: return "It revoked this machine or denied the request."
     case .lapsed: return "The request lapsed before anyone on \(machine) approved it. Ask again."
     case .keyChanged:
       return
-        "It answered with a different stim-server key than the one this Mac pinned, so Stim does not connect to it. If that machine was replaced or reinstalled, remove it here, which forgets the old key, then set it up again."
+        "It answered with a different stim-server key than the one this machine pinned, so Stim does not connect to it. If that machine was replaced or reinstalled, remove it here, which forgets the old key, then set it up again."
+    case .keyUnconfirmed:
+      return
+        "It answered with a stim-server key this machine has not confirmed. In a terminal on this machine, run stim remote list and answer y only if the fingerprint matches the one stim-server setup printed on \(machine)."
+    case .outdated:
+      return
+        "Its stim-server is older than this machine's Stim. On \(machine), run stim-server service update --release <version>, then run stim remote add \(machine) on this machine."
+    case .credentialsUnavailable:
+      return
+        "This machine cannot read the credentials it keeps for hosted simulators. Restore read access to device-host-machines.json in the Stim home, then check again."
+    case .busy: return "Another check holds this machine's hosting credentials. It shows here once that check finishes."
     case .notOnTailnet: return "No machine on this tailnet has that name."
     case .tailscaleOff: return "Start Tailscale to reach it."
     case .unreachable: return "stim-server did not answer on its tailscale serve route."
@@ -548,7 +565,7 @@ func formatLoad(_ value: Double) -> String {
 public struct AddedMachine: Equatable, Sendable {
   /// The `remote.machines` entry that names it.
   public var entry: String
-  /// The pill the Remote Machines list shows for it; nil until `stim doctor` has reported.
+  /// The pill the Connections list shows for it; nil until `stim doctor` has reported.
   public var status: MachineListStatus?
   /// What stops it and what to do about it; nil when it is healthy or not yet checked.
   public var detail: String?
@@ -567,7 +584,7 @@ public enum OffloadMachines {
     return name == mac.machine || name == mac.dnsName
   }
 
-  /// `mac` as the Remote Machines list knows it, or nil when no entry names it. Its state is the doctor status for that
+  /// `mac` as the Connections list knows it, or nil when no entry names it. Its state is the doctor status for that
   /// entry, never Tailscale's `Online` flag, which can read false while the machine answers.
   public static func added(_ mac: TailnetMac, entries: [String], statuses: [BuildMachineStatus]?) -> AddedMachine? {
     guard let entry = entries.first(where: { names($0, mac) }) else { return nil }

@@ -73,6 +73,30 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(!(process.environment ?? [:]).values.contains(secret))
   }
 
+  @Test func aChildWithoutAKeyGetsAnOpenLifetimePipeUntilItExits() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("desktop-lifetime-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let script = root.appendingPathComponent("child.pl")
+    try #"""
+    $| = 1;
+    print "marker=$ENV{STIM_DESKTOP_LIFETIME_FD} bootstrap=" . (defined $ENV{STIM_DESKTOP_BOOTSTRAP_FD} ? 'set' : 'unset') . "\n";
+    my $line = <STDIN>;
+    print "stdin closed\n";
+    """#.write(to: script, atomically: true, encoding: .utf8)
+    let environment = StimServerCLI(
+      environment: ["STIM_DESKTOP_LIFETIME_FD": "stale"], bundled: BundledServer(node: "/usr/bin/perl", script: script.path))
+    let lines = LockedValue([OutputLine]())
+    let exit = LockedValue<Int32?>(nil)
+    let process = try environment.serve(
+      onLine: { line in lines.withLock { $0.append(line) } }, onExit: { status in exit.withLock { $0 = status } })
+    defer { if process.isRunning { process.terminate() } }
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(lines.withLock { $0.map(\.text) } == ["marker=0 bootstrap=unset"])
+    #expect(exit.withLock { $0 } == nil)
+    process.terminate()
+  }
+
   @Test func anExternalOverrideCannotReceiveThePrivateKey() throws {
     let environment = StimServerCLI(environment: [:], override: "/bin/cat", bundled: nil)
     #expect(throws: ServerError(code: "forbidden", message: "Private Desktop bootstrap requires the bundled server.")) {
@@ -728,14 +752,15 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test(arguments: ["home", "authority", "feature"])
-  func settingsRefuseWrongHomeMissingAuthorityAndOldServers(reason: String) async throws {
+  func settingsRefuseWrongHomeServersWithoutAuthorityAndOldServers(reason: String) async throws {
     let key = reason == "authority" ? nil : DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer(
       "hello",
       hello(
-        key.map { bootstrapChallenge($0) }, features: reason == "feature" ? [] : ["desktop-settings-write"]))
+        key.map { bootstrapChallenge($0) },
+        features: reason == "feature" || reason == "authority" ? [] : ["desktop-settings-write"]))
     await settle()
     if key != nil {
       socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
@@ -749,6 +774,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       Issue.record("Settings must refuse this connection")
     } catch let error as ServerError {
       #expect(error.code == (reason == "feature" ? "unsupported" : "not-connected"))
+      #expect(error.message.contains("on this stim-server") == (reason == "authority"))
     }
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.settings.write") })
   }
@@ -1141,7 +1167,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(!client.isOpen && !client.hasDesktopAuthority)
   }
 
-  @Test(arguments: [false, true]) func oldOrAdoptedServersStayConnectedWithoutPrivateAuthority(hasKey: Bool) async throws {
+  @Test(arguments: [false, true]) func serversThatOfferNoDesktopActionsStayConnectedWithoutAuthority(hasKey: Bool) async throws {
     let (client, socket) = try await client(key: hasKey ? DesktopBootstrapKey() : nil)
     defer { client.stop() }
     socket.answer("hello", hello())
@@ -1155,6 +1181,45 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     } else {
       Issue.record("hello must carry params")
     }
+  }
+
+  @Test(arguments: [false, true]) func aServerWithoutAPrivateKeyGrantsItsLocalSocketAuthorityWithoutAProof(hasKey: Bool)
+    async throws
+  {
+    let (client, socket) = try await client(key: hasKey ? DesktopBootstrapKey() : nil)
+    defer { client.stop() }
+    socket.answer("hello", hello(features: ["desktop-local-authority"]))
+    await settle()
+    #expect(client.isOpen && client.hasDesktopAuthority)
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.authenticate") })
+    socket.onEvent(.closed("restarted"))
+    #expect(!client.isOpen && !client.hasDesktopAuthority)
+  }
+
+  @Test func aServerThatAdvertisesWriteFeaturesWithoutGrantingLocalAuthorityIsNotTrusted() async throws {
+    let (client, socket) = try await client(key: nil)
+    defer { client.stop() }
+    socket.answer("hello", hello(features: ["desktop-settings-write", "desktop-gc"]))
+    await settle()
+    #expect(client.isOpen && !client.hasDesktopAuthority)
+  }
+
+  @Test func aPairedServerNeverGetsAuthorityFromItsFeatures() async throws {
+    var socket: FakeTransport?
+    let client = ServerClient(
+      endpoint: URL(string: "ws://100.64.0.1:7787")!, clientName: "Stim Desktop", clientVersion: "1",
+      transport: { _, event in
+        let next = FakeTransport(onEvent: event)
+        socket = next
+        return next
+      },
+      scheduler: { _, _ in {} })
+    client.start()
+    await settle()
+    defer { client.stop() }
+    try #require(socket).answer("hello", hello(features: ["desktop-local-authority"]))
+    await settle()
+    #expect(client.isOpen && !client.hasDesktopAuthority)
   }
 
   @Test func refusesAnotherServersSocketBeforeSendingAnyProof() async throws {

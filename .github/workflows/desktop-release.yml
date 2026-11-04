@@ -24,6 +24,11 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: write
+      actions: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      build: ${{ steps.build-number.outputs.build }}
     env:
       GH_REPO: ${{ github.repository }}
       APPCAST_URL: https://github.com/${{ github.repository }}/releases/download/desktop-latest/appcast.xml
@@ -34,6 +39,7 @@ jobs:
           persist-credentials: false
 
       - name: Resolve the version
+        id: version
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
@@ -50,6 +56,8 @@ jobs:
           case "$version" in *-*) prerelease=true ;; esac
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "PRERELEASE=$prerelease" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "version=$version prerelease=$prerelease event=$GITHUB_EVENT_NAME"
 
       - name: The tag is on main
@@ -60,6 +68,14 @@ jobs:
             echo "::error::$GITHUB_REF_NAME is not on main. Tag a commit from main."
             exit 1
           fi
+
+      - name: A stable release has a green Full suite on this commit
+        if: github.event_name == 'push' && steps.version.outputs.prerelease == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=workflow_dispatch&status=success&per_page=100" |
+            node scripts/full-suite-gate.mjs "$GITHUB_SHA"
 
       - name: Build, sign and notarize
         uses: ./.github/actions/desktop-build
@@ -80,6 +96,12 @@ jobs:
           sentry-org: ${{ vars.SENTRY_ORG }}
           sentry-project: ${{ vars.SENTRY_DESKTOP_PROJECT }}
 
+      - name: Read the build number
+        id: build-number
+        run: |
+          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' apps/desktop/build/Stim.app/Contents/Info.plist)
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: stim-desktop-${{ env.VERSION }}
@@ -88,6 +110,7 @@ jobs:
             apps/desktop/build/release/Stim-*.zip
             apps/desktop/build/release/SHA256SUMS
             apps/desktop/build/release/appcast.xml
+            apps/desktop/build/release/appcast-item.xml
           if-no-files-found: error
 
       - name: Refuse to publish a build that is not notarized
@@ -112,18 +135,52 @@ jobs:
           fi
           gh release upload "$GITHUB_REF_NAME" --clobber "$out/Stim-$VERSION.dmg" "$out/Stim-$VERSION.zip" "$out/SHA256SUMS"
 
+      - name: Remove the signing keychain and API key
+        if: always()
+        run: |
+          if [ -n "${DESKTOP_KEYCHAIN:-}" ]; then security delete-keychain "$DESKTOP_KEYCHAIN" || true; fi
+          rm -rf "$RUNNER_TEMP/asc" "$RUNNER_TEMP/desktop-cert.p12" "$RUNNER_TEMP/desktop.provisionprofile"
+
+  # GitHub keeps one running and one pending job per concurrency group and cancels an older pending job
+  # when a newer one queues. The group desktop-appcast has at most this job and one Desktop next publish
+  # job, because each workflow's own concurrency group starts a run only after the previous one finished,
+  # so neither can cancel the other's pending publish.
+  publish:
+    needs: release
+    if: github.event_name == 'push' && needs.release.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 30
+    concurrency:
+      group: desktop-appcast
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      APPCAST_URL: https://github.com/${{ github.repository }}/releases/download/desktop-latest/appcast.xml
+      VERSION: ${{ needs.release.outputs.version }}
+      BUILD: ${{ needs.release.outputs.build }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: stim-desktop-${{ env.VERSION }}
+          path: ${{ runner.temp }}/release
+
       - name: Check that this is the newest stable release
-        if: github.event_name == 'push' && env.PRERELEASE == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' apps/desktop/build/Stim.app/Contents/Info.plist)
           current=
           if gh release view desktop-latest --json assets --jq '.assets[].name' 2>/dev/null | grep -qx appcast.xml; then
             curl -fsSL --retry 3 -o "$RUNNER_TEMP/appcast.xml" "$APPCAST_URL"
             current=$(node scripts/desktop-appcast.mjs list --current "$RUNNER_TEMP/appcast.xml" | awk -F'\t' '$1 == "stable" { print $2; exit }')
           fi
-          if [ -n "$current" ] && [ "$current" -gt "$build" ]; then
+          if [ -n "$current" ] && [ "$current" -gt "$BUILD" ]; then
             echo "::notice::desktop-latest serves the newer build $current, so it and the cask stay on that release."
             echo "NEWEST=false" >> "$GITHUB_ENV"
           else
@@ -131,11 +188,11 @@ jobs:
           fi
 
       - name: Update the desktop-latest release
-        if: github.event_name == 'push' && env.NEWEST == 'true'
+        if: env.NEWEST == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          out=apps/desktop/build/release
+          out=$RUNNER_TEMP/release
           cp "$out/Stim-$VERSION.dmg" "$RUNNER_TEMP/Stim.dmg"
           notes="Stable links to the newest Stim Desktop release, desktop-v$VERSION. Stim.dmg is a copy of Stim-$VERSION.dmg and appcast.xml is the Sparkle update feed."
           if gh release view desktop-latest > /dev/null 2>&1; then
@@ -151,7 +208,7 @@ jobs:
           fi
 
       - name: Bump the Homebrew cask
-        if: github.event_name == 'push' && env.NEWEST == 'true'
+        if: env.NEWEST == 'true'
         env:
           HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
         run: |
@@ -178,8 +235,6 @@ jobs:
             commit -m "stim $VERSION"
           git push origin HEAD
 
-      - name: Remove the signing keychain and API key
+      - name: Remove the Homebrew tap key
         if: always()
-        run: |
-          if [ -n "${DESKTOP_KEYCHAIN:-}" ]; then security delete-keychain "$DESKTOP_KEYCHAIN" || true; fi
-          rm -rf "$RUNNER_TEMP/asc" "$RUNNER_TEMP/desktop-cert.p12" "$RUNNER_TEMP/desktop.provisionprofile" "$RUNNER_TEMP/homebrew-tap-key"
+        run: rm -f "$RUNNER_TEMP/homebrew-tap-key"

@@ -334,6 +334,18 @@ one. Android AVDs use the
 assumes that the caller finished all device automation for that Stim session.
 It does not block on other processes attached to the owned device.
 
+An owned iOS simulator is the exception: while macOS memory pressure is normal,
+a device slot is free and `daemon.mode` is `on`, `stim stop` leaves it booted for
+`pool.bootedGraceMinutes` (15 by default). `stop` still ends Metro, the app and
+agent-device sessions, and the simulator stays assigned to the workspace. The
+next `stim ios` uses the booted simulator with no boot, and `stim worktree
+remove` parks it booted. The stim-daemon shuts it down when the grace period
+passes or when memory pressure is not normal. `stop` prints how long it stays
+booted; to shut it down now run `STIM_POOL_BOOTED_GRACE_MINUTES=0 stim stop`,
+and set `pool.bootedGraceMinutes` to `0` to turn the deferral off. A repeated
+`stop` keeps the first expiry. Android emulators, and any simulator stopped with
+`--slot`, are shut down at once.
+
 Android creation records an owned reservation before running native tools.
 Other workspaces can update Stim config during creation, while GC and teardown
 keep that reservation. An interruption leaves an incomplete record; retry
@@ -597,6 +609,19 @@ Tailscale refuses and Stim prints Tailscale's error message.
 {`Set metro.tunnel to tailscale for this workspace and start Metro for my remote agent-device proxy on the same tailnet. Show me its URL with stim status, then use stim stop when finished.`}
 </PromptBox>
 
+## Typing from a viewer
+
+When Stim Desktop controls an owned iOS simulator, or stim-server sends it
+input, Stim puts the simulator in hardware-keyboard mode, the setting behind
+Simulator.app's Connect Hardware Keyboard. The on-screen keyboard stays hidden
+and the keys of the viewer's keyboard type into the focused field. Nothing turns
+the mode off when the viewer leaves, so the simulator stays without an on-screen
+keyboard until an XCTest run, including agent-device on an iOS simulator, detaches
+it and brings the keyboard back. The next input from a viewer after two idle
+seconds attaches it again. An Android emulator keeps its on-screen keyboard: its
+keyboard is built in to the emulator, so Android's "Use on-screen keyboard"
+setting does not apply.
+
 ## Control from the phone viewer
 
 A phone granted control can use the compact bottom toolbar for Keyboard,
@@ -609,10 +634,11 @@ the device, so a portrait-only app shows sideways in a turned frame; on an emula
 app in front still needs to support the requested orientation. Physical devices rotate
 only in hand.
 
-Tapping Control explicitly takes over from the displayed driver immediately.
-If the server reports a driver conflict after that tap, the Take over action
-also starts control immediately. The server keeps its exclusive control lease
-and records the takeover. Viewing replay remains read-only.
+Tapping Control starts control at once, while an agent drives the device or
+another person controls it too: everyone's input reaches the device, and a
+finger already down keeps the touch pointer until it lifts. A device another
+workspace leases offers **Take Over** instead, and so does a device someone else
+drives on a stim-server older than shared control. Viewing replay remains read-only.
 
 ## Replay device screens
 
@@ -637,7 +663,7 @@ replayable.
 
 Recordings stay on your machine and are served only to paired phones and Stim
 Desktop. Turn them off for the whole machine in the phone's Settings or in Stim
-Desktop's Paired Devices settings, or on the Mac, where a repository or workspace can
+Desktop's Advanced settings, or on the Mac, where a repository or workspace can
 also be set on its own:
 
 ```bash
@@ -754,6 +780,17 @@ and waits up to 15 seconds more. A simulator that stays booted is deleted
 instead, and `stim worktree remove` prints `could not park <name>: ... --
 deleted it instead`.
 
+A simulator that is booted when `stim worktree remove` parks it stays booted
+for `pool.bootedGraceMinutes` (15 by default; `0` shuts it down at park), so the
+next `stim ios` that adopts it skips the boot. Stim keeps it booted only while
+macOS memory pressure is normal, a device slot is free and `daemon.mode` is `on`, terminates the
+leftover app, and counts the simulator against the device caps. The stim-daemon
+shuts it down, and keeps it parked, when the grace period passes, under any
+memory pressure before it touches a workspace's device, and before it reclaims
+another workspace's device for a run waiting on a device slot. `stim stop`
+keeps the workspace's simulator booted under the same gates, so `stop` then
+`worktree remove` keeps it booted too. Emulators are always shut down at park.
+
 Adoption gives the new workspace a clean app state without reinstalling. It
 resets privacy grants and the keychain, uninstalls every other user app except
 XCUITest runner apps, and
@@ -770,6 +807,16 @@ size and the SHA-256 of its signing block, central directory and end record
 with values recorded when the build was cached, so the check is one `adb shell`
 call instead of reading the whole APK. App-group
 containers, photos, the pasteboard and Simulator settings are not cleared.
+
+Every iOS install `stim ios` makes on a local owned simulator, adopted or not, also allows "Paste from
+Other Apps" for the app it installed, so pasting text Stim cannot type, such as
+accents and emoji, with Command-V from Stim Desktop, the phone app or a share
+lands in that app without an "Allow Paste" prompt. After the install and before
+the launch, Stim checks the simulator is still Stim-owned and writes the
+installed bundle id's `kTCCServicePasteboard` row (Allow) into the simulator's own
+`TCC.db`; no other app's row and nothing on the Mac is touched. A failure prints a
+warning and the install stands. A simulator that `--remote` runs on EAS is not covered. Other apps on the simulator, Safari included, keep
+iOS's own prompt.
 
 Android adoption requires the same system image, disk size and AVD creation
 settings. It keeps the AVD name. An emulator's `/data` partition is fixed, so
@@ -845,9 +892,15 @@ slot. Reload reports the failure and remedy in JSON when no other app can
 reload, and logs remain readable. A hello refusal after this machine loses hosting
 access clears its placement during stop or worktree removal; other refusals
 retain it.
-A clean host server restart stops its sessions and preserves eligible parked
-devices for adoption by the same client. A running session left by a crash stays
-`unknown` until explicit stop; booted devices are never re-attached after restart.
+A host server restart leaves ready iOS and Android sessions running, and the
+restarted server resumes them once their ownership claim is provably free. The
+simulator or emulator stays booted, the Metro bridge listens on its recorded port
+again and the agent-device grant keeps its token, so a rerun reattaches and the
+client's Metro links and agent config keep working. A session whose device is not
+verified as the recorded, ledger-owned, running one is stopped instead; an install
+that was in flight at shutdown, a revoked session and a macOS app are stopped too.
+A session whose owner is still held by a live process stays `unknown` until explicit
+stop. Eligible parked devices persist for adoption by the same client.
 On the hosting Mac, `stim gc` lists parked hosted devices and `stim gc --delete`
 deletes them through their owning session homes under a session claim. A held
 claim or unverified ledger ownership keeps the device. Android deletion requires
@@ -876,13 +929,14 @@ readable. The client waits up to 280 seconds for stop. The final collection,
 parking, the stop that follows a failed park and worker termination paths fit
 within that wait; an in-flight handoff copy and
 closing Metro or view transports are outside those worker bounds. Collected
-records remain in the session home; app blobs and materialized bundles are removed.
+records remain in the session home for the client to copy, until the host removes the home an hour after the session stopped;
+app blobs and materialized bundles are removed at stop.
 Native queries read persisted entries, overlap by five seconds and de-duplicate;
 info-level or later-persisted entries may be unavailable. JavaScript logs reach Metro.
 An older host prints an update note, uses uploads and shows previously copied logs.
 
 Stim Desktop shows the simulator with the machine's name and the phone app with an
-**on &lt;machine&gt;** label. Turn on **Serve to phones** in Desktop and pair the phone with the client
+**on &lt;machine&gt;** label. Turn on **Allow connections** in Desktop and pair the phone with the client
 machine. Both view and control it through that machine's local stim-server relay;
 neither connects directly to the hosting Mac. Named slots work independently.
 Touch and text work in Desktop. Local Simulator.app, rotation, hardware buttons
@@ -971,7 +1025,9 @@ which the client downloads, rather than arbitrary host destinations.
 `record stop` downloads the video to that path, or `./recording-<time>.mp4`, on
 your machine. The hosting Mac writes the recording only in a private directory
 for the session in its temporary directory and deletes the files after the download, on `stim stop` or
-session teardown and when the session's daemon restarts. One recording runs per
+session teardown and when the session's daemon restarts. The hosting Mac stops the
+recorder before it parks or deletes the simulator, and a stim-server that restarts
+stops a recorder its previous run left. One recording runs per
 session; a second `record start`, a host output path, `record` inside `batch` and
 a `record stop` from another agent-device session are refused. The host stops a
 recording after 10 minutes; a `record stop` within the next 15 minutes downloads
@@ -1037,7 +1093,7 @@ Replaying an attempt resolves the same session after a lost reply. Unknown
 creation or deletion outcomes retain the reservation until exact reconciliation;
 explicit stop and approval revocation delete only that session's exact
 ledger-owned simulator. At start, stim-server retires leftover stopped iOS and
-Android devices while retaining session homes and records.
+Android devices. An hour after a session stops, stim-server removes its home when the ledger lists no device (a session that stopped before creating one counts), nothing holds its claims and it is not parked; the journal record stays.
 Hosted reservations are atomic with each other; ordinary local device producers
 do not participate, so this is not a machine-wide hard capacity guarantee.
 
@@ -1045,7 +1101,7 @@ The worker also accepts an Android reservation with optional installed
 `systemImage` and `deviceProfile` selectors. It gives that opaque session a
 unique owned AVD and a journal-reserved console port, verifies the exact running
 AVD and ABI, and reconnects to that same record. Explicit stop and revocation
-delete only that exact ledger-owned AVD and retain its session home and record. Ports are coordinated
+delete only that exact ledger-owned AVD. The session home goes later, as described for iOS, and the record stays. Ports are coordinated
 among hosted sessions; ordinary local producers can still race a reservation.
 Android Metro and screen/input routing remain follow-ups in #2266;
 Android sessions refuse the iOS Metro, view and input routes. The

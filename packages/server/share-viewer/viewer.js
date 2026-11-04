@@ -1,6 +1,7 @@
 'use strict';
 
 const body = document.body;
+const rtc = window.stimRtc;
 const control = body.dataset.control === 'true';
 const allowedButtons = (body.dataset.buttons || '').split(' ').filter(Boolean);
 const canRotate = control && body.dataset.canRotate === 'true';
@@ -25,7 +26,16 @@ let expiresAt = null;
 let live = false;
 let finished = false;
 let hasFrame = false;
+let away = false;
+let resuming = false;
 let noteTimer = null;
+let retryTimer = null;
+let probing = false;
+let reconnecting = false;
+let attempt = 0;
+let missingSince = null;
+let releaseInput = () => {};
+const PROBE_TIMEOUT_MS = 10000;
 
 function setStatus(state, text) {
   statusBox.dataset.state = state;
@@ -49,16 +59,26 @@ function timeLeft() {
 
 function refreshStatus() {
   if (finished) return;
-  setStatus(live ? 'live' : 'waiting', live ? 'Live' : 'Waiting');
-  leftText.textContent = timeLeft();
+  if (reconnecting)
+    setStatus('waiting', missingSince === null ? 'Reconnecting...' : 'Share not found. Trying again...');
+  else if (away) setStatus('waiting', 'Waiting for the device');
+  else setStatus(live ? 'live' : 'waiting', live ? 'Live' : 'Waiting');
+  leftText.textContent = reconnecting ? '' : timeLeft();
 }
 setInterval(() => {
-  if (!finished) leftText.textContent = timeLeft();
+  if (!finished && !reconnecting) leftText.textContent = timeLeft();
 }, 1000);
 
 function finish(text) {
   finished = true;
+  reconnecting = false;
+  clearTimeout(retryTimer);
+  delete body.dataset.reconnecting;
   live = false;
+  away = false;
+  resuming = false;
+  delete body.dataset.away;
+  document.getElementById('upgrade').hidden = true;
   setStatus('ended', text);
   leftText.textContent = '';
 }
@@ -101,6 +121,11 @@ function renderFrame(source, width, height) {
   }
   context.drawImage(source, 0, 0, width, height);
   hasFrame = true;
+  if (resuming) {
+    resuming = false;
+    away = false;
+    delete body.dataset.away;
+  }
 }
 
 async function showJpeg(blob) {
@@ -159,13 +184,38 @@ function askForKeyframe() {
   waitingForKeyframe = true;
   if (Date.now() - keyframeAskedAt < KEYFRAME_ASK_MS) return;
   keyframeAskedAt = Date.now();
+  if (rtc.active === 'webrtc' && rtc.keyframe()) return;
+  rtc.countKeyframe();
   send({ type: 'keyframe' });
 }
+
+let undrawn = null;
+let drawScheduled = 0;
 
 function closeDecoder() {
   if (decoder && decoder.state !== 'closed') decoder.close();
   decoder = null;
   decoderKey = '';
+  dropUndrawn();
+}
+
+function dropUndrawn() {
+  undrawn?.close();
+  undrawn = null;
+}
+
+function drawUndrawn() {
+  drawScheduled = 0;
+  const frame = undrawn;
+  undrawn = null;
+  if (!frame) return;
+  renderFrame(frame, frame.displayWidth, frame.displayHeight);
+  rtc.drawn(frame.timestamp / 1000);
+  frame.close();
+  if (!live && !finished) {
+    live = true;
+    refreshStatus();
+  }
 }
 
 /** A decoder that never produced a frame means this browser cannot play the stream; a later failure gets a keyframe. */
@@ -230,12 +280,9 @@ function configure(sps, pps) {
   decoder = new VideoDecoder({
     output: (frame) => {
       decoded = true;
-      renderFrame(frame, frame.displayWidth, frame.displayHeight);
-      frame.close();
-      if (!live && !finished) {
-        live = true;
-        refreshStatus();
-      }
+      undrawn?.close();
+      undrawn = frame;
+      drawScheduled ||= requestAnimationFrame(drawUndrawn);
     },
     error: decoderFailed,
   });
@@ -247,11 +294,75 @@ function configure(sps, pps) {
   decoderKey = key;
 }
 
+let lastSequence = -1;
+const REORDER_MS = Number(new URLSearchParams(location.search).get('reorder')) || 40;
+const reordered = new Map();
+let reorderTimer = null;
+
+function resetSequence() {
+  lastSequence = -1;
+  reordered.clear();
+  clearTimeout(reorderTimer);
+  reorderTimer = null;
+}
+
+/** Plays a packet of the unordered channel; one after a missing packet cannot decode unless it is a keyframe. */
+function playSequenced(buffer, gap) {
+  const view = new DataView(buffer);
+  lastSequence = view.getUint32(4);
+  if (gap) {
+    rtc.gap();
+    if ((view.getUint8(1) & VIDEO_KEYFRAME) === 0) return askForKeyframe();
+  }
+  showVideo(buffer);
+}
+
+function drainReordered() {
+  while (reordered.has(lastSequence + 1)) {
+    const next = reordered.get(lastSequence + 1);
+    reordered.delete(lastSequence + 1);
+    playSequenced(next, false);
+  }
+  if (!reordered.size) {
+    clearTimeout(reorderTimer);
+    reorderTimer = null;
+  }
+}
+
+function giveUpOnMissing() {
+  reorderTimer = null;
+  if (!reordered.size) return;
+  const next = Math.min(...reordered.keys());
+  const buffer = reordered.get(next);
+  reordered.delete(next);
+  playSequenced(buffer, true);
+  drainReordered();
+  if (reordered.size) reorderTimer = setTimeout(giveUpOnMissing, REORDER_MS);
+}
+
+/** An unordered, lossy channel delivers packets late and out of order; waits briefly for a missing one. */
+function receiveRtc(buffer) {
+  if (buffer.byteLength < 21) return;
+  const sequence = new DataView(buffer).getUint32(4);
+  if (lastSequence >= 0 && sequence <= lastSequence) {
+    rtc.late();
+    return;
+  }
+  if (lastSequence < 0 || sequence === lastSequence + 1) {
+    playSequenced(buffer, false);
+    drainReordered();
+    return;
+  }
+  reordered.set(sequence, buffer);
+  reorderTimer ??= setTimeout(giveUpOnMissing, REORDER_MS);
+}
+
 /** Decodes one video packet: the header the server's videoPacket writes, then an Annex-B access unit. */
 function showVideo(buffer) {
   const view = new DataView(buffer);
   if (buffer.byteLength < 21 || view.getUint8(0) !== 1) return;
   const keyframe = (view.getUint8(1) & VIDEO_KEYFRAME) !== 0;
+  rtc.received(buffer.byteLength);
   const units = nalUnits(new Uint8Array(buffer, view.getUint16(2)));
   if (keyframe) {
     const sps = units.find((unit) => nalType(unit) === 7);
@@ -475,7 +586,10 @@ function setPeopleOpen(open, restoreFocus) {
   }
 }
 
-peopleButton.addEventListener('click', () => setPeopleOpen(peoplePanel.hidden, false));
+peopleButton.addEventListener('click', () => {
+  if (peoplePanel.hidden) setOptionsOpen(false, false);
+  setPeopleOpen(peoplePanel.hidden, false);
+});
 peopleBox.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !peoplePanel.hidden) {
     event.stopPropagation();
@@ -500,10 +614,14 @@ nameEdit.addEventListener('submit', (event) => {
 });
 
 const socketUrl = location.href
-  .replace(/#.*$/, '')
+  .replace(/[?#].*$/, '')
   .replace(/^http/, 'ws')
   .replace(/\/[^/]*$/, '/ws');
+const pageId = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+  byte.toString(16).padStart(2, '0'),
+).join('');
 let socket = null;
+let kickClipboard = () => {};
 let pending = Promise.resolve();
 
 function sendName(name) {
@@ -518,11 +636,29 @@ function connect(codec) {
   me = null;
   overlay.clear();
   renderRoster();
-  const current = new WebSocket(socketUrl + (codec === 'h264' ? '?codec=h264' : ''));
+  const viaRtc = codec === 'h264' && rtc.wanted && !rtcFailed;
+  const current = new WebSocket(
+    `${socketUrl}?id=${pageId}${codec === 'h264' ? '&codec=h264' : ''}${viaRtc ? '&transport=webrtc' : ''}`,
+  );
+  const previous = socket;
   socket = current;
+  if (previous && previous.readyState <= WebSocket.OPEN) previous.close();
   body.dataset.codec = codec;
+  body.dataset.transport = viaRtc ? 'webrtc' : 'ws';
+  resetSequence();
+  if (!viaRtc) rtc.stop();
   current.binaryType = 'arraybuffer';
   current.addEventListener('open', () => {
+    if (rtc.visible) {
+      const clock = () => send({ type: 'clock', c: Date.now() });
+      clock();
+      const clockTimer = setInterval(
+        () => (current === socket && current.readyState === 1 ? clock() : clearInterval(clockTimer)),
+        2000,
+      );
+    }
+    if (viaRtc) startRtc();
+    kickClipboard();
     if (chosenName) sendName(chosenName);
   });
   current.addEventListener('message', (event) => {
@@ -536,17 +672,46 @@ function connect(codec) {
     }
     const message = JSON.parse(event.data);
     if (message.type === 'hello') {
+      reconnecting = false;
+      attempt = 0;
+      missingSince = null;
+      clearTimeout(retryTimer);
+      delete body.dataset.reconnecting;
+      if (typeof message.title === 'string') document.title = message.title;
       expiresAt = Date.parse(message.expiresAt);
       refreshStatus();
+    } else if (message.type === 'title') {
+      if (typeof message.title === 'string') document.title = message.title;
     } else if (message.type === 'clipboard') {
       const waiting = copies.get(message.id);
       copies.delete(message.id);
       if (waiting && typeof message.text === 'string') waiting.resolve(message.text);
       else if (waiting) waiting.reject(new Error(message.error || 'The device did not return its clipboard.'));
-    } else if (message.type === 'artwork') void setArtwork(message.artwork);
+    } else if (message.type === 'clock') rtc.clock(message);
+    else if (message.type === 'webrtc-answer') void rtc.answer(message.sdp).catch((error) => rtc.failed(String(error)));
+    else if (message.type === 'webrtc-failed') rtc.failed(message.message || 'WebRTC failed');
+    else if (message.type === 'artwork') void setArtwork(message.artwork);
     else if (message.type === 'delayed') {
+      if (away) return;
       live = !message.delayed && hasFrame;
       refreshStatus();
+    } else if (message.type === 'waiting') {
+      rtc.stop();
+      dropUndrawn();
+      away = true;
+      resuming = false;
+      live = false;
+      body.dataset.away = 'true';
+      refreshStatus();
+    } else if (message.type === 'resumed') {
+      dropUndrawn();
+      resuming = true;
+      live = false;
+      waitingForKeyframe = true;
+      refreshStatus();
+      resetSequence();
+      if (viaRtc && !rtcFailed) startRtc();
+      else if (codec === 'h264') askForKeyframe();
     } else if (message.type === 'you') {
       me = { id: message.id, name: message.name, color: message.color };
       roster.set(me.id, { ...me, self: true, viewOnly });
@@ -561,10 +726,105 @@ function connect(codec) {
   });
   current.addEventListener('close', () => {
     if (finished || current !== socket) return;
-    finish('Disconnected');
-    showNote('Disconnected. Reload to reconnect.');
+    lostConnection();
   });
 }
+
+let rtcFailed = false;
+
+function startRtc() {
+  void rtc
+    .start({
+      send,
+      video: receiveRtc,
+      opened: () => {
+        waitingForKeyframe = true;
+        resetSequence();
+      },
+      failed: () => {
+        rtcFailed = true;
+        const previous = socket;
+        socket = null;
+        if (!previous || previous.readyState === 3) return connect('h264');
+        previous.addEventListener('close', () => connect('h264'));
+        previous.close();
+      },
+    })
+    .catch((error) => rtc.failed(String(error)));
+}
+
+function retryIn(delay) {
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(probe, delay);
+}
+
+function lostConnection() {
+  live = false;
+  away = false;
+  resuming = false;
+  waitingForKeyframe = true;
+  delete body.dataset.away;
+  reconnecting = true;
+  body.dataset.reconnecting = 'true';
+  for (const waiting of copies.values()) waiting.reject(new Error('The connection was lost.'));
+  copies.clear();
+  releaseInput();
+  overlay.clear();
+  refreshStatus();
+  retryIn(globalThis.stimReconnect.reconnectDelay(attempt++));
+}
+
+async function probe() {
+  clearTimeout(retryTimer);
+  if (probing || finished) return;
+  probing = true;
+  let verdict = 'retry';
+  const abort = new AbortController();
+  const giveUp = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(location.href.replace(/[?#].*$/, ''), {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      signal: abort.signal,
+    });
+    verdict = globalThis.stimReconnect.probeVerdict(response.status, await response.text());
+  } catch {
+    verdict = 'retry';
+  }
+  clearTimeout(giveUp);
+  probing = false;
+  if (finished) return;
+  if (verdict === 'viewer') {
+    missingSince = null;
+    return connect(body.dataset.codec);
+  }
+  if (verdict === 'login') return location.reload();
+  if (verdict === 'missing') {
+    missingSince ??= Date.now();
+    if (Date.now() - missingSince > globalThis.stimReconnect.MISSING_GIVE_UP_MS) {
+      return finish('This share has ended.');
+    }
+    refreshStatus();
+    return retryIn(globalThis.stimReconnect.MISSING_RETRY_MS);
+  }
+  missingSince = null;
+  refreshStatus();
+  retryIn(globalThis.stimReconnect.reconnectDelay(attempt++));
+}
+
+function retryNow() {
+  if (finished || probing) return;
+  if (!reconnecting) {
+    if (socket && socket.readyState === WebSocket.CLOSED) lostConnection();
+    return;
+  }
+  attempt = 0;
+  retryIn(0);
+}
+window.addEventListener('online', retryNow);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') retryNow();
+});
 
 /** Moves this viewer to JPEG once its own socket has closed, so the replacement never counts twice against the cap. */
 function useJpeg() {
@@ -578,8 +838,14 @@ function useJpeg() {
 }
 
 const send = (message) => {
-  if (socket && socket.readyState === 1) socket.send(JSON.stringify(message));
+  if (!socket || socket.readyState !== 1) return false;
+  socket.send(JSON.stringify(message));
+  return true;
 };
+
+for (const surface of [device, document.getElementById('toolbar')]) {
+  surface.addEventListener('contextmenu', (event) => event.preventDefault());
+}
 
 void canDecodeVideo().then((supported) => connect(supported ? 'h264' : 'jpeg'));
 
@@ -592,26 +858,280 @@ for (const button of document.querySelectorAll('[data-rotate]')) {
   else button.addEventListener('click', () => send({ type: 'rotate', direction: button.dataset.rotate }));
 }
 
-const copyButton = document.getElementById('copy');
-if (!control || !['ios', 'android'].includes(body.dataset.platform)) copyButton.remove();
+const options = document.getElementById('options');
+const optionsButton = document.getElementById('options-button');
+const optionsPanel = document.getElementById('options-panel');
+const syncSwitch = document.getElementById('sync-clipboard');
+const syncNote = document.getElementById('sync-note');
+const syncTitle = document.getElementById('sync-title');
+const syncHelp = document.getElementById('sync-help');
+const copyFallback = document.getElementById('copy-fallback');
+const pasteDevice = document.getElementById('paste-device');
+const copyDevice = document.getElementById('copy-device');
+const copyChip = document.getElementById('copy-chip');
+const SYNC_KEY = 'stim-share-clipboard-sync';
+const COPY_TIMEOUT_MS = 15000;
+
+function setOptionsOpen(open, restoreFocus) {
+  optionsPanel.hidden = !open;
+  if (!open) {
+    copyFallback.hidden = true;
+    copyFallback.value = '';
+  }
+  optionsButton.setAttribute('aria-expanded', String(open));
+  if (open) setPeopleOpen(false, false);
+  else if (restoreFocus) optionsButton.focus();
+}
+
+if (!control || !['ios', 'android'].includes(body.dataset.platform)) options.remove();
 else {
-  const { writeClipboard } = globalThis.stimClipboard;
+  const { writeClipboard, nextPollDelay, createClipboardSync } = globalThis.stimClipboard;
+  const sync = createClipboardSync();
+  const pasteKey = /Mac/.test(navigator.userAgent) ? 'Command' : 'Control';
+  const touchFirst = window.matchMedia('(pointer: coarse)');
+  let syncOn = true;
+  let readPermission = 'unknown';
+  let asked = false;
   let copyId = 0;
-  copyButton.addEventListener('click', () => {
-    if (!navigator.clipboard) return showNote('This browser gives the page no clipboard access.');
+  let delay = nextPollDelay(0, true);
+  let pollTimer = null;
+  let polling = false;
+  let chipText = null;
+
+  try {
+    syncOn = localStorage.getItem(SYNC_KEY) !== 'off';
+  } catch {
+    syncOn = true;
+  }
+  const remember = () => {
+    try {
+      localStorage.setItem(SYNC_KEY, syncOn ? 'on' : 'off');
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  options.hidden = false;
+  syncSwitch.checked = syncOn;
+
+  const active = () =>
+    syncOn &&
+    !touchFirst.matches &&
+    document.visibilityState === 'visible' &&
+    document.hasFocus() &&
+    socket !== null &&
+    socket.readyState === WebSocket.OPEN;
+
+  function requestDeviceText(poll) {
     const id = ++copyId;
-    const text = new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       copies.set(id, { resolve, reject });
       setTimeout(() => {
         if (copies.delete(id)) reject(new Error('The device did not answer in time.'));
-      }, 15000);
+      }, COPY_TIMEOUT_MS);
+      send({ type: 'clipboard-get', id, ...(poll ? { poll: true } : {}) });
     });
-    send({ type: 'clipboard-get', id });
-    writeClipboard(navigator.clipboard, globalThis.ClipboardItem, Blob, text).then(
-      () => showNote('Copied the device clipboard.'),
-      (error) => showNote(error && error.message ? error.message : 'The browser did not allow copying.'),
-    );
+  }
+
+  function showChip(text) {
+    chipText = text;
+    copyChip.hidden = text === null;
+  }
+
+  function refreshNote() {
+    const touch = touchFirst.matches;
+    syncTitle.textContent = touch ? 'Clipboard' : 'Sync clipboard';
+    syncSwitch.hidden = touch;
+    syncSwitch.disabled = touch;
+    syncHelp.textContent = touch
+      ? 'Copy text between this phone or tablet and the device. Your browser only lets a page use the clipboard when you tap, so there is no automatic sync.'
+      : 'Copy text between this browser and the device while this page is focused.';
+    pasteDevice.hidden = !touch;
+    syncNote.hidden = touch || (syncOn && readPermission === 'granted');
+    syncNote.textContent = `Press ${pasteKey}-V on the device screen to paste.`;
+  }
+
+  function showFallback(text) {
+    copyFallback.value = text;
+    copyFallback.hidden = false;
+    copyFallback.focus();
+    copyFallback.select();
+  }
+
+  async function writeToBrowser(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      sync.wrote(text);
+      showChip(null);
+    } catch {
+      showChip(text);
+    }
+  }
+
+  function schedule() {
+    clearTimeout(pollTimer);
+    pollTimer = active() ? setTimeout(pollOnce, delay) : null;
+  }
+
+  async function pollOnce() {
+    pollTimer = null;
+    if (polling || !active()) return;
+    polling = true;
+    let ok = true;
+    try {
+      const text = await requestDeviceText(true);
+      if (active() && sync.deviceRead(text)) await writeToBrowser(text);
+    } catch {
+      ok = false;
+    }
+    polling = false;
+    delay = nextPollDelay(delay, ok);
+    schedule();
+  }
+
+  async function readBrowser() {
+    if (!active() || readPermission !== 'granted') return;
+    try {
+      const request = sync.browserRead(await navigator.clipboard.readText());
+      if (request && request.message) {
+        // A send the server then drops is recorded as sent; the next poll may replace the browser text.
+        if (send(request.message)) sync.sent(request.message.text);
+      } else if (request) showNote(request.note);
+    } catch (error) {
+      if (error && error.name === 'NotAllowedError') readPermission = 'denied';
+      refreshNote();
+    }
+  }
+
+  function returned() {
+    delay = nextPollDelay(0, true);
+    schedule();
+    void readBrowser();
+  }
+
+  async function askToRead() {
+    if (asked || !syncOn || touchFirst.matches || readPermission !== 'prompt') return;
+    asked = true;
+    try {
+      await navigator.clipboard.readText();
+      readPermission = 'granted';
+    } catch (error) {
+      if (error && error.name === 'NotAllowedError') readPermission = 'denied';
+    }
+    refreshNote();
+    void readBrowser();
+  }
+
+  async function queryRead() {
+    if (!navigator.permissions || !navigator.clipboard || !navigator.clipboard.readText) {
+      readPermission = 'unsupported';
+    } else {
+      try {
+        const status = await navigator.permissions.query({ name: 'clipboard-read' });
+        readPermission = status.state;
+        status.addEventListener('change', () => {
+          readPermission = status.state;
+          refreshNote();
+          void readBrowser();
+        });
+      } catch {
+        readPermission = 'unsupported';
+      }
+    }
+    refreshNote();
+    void readBrowser();
+  }
+
+  syncSwitch.addEventListener('change', () => {
+    syncOn = syncSwitch.checked;
+    remember();
+    if (syncOn) {
+      returned();
+      void askToRead();
+    } else {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+      showChip(null);
+    }
+    refreshNote();
   });
+  copyChip.addEventListener('click', async () => {
+    const text = chipText;
+    if (text === null) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      sync.wrote(text);
+      showChip(null);
+      showNote('Copied the device clipboard.');
+    } catch {
+      showNote('The browser did not allow copying.');
+    }
+  });
+  pasteDevice.addEventListener('click', async () => {
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      return showNote('This browser gives the page no clipboard access.');
+    }
+    let text;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (error) {
+      return showNote(
+        error && error.name === 'NotAllowedError'
+          ? 'The browser did not allow reading your clipboard.'
+          : 'Your clipboard could not be read.',
+      );
+    }
+    const request = globalThis.stimClipboard.pasteRequest(text);
+    setOptionsOpen(false, false);
+    if (request && request.message) {
+      if (send(request.message)) sync.sent(request.message.text);
+      else showNote('Not connected to the device.');
+    } else showNote(request ? request.note : 'Your clipboard has no text.');
+  });
+  copyDevice.addEventListener('click', async () => {
+    copyFallback.hidden = true;
+    const text = requestDeviceText().then((value) => {
+      sync.deviceRead(value);
+      return value;
+    });
+    try {
+      if (!navigator.clipboard) throw new Error('This browser gives the page no clipboard access.');
+      await writeClipboard(navigator.clipboard, globalThis.ClipboardItem, Blob, text);
+      sync.wrote(await text);
+      showChip(null);
+      showNote('Copied the device clipboard.');
+    } catch (error) {
+      const value = await text.catch(() => null);
+      if (value) {
+        showNote('The browser did not allow copying. Select the text below to copy it.');
+        showFallback(value);
+      } else showNote(error && error.message ? error.message : 'The browser did not allow copying.');
+    }
+  });
+  optionsButton.addEventListener('click', () => setOptionsOpen(optionsPanel.hidden, false));
+  options.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !optionsPanel.hidden) {
+      event.stopPropagation();
+      setOptionsOpen(false, true);
+    }
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (!optionsPanel.hidden && !options.contains(event.target)) setOptionsOpen(false, false);
+    void askToRead();
+  });
+  document.addEventListener('keydown', () => void askToRead());
+  window.addEventListener('focus', returned);
+  window.addEventListener('blur', schedule);
+  document.addEventListener('visibilitychange', () =>
+    document.visibilityState === 'visible' ? returned() : schedule(),
+  );
+  kickClipboard = returned;
+  touchFirst.addEventListener('change', () => {
+    refreshNote();
+    returned();
+  });
+  refreshNote();
+  void queryRead();
 }
 
 const upgrade = document.getElementById('upgrade');
@@ -676,8 +1196,8 @@ if (control) {
       y: Math.min(1, Math.max(0, (event.clientY - box.top) / box.height)),
     };
   };
-  const mirror = createMirroredGesture();
-  const touches = createTouchTracker();
+  let mirror = createMirroredGesture();
+  let touches = createTouchTracker();
   const markers = [0, 1].map(() => {
     const marker = document.createElement('div');
     const style = marker.style;
@@ -702,16 +1222,25 @@ if (control) {
       marker.style.top = 100 * pair[index].y + '%';
     });
   };
+  let queuedMove = null;
+  let touching = false;
   const sendTouch = (message) => {
+    if (message.phase !== 'move') queuedMove = null;
+    if (message.phase === 'down') {
+      if (!live) return;
+      touching = true;
+    } else if (!touching || (message.phase === 'move' && !live)) return;
     if (message.phase === 'down') busy = false;
     if (!busy || message.phase === 'down') send(message);
     if (me) {
       const second = message.x2 === undefined ? null : { x: message.x2, y: message.y2 };
       overlay.own(me, message.phase, message.x, message.y, busy, second);
     }
-    if (message.phase === 'up') busy = false;
+    if (message.phase === 'up') {
+      busy = false;
+      touching = false;
+    }
   };
-  let queuedMove = null;
   let frame = 0;
   const flushMove = () => {
     frame = 0;
@@ -720,11 +1249,10 @@ if (control) {
   };
   const emit = (messages) => {
     for (const message of messages) {
-      if (message.phase === 'move' && message.x2 !== undefined) {
+      if (message.phase === 'move') {
         queuedMove = message;
         frame ||= requestAnimationFrame(flushMove);
       } else {
-        queuedMove = null;
         sendTouch(message);
       }
     }
@@ -734,11 +1262,22 @@ if (control) {
     clearTimeout(settle);
     if (touches.pending) settle = setTimeout(() => emit(touches.settle()), TOUCH_SETTLE_MS);
   };
+  releaseInput = () => {
+    down = false;
+    touching = false;
+    busy = false;
+    queuedMove = null;
+    clearTimeout(settle);
+    mirror = createMirroredGesture();
+    touches = createTouchTracker();
+    drawMarkers();
+  };
   screen.tabIndex = 0;
   screen.addEventListener('pointerdown', (event) => {
     screen.focus();
     screen.setPointerCapture(event.pointerId);
     event.preventDefault();
+    if (!live) return;
     if (event.pointerType === 'touch') {
       emit(touches.down(event.pointerId, at(event)));
       touched();
@@ -751,6 +1290,7 @@ if (control) {
     }
   });
   screen.addEventListener('pointermove', (event) => {
+    if (!live) return;
     if (event.pointerType === 'touch') {
       emit(touches.move(event.pointerId, at(event)));
       touched();
@@ -759,7 +1299,7 @@ if (control) {
     if (mirror.active) {
       emit(mirror.move(at(event), event.shiftKey, event.altKey));
       if (!event.altKey) emit(mirror.release());
-    } else if (down) sendTouch({ type: 'touch', phase: 'move', ...at(event) });
+    } else if (down) emit([{ type: 'touch', phase: 'move', ...at(event) }]);
     else if (event.altKey) mirror.hover(at(event), event.shiftKey);
     else emit(mirror.release());
     drawMarkers();
@@ -800,20 +1340,12 @@ if (control) {
     if (request && request.message) send(request.message);
     else if (request) showNote(request.note);
   });
-  const keys = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Escape: 'escape' };
-  const typed = { Enter: '\n', Tab: '\t', Backspace: '\b' };
+  const apple = /Mac|iPhone|iPad/.test(navigator.userAgent);
   screen.addEventListener('keydown', (event) => {
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-    const key = keys[event.key];
-    if (key && !event.shiftKey) {
-      send({ type: 'key', key });
-      event.preventDefault();
-      return;
-    }
-    const text =
-      typed[event.key] ?? (event.key.length === 1 && event.key >= ' ' && event.key <= '~' ? event.key : null);
-    if (text === null) return;
-    send({ type: 'text', text });
+    if (!live) return;
+    const message = globalThis.stimKeys.keyMessage(event, apple);
+    if (!message) return;
+    send(message);
     event.preventDefault();
   });
 }

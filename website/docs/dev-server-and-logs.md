@@ -713,6 +713,46 @@ server using that exact port, and verify it is serving this checkout. When
 finished, stop its named port with stim ports stop web.
 ```
 
+## Reverse ports
+
+An app on a workspace's device reaches Metro through a route Stim sets up. For any other server on this machine, `ports reverse` does the same at the server's own port, like `adb reverse`:
+
+<StimTabs
+code={`stim ports get api
+stim ports reverse api
+stim ports reverse 4318
+stim ports reverse --remove 4318`}
+/>
+
+The argument is a label from `ports get` or a raw port that a tool of this workspace listens on. Stim records up to 16 ports in the workspace and applies them to the devices it has now; running the command again repairs a reverse that was lost. How a device reaches the port depends on the device:
+
+| Device                                       | What happens                                                                                                                                                                                                        |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Local iOS simulator                          | Already reachable: a simulator shares this Mac's loopback. Nothing is applied.                                                                                                                                      |
+| Local Android emulator                       | `adb reverse tcp:<port> tcp:<port>`, applied again by `stim android` when it launches the app and by `stim reload android` when missing. `stim status` reports `android-reverse-missing` when the emulator lost it. |
+| Android phone (`android --device`)           | `adb reverse`, removed by `stim stop` and `worktree remove` with the Metro reverse. Stim removes only the ports it recorded.                                                                                        |
+| iPhone (`ios --device`)                      | Refused. USB carries no reverse forward.                                                                                                                                                                            |
+| Hosted iOS or Android (`--remote <machine>`) | Bridged through the client's links to the host; see [Reverse ports on hosted devices](./remote-machines.md#reverse-ports-on-hosted-devices).                                                                        |
+
+`stim stop` removes the reverses from the devices and keeps the recorded ports, so the next launch applies them again. `worktree remove`, `gc --delete` and automatic maintenance forget them with the workspace. `ports release` and `ports stop` remove a label's reverse before they free the port. An EAS Simulator session (`--remote eas`) cannot reach this machine, so it is not reversed.
+
+Appduct and similar tools that connect from the app back to a daemon advertise an address in a one-time link. Set that address to the loopback, reverse the daemon's port, and deliver the link with `agent-device`:
+
+<StimTabs
+code={`# ~/.appduct/config.json: "advertisedIp": "127.0.0.1"
+stim ports reverse <appduct daemon port>
+appduct sessions link --open ios-sim   # prints or opens the link
+stim agent-device open <app> "<link>"`}
+/>
+
+Copy this prompt into your agent:
+
+```text
+Read stim guide ports. My tool listens on port <port> on this machine. Make it
+reachable from the app on this workspace's device at localhost:<port> with
+stim ports reverse, and confirm from the app that it connects.
+```
+
 ## Metro for hosted iOS
 
 `stim ios --remote <machine>` keeps Metro here and needs no `stim start --remote`.

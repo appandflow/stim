@@ -3,20 +3,29 @@
 # lint, format, typecheck, build, the full vitest unit suite (all six
 # packages), and the fast cross-platform e2e (test/e2e/cache-flow.e2e.js), which
 # drives the real CLI and the real cache library end to end with no compiler.
-# The SLOW native builds live in e2e-native.yml: a smoke on every push to
-# main, the full loop nightly, and on a pull request only the suites its
-# e2e-* labels ask for, so a flaky 15-minute build never blocks a PR.
+# The macOS and Windows jobs below run only with `full`: the Full suite
+# workflow (nightly, before a stable release, on the `ci-full` label) passes
+# it, and so does a dispatch of this workflow. A pull request, the merge queue
+# and a push to main run the two Linux jobs only. The SLOW native builds live in
+# e2e-native.yml.
 name: CI
 
 on:
   workflow_dispatch:
     inputs:
+      full:
+        description: Also run the macOS and Windows jobs
+        type: boolean
+        default: true
       build_stage_macos:
         description: Validate build-only Apple operations and artifact export on macOS
         type: boolean
         default: false
-  schedule:
-    - cron: '0 6 * * *'
+  workflow_call:
+    inputs:
+      full:
+        type: boolean
+        default: true
   push:
     branches: [main]
     paths:
@@ -58,7 +67,7 @@ on:
       - 'apps/desktop/Tests/VisualFixtureTests/Fixtures/real-archive/**'
 
 concurrency:
-  group: ci-v2-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: ci-v2-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.full && '-full' || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -67,7 +76,6 @@ permissions:
 jobs:
   test:
     name: test (node ${{ matrix.node }})
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     strategy:
       # Repository builds require Node 22.18 or later because tsdown uses that
@@ -173,7 +181,7 @@ jobs:
 
   test-windows:
     name: test (windows)
-    if: github.event_name != 'schedule'
+    if: inputs.full
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -224,7 +232,7 @@ jobs:
 
   test-macos:
     name: test (macos)
-    if: github.event_name != 'schedule'
+    if: inputs.full
     runs-on: macos-15
     timeout-minutes: 30
     steps:
@@ -256,7 +264,7 @@ jobs:
 
   native-process-inspection:
     name: native process inspection (${{ matrix.os }})
-    if: github.event_name != 'schedule'
+    if: inputs.full
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     strategy:
@@ -281,13 +289,8 @@ jobs:
         if: runner.os == 'macOS'
         run: node --test test/e2e/native-cleanup.e2e.js
 
-  windows-full:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    uses: ./.github/workflows/windows-full.yml
-
   runtime-floor:
     name: published runtime (node 22.12.0)
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

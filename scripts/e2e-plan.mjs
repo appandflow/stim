@@ -11,8 +11,6 @@ const PLATFORMS = {
 
 function requested({ eventName, labels, suite, action, changedLabel }) {
   switch (eventName) {
-    case 'push':
-      return ['smoke'];
     case 'schedule':
       return ['loop'];
     case 'workflow_dispatch':

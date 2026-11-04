@@ -273,7 +273,7 @@ With `androidEmulatorApp` resolved to `"stim-desktop"` on macOS, Stim launches i
 `-no-window -gpu host`; see [Machine settings](#machine-settings).
 Every owned emulator starts its gRPC endpoint on the console port plus 3000
 with token authentication (`-grpc <port> -grpc-use-token`); Stim Desktop reads
-emulator frames from it and sends input through it while **Take over** is on.
+emulator frames from it and sends input through it while **Control** is on.
 Run `stim guide settings` for the complete key and value list.
 
 ## Machine settings
@@ -405,13 +405,23 @@ set always wins over that default. `stim settings` shows such a default as
 workspace to adopt. Absent means 3; `0` turns parking and adoption off. When
 `STIM_HOME` is set, parking is off unless `STIM_POOL_IOS_PARKED_MAX` is set too.
 `pool.androidParkedMax` and `STIM_POOL_ANDROID_PARKED_MAX` apply the same rules
-to Android emulators. The hosting Mac also uses these bounds for hosted devices
+to Android emulators.
+
+The hosting Mac also uses these bounds for hosted devices
 on stop, separately from its local pool and across all clients per platform.
 Hosted adoption is limited to the same client, clears app data and removes other
 apps. Parked hosted devices persist across a clean server restart; the oldest
 excess devices, unusable adoption candidates and a revoked client's devices are
 retired. See [hosted parking](./remote-machines.md#hosted-parking-and-restart)
 and [owned devices](/docs/owned-devices) for adoption cleanup.
+
+`pool.bootedGraceMinutes` is how many minutes `worktree remove` keeps a
+simulator that is booted booted as it parks it, and `stop` keeps the
+workspace's own owned simulator booted, so the next `stim ios` skips the boot.
+Absent means 15; `0` shuts it down at park and at `stop`. Stim keeps it booted
+only while macOS memory pressure is normal and a device slot is free.
+`STIM_POOL_BOOTED_GRACE_MINUTES` overrides it, and when `STIM_HOME` is set it is
+`0` unless that variable is set. Emulators are always shut down at park and at `stop`. It needs the stim-daemon: with `daemon.mode` `off` or `report`, or on Windows, `worktree remove` and `stop` shut the simulator down at once.
 
 `remote.buildPoolDisabled` and `remote.devicePoolDisabled` list members excluded
 from this requester's automatic build and simulator/emulator placement. Both default
@@ -627,7 +637,10 @@ A dropped connection is not a failure by itself: Stim pings the machine every
 15 seconds, treats a minute of silence while it waits for the build as a drop,
 then reconnects to the same machine for up to 3 minutes and takes the running
 build back. The machine keeps a build running for 5 minutes without a
-connection before it cancels it. A drop while the app is fetched still builds
+connection before it cancels it. When the machine's `stim-server` restarted and no
+longer holds the build, or the connection drops while the source syncs and no other machine
+can take the build, Stim waits for the machine to answer (up to 3 minutes) and starts the same
+build again there, up to twice, before `auto` builds here or a named machine refuses. A drop while the app is fetched still builds
 here. Ctrl-C cancels the build on the machine; a run killed another way, or
 interrupted while it reconnects, leaves it running until those 5 minutes pass. An
 offloaded app lands only in this machine's build cache, not in a remote cache
@@ -713,7 +726,7 @@ registry signature of every dependency they bring from npm, and does not look up
 Stim's own packages on the registry, so an unpublished version installs. Either way
 the new server is installed beside the running one and must start before the
 switch. The update waits up to 30 minutes for offloaded builds and hosted
-sessions to finish, restarts the job, and switches back to the previous server
+native steps to finish (a server that resumes its hosted sessions leaves the others running), restarts the job, and switches back to the previous server
 when the new job exits or does not answer within 90 seconds. It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
 serve route.
@@ -828,6 +841,12 @@ stim settings set share.port 7790                           # loopback port the 
 
 See [Share a running app](./share.md#custom-domain) for the Caddyfile.
 
+`share.webrtc` is an experimental machine setting, off by default. Set it to
+`true` and a viewer that opens a share link with `?transport=webrtc` takes video
+over a WebRTC data channel from the machine that owns the device, and falls back
+to WebSocket when WebRTC fails. It needs the optional `node-datachannel` package
+on that machine.
+
 ## Device recordings
 
 `stim-server` records the screens of owned simulators, emulators and the
@@ -912,7 +931,8 @@ Sizes use binary GB and MB; 0 means keep none.
 <ArchiveSettings />
 
 Retention runs on every worktree removal, archived or not, once an archive
-exists. It deletes records past their age or count limit first, then expires
+exists, and in the daily age sweep of [automatic maintenance](./build-caches.md#automatic-maintenance),
+so archives that outlive their limits go without another removal. It deletes records past their age or count limit first, then expires
 recordings, agent actions and logs by age from removal; trims logs by oldest
 rotated generation, then build logs, then oldest other files; and removes the
 largest kind of the oldest archive while total caps are exceeded. Artifact
@@ -1010,18 +1030,37 @@ reclaim for a run waiting to boot, and
 `web`, `macos` and `revive` start one `stim-daemon` process per Stim home,
 scoped homes included. It ticks each minute while anything runs there or the
 pressure level is above normal, and every 5 minutes otherwise. It exits two
-ticks after nothing runs and no workspace waits for its dormant stage, so the
-stage fires in a quiet home. A workspace waits until its `idle.dormantDays`
+ticks after nothing runs, no maintenance pass runs and no workspace waits for
+its dormant stage, so the stage fires in a quiet home. A workspace waits until its `idle.dormantDays`
 have passed plus one slow tick, and never while `maintenance.keep`,
 `idle.minutes` 0, `idle.dormantDays` 0, a hosted placement, an unreadable state
 or a failing device listing keeps it out, nor with no activity recorded in its
-state. A finished-worktree removal does not keep the daemon. Each tick it
+state. A merged or closed worktree that the last worktree check kept only for
+its `gc.worktreeGraceMinutes` grace period keeps it, while `daemon.mode` is `on`
+and `maintenance.removeFinishedWorktrees` is true, until a later check removes
+the worktree or keeps it for another reason. Each tick it
 measures the machine once,
 classifies the pressure level, moves workspaces with no activity for
 `idle.minutes` into the [idle stage](./dev-server-and-logs.md#idle-stop) and
 those idle for `idle.dormantDays` into the dormant stage, runs the pressure
-ladder above normal, and runs automatic maintenance. It also wakes the oldest
-run waiting for a build slot as soon as one is released. `report` logs what
+ladder above normal, and reclaims a device for a run waiting to boot. Automatic
+maintenance and the dormant stage's dependency deletion run beside the ticks,
+one pass at a time, so a slow `git fetch`, pull request lookup or size scan
+never delays a tick or a waiting run. The same lane records the
+[fingerprint](./build-caches.md) of a running workspace whose git HEAD,
+lockfile or install stamp changed. It also wakes the oldest
+run waiting for a build slot as soon as one is released. When one of those
+commands runs from an installed Stim (a global install or a `node_modules`
+dependency) with a newer version than the running daemon, for example after
+an upgrade, or the daemon runs a development build, that daemon keeps serving
+the command and one new daemon from the installed build takes over once the
+current tick finishes. A maintenance pass the old daemon has running finishes
+in its process, which starts no other. The same or an older version never
+replaces it, so
+alternating a global `stim` with `npx stim` or a project's copy does not
+restart the daemon. A development build (a checkout's `dist`, `npm link` or
+`pnpm link --global`) never replaces a daemon. Runs waiting for a build slot or
+a boot keep their queue positions across the handover. `report` logs what
 each pass would do and acts on nothing. `off` runs no daemon and no pass: each
 dev server supervisor stops its own dev server and devices after
 `idle.minutes`, and nothing times a device with no dev server. It is `off` in
@@ -1044,6 +1083,17 @@ once it exits and a command starts a new one. Its log is
 `$STIM_HOME/daemon/daemon.ndjson`, rotated like workspace logs, and its last
 tick's measurement and decisions, with its last 20 actions, are in
 `$STIM_HOME/daemon/snapshot.json`.
+
+On Linux the daemon starts as a transient user service,
+`stim-daemon-<home hash>-<id>.service`, when `systemd-run` is on `PATH`,
+`XDG_RUNTIME_DIR` is set and a user systemd manager answers. A command runner
+that adopts and kills everything a call started, such as an agent harness that
+sets `PR_SET_CHILD_SUBREAPER`, cannot reach a service, so the daemon keeps
+ticking between commands. The service ends with the user manager at the last
+logout unless lingering is on; the next command starts the daemon again. Without one the daemon is a detached child, which
+such a runner stops when the call ends; set `STIM_DAEMON=off` for that runner,
+and the passes then run in each command's own process. The dev server's
+supervisor is not a service; `stim guide metro` has the recipe for it.
 
 `stim status` prints a daemon line with its mode, whether it runs, when it last
 ticked and the pressure level, then the last daemon action, the runs waiting for

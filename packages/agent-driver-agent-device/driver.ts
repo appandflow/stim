@@ -9,9 +9,11 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -21,10 +23,12 @@ import {
   claimRemoveCommand,
   clearClaimChild,
   markClaimChildPending,
+  readClaimSet,
   releaseClaim,
   setClaimChild,
   tryAcquireClaim,
   type ClaimHandle,
+  type ClaimOwner,
 } from '@stim-cli/core/ownership-claim';
 import {
   captureProcessIdentity,
@@ -104,6 +108,7 @@ const DEVICE_AGENT_DEVICE =
 
 const MAX_RECORDING_MS = 10 * 60_000;
 const MAX_RECORDING_BYTES = 512 * 1024 * 1024;
+const RECORDER_LABEL = 'hosted simulator recorder';
 const CAP_RETRY_MS = 30_000;
 const CAP_ATTEMPTS = 10;
 // agent-device deletes a downloadable artifact nobody fetched after 15 minutes (ARTIFACT_CLEANUP_TIMEOUT_MS).
@@ -141,6 +146,8 @@ function devicePolicyDigest(device: HostedAgentDevice): string {
 
 /** agent-device caps a lease's inactivity window at ten minutes; the host renews well inside it. */
 const LEASE_TTL_MS = 600_000;
+/** agent-device ends a leased session, and with it the app session and runner, once its lease goes this long without a heartbeat; the client asks for five minutes. */
+const DEVICE_LEASE_TTL_MS = 3_600_000;
 const MAX_RPC_BYTES = 1024 * 1024;
 const MAX_ECHO = 64;
 const COMMAND_METHODS = new Set(['agent_device.command', 'agent-device.command']);
@@ -223,6 +230,7 @@ interface Lease {
 
 interface Recording {
   dir: string;
+  earlier: string[];
   session: unknown;
   stop: Record<string, unknown>;
   pending: boolean;
@@ -268,6 +276,8 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private readonly leases = new Map<string, Lease>();
   private readonly released = new Set<string>();
   private recording: Recording | null = null;
+  private recorder: ClaimHandle | null = null;
+  private recordStarting: Promise<void> | null = null;
 
   constructor(options: AgentDeviceDriverOptions) {
     this.options = {
@@ -287,6 +297,39 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       tmpdir(),
       `stim-server-recordings-${createHash('sha256').update(this.options.stateDir).digest('hex').slice(0, 16)}`,
     );
+  }
+
+  private get sessionsLink(): string {
+    return join(this.options.stateDir, 'sessions');
+  }
+
+  private get sessionsTarget(): string {
+    return join(this.recordings, 'sessions');
+  }
+
+  // agent-device 0.21.35 and later ignore a remote request's output path and write
+  // <state dir>/sessions/<session>/recording-<uuid>.<ext>, so that directory has to resolve off the Stim home.
+  private prepareRecordings(): void {
+    mkdirSync(this.recordings, { recursive: true, mode: 0o700 });
+    const root = lstatSync(this.recordings);
+    if (
+      !root.isDirectory() ||
+      (process.getuid !== undefined && (root.uid !== process.getuid() || (root.mode & 0o077) !== 0))
+    )
+      throw new Error(`${this.recordings} is not a private directory of this user`);
+    mkdirSync(this.sessionsTarget, { recursive: true, mode: 0o700 });
+  }
+
+  private linkSessions(): void {
+    this.prepareRecordings();
+    rmSync(this.sessionsLink, { recursive: true, force: true });
+    symlinkSync(this.sessionsTarget, this.sessionsLink, 'dir');
+  }
+
+  private assertSessionsLinked(): void {
+    const link = this.sessionsLink;
+    if (!lstatSync(link).isSymbolicLink() || readlinkSync(link) !== this.sessionsTarget)
+      throw new Error(`${link} does not lead to ${this.sessionsTarget}`);
   }
 
   onExit(listener: () => void): void {
@@ -342,6 +385,13 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     clearTimeout(this.recording?.timer);
     this.recording = null;
     rmSync(this.recordings, { recursive: true, force: true });
+    if (this.options.device) {
+      try {
+        this.linkSessions();
+      } catch (error) {
+        process.stderr.write(`Hosted recording directory failed: ${String(error).replace(/\s+/g, ' ')}\n`);
+      }
+    }
     const policy = join(this.options.stateDir, 'policy.json');
     writeFileSync(policy, `${JSON.stringify(this.options.device ? devicePolicy(this.options.device) : POLICY)}\n`, {
       mode: 0o600,
@@ -361,6 +411,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
             AGENT_DEVICE_DAEMON_POLICY: policy,
             AGENT_DEVICE_MACOS_APP_BACKEND: 'native',
             AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1',
+            ...(this.options.device ? { AGENT_DEVICE_LEASE_MAX_TTL_MS: String(DEVICE_LEASE_TTL_MS) } : {}),
             ...(this.options.device?.serial ? { AGENT_DEVICE_ANDROID_SNAPSHOT_HELPER_SESSION: '0' } : {}),
             ...(this.options.device ? { AGENT_DEVICE_CLAIMS_DIR: join(this.options.stateDir, 'device-claims') } : {}),
           },
@@ -520,6 +571,19 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   async stop(): Promise<void> {
     this.stopping = true;
     await this.starting?.catch(() => undefined);
+    await this.recordStarting?.catch(() => undefined);
+    let recorderError: unknown;
+    if (this.options.device?.udid) {
+      clearTimeout(this.recording?.timer);
+      this.recording = null;
+      try {
+        if (this.recorder) await this.trackRecorder(this.options.device.udid);
+        await stopRecorders(recorderClaimRoot(this.options.stateDir), this.recorder);
+        this.recorder = null;
+      } catch (error) {
+        recorderError = error;
+      }
+    }
     const sessions = [...this.released];
     this.released.clear();
     for (const lease of this.leases.values()) clearInterval(lease.renew);
@@ -556,6 +620,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     if (running || this.claim) await this.teardown(running?.proxy, running ?? undefined);
     for (const session of sessions) this.removeSessionDirectories(session);
     rmSync(this.recordings, { recursive: true, force: true });
+    if (recorderError !== undefined) throw recorderError;
   }
 
   private async teardown(proxy?: ChildProcess, running?: Running): Promise<void> {
@@ -898,7 +963,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         clearTimeout(recording.timer);
         this.recording = null;
         if (succeeded(answer.body)) answer.body = withId(this.finished(recording, answer.body), id);
-        else discard(recording.dir);
+        else this.discardRecording(recording);
       }
       this.answer(response, answer);
       return;
@@ -936,19 +1001,15 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     const body = Buffer.from(JSON.stringify(rpc));
     const next: Recording = {
       dir,
+      earlier: sessionRecordings(this.sessionsTarget),
       session: params.session,
       stop: recordStop({ ...params, meta: owner }),
       pending: true,
       attempts: 0,
     };
     try {
-      mkdirSync(this.recordings, { recursive: true, mode: 0o700 });
-      const root = lstatSync(this.recordings);
-      if (
-        !root.isDirectory() ||
-        (process.getuid !== undefined && (root.uid !== process.getuid() || (root.mode & 0o077) !== 0))
-      )
-        throw new Error(`${this.recordings} is not a private directory of this user`);
+      this.prepareRecordings();
+      this.assertSessionsLinked();
       mkdirSync(dir, { mode: 0o700 });
     } catch (error) {
       process.stderr.write(`Hosted recording directory failed: ${String(error).replace(/\s+/g, ' ')}\n`);
@@ -958,17 +1019,103 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       return;
     }
     this.recording = next;
+    const started = this.startRecording(running, lease, target, body, next, response);
+    this.recordStarting = started;
+    await started;
+    if (this.recordStarting === started) this.recordStarting = null;
+  }
+
+  private async startRecording(
+    running: Running,
+    lease: Lease,
+    target: string,
+    body: Buffer,
+    next: Recording,
+    response: ServerResponse,
+  ): Promise<void> {
+    const udid = this.options.device?.udid;
+    if (udid) {
+      try {
+        await this.claimRecorder(udid);
+      } catch (error) {
+        process.stderr.write(`Hosted recorder claim failed: ${String(error).replace(/\s+/g, ' ')}\n`);
+        if (this.recording === next) this.recording = null;
+        this.discardRecording(next);
+        response
+          .writeHead(500, { 'content-type': 'text/plain' })
+          .end('The hosting Mac could not prepare the recording.\n');
+        return;
+      }
+    }
     const answer = await this.send(running, lease, target, body).catch(() => null);
     next.pending = false;
+    let tracked = true;
+    if (udid && (!answer || succeeded(answer.body))) tracked = await this.trackRecorder(udid);
+    else if (this.recorder && releaseClaim(this.recorder)) this.recorder = null;
+    if (udid && this.recording === next && answer && succeeded(answer.body) && !tracked) {
+      await this.send(
+        running,
+        lease,
+        '/rpc',
+        Buffer.from(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'stim-recorder-unidentified',
+            method: 'agent_device.command',
+            params: next.stop,
+          }),
+        ),
+      ).catch(() => null);
+      await this.trackRecorder(udid);
+      this.recording = null;
+      this.discardRecording(next);
+      response
+        .writeHead(500, { 'content-type': 'text/plain' })
+        .end('The hosting Mac could not identify the simulator recorder process, so it stopped the recording.\n');
+      return;
+    }
     if (this.recording === next && answer && succeeded(answer.body)) {
       next.timer = setTimeout(() => this.capLater(running, lease, next), this.options.maxRecordingMs);
       next.timer.unref();
     } else if (this.recording === next) {
       this.recording = null;
-      discard(dir);
+      this.discardRecording(next);
     }
     if (answer) this.answer(response, answer);
     else response.writeHead(502, { 'content-type': 'text/plain' }).end('Agent control is unavailable.\n');
+  }
+
+  private async claimRecorder(udid: string): Promise<void> {
+    const root = recorderClaimRoot(this.options.stateDir);
+    if (this.recorder) await this.trackRecorder(udid);
+    await stopRecorders(root, this.recorder);
+    this.recorder = null;
+    const attempt = tryAcquireClaim({ root, mode: 'exclusive', label: RECORDER_LABEL });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (!attempt.acquired)
+      throw new Error(`The ${RECORDER_LABEL} claim is held by another process: ${attempt.held?.path ?? root}`);
+    this.recorder = attempt.acquired;
+    markClaimChildPending(this.recorder);
+  }
+
+  private async trackRecorder(udid: string): Promise<boolean> {
+    const claim = this.recorder;
+    if (!claim) return true;
+    let pids: number[];
+    try {
+      pids = recorderPids(await listProcesses(), udid);
+    } catch {
+      return false;
+    }
+    if (pids.length === 0) {
+      if (releaseClaim(claim)) this.recorder = null;
+      return true;
+    }
+    const [pid, other] = pids;
+    const record = pid !== undefined && other === undefined ? this.captured(pid) : null;
+    if (!record) return false;
+    setClaimChild(claim, record);
+    return true;
   }
 
   private async capRecording(running: Running, lease: Lease, recording: Recording): Promise<void> {
@@ -996,14 +1143,14 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     recording.attempts += 1;
     if (answer && noRecording(answer.body)) {
       this.recording = null;
-      discard(recording.dir);
+      this.discardRecording(recording);
       return;
     }
     if (!answer || !succeeded(answer.body)) {
       if (recording.attempts < CAP_ATTEMPTS) later(CAP_RETRY_MS, () => this.capLater(running, lease, recording));
       else {
         this.recording = null;
-        discard(recording.dir);
+        this.discardRecording(recording);
         process.stderr.write(
           'A hosted recording reached its time limit and could not be stopped; its files were deleted.\n',
         );
@@ -1014,7 +1161,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     later(ARTIFACT_TTL_MS, () => {
       if (this.recording !== recording) return;
       this.recording = null;
-      discard(recording.dir);
+      this.discardRecording(recording);
     });
   }
 
@@ -1030,14 +1177,24 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.answer(response, { status: 200, headers: {}, body: withId(capped, id) });
   }
 
+  private written(recording: Recording): string[] {
+    return sessionRecordings(this.sessionsTarget).filter((file) => !recording.earlier.includes(file));
+  }
+
+  private discardRecording(recording: Recording): void {
+    discard(recording.dir);
+    for (const file of this.written(recording)) discard(file);
+  }
+
   private finished(recording: Recording, body: Buffer): Buffer {
     let bytes = 0;
     try {
       for (const entry of readdirSync(recording.dir, { withFileTypes: true }))
         if (entry.isFile()) bytes += statSync(join(recording.dir, entry.name)).size;
+      for (const file of this.written(recording)) bytes += statSync(file).size;
     } catch {}
     if (bytes <= this.options.maxRecordingBytes) return body;
-    discard(recording.dir);
+    this.discardRecording(recording);
     return Buffer.from(
       JSON.stringify({
         jsonrpc: '2.0',
@@ -1334,7 +1491,7 @@ function pinDeviceRequest(
       backend: lease.scope.backend,
       ...(typeof params.leaseId === 'string' ? { leaseId: params.leaseId } : {}),
       ...(typeof params.session === 'string' ? { session: params.session } : {}),
-      ...(typeof params.ttlMs === 'number' ? { ttlMs: params.ttlMs } : {}),
+      ...(String(rpc.method).endsWith('.release') ? {} : { ttlMs: DEVICE_LEASE_TTL_MS }),
     };
   } else return { id, rule: 'method', message: 'Refused method.', details: {} };
   return { rpc };
@@ -1490,6 +1647,79 @@ function failed(response: ServerResponse, error: unknown): void {
   process.stderr.write(`Hosted agent request failed: ${String(error).replace(/\s+/g, ' ').slice(0, 400)}\n`);
   if (response.headersSent) response.destroy();
   else response.writeHead(500, { 'content-type': 'text/plain' }).end('Agent control failed on the hosting Mac.\n');
+}
+
+export function recorderClaimRoot(stateDir: string): string {
+  return join(stateDir, 'recorder.claims');
+}
+
+function recorderPids(ps: string, udid: string): number[] {
+  const recorder = new RegExp(
+    `(?:^|/)(?:xcrun\\s+)?simctl(?:\\s.*)?\\sio\\s+${udid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+recordVideo\\s`,
+    'i',
+  );
+  return ps.split('\n').flatMap((line) => {
+    const [, pid, command = ''] = /^\s*(\d+)\s+(.*)$/.exec(line) ?? [];
+    return recorder.test(command) ? [Number(pid)] : [];
+  });
+}
+
+async function stopRecorder(record: ClaimOwner): Promise<boolean> {
+  for (const [signal, ms] of [
+    ['SIGINT', 10_000],
+    ['SIGKILL', 2000],
+  ] as const) {
+    const status = inspectProcessIdentity(record);
+    if (status === 'gone' || status === 'different') return true;
+    if (status === 'unknown') return false;
+    try {
+      process.kill(record.pid, signal);
+    } catch {}
+    if (await waitForProcessExit(record, ms)) return true;
+  }
+  return false;
+}
+
+export async function stopRecorders(root: string, own: ClaimHandle | null = null): Promise<void> {
+  const survey = readClaimSet(root);
+  const kept = survey.unresolved.map((problem) => problem.path);
+  let reap = survey.dead.length > 0;
+  for (const holder of survey.live) {
+    const mine = holder.claimId === own?.claimId;
+    if (!mine) {
+      const owner = inspectProcessIdentity(holder.owner);
+      if (owner === 'unknown') kept.push(holder.path);
+      if (owner === 'same' || owner === 'unknown') continue;
+    }
+    if (holder.childDeclared && !(holder.child && (await stopRecorder(holder.child)))) {
+      kept.push(holder.path);
+      continue;
+    }
+    if (mine) releaseClaim(own);
+    else reap = true;
+  }
+  const [unresolved] = kept;
+  if (unresolved !== undefined)
+    throw new Error(
+      `The ${RECORDER_LABEL} is unresolved; its claim ${unresolved} was kept. Once it is gone, clear it with: ${claimRemoveCommand(unresolved)}`,
+    );
+  if (!reap) return;
+  const attempt = tryAcquireClaim({ root, mode: 'exclusive', label: RECORDER_LABEL });
+  releaseClaim(attempt.acquired ?? attempt.pending);
+}
+
+function sessionRecordings(sessions: string): string[] {
+  try {
+    return readdirSync(sessions, { withFileTypes: true }).flatMap((session) =>
+      session.isDirectory()
+        ? readdirSync(join(sessions, session.name), { withFileTypes: true })
+            .filter((entry) => entry.isFile() && entry.name.startsWith('recording-'))
+            .map((entry) => join(sessions, session.name, entry.name))
+        : [],
+    );
+  } catch {
+    return [];
+  }
 }
 
 function discard(dir: string): void {

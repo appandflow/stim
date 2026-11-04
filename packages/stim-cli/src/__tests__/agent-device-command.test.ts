@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { workspaceId } from '@stim-cli/core';
 import type { WorkspaceState } from '@stim-cli/core/state';
 import {
   agentDeviceArgs,
@@ -24,10 +25,10 @@ const emulator: WorkspaceDevice = {
 };
 const tablet: WorkspaceDevice = { ...sim, slot: 'tablet', id: 'SIM-2' };
 
-function args(devices: WorkspaceDevice[], argv: string[]) {
+function args(devices: WorkspaceDevice[], argv: string[], root = '/work/app') {
   const plan = planAgentDevice(devices, argv);
   if ('refusal' in plan) return plan;
-  return agentDeviceArgs(plan);
+  return agentDeviceArgs(plan, root);
 }
 
 describe('planAgentDevice', () => {
@@ -47,6 +48,23 @@ describe('planAgentDevice', () => {
       args: ['device', 'status', '--stale', '--platform', 'ios', '--udid', 'SIM-1'],
       session: null,
     });
+  });
+
+  test('a hosted default session is stable within a workspace and differs between workspaces', () => {
+    const hosted: WorkspaceDevice = {
+      ...sim,
+      kind: 'hosted',
+      id: null,
+      remoteConfig: '/stim/hosted-ios/default/c.json',
+    };
+    const sessionOf = (root: string, extra: string[] = []) => {
+      const built = args([hosted], ['snapshot', ...extra], root);
+      if ('refusal' in built) throw new Error(built.refusal.message);
+      return built.args[built.args.indexOf('--session') + 1];
+    };
+    expect(sessionOf('/work/app')).toBe(sessionOf('/work/app'));
+    expect(sessionOf('/work/app')).not.toBe(sessionOf('/work/app-2'));
+    expect(sessionOf('/work/app-2', ['--session', 'mine'])).toBe('mine');
   });
 
   test("accepts the workspace's own UDID or serial and refuses another device", () => {
@@ -102,8 +120,21 @@ describe('planAgentDevice', () => {
       remoteConfig: '/stim/hosted-ios/default/c.json',
     };
     expect(args([hosted], ['press', '@e1', '--remote-config', '/stim/hosted-ios/default/c.json'])).toEqual({
-      args: ['press', '@e1', '--remote-config', '/stim/hosted-ios/default/c.json'],
+      args: [
+        'press',
+        '@e1',
+        '--session',
+        `stim-default-ios-${workspaceId('/work/app').slice(0, 8)}`,
+        '--remote-config',
+        '/stim/hosted-ios/default/c.json',
+      ],
       session: null,
+    });
+    expect(args([hosted], ['snapshot', '-i', '--session', 'mine'])).toMatchObject({
+      args: ['snapshot', '-i', '--session', 'mine', '--remote-config', '/stim/hosted-ios/default/c.json'],
+    });
+    expect(args([hosted], ['device', 'status'])).toMatchObject({
+      args: ['device', 'status', '--remote-config', '/stim/hosted-ios/default/c.json'],
     });
     expect(args([{ ...hosted, remoteConfig: null }], ['snapshot'])).toMatchObject({
       refusal: { code: 'STIM_NO_DEVICE' },

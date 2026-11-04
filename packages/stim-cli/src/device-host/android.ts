@@ -38,7 +38,12 @@ import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { ensureConfig, loadConfig, withConfigLockAsync } from '../workspace/config.ts';
 import { hostedNotify, type HostedWorkerResult } from './worker.ts';
 import { removeHostedAppData } from './app.ts';
-import { installHostedAndroidApp, restoreHostedAndroidMetro } from './android-app.ts';
+import {
+  applyHostedAndroidReverses,
+  installHostedAndroidApp,
+  restoreHostedAndroidMetro,
+  type HostedAndroidReverses,
+} from './android-app.ts';
 
 async function portIsOccupied(port: number): Promise<boolean> {
   const devices = await listAdbDevicesAsync({ timeoutMs: 5000 });
@@ -88,15 +93,24 @@ function selectHostedAndroidDevice(request: HostedDeviceSelectors): HostedAndroi
 
 /** Runs only in the private worker home; a caller cannot select or tear down an existing AVD. */
 export async function runHostedAndroidDevice(
-  mode: 'prepare' | 'stop' | 'install' | 'reverse' | 'park' | 'inspect' | 'adopt',
+  mode: 'prepare' | 'stop' | 'install' | 'reverse' | 'reverse-ports' | 'park' | 'inspect' | 'adopt' | 'resume',
   request: { session: string; consolePort?: unknown; systemImage?: string; deviceProfile?: string },
   app?: { attempt: string; metroPort?: number; clientMetroPort?: number },
+  reverses?: HostedAndroidReverses,
 ): Promise<HostedWorkerResult> {
   const home = process.env.STIM_HOME;
   if (!home) throw new Error('Hosted workers require their isolated STIM_HOME.');
   let device: HostedAndroidDevice | null = null;
   let creationStarted = false;
   try {
+    if (mode === 'reverse-ports') {
+      if (!reverses) throw new Error('Hosted Android reverse ports need their port list.');
+      device = readHostedDevice(home, 'android');
+      if (!hostedConsolePort(request.consolePort) || device.consolePort !== request.consolePort)
+        throw new Error('The hosted Android device identity differs from its session console port.');
+      await applyHostedAndroidReverses(home, device, reverses);
+      return { state: 'ready', device };
+    }
     if (mode === 'install' || mode === 'reverse') {
       if (!app) throw new Error('Hosted Android native work needs its admitted app attempt.');
       device = readHostedDevice(home, 'android');
@@ -224,6 +238,17 @@ export async function runHostedAndroidDevice(
       await resetAdoptedAvd(device.avdName, device.serial, '');
       removeHostedAppData(home, { keepBlobs: true });
       await muteBootedEmulator(device.serial, device.avdName, hostedNotify);
+      return { state: 'ready', device };
+    }
+    if (mode === 'resume') {
+      if (
+        device.avdName !== ownedAvdName(`hosted-${request.session}`) ||
+        !hostedConsolePort(request.consolePort) ||
+        device.consolePort !== request.consolePort ||
+        (await getAvdNameForSerialAsync(device.serial)) !== device.avdName ||
+        (await androidDeviceAbi(device.serial)) !== device.architecture
+      )
+        throw new Error('The hosted emulator is not running as its recorded owned AVD.');
       return { state: 'ready', device };
     }
     if (mode === 'park') {

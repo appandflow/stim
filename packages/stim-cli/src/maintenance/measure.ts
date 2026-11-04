@@ -14,7 +14,7 @@ import { readVolumeSpace, readVolumeSpaceAsync } from '../budget.ts';
 import { memoryPressure } from '../daemon/pressure.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { readHostMemoryPressure, readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
-import { discoverCaches, type CacheDescriptor } from '../cache/caches.ts';
+import { discoverCachesAsync, type CacheDescriptor } from '../cache/caches.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
@@ -52,6 +52,15 @@ export async function measurePressureAsync(
   return pressureFromObservations(previous, now, level, disk);
 }
 
+/** Pressure from a measurement already taken, such as the daemon tick's. */
+export function pressureFromMeasurement(
+  previous: MaintenancePressure | null,
+  now: number,
+  { memory, disk }: { memory: { level: HostMemoryPressure | null }; disk: MaintenancePressure['disk'] },
+): MaintenancePressure {
+  return pressureFromObservations(previous, now, memory.level, disk);
+}
+
 /**
  * Disk and memory as status shows them. `pressured` is the stim-daemon's memory level above normal; the warning clock
  * carries over from the last measurement, or from the daemon's last tick.
@@ -85,7 +94,7 @@ export function sizeScanDeferred(): boolean {
 
 export function cacheBlocked(
   entry: Pick<MaintenanceSize, 'name' | 'dir' | 'category'>,
-  discovered: CacheDescriptor[] = discoverCaches(),
+  discovered: CacheDescriptor[],
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
   return (
@@ -111,12 +120,14 @@ export function cacheBlocked(
 export async function measureSizes(
   now: number,
   failure: (target: string, workspace?: string) => void,
+  operation?: StimContext,
 ): Promise<MaintenanceSize[]> {
   const sizes: MaintenanceSize[] = [];
   const outputs = await collectWorkspaceOutputs({
     olderThan: null,
     now,
     sizeTimeoutMs: 120_000,
+    ...(operation ? { signal: operation.signal, operation } : {}),
   });
   for (const entry of outputs.workspaces) {
     if (entry.bytes === null) {
@@ -157,7 +168,7 @@ export async function measureSizes(
       category: 'compilation-cache',
     },
   ];
-  const discovered = discoverCaches();
+  const discovered = await discoverCachesAsync();
   for (const cache of discovered) {
     if (cache.source !== 'registered' && !canonicalPath(cache.dir).startsWith(`${canonicalPath(configDir())}/`))
       continue;

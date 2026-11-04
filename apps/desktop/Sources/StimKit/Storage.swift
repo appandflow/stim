@@ -88,6 +88,11 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
   /// Why `stim gc --delete` keeps the build outputs, or nil when it clears them.
   public var buildOutputsKept: String?
   public var nodeModules: DiskSize
+  /// The part of node_modules that clones or hard links share with other folders and that `nodeModules` leaves out.
+  /// Nil when `stim status` reported no private size, so `nodeModules` is a `du` figure that counts clones in full.
+  public var nodeModulesShared: Int64? = nil
+  /// A primary checkout, whose `nodeModules` counts the bytes its clones share.
+  public var isCheckout = false
   public var logs: DiskSize
   /// What `stim gc --delete` would trim from the logs, or nil when it trims nothing.
   public var logsTrimmed: Int64?
@@ -124,6 +129,17 @@ public struct WorkspaceStorage: Identifiable, Hashable, Sendable {
   /// Whether every category has a size, so `total` is not a lower bound.
   public var totalComplete: Bool { [buildOutputs, nodeModules, logs, devices].allSatisfy { $0.bytes != nil } }
 
+}
+
+extension Workspace {
+  /// node_modules of a linked worktree as `stim status` measured it: `own` is what deleting it frees and `shared` is
+  /// what clones or hard links share with other folders. Nil without a private size, and for a primary checkout, which
+  /// counts all of its node_modules.
+  public var statusNodeModules: (own: Int64, shared: Int64)? {
+    guard worktree != nil, let total = disk?.nodeModulesBytes, let own = disk?.nodeModulesPrivateBytes, own >= 0, own <= total
+    else { return nil }
+    return (Int64(own), Int64(total - own))
+  }
 }
 
 /// A location shown with its size: Stim-managed and reclaimable through the CLI, or outside Stim and shown
@@ -401,11 +417,13 @@ public struct StorageReport: Sendable {
         gc == nil ? .notMeasured : output.map { $0.bytes.map(DiskSize.size) ?? .failed } ?? .absent
       let log = logs[env.path]
       let missing = dead.contains(env.path)
+      let statusModules = env.statusNodeModules
       return WorkspaceStorage(
         path: env.path, worktreePath: root, repository: env.worktree?.repository, branch: env.worktree?.branch,
         buildOutputs: buildOutputs,
         buildOutputsKept: output.flatMap { $0.willClear == true ? nil : ($0.detail ?? "kept") },
-        nodeModules: missing ? .absent : disk.measure("\(root)/node_modules"),
+        nodeModules: missing ? .absent : statusModules.map { .size($0.own) } ?? disk.measure("\(root)/node_modules"),
+        nodeModulesShared: missing ? nil : statusModules?.shared, isCheckout: env.worktree == nil,
         logs: gc?.sections.workspaceLogs == nil ? .notMeasured : log.map { .size($0.bytes) } ?? .absent,
         logsTrimmed: log.flatMap { $0.willTrim ? $0.trimBytes : nil },
         logsKept: log.flatMap { $0.trimBytes > 0 && !$0.willTrim ? ($0.detail ?? "kept") : nil },
@@ -601,12 +619,12 @@ public enum WorktreeLifecycle: Hashable, Sendable {
   /// Days without recorded use after which a worktree with no open pull request reads as stale.
   public static let staleDays = 7
 
-  /// `worktree` is the `stim gc --json` entry, nil for a checkout gc does not sweep. `pulls` maps branch
-  /// names to open pull requests, nil when the GitHub CLI could not answer.
-  public init?(worktree: GcReport.LinkedWorktree?, branch: String?, pulls: [String: PullRequest]?) {
+  /// `worktree` is the `stim gc --json` entry, nil for a checkout gc does not sweep. Its `pullRequest` is nil when
+  /// the branch has none or `stim` could not tell, and the worktree then reads from its idleness alone.
+  public init?(worktree: GcReport.LinkedWorktree?) {
     if let into = worktree?.mergedInto {
       self = .merged(into: into)
-    } else if let branch, let pull = pulls?[branch] {
+    } else if let pull = worktree?.pullRequest, pull.state == "open" {
       self = .pullRequest(number: pull.number, url: pull.url)
     } else if let worktree {
       if let days = worktree.idleDays, days >= Self.staleDays {
@@ -626,20 +644,5 @@ public enum WorktreeLifecycle: Hashable, Sendable {
     case .stale(let days): return "Stale \(days)d"
     case .active: return "Active"
     }
-  }
-}
-
-public struct PullRequest: Decodable, Hashable, Sendable {
-  public var number: Int
-  public var url: String
-  public var headRefName: String
-
-  /// `gh pr list` arguments for the open pull requests of the repository in the working directory.
-  public static let listArguments = ["pr", "list", "--state", "open", "--json", "number,url,headRefName", "--limit", "200"]
-
-  /// Open pull requests by head branch, or nil when the output is not a `gh pr list --json` array.
-  public static func byBranch(_ json: Data) -> [String: PullRequest]? {
-    guard let pulls = try? JSONDecoder().decode([PullRequest].self, from: json) else { return nil }
-    return Dictionary(pulls.map { ($0.headRefName, $0) }, uniquingKeysWith: { first, _ in first })
   }
 }

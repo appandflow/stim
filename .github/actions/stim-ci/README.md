@@ -139,8 +139,9 @@ Android and Stim Desktop on macOS. Each job repeats after cleanup with warm
 build state. The smoke command checks the exact app process immediately and
 again after five seconds. This is native lifecycle coverage, not UI E2E.
 
-It runs on relevant pushes to `main`, manual dispatch, and relevant pull
-requests carrying `e2e-smoke`. Existing app unit tests stay in their workflows.
+It runs nightly on `main`, on manual dispatch, and on relevant pull requests
+carrying `e2e-smoke`. A failing nightly run files a `Nightly failure: Stim CI
+dogfood` issue. Existing app unit tests stay in their workflows.
 
 `apps/mobile/.eas/workflows/stim-ci.yml` invokes the same executable from an
 EAS custom Android job with nested virtualization and uploads its artifacts.

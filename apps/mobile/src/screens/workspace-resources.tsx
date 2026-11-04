@@ -15,6 +15,7 @@ import { formatBytes, formatDateTime, formatDuration, formatMemoryMb, formatSize
 import {
   diskParts,
   diskPartsLabel,
+  diskSharedBytes,
   formatCpu,
   processRows,
   sparkline,
@@ -209,12 +210,17 @@ function LiveWorkspaceResources({ path }: { path: string }) {
       {apps.map((app, index) => {
         const parts = diskParts(app);
         return parts ? (
-          <DiskCard key={app.path} parts={parts} title={multi ? page.projects[index] : undefined} />
+          <DiskCard
+            key={app.path}
+            parts={parts}
+            shared={diskSharedBytes(app)}
+            title={multi ? page.projects[index] : undefined}
+          />
         ) : null;
       })}
       {free === null ? null : (
         <Text variant="footnote" tone="tertiary">
-          <Trans>The Mac volume that holds workspaces has {freeSpace} free.</Trans>
+          <Trans>The volume that holds workspaces has {freeSpace} free.</Trans>
         </Text>
       )}
     </SheetScreen>
@@ -267,14 +273,18 @@ function Tile({
 
 const PART_COLOR = { nodeModules: 'accent', worktree: 'tertiary', build: 'info' } as const;
 
-function DiskCard({ parts, title }: { parts: DiskPart[]; title?: string }) {
+function DiskCard({ parts, shared, title }: { parts: DiskPart[]; shared: number | null; title?: string }) {
   const { theme } = useUnistyles();
   const total = parts.reduce((sum, part) => sum + part.bytes, 0);
   const size = formatSize(total);
+  const sharedSize = shared ? formatSize(shared) : null;
   const summary = diskPartsLabel(parts);
   const heading = title ?? t`Disk`;
+  const label = sharedSize
+    ? t`${heading} ${size}: ${summary}, shared with other folders ${sharedSize}`
+    : t`${heading} ${size}: ${summary}`;
   return (
-    <View style={styles.card} accessible accessibilityLabel={t`${heading} ${size}: ${summary}`}>
+    <View style={styles.card} accessible accessibilityLabel={label}>
       <Text variant="caption" tone="secondary">
         {heading}
       </Text>
@@ -304,6 +314,17 @@ function DiskCard({ parts, title }: { parts: DiskPart[]; title?: string }) {
           </Text>
         </View>
       ))}
+      {sharedSize ? (
+        <View style={styles.legendRow}>
+          <View style={[styles.dot, styles.hollowDot, { borderColor: theme.colors.tertiary }]} />
+          <Text variant="footnote" tone="tertiary" style={styles.grow}>
+            <Trans>Shared with other folders</Trans>
+          </Text>
+          <Text variant="footnote" tone="tertiary" style={styles.tabular}>
+            {sharedSize}
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -319,6 +340,7 @@ const styles = StyleSheet.create((theme) => ({
   stack: { flexDirection: 'row', gap: 1, height: 6, borderRadius: 3, overflow: 'hidden' },
   legendRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
   dot: { width: 7, height: 7, borderRadius: 3.5 },
+  hollowDot: { borderWidth: 1 },
   tiles: { flexDirection: 'row', gap: theme.space.md },
   tile: {
     flex: 1,

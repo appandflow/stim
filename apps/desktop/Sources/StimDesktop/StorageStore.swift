@@ -2,9 +2,9 @@ import AppKit
 import StimKit
 import StimStores
 
-/// Disk sizes Stim Desktop measures itself with `du`, and open pull requests from `gh`. Each path is sized by
-/// its own `du` and published as it finishes, so one slow tree delays only its own row. Results are kept for
-/// `maxAge`, so opening the Storage view never waits on them.
+/// Disk sizes Stim Desktop measures itself with `du`, except the node_modules sizes `stim status` already reports.
+/// Each path is sized by its own `du` and published as it finishes, so one slow tree delays only its own row.
+/// Results are kept for `maxAge`, so opening the Storage view never waits on them.
 @MainActor
 final class StorageStore: ObservableObject {
   static let maxAge: TimeInterval = 15 * 60
@@ -14,18 +14,13 @@ final class StorageStore: ObservableObject {
 
   @Published private(set) var disk = DiskMeasurements()
   @Published private(set) var measuredAt: Date?
-  @Published private(set) var loadingPulls = false
-  /// Open pull requests by repository, then by head branch.
-  @Published private(set) var pulls: [String: [String: PullRequest]] = [:]
-  /// False when no `gh` is on Stim Desktop's PATH.
-  @Published private(set) var hasGitHubCLI: Bool?
   @Published private(set) var paths = StoragePaths(home: NSHomeDirectory())
 
   private let status: StatusStore
   private let environment: Task<[String: String], Never>
   private let terminationObserver: NSObjectProtocol
 
-  var measuring: Bool { !disk.pending.isEmpty || loadingPulls }
+  var measuring: Bool { !disk.pending.isEmpty }
 
   init(status: StatusStore, environment: Task<[String: String], Never>) {
     self.status = status
@@ -44,10 +39,9 @@ final class StorageStore: ObservableObject {
     if !force, let at = measuredAt, Date().timeIntervalSince(at) < Self.maxAge { return }
     let environments = status.payload?.environments ?? []
     let unprovisioned = status.payload?.unprovisionedWorktrees ?? []
-    let repositories = Set(environments.compactMap { $0.worktree?.repository } + unprovisioned.compactMap(\.repository))
     let modules = Set(
-      environments.map { "\($0.worktree?.path ?? $0.path)/node_modules" } + unprovisioned.map { "\($0.path)/node_modules" })
-    loadingPulls = true
+      environments.filter { $0.statusNodeModules == nil }.map { "\($0.worktree?.path ?? $0.path)/node_modules" }
+        + unprovisioned.map { "\($0.path)/node_modules" })
     disk = DiskMeasurements(pending: Set(modules))
     let environment = environment
     Task {
@@ -59,9 +53,7 @@ final class StorageStore: ObservableObject {
         + (modules.sorted() + paths.unmanaged.map(\.path)).map { (path: $0, options: ["-k", "-s"]) }
       let absent = await Task.detached { Set(jobs.map(\.path).filter { !FileManager.default.fileExists(atPath: $0) }) }.value
       disk = DiskMeasurements(pending: Set(jobs.map(\.path)).subtracting(absent), absent: absent)
-      async let sized: Void = measure(jobs.filter { !absent.contains($0.path) })
-      async let pulled: Void = loadPulls(repositories: repositories, environment: environment)
-      _ = await (sized, pulled)
+      await measure(jobs.filter { !absent.contains($0.path) })
       measuredAt = Date()
     }
   }
@@ -87,32 +79,6 @@ final class StorageStore: ObservableObject {
         if sizes[path] == nil { disk.failed.insert(path) }
         next()
       }
-    }
-  }
-
-  private func loadPulls(repositories: Set<String>, environment: [String: String]) async {
-    let (gh, pulls) = await Self.offThread {
-      let gh = GitHubCLI(environment: environment, registry: Self.running)
-      let pulls = Dictionary(
-        uniqueKeysWithValues: repositories.compactMap { repository -> (String, [String: PullRequest])? in
-          guard let byBranch = gh.run(PullRequest.listArguments, cwd: repository).flatMap(PullRequest.byBranch)
-          else { return nil }
-          return (repository, byBranch)
-        })
-      return (gh, pulls)
-    }
-    self.pulls = pulls
-    hasGitHubCLI = gh.executable != nil
-    loadingPulls = false
-  }
-
-  func pulls(for workspace: WorkspaceStorage) -> [String: PullRequest]? {
-    workspace.repository.flatMap { pulls[$0] }
-  }
-
-  nonisolated private static func offThread<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
-    await withCheckedContinuation { continuation in
-      DispatchQueue.global(qos: .default).async { continuation.resume(returning: work()) }
     }
   }
 }

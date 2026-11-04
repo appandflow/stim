@@ -207,6 +207,27 @@ export function getParkedMax(
   return { max: explicit ? parsed : env.STIM_HOME ? 0 : parsed, error: null };
 }
 
+/** `pool.bootedGraceMinutes`: how long a parked simulator may stay booted; a scoped home keeps it at 0 unless the environment sets it. */
+export function getBootedGraceMinutes({
+  config,
+  env = ambientEnv(),
+}: { config?: Config | null; env?: NodeJS.ProcessEnv } = {}): ParkedMax {
+  const envKey = 'STIM_POOL_BOOTED_GRACE_MINUTES';
+  const fromEnv = env[envKey];
+  const explicit = fromEnv !== undefined && fromEnv !== '';
+  const pool = (config === undefined ? loadConfig() : config)?.pool;
+  const raw = explicit ? fromEnv : isJsonObject(pool) ? pool.bootedGraceMinutes : undefined;
+  if (raw === undefined) return { max: env.STIM_HOME ? 0 : 15, error: null };
+  const parsed = parseMax(raw, explicit);
+  if (parsed === null) {
+    return {
+      max: 0,
+      error: `Invalid ${explicit ? envKey : 'pool.bootedGraceMinutes'} value ${JSON.stringify(raw)}. Expected a whole number of minutes, 0 or more.`,
+    };
+  }
+  return { max: explicit ? parsed : env.STIM_HOME ? 0 : parsed, error: null };
+}
+
 function resolveLimit(envVal: unknown, cfgVal: unknown): number {
   const hasEnv = envVal !== undefined && envVal !== null && envVal !== '';
   const raw = hasEnv ? Number(envVal) : typeof cfgVal === 'number' ? cfgVal : Number.NaN;

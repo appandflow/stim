@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { workspaceDir } from '../workspace/paths.ts';
 import { phaseLine } from '../command-output.ts';
 import { agentAccess, removeAgentAccess } from './hosted-agent.ts';
-import { closeAgentConnection } from './agent-connection.ts';
+import { closeAgentConnection, hostedAgentSessionName } from './agent-connection.ts';
 import { randomUUID } from 'node:crypto';
 import type { BuildHandoff } from '../offload/client.ts';
 import { pullHostedNativeLogs } from './hosted-logs.ts';
@@ -25,6 +25,7 @@ import {
   parseHostedNativePlacement,
   unreadableHostedNative,
   hostedMemoryRefusal,
+  reversePorts,
 } from '@stim-cli/core/state';
 import {
   call,
@@ -51,6 +52,7 @@ import {
 } from './hosted-client.ts';
 import { requestHostedMetro, closeHostedMetro, hostedAgentPort, requireHostedMetro } from './metro-request.ts';
 import { writeHostedNative } from './ios-state.ts';
+import { requireReverseLinks, syncHostedReverses } from './reverse.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { cancellableSleep } from '../cancellation.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
@@ -397,6 +399,16 @@ async function placeHostedNativeOnce(
       await call(host, 'device-host.metro.close', { session: session.id });
       await closeHostedMetro(root, session.id);
     }
+    if (reversePorts(readWorkspaceState(root)).length > 0) {
+      try {
+        requireReverseLinks(root);
+        await syncHostedReverses(root, host, session.id);
+      } catch (error) {
+        note(
+          `reverse ports were not set up on ${host.machine}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     const { files, content } =
       platform === 'ios'
         ? bundleManifest(bundle)
@@ -532,7 +544,8 @@ export async function stopHostedNative(
       failures.push(unreadableHostedNative(name, platform));
       continue;
     }
-    if (placement.agent.driver === 'agent-device') closeAgentConnection(placement.agent.remoteConfig);
+    if (placement.agent.driver === 'agent-device')
+      closeAgentConnection(placement.agent.remoteConfig, hostedAgentSessionName(root, platform, name));
     let host: HostConnection | undefined;
     const cancel = () => host?.connection.close();
     signal?.addEventListener('abort', cancel, { once: true });

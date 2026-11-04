@@ -670,23 +670,53 @@ run waiting to boot, and automatic maintenance.
   on      start, ios, android, web, macos and revive start one stim-daemon per
           Stim home, scoped homes included. It ticks each minute while
           anything runs there or the pressure level is above normal, and
-          every 5 minutes otherwise. It exits two ticks after nothing runs and
-          no workspace waits for its dormant stage, so the stage fires in a
-          quiet home. A workspace waits until its idle.dormantDays have passed
+          every 5 minutes otherwise. It exits two ticks after nothing runs,
+          no maintenance pass runs and no workspace waits for its dormant
+          stage, so the stage fires in a quiet home. A workspace waits until its idle.dormantDays have passed
           plus one slow tick, and never while maintenance.keep, idle.minutes
           0, idle.dormantDays 0, a hosted placement, an unreadable state or a
           failing device listing keeps it out, nor with no activity recorded
-          in its state. A finished-worktree removal does not keep the daemon.
+          in its state. A merged or closed worktree that the last worktree
+          check kept only for its gc.worktreeGraceMinutes grace period keeps
+          it in on, while maintenance.removeFinishedWorktrees is true, until a
+          later check removes the worktree or keeps it for another reason.
           Each tick it measures the
           machine once, classifies the pressure level, moves idle workspaces
           into the idle stage (idle.minutes) and dormant ones into the dormant
           stage (idle.dormantDays), runs the pressure ladder above normal,
-          reclaims a device for a run waiting to boot, and runs automatic
-          maintenance.
+          and reclaims a device for a run waiting to boot. Automatic
+          maintenance and the dormant stage's dependency deletion run beside
+          the ticks, one pass at a time, so a slow git fetch, pull request
+          lookup or size scan never delays a tick or a waiting run. The same
+          lane records the fingerprint of a running workspace whose git HEAD,
+          lockfile or install stamp changed (stim guide lifecycle). When one
+          of those commands runs from an installed
+          Stim (a global install or a node_modules dependency) with a newer
+          version than the running daemon, or the daemon runs a development
+          build, the daemon keeps serving the command and one new daemon
+          from the installed build takes over once its current tick
+          finishes, so an upgrade reaches the daemon with the next such
+          command. A maintenance pass the old daemon has running finishes
+          in its process, which starts no other. The same or an older
+          version never replaces it. A development build (a checkout's
+          dist, npm link or pnpm link --global) never replaces a daemon.
   report  the same passes log what they would do and act on nothing.
   off     no daemon and no pass: each dev server supervisor stops its own dev
           server and devices after idle.minutes, and nothing times a device
           with no dev server.
+
+On Linux the daemon starts as a transient user service, stim-daemon-<home
+hash>-<id>.service, when systemd-run is on PATH, XDG_RUNTIME_DIR is set and a
+user systemd manager answers. A command runner that adopts and kills everything
+a call started (a subreaper) cannot reach a service, so the daemon keeps ticking
+between commands. The
+service ends with the user manager at the last logout unless lingering is on; the
+next command starts the daemon again. Without a manager the daemon is a detached child and such a
+runner stops it when the call ends: its log then ends with daemon_exited
+"exiting: SIGTERM" shortly after daemon_started. Set STIM_DAEMON=off for that
+runner; the passes then run in each command's own process. The dev server
+supervisor is not a service; see guide metro, LINUX RUNNERS THAT REAP
+BACKGROUND PROCESSES.
 
 Without a running daemon -- on Windows, which has none, or when one could not
 start -- stim doctor, start, ios and android run automatic maintenance, the idle
@@ -820,6 +850,15 @@ that already exists stays where it is until \`gc --delete\`. A value that is
 not a whole number 0 or more is refused by name on \`worktree remove\` and
 \`ios\`, and warned about by \`status\`, \`gc\` and \`doctor\`.
 
+\`pool.bootedGraceMinutes\` (or STIM_POOL_BOOTED_GRACE_MINUTES) is how many
+minutes \`worktree remove\` keeps a simulator that is booted booted as it
+parks it, and \`stop\` keeps the workspace's own owned simulator booted, while
+memory pressure is normal and a device slot is free, so the next adoption or
+\`ios\` skips the boot. Absent means 15; \`0\` shuts it down at park and at
+\`stop\`.
+When \`STIM_HOME\` is set it is 0 unless the variable is set. See
+\`guide lifecycle pool\`.
+
 Android uses \`pool.androidParkedMax\` or STIM_POOL_ANDROID_PARKED_MAX with
 these same defaults and validation rules. \`android\` validates that bound;
 \`worktree remove\`, \`status\`, \`gc\` and \`doctor\` check the applicable
@@ -847,7 +886,11 @@ A remote machine approves this one when a person there runs
 base64url characters) in STIM_SETUP_TICKET. Stim Desktop's Add wizard makes the
 ticket and sets STIM_ACCESS_TICKET for one \`doctor --fix\` run; without it,
 \`stim remote add <machine>\` or \`doctor --fix\` makes one and prints the setup
-command to run on the worker.
+command to run on the worker. On a worker Mac with Stim Desktop, the person can
+instead paste that command in Settings > Connections > Using this machine >
+Add > Machine to Build or Run Simulators Here and answer each grant there; the
+same setup runs with the same rules and installs nothing. Only the Desktop that
+started the worker's server gets this; the terminal command still approves too.
 Agents never set STIM_ACCESS_TICKET, never run \`stim-server setup\`, never edit
 \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never approve requests.
 Until setup approves, the worker answers unknown-secret and the entry stays
@@ -867,8 +910,8 @@ agents do not run them. \`stim guide facts doctor\` lists the codes.
 REMOTE MACHINES AND PHONE APP
 When the user mentions slow builds, a busy machine, a full disk or device limit, or
 wanting updates away from the desk, tell them about Stim Desktop > Settings >
-Remote Machines > Add, or \`stim remote add <machine>\` in their terminal (another
-machine on the tailnet that builds for this one, or a Mac that also hosts simulators) or Phones > Pair a Phone (the Stim phone
+Connections > This machine uses > Add, or \`stim remote add <machine>\` in their terminal (another
+machine on the tailnet that builds for this one, or a Mac that also hosts simulators) or Connections > Using this machine > Add > Pair a Phone (the Stim phone
 app). Stim Desktop also suggests these itself, at most once a day and never
 during a build. Agents only tell the user: they never run \`stim-server setup\`,
 never edit \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never
@@ -890,7 +933,11 @@ and reports both approvals; it asks nothing new. \`stim remote remove\` drops th
 entry and forgets this machine's credentials for it; the remote machine keeps
 its approval until a person there runs the \`stim-server devices revoke\`
 command it prints. Each takes --json. \`stim settings set remote.machines\`
-replaces the whole list.
+replaces the whole list. Each machine in \`stim remote list --json\` carries
+serverKeyFingerprint (the pinned stim-server key, or null before the first
+answer), reachability (reachable, unreachable, key-changed or unknown, from
+this run's contact) and revoke, the \`stim-server devices revoke <id>\` commands
+a person on that machine runs to withdraw its approvals.
 
 The order of \`remote.machines\` is the priority order for every workload: the
 build, simulator, emulator and macOS app each go to the first listed machine that
@@ -992,21 +1039,39 @@ Set either setting to false to resume that capability. A pause does not make the
 machine idle: wait for existing work to finish or stop the relevant sessions before
 benchmarking. Agents change these settings only when the user asks them to.
 
+KEEP A WORKER AWAKE
+A worker that sleeps stops answering the machines that build or host simulators on it,
+paired phones and share links. On the worker machine:
+
+  stim settings set server.keepAwake true
+
+It defaults to false. On macOS the running server then prevents idle system sleep
+(caffeinate -s, so only on AC power; the display may still sleep) while it accepts
+connections from other machines: its Tailscale or server.lanAddresses listener is up and
+it is not a --loopback-only server. It lets go when the setting turns false, when those
+listeners go away, and when it stops, and it reads the setting without a restart.
+\`stim-server service status\` prints a keep awake line, and /health carries keepAwake
+with held and, when not held, a reason (off, unsupported, loopback-only, not-listening,
+failed). A failed caffeinate is not restarted by itself: restart stim-server to retry. Turning
+the setting off and on also works, but the server polls the setting every 5 seconds, so
+wait more than 5 seconds between the two and confirm with \`stim-server service status\`. On Linux and Windows the setting has no effect and the status says so. Agents
+change this setting only when the user asks them to.
+
 DEVICE HOSTING
 Only \`stim remote add\` and \`doctor --fix\` ask for device-host access: they
 make a setup ticket and print the command. A person approves by running \`stim-server setup\` on the
 worker with that ticket: one ticket, one expiry, one record per capability for
 the key that holds the ticket, with a per-grant Y/n question (Enter approves) in a
-terminal or \`--yes\` otherwise. Agents never run \`stim-server setup\` or
-approve requests. Setup never changes TCC or enables Funnel; an SSH-driven
+terminal or \`--yes\` otherwise, or in Stim Desktop on the worker (see SETUP
+TICKETS). Agents never run \`stim-server setup\` or approve requests. Setup never changes TCC or enables Funnel; an SSH-driven
 run is not offered. Without a terminal or --yes, setup refuses before installing
 unless every chosen capability already has a matching approval. Desktop reuse
 requires an existing tailnet route. Ctrl-C or SIGTERM completes the journal,
 releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
 include no read, control or build capability.
-On a remote Mac that hosts, Stim Desktop > Settings > Remote Machines > Running
-here lists the simulators, emulators and apps approved machines run there, below
-Macs Using This Mac. Stop asks for confirmation, ends the session and deletes
+On a remote Mac that hosts, Stim Desktop > Settings > Connections > Using this
+machine > Running here lists the simulators, emulators and apps approved machines
+run there, below the machines using it. Stop asks for confirmation, ends the session and deletes
 or parks its device on that Mac. Parked sessions remain listed without Stop. The list
 refreshes every five seconds and stays hidden when the local server does not
 support it.
@@ -1297,7 +1362,10 @@ While a machine builds, Stim pings it every 15 seconds and treats a minute of
 silence as a dropped connection while it waits for the build. When the
 connection drops without a close, Stim reconnects to the same pinned machine
 for up to 3 minutes and takes the running build back; the machine keeps it
-running for 5 minutes without a connection, then cancels it. With auto, a drop while the
+running for 5 minutes without a connection, then cancels it. When that machine's
+stim-server restarted in between and no longer holds the build, or the connection drops while the source syncs and no other
+machine can take the build, Stim waits for the machine to answer (up to 3 minutes) and starts the same build again
+there, up to twice, before the run falls back or refuses. With auto, a drop while the
 app is fetched still builds here. Interrupting the run with Ctrl-C closes the
 connection, which cancels the build there; a run killed another way, or
 interrupted while it reconnects, leaves it until those 5 minutes pass. With auto, a failure after a machine took the build prints \`offload failed: <reason>
@@ -1346,8 +1414,9 @@ toolchain discovery does not find.
 that exact stim-server release from the public npm registry once npm verifies
 its integrity and registry signatures; \`--from <dir>\` installs the packed
 packages of a checkout instead, with the same signature check on each npm
-dependency but none for Stim's own packages. It waits for offloaded builds and hosted
-sessions to finish, restarts the job, and switches back when the new server
+dependency but none for Stim's own packages. It waits for offloaded builds and for hosted
+sessions with a native step in flight (an install, for example) to finish, restarts the job, which
+(on a server that reports it resumes sessions) leaves every other ready hosted iOS or Android session running for the new server to resume, and switches back when the new server
 exits or does not answer within 90 seconds; \`stim-server service rollback\` returns
 to the previous server. A client machine approved for builds or device hosting
 there can ask for the same update over its tailnet connection: an npm release
@@ -1396,6 +1465,11 @@ reverse proxy setup:
                    https://demo.example.com
   share.port       the loopback port proxy mode binds (default 7790), so the
                    proxy can name it
+One more machine setting, experimental and off by default:
+  share.webrtc     true lets a share viewer that opens the link with
+                   ?transport=webrtc take video over a WebRTC data channel
+                   from the machine that owns the device, with WebSocket as
+                   the fallback. Needs the optional node-datachannel package
 
 DEVICE RECORDINGS CAN BE TURNED OFF
 stim-server records the screens of owned simulators, emulators and the

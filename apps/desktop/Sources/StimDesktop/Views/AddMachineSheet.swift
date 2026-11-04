@@ -214,9 +214,9 @@ struct AddMachineSheet: View {
       .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
       if let existing = model.existingPeer {
         VStack(alignment: .leading, spacing: Space.sm) {
-          Text("\(existing.mac.hostName) is already added. Its state and settings are in Remote Machines.")
+          Text("\(existing.mac.hostName) is already added. Its state and settings are in Settings > Connections.")
             .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
-          Button("Show in Remote Machines") { dismiss() }.buttonStyle(.stim(.secondary, .regular))
+          Button("Show in Connections") { dismiss() }.buttonStyle(.stim(.secondary, .regular))
         }
       }
       if model.macList == .empty {
@@ -281,7 +281,7 @@ struct AddMachineSheet: View {
     .accessibilityLabel(
       "\(peer.mac.hostName), already added\(added.status.map { ", \($0.title)" } ?? "")\(added.detail.map { ". \($0)" } ?? "")"
     )
-    .accessibilityHint("Shows that it is set up in Remote Machines")
+    .accessibilityHint("Shows that it is set up in Connections")
   }
 
   private func peerName(_ peer: Tailnet.Peer) -> some View {
@@ -358,8 +358,12 @@ struct AddMachineSheet: View {
       VStack(alignment: .leading, spacing: Space.lg) {
         Text(wizard.phase == .cancelled ? "Setup cancelled" : "Set up \(name)").font(.stim(.title))
         if wizard.phase != .cancelled {
-          Text("Run this on \(name), then approve each request there (y) in \(shell).")
-            .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+          Text(
+            model.os == .macOS
+              ? "Run this on \(name), then approve each request there (y) in Terminal. When Stim Desktop on \(name) runs its own stim-server rather than a stim-server service, you can instead paste it there in Settings > Connections > Using this machine > Add > Machine to Build or Run Simulators Here, and choose Allow."
+              : "Run this on \(name), then approve each request there (y) in \(shell)."
+          )
+          .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
         }
         if wizard.phase == .cancelled {
           Text(statusText).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)

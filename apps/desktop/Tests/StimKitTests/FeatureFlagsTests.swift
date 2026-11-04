@@ -66,6 +66,24 @@ private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
   }
 }
 
+@Test func allowConnectionsTurnsOffOnceWhereThePhoneAppFlagKeptTheServerOnLoopback() throws {
+  try withDefaults { defaults in
+    defaults.set(true, forKey: AppPreferences.Key.servesPhones)
+    FeatureFlags.set(.phoneApp, enabled: false, defaults: defaults)
+    #expect(FeatureFlags.resetServingWithoutPhoneApp(defaults: defaults))
+    #expect(!defaults.bool(forKey: AppPreferences.Key.servesPhones))
+    defaults.set(true, forKey: AppPreferences.Key.servesPhones)
+    #expect(!FeatureFlags.resetServingWithoutPhoneApp(defaults: defaults))
+    #expect(defaults.bool(forKey: AppPreferences.Key.servesPhones))
+  }
+  try withDefaults { defaults in
+    defaults.set(true, forKey: AppPreferences.Key.servesPhones)
+    #expect(FeatureFlags.seed(servesPhones: true, pairedPhones: nil, defaults: defaults))
+    #expect(!FeatureFlags.resetServingWithoutPhoneApp(defaults: defaults))
+    #expect(defaults.bool(forKey: AppPreferences.Key.servesPhones))
+  }
+}
+
 @Test func theSetupGuideHasNoPhoneStepWithoutThePhoneApp() {
   #expect(!SetupStep.sequence(phoneApp: false).contains(.phone))
   #expect(SetupStep.sequence(phoneApp: true).contains(.phone))
@@ -103,11 +121,4 @@ private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
   }
   for text in offCopy() { #expect(!text.lowercased().contains("phone"), "\(text)") }
   #expect(PhoneApp.Copy.screenPermissionUse(phoneApp: true).contains("phone"))
-}
-
-@Test func theServerListensBeyondLoopbackOnlyWhenThePhoneAppServesPhones() {
-  #expect(PhoneApp.listensOnTailnet(phoneApp: true, servesPhones: true))
-  #expect(!PhoneApp.listensOnTailnet(phoneApp: true, servesPhones: false))
-  #expect(!PhoneApp.listensOnTailnet(phoneApp: false, servesPhones: true))
-  #expect(!PhoneApp.listensOnTailnet(phoneApp: false, servesPhones: false))
 }

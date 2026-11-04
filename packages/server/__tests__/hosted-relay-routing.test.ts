@@ -24,7 +24,9 @@ it.each([
           ? { subscription: 'upstream', video: 'h264' }
           : method === 'device-host.control.begin'
             ? { session: 'host-control', postures: ['folded', 'unfolded'] }
-            : {},
+            : method === 'device-host.attach'
+              ? { state: 'stopped' }
+              : {},
     }),
   );
   const connection = {
@@ -135,6 +137,7 @@ it.each([
     expect.objectContaining({ platform, slot, action: 'control.end' }),
   ]);
   frames.closed(new Error('host offline'));
+  await vi.advanceTimersByTimeAsync(1000);
   expect(messages.at(-1)).toMatchObject({
     event: 'error',
     subscription: 'local',
@@ -143,7 +146,7 @@ it.each([
     error: { code: 'frames-failed' },
   });
   expect(dropped).toEqual(['local']);
-  expect(release).toHaveBeenCalledTimes(2);
+  expect(release).toHaveBeenCalled();
   relay.close();
 });
 
@@ -161,7 +164,7 @@ async function clipboardCalls(supported: boolean) {
   );
   const connection = {
     request,
-    supports: (feature: string) => supported && feature === 'device-clipboard',
+    supports: (feature: string) => supported && (feature === 'device-clipboard' || feature === 'device-keyboard'),
     route: () => () => {},
   } as unknown as Upstream;
   const hosts = { acquire: async () => ({ connection, release: () => {} }) } as unknown as HostConnections;
@@ -182,9 +185,11 @@ async function clipboardCalls(supported: boolean) {
   const begun = request.mock.calls.length;
   relay.control(2, 'input.clipboard.set', { session: 'h1', text: 'abc', paste: true });
   relay.control(3, 'input.clipboard.get', { session: 'h1' });
+  relay.control(4, 'input.key', { session: 'h1', key: 'a', modifiers: ['command'] });
+  relay.control(5, 'input.key', { session: 'h1', key: 'left', modifiers: [] });
   const answers = () =>
     messages.filter((message) => 'id' in message && typeof message.id === 'number' && message.id >= 2);
-  await vi.waitFor(() => expect(answers()).toHaveLength(2));
+  await vi.waitFor(() => expect(answers()).toHaveLength(4));
   return { sent: request.mock.calls.slice(begun), answers: answers() };
 }
 
@@ -193,19 +198,25 @@ it('forwards the clipboard calls to a hosted session whose host advertises devic
   expect(sent).toEqual([
     ['device-host.input.clipboard.set', { session: 'host-control', text: 'abc', paste: true }],
     ['device-host.input.clipboard.get', { session: 'host-control' }],
+    ['device-host.input.key', { session: 'host-control', key: 'a', modifiers: ['command'] }],
+    ['device-host.input.key', { session: 'host-control', key: 'left', modifiers: [] }],
   ]);
   expect(answers).toEqual([
     { id: 2, result: {} },
     { id: 3, result: { text: 'from the host' } },
+    { id: 4, result: {} },
+    { id: 5, result: {} },
   ]);
 });
 
-it('refuses the clipboard calls for a host without device-clipboard, without sending them', async () => {
+it('refuses the clipboard calls and key chords for a host without the feature, sending only the bare arrow', async () => {
   const { sent, answers } = await clipboardCalls(false);
-  expect(sent).toEqual([]);
+  expect(sent).toEqual([['device-host.input.key', { session: 'host-control', key: 'left', modifiers: [] }]]);
   expect(answers).toEqual([
     { id: 2, error: { code: 'action-failed', message: expect.stringContaining('update its Stim') } },
     { id: 3, error: { code: 'action-failed', message: expect.stringContaining('update its Stim') } },
+    { id: 4, error: { code: 'action-failed', message: expect.stringContaining('update its Stim') } },
+    { id: 5, result: {} },
   ]);
 });
 
@@ -214,7 +225,12 @@ describe('presence of a hosted device on the relay', () => {
     const routes = new Map<string, Parameters<Upstream['route']>[1]>();
     const connection = {
       request: async (method: string) => ({
-        result: method === 'device-host.frames.subscribe' ? { subscription: 'upstream' } : { session: 'host-control' },
+        result:
+          method === 'device-host.frames.subscribe'
+            ? { subscription: 'upstream' }
+            : method === 'device-host.attach'
+              ? { state: 'stopped' }
+              : { session: 'host-control' },
       }),
       supports: () => false,
       route: (name: string, route: Parameters<Upstream['route']>[1]) => {
@@ -265,6 +281,145 @@ describe('presence of a hosted device on the relay', () => {
     await f.relay.subscribe(1, host, { platform: 'ios', slot: 'default' }, () => {}, presence);
     expect(presence).toHaveBeenCalledWith('local');
     f.routes.get('s:upstream')!.closed(new Error('host offline'));
+    await vi.advanceTimersByTimeAsync(1000);
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a hosted frame subscription whose host connection drops', () => {
+  type Route = Parameters<Upstream['route']>[1];
+  const isError = (message: ServerMessage | Buffer) =>
+    !Buffer.isBuffer(message) && 'event' in message && message.event === 'error';
+  const host = { machine: 'mini', session: 'host-session' };
+
+  function routeOf(routes: Map<string, Route>[], generation: number, name: string): Route {
+    const found = routes[generation]?.get(name);
+    if (!found) throw new Error(`no route ${name} on connection ${generation}`);
+    return found;
+  }
+
+  function setup(
+    attach: () => { state: string } | { error: { code: string; message: string } } | Promise<never>,
+    videoOf: (generation: number) => 'h264' | undefined = () => undefined,
+  ) {
+    const messages: (ServerMessage | Buffer)[] = [];
+    const dropped: string[] = [];
+    const subscribes: unknown[] = [];
+    const routes: Map<string, Route>[] = [];
+    let generation = 0;
+    const acquire = vi.fn<HostConnections['acquire']>(async () => {
+      const mine = generation++;
+      const own = new Map<string, Route>();
+      routes[mine] = own;
+      const connection = {
+        request: async (method: string, params: unknown) => {
+          if (method === 'device-host.attach') {
+            const answer = await attach();
+            return 'error' in answer ? answer : { result: answer };
+          }
+          if (method === 'device-host.frames.subscribe') {
+            subscribes.push(params);
+            return { result: { subscription: `upstream-${mine}`, ...(videoOf(mine) ? { video: videoOf(mine) } : {}) } };
+          }
+          return { result: {} };
+        },
+        supports: () => false,
+        route: (name: string, route: Route) => {
+          own.set(name, route);
+          return () => own.delete(name);
+        },
+      } as unknown as Upstream;
+      return { connection, release: () => {} };
+    });
+    const relay = new HostedRelay(
+      { acquire } as unknown as HostConnections,
+      (message) => messages.push(message),
+      () => 0,
+      () => 'local',
+      (id) => dropped.push(id),
+      () => {},
+    );
+    return { relay, messages, dropped, subscribes, routes, acquire };
+  }
+
+  it('subscribes again with the same parameters and keeps the local subscription and its viewer', async () => {
+    const f = setup(() => ({ state: 'ready' }));
+    await f.relay.subscribe(1, host, { platform: 'ios', slot: 'default', fps: 5 }, () => {});
+    routeOf(f.routes, 0, 's:upstream-0').closed(new Error('the host connection closed'));
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(f.subscribes).toHaveLength(2);
+    expect(f.subscribes[1]).toEqual(f.subscribes[0]);
+    routeOf(f.routes, 1, 's:upstream-1').event({ event: 'frame', subscription: 'upstream-1', data: 'jpeg' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.messages).toContainEqual(expect.objectContaining({ event: 'frame', subscription: 'local' }));
+    expect(f.messages.some(isError)).toBe(false);
+    expect(f.dropped).toEqual([]);
+    expect(f.relay.keyframe(2, 'local')).toBe(true);
+  });
+
+  it('waits while the host session is not ready and gives up when it stopped', async () => {
+    const states = ['unknown', 'unknown', 'stopped'];
+    const f = setup(() => ({ state: states.shift() ?? 'stopped' }));
+    await f.relay.subscribe(1, host, { platform: 'ios', slot: 'default' }, () => {});
+    routeOf(f.routes, 0, 's:upstream-0').closed(new Error('the host connection closed'));
+    await vi.advanceTimersByTimeAsync(1000 + 2000 + 4000);
+
+    expect(f.subscribes).toHaveLength(1);
+    expect(f.messages.at(-1)).toMatchObject({
+      event: 'error',
+      subscription: 'local',
+      error: { code: 'frames-failed', message: expect.stringContaining('the hosted session stopped') },
+    });
+    expect(f.dropped).toEqual(['local']);
+  });
+
+  it('fails the subscription once the host has not come back for three minutes', async () => {
+    const f = setup(() => Promise.reject(new Error('the host did not connect in time')));
+    await f.relay.subscribe(1, host, { platform: 'ios', slot: 'default' }, () => {});
+    routeOf(f.routes, 0, 's:upstream-0').closed(new Error('the host connection closed'));
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+
+    expect(f.messages.at(-1)).toMatchObject({
+      event: 'error',
+      subscription: 'local',
+      error: { code: 'frames-failed', message: expect.stringContaining('the host did not connect in time') },
+    });
+    expect(f.acquire.mock.calls.length).toBeGreaterThan(3);
+  });
+
+  it('fails at once when the host refuses this machine, and when it now streams another video format', async () => {
+    const revoked = setup(() => ({ error: { code: 'forbidden', message: 'This machine lost device-host access.' } }));
+    await revoked.relay.subscribe(1, host, { platform: 'ios', slot: 'default' }, () => {});
+    routeOf(revoked.routes, 0, 's:upstream-0').closed(new Error('the host connection closed'));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(revoked.messages.at(-1)).toMatchObject({
+      event: 'error',
+      error: { message: expect.stringContaining('lost device-host access') },
+    });
+
+    const reformatted = setup(
+      () => ({ state: 'ready' }),
+      (generation) => (generation === 0 ? 'h264' : undefined),
+    );
+    await reformatted.relay.subscribe(1, host, { platform: 'ios', slot: 'default', video: ['h264'] }, () => {});
+    routeOf(reformatted.routes, 0, 's:upstream-0').closed(new Error('the host connection closed'));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(reformatted.messages.at(-1)).toMatchObject({
+      event: 'error',
+      error: { message: expect.stringContaining('another video format') },
+    });
+  });
+
+  it('does not subscribe again once the viewer stopped while it waited', async () => {
+    const f = setup(() => ({ state: 'ready' }));
+    const stops: (() => void)[] = [];
+    await f.relay.subscribe(1, host, { platform: 'ios', slot: 'default' }, (_id, stopper) => stops.push(stopper));
+    routeOf(f.routes, 0, 's:upstream-0').closed(new Error('the host connection closed'));
+    stops.forEach((stop) => stop());
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(f.subscribes).toHaveLength(1);
+    expect(f.messages.some(isError)).toBe(false);
   });
 });

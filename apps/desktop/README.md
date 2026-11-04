@@ -74,7 +74,7 @@ Desktop waits for a startup cancellation acknowledgement before stopping the sam
 an unresolved cleanup refusal includes the exact claim recovery remedy.
 The 120-second deadline cancels startup and waits for owned cleanup; an unresolved
 claim refusal takes precedence over the timeout so its recovery remedy remains visible.
-Requests have a 1 MiB output limit. Older or adopted servers show
+Requests have a 1 MiB output limit. Older servers show
 an error, and reconnect does not replay a start. The supervisor continues running
 after a successful handoff to its workspace.
 
@@ -92,35 +92,35 @@ server. Named slots, hosted machines, remote build selection, uncached test buil
 and headed web retain their selectors. Activity keeps ordered progress, flat
 platform facts and typed refusals. Cancellation waits for server cleanup; a
 retained claim refusal keeps its recovery remedy. A lost connection never replays
-the run. Older, adopted or unavailable servers report an error without a CLI fallback.
+the run. Older or unavailable servers report an error without a CLI fallback.
 
-Reload actions also use the matching-home bundled server's private authority,
+Reload actions also use the matching-home server's Desktop authority,
 through `desktop.reload.subscribe` with `desktop-reload` support. Activity keeps
 ordered progress and the flat CLI JSON or typed refusal. Cancellation,
 unsubscribe and disconnect stop pending work; reconnect never replays the action.
 A dispatched reload cannot be retracted and does not prove completion. Metro
 broadcasts can reach other connected clients. The in-process operation has a
 60 second execution budget and 35 second cleanup budget; an unresolved cleanup
-keeps its server admission reserved. Older or adopted servers report an error
+keeps its server admission reserved. Older servers report an error
 without falling back to a CLI process.
 
-Cleanup actions use `desktop.gc.subscribe` with private Desktop authority,
+Cleanup actions use `desktop.gc.subscribe` with Desktop authority,
 the matching Stim home and `desktop-gc` support. Cache, worktree, age and idle
 selectors retain their existing behavior. Activity keeps ordered progress and
 the complete JSON report, including partial failures. Cancellation waits for
 server cleanup and preserves an unresolved claim's recovery remedy. The
 operation has a 60-second execution budget and 35-second cleanup budget;
-the server's request deadline can cancel it earlier. Older, adopted or
+the server's request deadline can cancel it earlier. Older or
 unavailable servers report an error without a CLI fallback. Reconnect never
 repeats the cleanup.
 
 Worktree removal, including tutorial restart and sample teardown, uses the
-same-home bundled server's private `desktop.worktree.remove.subscribe` action.
+same-home server's `desktop.worktree.remove.subscribe` action.
 It preserves the CLI's dirty-worktree refusal and explicit force choice. Source
 checkout cleanup succeeds without deleting the source; linked-worktree deletion
 and a later branch-cleanup failure remain separate results. Cancellation waits
-for owned cleanup and preserves unresolved-claim remedies. An unavailable,
-adopted or older server fails the action without a CLI fallback; reconnect never
+for owned cleanup and preserves unresolved-claim remedies. An unavailable
+or older server fails the action without a CLI fallback; reconnect never
 repeats removal. Tutorial restart leaves the clone in place if stop or removal
 fails.
 
@@ -148,8 +148,10 @@ actions use typed local-server operations for the selected workspace. The comman
   or per run with `stim ios --remote auto` / `stim ios --remote <machine>`.
   Desktop passes no remote flag for a new run. Recorded hosted sessions stay
   fixed to their machine until `stim stop`. When a device is not on this Mac,
-  its tile, workspace page, viewer toolbar and sidebar row show the machine's name
-  with a computer icon (VoiceOver: "Running on &lt;machine&gt;"),
+  its tile, workspace page and viewer toolbar show the machine's name
+  with a computer icon (VoiceOver: "Running on &lt;machine&gt;"), and a sidebar row
+  shows "on &lt;machine&gt;" (VoiceOver: "Yours, running on &lt;machine&gt;"), or
+  "theirs, on &lt;machine&gt;" in a paired machine's section, where the work belongs to that machine,
   with the placement reason as hover text. Local devices show no placement label. The
   same views label EAS Simulator sessions **EAS**. The
   menus offer the platforms `stim status` reports in `platforms`, plus any
@@ -222,7 +224,10 @@ worktree's branch, else the verified checkout's folder, else its project.
 Apps sharing a reported checkout appear together, including primary checkouts;
 older servers retain linked-worktree grouping. Each app keeps its own commands,
 devices and log routes. Primary checkout groups have no Remove Worktree action.
-Resources shows each app's dependency disk breakdown separately.
+Resources shows each app's dependency disk breakdown separately. For a linked worktree, its Disk card counts only the private part of
+`node_modules` (what removing it frees, from `stim status`) in the total and the bar, and lists the part that
+clones or hard links share with other folders on a last line, not counted. A primary checkout, and a workspace
+without a private size, count `node_modules` in full, so the shared bytes are counted once, under the source.
 The second line is where the app sits inside its checkout, such as `apps/mobile`.
 The view options button next to the logo opens a menu:
 
@@ -275,26 +280,26 @@ Advanced > Feature flags** lists them with **Reset to Defaults**. Code asks `Fea
 (StimKit), or `FeatureFlagStore.shared` from a view. A launch argument such as `-featureFlag.phoneApp YES` sets a
 flag for one run.
 
-**Phone app** is off by default. Off, Desktop hides the Paired Devices page, the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
-phones in copy. It never revokes a pairing. Desktop's own stim-server then listens on loopback only. A Mac that already serves phones or has a
+**Phone app** is off by default. Off, Desktop hides **Add... > Pair a Phone...** in **Settings > Connections** (paired phones stay listed), the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
+phones in copy. It never revokes a pairing and leaves **Allow connections** as it is. A Mac that already serves phones or has a
 paired phone gets the flag on at first launch with flags. The phone app is documented in
 `website/docs/phone-app.md`.
 
-**Paired machines** is off by default. On, **Settings > Paired Machines** lists this Mac's pairings with other machines'
-stim-servers and opens **Pair with a Machine...**, which takes the output of `stim-server pair` (the bare JSON or the
+**Settings > Connections > This machine uses** lists this machine's pairings with other machines'
+stim-servers and opens **Add... > View or Control Its Work...**, which takes the output of `stim-server pair` (the bare JSON or the
 `{ qr, expiresAt }` form of `--json`). `PairedServers` (StimKit) holds the list and the pairing in progress: one
-`ServerClient` per pairing while the flag is on, reporting the connection and recording each `hello` back to the store, and one
+`ServerClient` per pairing while Desktop runs, reporting the connection and recording each `hello` back to the store, and one
 pairing at a time. Items live in the data-protection Keychain, one per pairing, and an ad-hoc copy
-keeps them in memory only. An item that cannot be decoded shows as unreadable with Forget. Forget deletes the key
+keeps them in memory only. An item that cannot be decoded shows as unreadable with Remove. Remove deletes the key
 and shows `stim-server devices revoke <id>`; it does not revoke on the machine. A key the Keychain cannot read
 right now is tried again, not reported as revoked.
 
 `PairedServerSessions` wraps each of those clients in a `ServerSession` (owner `.paired(<pairing id>)`), so a pairing
-has one connection, and `StatusStore.usePairedServers` follows each one's status in memory. Below this Mac's
-projects, the sidebar gets a section per paired server: its name, connection dot, a **View Only** pill (**View and
+has one connection, and `StatusStore.usePairedServers` follows each one's status in memory. Below this machine's
+projects, the sidebar gets a section per paired server, titled "&lt;name&gt; (viewing)" (`PairedServerWording.sectionTitle`): its name, connection dot, a **View Only** pill (**View and
 Control** for a `--control` pairing), and its
-workspaces with the same grouping and status filter as this Mac's. Hidden, expanded and collapsed state for those
-rows is kept in memory only, keyed by the owner and path, and this Mac's hidden paths never apply to them. A paired
+workspaces with the same grouping, status filter and row layout as this machine's: the status sits beside the name when the whole name fits and on its own line below it otherwise. Hidden, expanded and collapsed state for those
+rows is kept in memory only, keyed by the owner and path, and this machine's hidden paths never apply to them. A paired
 row opens a page: the status, the path as text, the agent and device lines with the machine each runs on
 ("Running on janics-mac-mini-2"), the build and where it compiles, and "Viewing floco · read-only" or "Controlled by
 floco". An iOS or Android device row, own or hosted, and a hosted macOS app open `DeviceViewer` with the pairing's
@@ -307,10 +312,22 @@ server's `action` method by `ServerSession.runPairedAction`. A read-only pairing
 command Desktop builds from the `hello` device id; a `forbidden` answer reconnects to pick up the new access. The
 page has no logs, files or settings. The sidebar row's context menu offers the same **Reload App** and **Stop** actions,
 with the same access checks and a confirmation naming the owning server before Stop, alongside **Hide**.
-**Machines** lists each paired server after the
-build machines, with its reported capacity, its hosted devices and its offloaded builds. A hosted session two
-servers report shows once, under the first. A pairing whose server says it is this Mac's own gets no section.
-With the flag off, or with no pairing, nothing connects and the sidebar and Machines page are unchanged.
+**Machines** groups its machine buttons with `MachineChoices.groups`: **Your machines** holds this machine and
+the remote machines, **Viewing** the paired servers, and the labels show only while a pairing exists. A remote
+machine's page lists **Your work on &lt;machine&gt;** (`PlacedWork`: this machine's hosted devices and offloaded
+builds there). A paired server's page shows its reported capacity and its `ForeignWork`, worded "&lt;name&gt; runs it on
+&lt;machine&gt;". The two types never share a list: `PlacedWork.list` keeps `owner == .local`, `ForeignWork.list` one
+paired owner. This machine's page lists **Hosting for other machines**, the `device-host.sessions` rows labelled
+with the client's name, apart from its workspaces. A hosted session two servers report counts once, under the first. A pairing whose server says it is this machine's own gets no section.
+Active Workspaces, the Overview and Builds list paired machines' workspaces too. `PairedMachine.list` keeps a pairing's
+workspaces only while its connection is open and its status feed delivers, so an unreachable, refused or revoked pairing
+adds none, and a note names it. `WallCard.merged` puts this Mac's cards first, then one card per active workspace of each
+available machine, with the machine's name and **View Only** or **View and Control** on the card; a card opens that workspace's
+page, and its device streams through `PhysicalDeviceScreen` as the page's tile does, view only, with the tile's
+offscreen pause and Standard quality. The Overview adds a **Machines** row (`MachineTally`) counting each machine's active workspaces,
+running builds and running devices, and Builds adds **Running now** (`RunningBuild`) with each build's phases from `plannedPhases`.
+A **This Mac** / **All Machines** control (`machineScope` preference, default all) appears on each screen while a machine is available.
+With the flag off, or with no pairing, nothing connects and the sidebar, Machines page and these screens are unchanged.
 
 ## Hiding a workspace
 
@@ -354,7 +371,7 @@ expiry means nothing was kept. Recording expiry is a label: retained replay span
 available regardless of the client clock. Archived pages offer
 no live device or workspace actions. An older server shows an update hint for archive
 requests that require a workspace instead of an archive; other refusals show the server's
-message. Connect through the Paired Devices page to read logs and replay.
+message. Connect through **Settings > Connections** to read logs and replay.
 
 Each of Logs, Recordings and Agent actions has a **Clear** button that, after a confirmation, deletes that kind of that archive through
 `stim gc --delete --cache archived-logs:<id>` (`archived-recordings:<id>`, `archived-agent:<id>`) and keeps the record; the row then reads Cleared until the page is left, and None kept after.
@@ -534,10 +551,14 @@ read of a session only records the device's text. Mac items with concealed or tr
 marks (`org.nspasteboard.ConcealedType`, `org.nspasteboard.TransientType` and older password
 manager types), files or images, and empty or over-256 KB text are not sent to the device. Device text
 is written to the Mac marked transient, since its sensitivity is unknown. The popover also has
-**Paste Mac Clipboard**, which presses Command-V on an iOS simulator (iOS asks
-"Allow Paste" for text from another source) and **Copy Device Clipboard**.
-After a paste on an iOS simulator, a notice says to tap the paste suggestion on the device
-if nothing appears. Apps on the device, and agents driving it, can read the text sent to it.
+**Paste Mac Clipboard** and **Copy Device Clipboard**. On an iOS simulator, Paste
+types printable ASCII, line breaks and tabs into the focused field as key presses (about 35
+characters a second, so a long paste takes a while), so iOS shows no paste prompt and a
+simulator slimmed by SimSlim takes it too; the field's own typing rules still apply, such as
+smart quotes and dashes. Text with any other character (accents, emoji) is pasted with
+Command-V. Stim allows "Paste from Other Apps" for the app it installs on an owned simulator, so
+that app takes it without a prompt; another app has iOS ask "Allow Paste" for text from another
+source, and a notice says to tap the paste suggestion on the device if nothing appears. Apps on the device, and agents driving it, can read the text sent to it.
 
 A device Desktop shows through stim-server (a hosted iOS or Android session, a device of a paired
 machine, a leased Android phone) has the same section once **Control** is on, and a disabled one that names the server to update when its hello lacks the feature. Sync is on by default, so the current Mac text is sent to the device's machine as soon as Control starts. Sync, **Paste Mac
@@ -547,8 +568,9 @@ is disabled and names the server to update. The device takes at most 8 KiB of UT
 Mac: a larger Mac item is not synced and shows a notice, and **Paste Mac Clipboard** refuses it with
 its size. Each call costs 10 inputs of the connection's budget. Text crosses the network, so a hosted
 device on another Mac receives it over the tailnet. Failures show their server message in a notice
-(sync) or an alert (the buttons). The paste hint above applies to iOS devices reached through the
-server too. A leased iPhone, macOS apps, web pages, remote EAS previews and replay never sync.
+(sync) or an alert (the buttons). Pasting into an iOS simulator reached through the
+server types the text the same way (the server does it), and the paste hint applies only when it
+could not. A leased iPhone, macOS apps, web pages, remote EAS previews and replay never sync.
 
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,
@@ -566,7 +588,7 @@ agent actions in the logs, at the selected action or the one on screen. The tool
 the list, and the app remembers it; a sheet too narrow for the list and a
 420-point canvas hides it too. Physical and remote devices have no list.
 
-Escape releases a device that is taken over, and otherwise closes the viewer;
+Escape releases a device you control, and otherwise closes the viewer;
 closing it releases the device too. While the viewer is open, the device's
 tile stops streaming and says "Open in the viewer". The stream on a workspace card of the Active Workspaces wall or the
 Overview is a preview too; clicking it opens its workspace with that device focused. The grid pauses previews after
@@ -656,8 +678,8 @@ section stops the plan, and nothing is checked while a build runs; the row
 shows the running build instead. **Check** runs the plan again, and the row
 shows when it was last checked.
 
-Preview reads require private Desktop authority and `desktop-plan` support. Unavailable,
-adopted, wrong-home or older servers report an error without a CLI fallback. Closing a
+Preview reads require Desktop authority and `desktop-plan` support. Unavailable,
+wrong-home or older servers report an error without a CLI fallback. Closing a
 check waits for its connection-scoped cancellation to drain without blocking other controls.
 A retained cleanup refusal keeps its code, message and remedy in Notifications even when a
 new check replaces the cancelled one or completion races cancellation. Desktop acknowledges
@@ -786,13 +808,22 @@ gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
 - **Projects**: workspaces and linked worktrees that `stim worktree warm` has
   not set up (**Not warmed**), grouped by repository and ranked by total. A
   repository with several worktrees expands into them. Each worktree shows its
-  `node_modules` (sized with `du`), owned devices (from the inventory), and
-  build outputs and logs (from `stim gc --json`). A trash icon marks build
+  `node_modules`, owned devices (from the inventory), and
+  build outputs and logs (from `stim gc --json`). For a linked worktree,
+  `node_modules` is the private size `stim status` reports, what removing it
+  frees, and the part that copy-on-write clones or hard links share with other
+  folders follows it in parentheses, not counted. A primary checkout shows all of
+  its `node_modules`, so those shared bytes are counted once, under the source
+  (when the repository's primary checkout is not listed they are not counted).
+  Without a private size (an older Stim, or a folder
+  status has not measured) it is sized with `du`, which counts clones in full;
+  its tooltip says so. A trash icon marks build
   outputs `stim gc --delete` clears; a lock marks ones it keeps, with the
   reason. Scissors mark logs `stim gc --delete` trims to their newest 8 MiB; a
   lock marks logs over the cap it keeps. The lifecycle reads **Merged into
-  main** from `stim gc --json`, **PR #n open** from `gh pr list` in the
-  repository when the GitHub CLI is signed in, **Stale Nd** after 7 days without
+  main** from `stim gc --json`, **PR #n open** from the pull request
+  state in `stim gc --json`, which Stim reads through its shared pull request
+  cache, **Stale Nd** after 7 days without
   recorded use, **Active**, **Checkout** for a source checkout, or **Folder
   gone**. A row's menu reveals the worktree in Finder or runs `stim worktree
 remove` in it, with what that frees: its `node_modules`, build outputs and
@@ -995,13 +1026,17 @@ While controlling a local iPhone simulator, drag up from the bottom edge and
 release to go Home, or pause before releasing to open the app switcher. iOS
 handles the gesture timing, including when the simulator is rotated.
 
-While controlling a local iOS simulator or Android emulator, hold **Option** and
+While controlling an iOS simulator or Android emulator, or an iOS or Android device that Desktop reaches
+through stim-server (hosted, paired or a leased Android phone), hold **Option** and
 drag to pinch or rotate two fingers around their center. Hold **Option-Shift**
 to move both fingers together. Trackpad pinch also sends a two-finger pinch.
 Two markers show the contact positions, including on a framed or folded screen.
 Releasing Option, ending the gesture, changing orientation or releasing Control
 lifts both contacts. Option and the gesture's Shift modifier stay on the Mac.
-These gestures are not available for physical devices, remote previews or web pages.
+A device reached through stim-server takes them as `input.touch` with a second finger, so the server must be a
+version that accepts it: an older paired server turns a pinch into a one-finger touch, and an older hosted worker
+refuses it. The gestures are not available for a physical iPhone, an iPhone Duo, macOS apps, remote previews or web
+pages.
 
 While **Control** is on, groups below the screen of a running simulator or emulator have its
 hardware buttons and rotation: **Home** and **Lock** on a simulator, sent
@@ -1012,6 +1047,13 @@ left** and **Rotate right**. An iPhone Duo rotates through its Virtualization
 provider in each posture. Apps keep their supported orientations, and its home
 screen stays portrait. Hardware buttons, rotation and posture controls are
 available only while **Control** is on.
+
+Keys follow the Mac keyboard while **Control** is on. A local simulator gets every key as a HID event. A device reached
+through stim-server (hosted, paired or a leased phone) gets printable ASCII, Return, Tab and Delete as `input.text`,
+and the arrows and Escape as `input.key`. When the server advertises `device-keyboard`, an iOS simulator or an Android
+emulator also takes Shift with the arrows and Escape, and Command, Control and Option chords with Tab, Return, Delete,
+the arrows, letters and digits as `input.key` with the modifiers (Command acts as Control on Android). A local emulator
+sends those chords with `adb shell input keycombination`. A phone and a server without `device-keyboard` take no chords.
 
 **Simulator Options** below the screen reads the selected iOS simulator's
 appearance, text size and accessibility settings from Xcode. Change light/dark,
@@ -1086,7 +1128,7 @@ so the viewer takes that display's shape and touches address its pixels.
 Android input goes through the emulator's gRPC `sendMouse` and `sendKey` calls.
 Printable ASCII is sent as text; other keys, such as Delete, Return, Tab and the
 arrows, are sent as key presses. Control shortcuts are not sent, and an
-emulator without a gRPC endpoint cannot be taken over.
+emulator without a gRPC endpoint cannot be controlled.
 
 ## Web
 
@@ -1120,16 +1162,13 @@ Copy button (**Control password** and **View password** when there are two). The
 one, and the sheet's state is dropped when it closes. Physical devices, hosted
 devices and macOS apps have no Share item.
 
-**Stim > Settings > Web Shares** lists the server's live shares, read with
-`share.list` every 5 seconds: one section per workspace, one row per share with
-its platform, **View only**, **View and control** or **View and control, view password**,
+**Stim > Settings > Connections > Using this machine > Share links** lists the server's live shares, read with
+`share.list` every 5 seconds: one row per share with its workspace, its platform, **Share link**, **View only**, **View and control** or **View and control, view password**,
 **No password** when it has none,
 viewers and time left. Each row has **Stop**, which sends `share.stop` with the
-workspace and the share's `id`; a workspace with several shares also has **Stop All**
-in its header, which sends the workspace alone. When the local server's hello lacks
+workspace and the share's `id`. When the local server's hello lacks
 the `share-stop-id` feature, it would ignore `id` and end every share of the workspace,
-so Desktop sends no `id`, shows no row **Stop** and the header's **Stop** (**Stop All** when there are
-several) says it ends them all. An older server that does not answer `share.*` shows a
+so Desktop sends no `id` and each row's **Stop All** says it ends them all. An older server that does not answer `share.*` shows a
 message instead. The methods work only on
 the local Unix socket and need no Desktop authority.
 
@@ -1227,7 +1266,7 @@ Instead of a screen, the tile says:
   unreachable.
 - **The stim-server on this port is older than Stim Desktop** when the server's
   hello lacks `physical-ios` or `physical-android` for the device: Desktop adopted
-  a server it did not start. Updating or stopping that server lets Desktop start its own.
+  a server it did not start. Update that server, or stop it and reopen Stim Desktop so Desktop starts its own.
 - **Disconnected** when `stim status` reads the device as disconnected.
 - **The workspace's lease on this device ended**, with the `--device` command
   that leases it again, once the lease's end time passes, before `stim status`
@@ -1260,13 +1299,20 @@ if it has not exited after 3 seconds. A
 killed server leaves its `stim status --watch` child running until that child's
 next write fails. A stim-server older than the `--loopback-only` flag exits at once,
 and the sidebar footer shows a warning icon that says to update it. A failure of any
-other kind, such as a port held by another program or a server for another Stim home,
-shows the same icon with the reason in its tooltip; click it to retry now. Desktop also retries a failed start every 30 seconds or more, except for an outdated server. No dialog
+other kind, such as a server for another Stim home, shows the same icon with the reason
+in its tooltip; click it to retry now. A port that something holds without answering
+`/health`, such as a stim-server too busy to reply, is neither adopted nor replaced:
+Desktop starts no second server onto it and shows it as degraded until it answers or the
+port is free. The icon also shows while the server runs but refuses Desktop's connection,
+such as when another stim-server for the same Stim home owns its local socket; the reason
+is the server's refusal, repeated under the server's version in **Settings > Advanced** and
+on the Phones page, and the click connects again. The warning stays until the connection
+is open again. Desktop also retries a failed start every 30 seconds or more, except for an outdated server. No dialog
 interrupts. `--loopback-only` removes the server's own Tailscale listeners and makes it refuse any
 request that a `tailscale serve --https` route forwards to the port, so paired phones and other
-Macs cannot reach it; Desktop never removes or edits the route. Turning the Phone app flag off, or **Serve to phones** off, restarts the
-server Desktop started in loopback-only mode, which disconnects paired phones until
-they are served again. The bundled server runs unless you choose another `stim-server` in
+Macs cannot reach it; Desktop never removes or edits the route. Turning **Allow connections** off restarts the
+server Desktop started in loopback-only mode, which disconnects paired phones and machines until
+connections are allowed again. The bundled server runs unless you choose another `stim-server` in
 **Settings > Advanced**, such as a checkout's build; a build without the bundle, such as a
 `stim macos` copy or `swift run`, finds `stim-server` on the login shell's `PATH`. When
 no server answers, Desktop starts the bundled server at once with the launch environment,
@@ -1277,36 +1323,50 @@ scripts in `~/Library/Caches/<bundle id>/node-compile-cache`; it removes
 `NODE_COMPILE_CACHE` from its environment before it starts anything, so commands it
 runs, such as Metro or Gradle, never write there. A test copy can move the port from 7787 with
 `defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
-the Mac's own server. While a server runs, the Paired Devices tab re-checks it every 5
+the Mac's own server. While a server runs, **Settings > Connections > Using this machine** re-checks it every 5
 seconds and the app every 10 seconds while it is active, otherwise every 60
-seconds. When a server the app did not start misses two checks in a row, the app starts its
-own. With the Phone app on and **Serve to phones** on, Desktop starts its server without
+seconds. When a server the app adopted misses two checks in a row, the app shows it as
+degraded and keeps checking: it never starts its own server onto that port while the adopted
+server is gone, so a `stim-server service` LaunchAgent that restarts, updates or crashes keeps
+its port. The message names the `dev.stim.server` LaunchAgent when its plist is installed for this
+user. The app starts its own server only when it adopted none, no server answers on the port and nothing holds it:
+at launch, or later once a port a program that is not a stim-server held at launch is free. To use Desktop's own server instead, stop the adopted one and reopen Stim
+Desktop. With **Allow connections** on, whatever the Phone app flag says, Desktop starts its server without
 `--loopback-only`, so it also listens on this Mac's Tailscale addresses, and restarts the
-server it started when the setting or the flag changes. The pairing and device commands use the
+server it started when the setting changes. The pairing and device commands use the
 `STIM_HOME` its health reports, so they act on that server's pairing state. When that `STIM_HOME` is
-not `~/.stim`, the tab names it and warns that phones paired now are stored
+not `~/.stim`, the Connections tab names it and warns that phones paired now are stored
 there. This warning appears when Desktop uses the default home and
 has adopted a server started with another home. Those phones stop working once Stim Desktop
 serves `~/.stim` again.
 
 A stim-server that already answers on the port with a matching Stim home, such as
 the LaunchAgent that `stim-server setup` or `stim-server service install` creates, is
-adopted as not started by the app, whatever **Serve to phones** says, so build and
+adopted as not started by the app, whatever **Allow connections** says, so build and
 device-host requests from other Macs reach the Allow / Deny dialog. If Desktop's own
 server fails and a LaunchAgent server comes up, the next retry (every 30 seconds or
-more) adopts it. A server with another Stim home is not adopted: the sidebar footer
+more) adopts it. Desktop's own actions, such as cleanup, settings changes and app runs,
+work on an adopted server too, with no approval step. Desktop reaches it through the Stim
+home's local socket (`server/local.sock`, mode 0600 in a directory only this user can enter), and a
+stim-server without a private key grants that socket's clients the same actions; a server reached only
+over TCP gets none (a network connection never receives them). Only the bundled server Desktop started demands its private key on that socket. A
+server older than Desktop, or one another Stim Desktop started, offers no actions: each of them
+refuses with that reason. Approving another machine's build or device-host request in Desktop still
+needs the bundled server's private key, so against an adopted server that sheet refuses and
+points to `stim-server setup` in Terminal. A server with another Stim
+home is not adopted: the sidebar footer
 shows the mismatch and Desktop keeps retrying. Before its environment is ready, Desktop
 adopts a ready server provisionally when the Stim home it runs with would adopt it, so the
 sidebar shows its status feed right away. A provisional adoption only reads: Desktop
 connects with a stored token, and does not pair, grant, save or delete a token, run
 `stim-server` commands or send control requests. Once the environment is ready, Desktop
 checks the server again and keeps it only when it still serves the same home and version;
-otherwise it drops the server and looks for one again. Turning **Serve to phones** off restarts a
+otherwise it drops the server and looks for one again. Turning **Allow connections** off restarts a
 server the app started in loopback-only mode and never touches one it did not start;
 turning it on after a failed start tries again.
 
 A server answering health with HTTP 503 appears as **Starting** or
-**Degraded** with its reason in the Paired Devices page (or **Settings > Advanced** with the Phone app off); the footer icon shows only Degraded. Desktop keeps
+**Degraded** with its reason in **Settings > Connections** and **Settings > Advanced**. Desktop keeps
 checking it without starting another server or terminating one it launched.
 For a server it launches, Desktop checks every 250 milliseconds until it is
 ready or the 15-second startup deadline passes, then uses its regular poller.
@@ -1323,11 +1383,11 @@ it can also read changed and untracked text files in registered workspaces,
 including non-ignored `.env` files. A phone allowed to control
 can also drive simulators and emulators and run reload and stop.
 An iPhone that turns on notifications gets push notifications from the server
-while **Serve to phones** is on, even when the app on the phone is closed; see
+while **Allow connections** is on, even when the app on the phone is closed; see
 [Push notifications](../../packages/server/README.md#push-notifications).
 
-**Pair a Phone...** opens a five-step wizard: get the apps, connect Tailscale,
-turn on serving, scan a code, and see the paired phone. It is also available
+**Add... > Pair a Phone...** in **Settings > Connections > Using this machine** opens a five-step wizard: get the apps, connect Tailscale,
+allow connections, scan a code, and see the paired phone. It is also available
 from the first-run guide's **Pair Your Phone** step. The wizard turns on serving
 and sets up a tailnet-only route through the authenticated loopback `route.setup`
 request; it never enables Funnel. Tailscale and server checks update automatically.
@@ -1345,26 +1405,13 @@ stays valid until it expires. **Can't Scan? Enter the Endpoint and Token** shows
 copyable **Endpoint** and **Token** fields, with the token hidden until revealed. The wizard
 waits for the phone and shows its name and access on the success screen.
 
-The Paired Devices tab lists paired phones from `stim-server devices --json`: each
-phone's name, when it was last seen and a **View Only** or **Can control**
-badge. Its menu has **Allow Control** or **View Only**, which runs
-`stim-server devices grant <id> --control` or `--read`, and **Revoke...**,
-which runs `stim-server devices revoke <id>` after a confirmation. With no
-phone paired, the tab shows an empty state with **Pair a Phone...**. A
-problem that stops phones from connecting shows as one line above the list:
-serving off (**Turn On**), or Tailscale off, a missing route or a Funneled
-route (**Fix...**, which opens the wizard at its Tailscale step). Below the
-list, the **Server** section holds **Serve to phones** and the server's version
-and port. With the Phone app flag off there is no Paired Devices tab. **Settings >
-Advanced** holds **Record device screens for replay** and a **stim-server**
+Paired phones are listed in **Settings > Connections**, described in
+[Connections](#connections). **Settings > Advanced** holds **Record device screens for replay** and a **stim-server**
 section with the server's status, **Try Again** after a failure and the
 executable override.
 
-Macs that build or host devices here are listed on the Remote Machines tab, see
-[Macs using this Mac](#macs-using-this-mac).
-
-When Tailscale runs, the wizard's **Turn On Serving** step (or **Set up
-connection**) configures and verifies a dedicated
+When Tailscale runs, the wizard's **Allow Connections** step (or **Set Up** next to a
+missing route in Settings > Connections) configures and verifies a dedicated
 tailnet-only HTTPS proxy to the server's loopback port. It uses port 7443 or the
 next free port, keeps an existing route unchanged and never enables Funnel. This
 action uses Desktop's authenticated local control connection; a phone or
@@ -1374,9 +1421,63 @@ unreadable or timed-out route probe changes nothing. A route exposing this serve
 through Funnel refuses setup and pairing. The wizard verifies the connection
 before showing its QR code.
 
+## Connections
+
+**Settings > Connections** replaces the Paired Devices, Paired Machines, Remote Machines and Web Shares tabs. Its
+segmented control switches between **Using this machine** and **This machine uses**, each with an **Add...** menu in its
+list header. A request to open one of the old tabs (`settingsTab` set to `phones`, `web-shares`, `build-machines` or
+`paired-machines`) opens Connections on the matching segment.
+
+**Using this machine** starts with **Allow connections**, the `servesPhones` preference that decides whether Desktop's
+server listens on the tailnet, with a one-line warning when Tailscale is off, the route is Funneled or missing, or
+connections are off while records exist. **Fix...** opens the phone wizard at its Tailscale step when the Phone app flag
+is on; without it, a missing route offers **Set Up**, which sends `route.setup`. **Keep this machine awake** shows only
+when `stim settings` lists `server.keepAwake`, and writes it at machine scope. `Connections.incoming` (StimKit) groups
+the records of `stim-server devices --json` by `keyFingerprint`, so a machine approved for builds and hosting is one row
+with **Build** and **Run devices**. A row shows the name, **Device** for a `stim-server pair` pairing (a phone or another
+machine's Desktop; until servers report `kind: desktop` the two cannot be told apart) or **Machine**, last connected,
+the access pills and **Revoke Access...**, which revokes every record of the key. Its menu holds **Change Access**
+(**View** or **Control**, through `stim-server devices grant`, for the pairing record only), **Rename...**
+(`stim-server devices rename <id> <name>` for every record of the row) and each record id. Every record that can
+connect is listed whatever the Phone app flag says; the flag hides only **Add... > Pair a Phone...** and the phone
+wizard. **Revoke Access...** revokes the records one after another and keeps the first failure shown. **Share links**
+and **Running here** follow.
+
+**Add... > Machine to Build or Run Simulators Here...** opens the approval sheet (`ApproveMachineSheet`). It shows
+`stim remote add <this machine>` for the other machine and a field for the `stim-server setup` command that machine
+prints. `SetupRequest.parse` (StimKit) reads the ticket, `--expires`, `--build` and `--device-host` and refuses any other
+option, which still needs a terminal. **Continue** sends `desktop.setup.subscribe` on the proved bundled-server
+connection, and the server runs the same setup in process. Each grant shows **Allow** and **Don't Allow**, answered
+with `desktop.setup.answer` naming that capability; a missing macOS permission shows **Skip**, naming that permission. When Desktop uses a server it did not start, or a `stim-server service` is installed, the request is refused with a pointer to Terminal, since this path never installs or changes a service. The sheet then waits for the requesting machine
+to connect; closing it withdraws the request. It ends on the confirmation screen. **Add... > Share Link...** still
+explains where shares start, because a share needs a running device.
+
+Every Add path ends on `ConnectionConfirmationView`: the name, the direction (**Using this machine** or **This machine
+uses**), the access pills and where to revoke it, with the `stim-server devices revoke` commands. Outgoing paths say that
+removing the connection here forgets it here only. The phone wizard, **Pair with a Machine**, the remote machine
+wizard's Done step and the approval sheet use it.
+
+`servesPhones` used to open the tailnet listener only together with the Phone app flag. On the first launch with
+Connections, `FeatureFlags.resetServingWithoutPhoneApp` runs once after `FeatureFlags.seed` and turns `servesPhones`
+off where the flag is off, so no server that was loopback-only starts listening on the tailnet by itself.
+
+**This machine uses** lists `Connections.outgoing`: the `remote.machines` entries in placement order, each joined with
+the Keychain pairing whose id equals the entry's `serverKeyFingerprint` from the server's `remote` desktop report
+(`stim remote list --json`, read once doctor's check has finished, since both take the device-host inspection claim),
+then the pairings no entry shares, including unreadable ones. Without that report, from
+an older server, entries and pairings stay separate rows. Doctor's states win over the report's. Access pills come from
+the pairing's capabilities and the approved build and device-host states. **Remove...** opens one sheet that removes
+the entry from `remote.machines`, forgets the pairing, and lists the `stim-server devices revoke <id>` commands to run
+on that machine: the report's `revoke`, the doctor `deviceId`s and the pairing's device id.
+
+`BuildMachineStatus.State` maps every state `stim remote list --json` and `stim doctor --json` emit to a title, tone and
+remedy, including `key-unconfirmed` (**Key not confirmed**), `outdated` (**Server is outdated**) and the device-host
+states `credentials-unavailable` and `busy`. `Tests/StimKitTests/Fixtures/remote-machine-state-vectors.json` holds the
+titles and tones the phone app's `build-machines.test.ts` checks too.
+
 ## Remote Machines
 
-**Add Remote Machine...** in **Settings > Remote Machines** opens the five-step
+**Add... > Build or Run Simulators There...** in **Settings > Connections > This machine uses** opens the five-step
 setup wizard. Each step has an illustration in the first-run guide's style. The
 wizard refreshes in the background and has no Check again button: tailnet peers
 every 5 seconds on step 1, existing approvals every 10 seconds on step 2, the
@@ -1397,11 +1498,11 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
      installs later. With no such peer, the step links to the Tailscale
      downloads for a Mac, for Linux and for Windows.
      A peer already in `remote.machines` (`OffloadMachines.added`) is marked
-     **Added** and shows the pill the Remote Machines list shows for it
+     **Added** and shows the pill the Connections list shows for it
      (`BuildMachineStatus.listStatus`, with the doctor diagnosis text when it is
      not healthy), not Tailscale's `Online` flag, which can read false while the
      machine answers. It is not a setup target: choosing it only says it is
-     already added and offers **Show in Remote Machines**. Next and the
+     already added and offers **Show in Connections**. Next and the
      offline-only hint consider the other peers.
 2. **What it does.** Builds and Hosted simulators checkboxes and the animated
    preview of what setup will do. Both can be off. Then Next is disabled and
@@ -1450,7 +1551,7 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    budget of up to 150 seconds. When Builds is chosen, Android tools are always compared
    and are amber. Next is never disabled by a tool row: approval is finished, a
    failed offload falls back to a local build, and the machine stays added.
-   A machine's page in Settings > Remote Machines shows every problem and note,
+   A machine's page in Settings > Connections shows every problem and note,
    including the Android ones, grouped by platform.
    A problem that stops the chosen capability is red: a Stim build mismatch, no Xcode, a different CPU or an
    unreachable or unapproved Mac for Builds, and no iOS simulator runtime for
@@ -1509,16 +1610,17 @@ forget the pairing. It shows revoke commands for grants created during this run,
 preserving pre-existing approvals. When the pre-state is unknown, only grants
 recorded in the setup journal appear.
 
-**Remove** in Remote Machines takes the Mac out of `remote.machines`. Its sheet
-shows the optional cleanup on that Mac: `stim-server devices revoke <id>` for
-this Mac's build and hosting requests, and `stim-server service uninstall`. It
+**Remove...** in Connections takes the Mac out of `remote.machines` and forgets a
+pairing that shares its server key. Its sheet shows what to run on that machine, since
+removing it here never revokes this machine there: `stim-server devices revoke <id>` for
+this machine's build, hosting and pairing records, and `stim-server service uninstall`. It
 also says that an `ios.remote` or `android.remote` naming the Mac needs
 changing.
 
 Another Mac on the tailnet can build for this one once a person on it approves
 this Mac (see [Build access](../../packages/server/README.md#build-access)).
 
-On the Mac that wants to build elsewhere, **Stim > Settings > Remote Machines**
+On the Mac that wants to build elsewhere, **Stim > Settings > Connections > This machine uses**
 is a list of the entries of the `remote.machines` machine setting, in that order.
 The order is the placement priority for builds, simulators, emulators and macOS apps:
 each goes to the first Mac that has room and a load under its own
@@ -1526,22 +1628,23 @@ each goes to the first Mac that has room and a load under its own
 each row shows its place, and the up and down buttons write the new order to
 `remote.machines` at machine scope. The list's footer says the same. Each row
 shows its place in the list, the Mac's name, one status pill, its MagicDNS name with its cores and
-offloaded builds, a detail line, what it does (**Builds**, plus **Simulators**
-when its device-host access is approved), up and down buttons that move the Mac, **Details** and **Remove...**. The pill
+offloaded builds, a detail line, its access pills (**Build** when its build access is approved, **Run devices** when
+its device-host access is, and **View** or **Control** from a pairing that shares its server key), up and down buttons that move the Mac, **Details** and **Remove...**. The pill
 shows only a state that stops this Mac using the machine; the machine's page holds
 the rest. It reads **Approved**, **Waiting for
 approval** (someone on that machine approves it by running the setup command
 there; the row says when the request lapses, such as "Waiting for approval
 until 21:05", in local time),
 the title of the layer doctor's `diagnosis` names when the machine cannot be used
-(**Tailscale is off**, **Mac is offline**, **No serve route**, **Server not running**,
+(**Tailscale is off**, **Machine is offline**, **No serve route**, **Server not running**,
 **Server not ready** and so on; **Unreachable** when an older `stim` reports none), with its
 message and remedy as the detail line,
 **Needs update** (it runs an incompatible Stim build; **Updating** while an update runs),
 the short title of doctor's first reason the approved machine is not offloadable,
 such as **CocoaPods differs** or **Low on disk** (**Not offloading** for a reason
 this Desktop does not know), or the machine's other readiness or
-pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked or
+pairing state, such as **Busy**, **Not asked**, **Key not confirmed** (run `stim remote list` in a terminal and
+confirm the fingerprint), **Server is outdated**, **Revoked** (revoked or
 denied), **Request lapsed** (nobody on the remote Mac approved it in time;
 **Ask Again** is available), **Different machine** (it answered with another stim-server key than the one
 this Mac pinned at approval, so Stim does not connect to it),
@@ -1693,25 +1796,23 @@ time they saved against this project's last build here (an estimate), and the
 fallbacks. Below are its latest placements. The counts and placements come from
 fresh `stats.get` requests through the matching local server session. An unavailable session shows a read error. The page keeps checking once a
 minute regardless of the selection. Pending, unreachable and failed checks stay
-visible. **Link Machine** opens **Settings > Remote Machines** for pairing and
+visible. **Link Machine** opens **Settings > Connections** for pairing and
 removal; the selector itself changes no settings. Remote selections have no
 local disk cleanup actions.
 
-### Macs using this Mac
+### Using this machine
 
-Below this Mac's own remote Macs, the Remote Machines tab lists the host side of this
-Mac while there is something to show, including while the tab is still loading.
-**Macs Using This Mac** lists other Macs approved to build here or to host
-simulator and emulator sessions here, from `stim-server devices --json`, with
-where they were approved from. Only `stim-server setup` on this Mac approves
-them. Each shows **Can build** or **Approved for devices** and **Revoke**, which
-runs `stim-server devices revoke <id>`. A device-host approval grants no read,
-control or build access, and does not start a device.
-
-**Running Here** lists the simulators, emulators and apps approved Macs run on
+The Remote Machines list is the **This machine uses** segment of
+[Connections](#connections). Machines approved with `stim-server setup` on this machine
+to build here or to host simulator and emulator sessions here are listed with the
+phones under **Using this machine**, one row per client key, with **Build** and
+**Run devices** in the warning color and **Revoke Access...**, which runs
+`stim-server devices revoke <id>` for every record of the key. A device-host
+approval grants no read, control or build access, and does not start a device.
+**Running here** lists the simulators, emulators and apps those machines run on
 this Mac, with the client, device, app, state and session age. **Stop** asks for
 confirmation, then ends that session and deletes or parks its device. Parked
-sessions remain listed without a Stop button. The tab refreshes both lists every
+sessions remain listed without a Stop button. The segment refreshes both lists every
 five seconds; sessions stay hidden when the local server does not support them.
 
 ## Notifications
@@ -1747,7 +1848,7 @@ marks the existing inbox read, once, and later entries are untouched. The first 
 notifying, except for Needs you, which notifies each item it has not notified
 before. Desktop does not look up pull requests, so it never notifies a pull
 request ready for review; a merged branch notifies once git finds it merged. The
-phone's "Someone takes over your device" is a push to a phone and never fires
+phone's "Someone else drives your device" is a push to a phone and never fires
 here. A phone controlling a simulator
 through stim-server counts as an agent driving it, because Desktop cannot read
 stim-server's leases. The phone app and stim-server do read them, and do not count such a phone as an agent.
@@ -1812,9 +1913,9 @@ value there overrides, an environment override when one is set, and a
 **Reset** that unsets the layer. A default `stim` picks per machine, such as
 `stim-desktop` for `iosSimulatorApp` while Stim Desktop is installed, shows the
 reason `stim` reports, for example `default (Stim Desktop installed)`. Edits use
-`desktop.settings.write` on the proved local connection of Desktop's bundled
-server, for the same canonical Stim home, with `desktop-settings-write` support.
-An unavailable, older, external or adopted server reports an error without a CLI
+`desktop.settings.write` on Desktop's authorized local connection,
+for the same canonical Stim home, with `desktop-settings-write` support.
+An unavailable or older server reports an error without a CLI
 fallback. A refusal's message and remedy show
 under the field. `android.keystorePassword` is never shown. Keys Stim does not
 read are listed read-only.
@@ -2073,6 +2174,17 @@ the same rules as a lint, which is what desktop CI runs. CI also builds and
 tests with `-Xswiftc -warnings-as-errors`, so fix a warning instead of
 introducing one.
 
+A pull request and a push to `main` that change Desktop run the token and
+ASCII checks on Linux, and on macOS the formatting lint and the debug build
+(`swift build -Xswiftc -warnings-as-errors`) with the linked SDK check. The
+build takes about 4 minutes and has no cache (see #5108). `swift test`, the Release
+configuration compile, the `stim-frames` helper compile, the hardened-runtime
+server start and an ad-hoc release package run in the `Full suite` workflow:
+nightly at 04:30 UTC, on a pull request labeled `ci-full`, and before a stable
+release. A change that breaks only a test or one of those compiles is found by the
+nightly run, so run `swift test -Xswiftc -warnings-as-errors` yourself, or add `ci-full`.
+Run the full job for a branch with `gh workflow run desktop.yml --ref <branch>`.
+
 `Sources/StimDesktop/Design/Tokens.swift` is generated from the phone app's
 design tokens in `apps/mobile/src/design/tokens.ts`: spacing, radii, opacity,
 the text styles with their macOS sizes from `macosText`, and the light and dark
@@ -2108,11 +2220,12 @@ In a normal debug session, **Window > SwiftUI Playground** opens the same fixtur
 that session's main window keeps its normal live services. The standalone entry is the
 backend-free option. Release builds exclude the playground and its fixture seams, and refuse `--playground`.
 
-Choose live or archived Workspaces, Notifications, Builds, Simulator controls, Settings or Design tokens. Each screen offers
+Choose live or archived Workspaces, the Sidebar (this machine's and a paired machine's projects at three sidebar widths, with the "on mini" and "theirs, on mini-2" placement badges), Machine ownership (the Machines page's chip groups, your work placed on a remote machine and the work other machines run here), Notifications, Builds, Simulator controls, Settings or Design tokens. Each screen offers
 its applicable named scenarios: ready, loading, empty, error, long text and large data.
 Notifications includes 200 entries; Builds includes the retained maximum of 10 runs per platform. Local inboxes and fixed
 simulator forms omit loading/error or large-list scenarios that their production views do not have.
-Settings covers the four configuration scopes, not the App, Paired Devices or Remote Machines tabs.
+Settings covers the four configuration scopes, not the App or Connections tabs; **Connections: using this machine** and
+**Connections: this machine uses** show both segments of Connections with fixed connections.
 
 **Compact** sets the fixture viewport to 380 points; regular is 900 points. Switch light/dark,
 large text and increased contrast without changing system preferences. Reduce Motion follows the Mac's current accessibility setting because SwiftUI does not expose a writable override. Filters,
@@ -2139,7 +2252,7 @@ Sentry DSN or `stim-desktop` URL scheme. It has its own `UserDefaults`, login
 item, notification permission and notification history, and pairs with
 stim-server under its own name (see [Replay](#replay)). Both apps use port
 7787, so the one that starts second uses the other's server instead of starting
-one; when that app quits, the remaining one starts its own within two minutes. Paired phones and the `tailscale serve` route keep working
+one; when that app quits, the remaining one shows the server it adopted as unavailable and waits for it, and reopening it starts its own. Paired phones and the `tailscale serve` route keep working
 because they belong to the Stim home, not to either app. Both apps check disk
 pressure. `stim ios` and `stim android` open device links with `open -a Stim`,
 which reaches the release app, never Stim Dev.
@@ -2174,7 +2287,7 @@ hardened runtime and `Support/Node/node.entitlements`:
 `com.apple.security.cs.disable-library-validation`, because the `stim`
 commands the server runs on this Node can load a project's own native addons,
 signed by another team or not at all. Both are in the set Node.js signs its own
-macOS release with. The Desktop workflow stages the server on every run, signs
+macOS release with. The Desktop workflow's full run stages the server and signs
 it the same way ad hoc and checks that it answers `/health` under an empty
 environment.
 
@@ -2337,11 +2450,11 @@ The fixture test skips without the variable and never starts the CLI or a device
 
 - `Sources/StimKit`: models for Stim JSON, the toolchain environment, the `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the status machine section, the Machine report, free plan and worktree lifecycle, the pressure plan and activity log, and the crash report scrubber. Unit-tested.
 - `Sources/StimStores`: the observable stores whose ordering and staleness rules have tests: the status refresh and watch, the gc report and the action runs. They take the `stim` call, and the clock where they decide staleness, as closures, so `Tests/StimStoresTests` can order results by hand. The DEBUG visual fixture target imports `StimDesktop` to capture its production views.
-- `Sources/SimulatorFrames`: live simulator frames through CoreSimulator, and input through the simulator's CoreDevice HID service (`dtuhidd`) or, when a simulator has none, SimulatorKit's legacy HID client. All of them are private Apple interfaces. Expect Xcode releases to break it.
+- `Sources/SimulatorFrames`: live simulator frames through CoreSimulator, and input through the simulator's CoreDevice HID service (`dtuhidd`) or, when a simulator has none, SimulatorKit's legacy HID client. All of them are private Apple interfaces. Expect Xcode releases to break it. `SimulatorHID` puts a Stim-owned simulator in hardware-keyboard mode (`SimDevice setHardwareKeyboardEnabled:keyboardType:error:`) when it opens and before input that follows two idle seconds, because an XCTest run detaches it; CoreSimulator applies the call only when its arguments change, so `SimulatorHardwareKeyboard` sends two keyboard types.
 - `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo and observe its angle from the phone.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. An emulator without a hardware keyboard (`hw.keyboard=no`) drops key events, so Desktop types on it with `adb shell input`. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/WebFrames`: the Stim-owned Chrome page from `stim web`, over the Chrome DevTools Protocol on the loopback `cdpEndpoint` `stim status` reports. It connects only when `SystemInfo.getProcessInfo` names the Chrome pid status reports, attaches to the page's `targetId`, streams it with `Page.startScreencast` and sends `Input.dispatch*` events. Public protocol only; no WebKit view, which would render a different engine than the one agents test.
-- stim-server's `stim-frames` helper compiles the shared files listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. This includes the SceneKit Duo model used for composed mobile frames. Desktop CI compiles it; keep SwiftUI and StimKit dependencies behind module availability checks. Desktop and the helper both send simulator keys through `SimulatorHID.hardwareKey`, and page input through `WebPage`.
+- stim-server's `stim-frames` helper compiles the shared files listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. This includes the SceneKit Duo model used for composed mobile frames. The nightly Desktop workflow compiles it; keep SwiftUI and StimKit dependencies behind module availability checks. Desktop and the helper both send simulator keys through `SimulatorHID.hardwareKey`, and page input through `WebPage`.
 - `Sources/StimDesktop`: the SwiftUI app. `Design/` holds the generated tokens, the theme layer over them (`.textStyle(_:)`, `Font.stim(_:)` and the dynamic colors), and the component kit that mirrors the phone's: `.buttonStyle(.stim(_:_:))`, `IconButton`, `Pill`, `Banner`, `ListSection`/`ListRow`, `Card`, `HoverRowStyle`, `StatusDot`, `StimProgressBar`, `InlineEmpty` and the `IconSize` scale. A debug build has **Window > SwiftUI Playground** for production screen fixtures and design tokens.
 
 ### Native visual fixture exports

@@ -10,7 +10,7 @@ import { isAbsentPath, isOnMountedVolume, listMountedVolumes } from './fs-util.t
 import { basename, dirname, join } from 'path';
 import { admissionLimits, getPlatformDeviceLimits, loadConfig } from './workspace/config.ts';
 import { buildSlotUsage } from './engine/build-slots.ts';
-import { deviceSlotUsages } from './engine/device-capacity.ts';
+import { deviceSlotUsages, readFreshDeviceListing } from './engine/device-capacity.ts';
 import type { ProjectRecord, SupervisorRecord } from './workspace/config.ts';
 import { getExecutor } from './exec.ts';
 import { isMetroRunning } from './ports.ts';
@@ -47,10 +47,10 @@ import {
   linkedWorktreesOnDisk,
   nativeCanonicalPath,
   repoRoot,
-  repoRootAsync,
 } from './workspace/worktree.ts';
 import { inPrivacyProtectedFolder, readWorktreeGit } from './workspace/git-summary.ts';
 import { readWorkspaceState, type WorkspaceState } from './workspace/workspace-state.ts';
+import { verifiedCheckoutRoots } from './checkout-roots.ts';
 import { readStats, statsProjectKey, type RunHistory } from './engine/stats.ts';
 import {
   ACTIVE_BUILD_KEY,
@@ -84,6 +84,7 @@ import {
   readDormantStage,
   readIdleStage,
   readIdleStop,
+  reversePorts,
   readBuildHistory,
   readLastBuilds,
   readDevicePlacement,
@@ -110,6 +111,8 @@ import { createAppProcessReader } from './devices/app-process.ts';
 import { hasMetroReverse } from './engine/app-install.ts';
 import {
   addReverseMissingIssue,
+  addReversePortMissingIssue,
+  reversePortTargets,
   applyMachineMemory,
   deviceLeaseStates,
   environmentState,
@@ -208,6 +211,8 @@ export interface StatusSnapshot {
 export interface StatusProbes {
   /** Rejects when simctl cannot be read. */
   simulators(): Promise<IosSimRecord[]>;
+  /** The emulator listing that came with the simulators when they were answered from the shared device listing. */
+  listedAdb?(): AdbDevices | null;
   metro(
     projects: [string, ProjectRecord][],
   ): Promise<{ metro: MetroResolution | null; supervisor: SupervisorFacts | null }[]>;
@@ -228,21 +233,32 @@ export interface StatusProbes {
 
 /**
  * Probes that read everything when asked. `simctlListing`, when given, answers `simulators` without running simctl,
- * `gitMaxAgeMs` reuses git summaries read that recently, and `archives` answers `archives` without reading them.
+ * `sharedListing` answers it from the shared device listing when that is fresh, `gitMaxAgeMs` reuses git summaries
+ * read that recently, and `archives` answers `archives` without reading them.
  */
 export function liveProbes({
   simctlListing = null,
+  sharedListing = false,
   gitMaxAgeMs = 0,
   archives,
-}: { simctlListing?: string | null; gitMaxAgeMs?: number; archives?: ArchivedWorkspace[] } = {}): StatusProbes {
+}: {
+  simctlListing?: string | null;
+  sharedListing?: boolean;
+  gitMaxAgeMs?: number;
+  archives?: ArchivedWorkspace[];
+} = {}): StatusProbes {
   const androidRuntimeOf = androidRuntimeReader();
+  let listedAdb: AdbDevices | null = null;
   return {
-    simulators: () =>
-      process.platform !== 'darwin'
-        ? Promise.resolve([])
-        : simctlListing === null
-          ? listAllIosSimsAsync()
-          : Promise.resolve().then(() => parseSimctlList(simctlListing)),
+    simulators: () => {
+      if (process.platform !== 'darwin') return Promise.resolve([]);
+      if (simctlListing !== null) return Promise.resolve().then(() => parseSimctlList(simctlListing));
+      const shared = sharedListing ? readFreshDeviceListing(loadConfig()) : null;
+      if (!shared) return listAllIosSimsAsync();
+      listedAdb = shared.adb;
+      return Promise.resolve(shared.sims);
+    },
+    listedAdb: () => listedAdb,
     metro: readMetroFacts,
     hostedIos: readHostedIosStatus,
     hostedAndroid: readHostedAndroidStatus,
@@ -300,12 +316,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   const macosReads = projects.map(([path]) => probes.hostedMacos(readMacosRecord(path)));
   const cwdRoot = findServerWorkspace(cwd)?.root ?? null;
   const { worktrees, commonDirs, checkouts } = linkedWorktrees([cwd, ...projects.map(([path]) => path)]);
-  const checkoutRead = Promise.all(
-    [...new Set(checkouts.values())].map(async (path) => {
-      const root = await repoRootAsync(path);
-      return root && nativeCanonicalPath(root) === path ? path : null;
-    }),
-  );
+  const checkoutRead = verifiedCheckoutRoots([...new Set(checkouts.values())]);
   checkoutRead.catch(() => {});
   const orphanWorktrees = unprovisionedWorktrees(
     worktrees,
@@ -364,7 +375,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   }));
   await gitRead;
 
-  const verifiedCheckouts = new Set(await checkoutRead);
+  const verifiedCheckouts = await checkoutRead;
   const history = readStats().record?.history;
   const states: EnvironmentState[] = [];
   let mountedVolumes: string[] | undefined;
@@ -538,7 +549,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
                 : () => {
                     throw simctlFailure;
                   },
-          adb: () => listAdbDevicesAsync({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS }),
+          adb: () => probes.listedAdb?.() ?? listAdbDevicesAsync({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS }),
         })
       : {}),
   };
@@ -751,9 +762,18 @@ function readMetroReverses(
   probes: StatusProbes,
 ): void {
   for (const [i, state] of states.entries()) {
-    for (const target of metroReverseTargets(state, launchesByState[i]!)) {
+    const launches = launchesByState[i] ?? {};
+    for (const target of metroReverseTargets(state, launches)) {
       const listing = probes.metroReverses(target.serial);
       if (listing !== null && !hasMetroReverse(listing, target.metroPort)) addReverseMissingIssue(state, target);
+    }
+    const ports = reversePorts(readWorkspaceState(state.path));
+    if (ports.length === 0) continue;
+    for (const target of reversePortTargets(state, launches)) {
+      const listing = probes.metroReverses(target.serial);
+      if (listing === null) continue;
+      for (const port of ports)
+        if (!hasMetroReverse(listing, port)) addReversePortMissingIssue(state, { ...target, port });
     }
   }
 }

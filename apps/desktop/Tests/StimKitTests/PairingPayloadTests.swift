@@ -35,23 +35,27 @@ import Testing
     }
   }
 
-  @Test func onlyTailnetEndpointsAreAccepted() {
-    let accepted = [
-      "wss://floco.tail1234.ts.net:7443", "wss://Floco.Tail1234.TS.net/", "ws://100.64.0.1:7787",
-      "ws://100.127.255.254:7787", "ws://[fd7a:115c:a1e0::1]:7787",
-    ]
-    let refused = [
-      "ws://floco.tail1234.ts.net:7443", "wss://ts.net", "wss://example.com", "ws://100.63.255.255:7787",
-      "ws://100.128.0.1:7787", "ws://203.0.113.5:7787", "ws://127.0.0.1:7787", "ws://192.168.1.2:7787",
-      "ws://[fd7a:115c:a1e1::1]:7787", "wss://user:pass@floco.tail1234.ts.net", "wss://floco.tail1234.ts.net/?x=1",
-      "http://100.64.0.1:7787", "wss://100.64.0.1:7443",
-    ]
-    for endpoint in accepted {
-      #expect((try? PairingPayload.parse(Self.payload(endpoint: endpoint))) != nil, "\(endpoint)")
-    }
-    for endpoint in refused {
-      #expect(throws: PairingPayload.Problem.notTailnet, "\(endpoint)") {
-        try PairingPayload.parse(Self.payload(endpoint: endpoint))
+  struct EndpointVector: Decodable {
+    var endpoint: String
+    var kind: String
+    var desktop: Bool
+  }
+
+  @Test func endpointsFollowTheRuleSharedWithThePhoneApp() throws {
+    let url = Bundle.module.url(
+      forResource: "pairing-endpoint-vectors", withExtension: "json", subdirectory: "Fixtures")!
+    struct File: Decodable { var endpoints: [EndpointVector] }
+    let vectors = try JSONDecoder().decode(File.self, from: Data(contentsOf: url)).endpoints
+    #expect(vectors.contains { $0.kind == "localNetwork" })
+    for vector in vectors {
+      let payload = try? PairingPayload.parse(Self.payload(endpoint: vector.endpoint))
+      #expect((payload != nil) == vector.desktop, "\(vector.endpoint)")
+      if let payload {
+        #expect(payload.network == (vector.kind == "tailnet" ? .tailnet : .localNetwork), "\(vector.endpoint)")
+      } else {
+        #expect(throws: PairingPayload.Problem.unsupportedEndpoint, "\(vector.endpoint)") {
+          try PairingPayload.parse(Self.payload(endpoint: vector.endpoint))
+        }
       }
     }
   }

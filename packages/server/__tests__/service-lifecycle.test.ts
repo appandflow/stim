@@ -32,6 +32,9 @@ const launchd = vi.hoisted(() => ({
   failRestore: false,
   failBootout: false,
   busyWork: false,
+  hostedSessions: 0,
+  hostedWork: 0,
+  resumes: false,
   bootstraps: [] as { plist: string; portBusy: boolean }[],
 }));
 
@@ -171,6 +174,9 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
       failRestore: false,
       failBootout: false,
       busyWork: false,
+      hostedSessions: 0,
+      hostedWork: 0,
+      resumes: false,
       bootstraps: [],
     });
     launchd.original = renderPlist({
@@ -203,7 +209,8 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
             version: '1.0.0',
             busy: {
               builds: launchd.job === 'old' && launchd.busyWork ? 1 : 0,
-              hostedSessions: launchd.job === 'old' && launchd.busyWork ? 1 : 0,
+              hostedSessions: launchd.job === 'old' ? (launchd.busyWork ? 1 : launchd.hostedSessions) : 0,
+              ...(launchd.resumes ? { hostedWork: launchd.hostedWork, resumes: true } : {}),
             },
             startup: { state: launchd.startup, reason: 'Stim home unavailable' },
           }),
@@ -430,6 +437,51 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
       expect(parseInstalledPlist(updated)?.previousScript).toBe(join(home, 'old-server.mjs'));
     },
   );
+
+  it.each([
+    [
+      'a server that resumes its sessions does not wait for them',
+      { resumes: true, hostedSessions: 2, hostedWork: 0 },
+      false,
+    ],
+    [
+      'a server that resumes still waits for a native step in flight',
+      { resumes: true, hostedSessions: 2, hostedWork: 1 },
+      true,
+    ],
+    [
+      'an older server that stops its sessions at shutdown is waited for',
+      { resumes: false, hostedSessions: 2, hostedWork: 0 },
+      true,
+    ],
+  ])('%s', async (_name, state, waits) => {
+    Object.assign(launchd, state);
+    const lines: string[] = [];
+    const updating = updateService(label, { release: '1.0.0' }, (line) => lines.push(line));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(launchd.job).toBe(waits ? 'old' : 'new');
+    expect(lines.some((line) => line.startsWith('Waiting for'))).toBe(waits);
+    Object.assign(launchd, { hostedSessions: 0, hostedWork: 0 });
+    await finish(updating);
+    expect(launchd.job).toBe('new');
+  });
+
+  it('a rollback still waits for hosted sessions a resuming server would leave running', async () => {
+    const target = join(home, 'previous', 'dist', 'stim-server.mjs');
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, '');
+    writeFileSync(join(dirname(target), '..', 'package.json'), JSON.stringify({ version: '1.0.0' }));
+    execFileSync('plutil', ['-replace', 'StimService.PreviousScript', '-string', target, plist]);
+    Object.assign(launchd, { resumes: true, hostedSessions: 1, hostedWork: 0 });
+    const lines: string[] = [];
+    const rolling = rollbackService(label, (line) => lines.push(line));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(launchd.job).toBe('old');
+    expect(lines.some((line) => line.startsWith('Waiting for'))).toBe(true);
+    Object.assign(launchd, { hostedSessions: 0 });
+    await finish(rolling);
+    expect(launchd.job).toBe('new');
+  });
 
   it('restores the current service when the rollback job exits despite matching stale health', async () => {
     const target = join(home, 'previous', 'dist', 'stim-server.mjs');

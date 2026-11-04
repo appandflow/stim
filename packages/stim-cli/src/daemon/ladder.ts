@@ -9,7 +9,7 @@ import {
   type MaintenanceAction,
   type PressureLevel,
 } from '@stim-cli/core/state';
-import { pruneCache, type CacheDescriptor } from '../cache/caches.ts';
+import { discoverCachesAsync, pruneCache, type CacheDescriptor } from '../cache/caches.ts';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
@@ -20,12 +20,13 @@ import { readParked } from '../devices/sim-pool.ts';
 import { restoreProblem } from '../workspace/lightened.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { executeAction, type ActContext } from '../maintenance/act.ts';
-import { artifactWorktrees } from '../maintenance/artifacts.ts';
+import { artifactWorktreesFor } from '../maintenance/artifacts.ts';
 import { cacheBlocked } from '../maintenance/measure.ts';
-import { cacheEntryProtection } from '../maintenance/protect.ts';
+import { cacheEntryProtectionFor } from '../maintenance/protect.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../maintenance/settings.ts';
 import { planRung6 } from '../maintenance/sweep.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
+import { runBootedParkedPass } from './booted-parked.ts';
 import { clearDependency, rankDependencies, selectDependencies } from './dependencies.ts';
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
@@ -181,7 +182,7 @@ async function run(
   }
   let outcome;
   try {
-    outcome = await executeAction(plan, actContext(context.settings));
+    outcome = await executeAction(plan, { ...actContext(context.settings), operation: context.operation });
   } catch (error) {
     outcome = { status: 'failed' as const, bytes: 0, detail: error instanceof Error ? error.message : String(error) };
   }
@@ -205,12 +206,26 @@ function wouldDetail(context: Pick<RungContext, 'force'>): string {
   return context.force ? 'stim gc --delete would do this' : 'daemon.mode report acts on nothing';
 }
 
+/** Rung 0, before the idle stage: the parked simulators kept booted for a later adoption, which hold memory for nothing in use. */
+async function bootedParkedRung(context: RungContext): Promise<void> {
+  context.actions.push(
+    ...(await runBootedParkedPass({
+      sims: context.sims ?? null,
+      memory: context.level === 'critical' ? 'critical' : 'warning',
+      act: context.act,
+      log: context.log,
+      operation: context.operation,
+      all: true,
+    })),
+  );
+}
+
 /** Rung 1's disk half: the regenerable outputs of workspaces with nothing running, idle 2 minutes or more. */
 async function idleOutputsRung(context: RungContext): Promise<void> {
   for (const candidate of await stoppedOutputCandidates(context.config, context, PRESSURE_IDLE_MS)) {
     if (!(await context.stillShort())) return;
     const result = context.act
-      ? await clearStoppedOutputs(candidate, context.config, PRESSURE_IDLE_MS)
+      ? await clearStoppedOutputs(candidate, context.config, PRESSURE_IDLE_MS, context.operation)
       : {
           outcome: 'would' as const,
           bytes: context.measure ? await idleOutputBytes(candidate.path, context.config) : 0,
@@ -292,7 +307,7 @@ async function trim(
   const result = pruneCache(cache, {
     olderThanDays: recentDays,
     byMtime: true,
-    protect: cacheEntryProtection(context.config),
+    protect: await cacheEntryProtectionFor(context.config, context.operation),
     evictBytes,
   });
   if (result.skipped) return { outcome: 'kept', bytes: 0, detail: result.skipped };
@@ -339,11 +354,10 @@ async function cachesRung(context: RungContext): Promise<void> {
     const bytes = await measuredDirectorySizeAsync(compilation, { timeoutMs: SIZE_TIMEOUT_MS });
     const capGb = context.settings.swiftCompilationCacheMaxGb;
     if (bytes !== null && (critical || (capGb > 0 && bytes > (capGb * GIB) / 2))) {
-      const blocked = cacheBlocked({
-        name: 'Swift compilation cache',
-        dir: compilation,
-        category: 'compilation-cache',
-      });
+      const blocked = cacheBlocked(
+        { name: 'Swift compilation cache', dir: compilation, category: 'compilation-cache' },
+        await discoverCachesAsync(),
+      );
       if (blocked)
         recordAction(
           context,
@@ -386,7 +400,7 @@ async function dormantRung(context: RungContext): Promise<void> {
   for (const candidate of await dormantCandidates(context.config, context, idleMs)) {
     if (!(await context.stillShort())) return;
     const result = context.act
-      ? await enterDormantStage(candidate, context.config, idleMs, context.why)
+      ? await enterDormantStage(candidate, context.config, idleMs, context.why, context.operation)
       : {
           outcome: 'would' as const,
           bytes: context.measure ? await workspaceDeviceBytes(context, candidate.project) : 0,
@@ -444,7 +458,7 @@ async function dependenciesRung(context: RungContext): Promise<void> {
       },
       context.why,
     );
-  const worktrees = take.length ? artifactWorktrees() : [];
+  const worktrees = take.length ? await artifactWorktreesFor(context.operation) : [];
   const restoreCache: Parameters<typeof restoreProblem>[1] = new Map();
   for (const dependency of take) {
     if (!(await context.stillShort())) return;
@@ -482,7 +496,14 @@ async function dependenciesRung(context: RungContext): Promise<void> {
         });
       continue;
     }
-    const result = await clearDependency(dependency, PRESSURE_IDLE_MS, protectedRoot, worktrees, why);
+    const result = await clearDependency(
+      dependency,
+      PRESSURE_IDLE_MS,
+      protectedRoot,
+      worktrees,
+      why,
+      context.operation,
+    );
     recordAction(
       context,
       {
@@ -517,6 +538,7 @@ const RUNGS: {
   relieves: readonly Cause[];
   act: (context: RungContext, causes: Cause[]) => Promise<void>;
 }[] = [
+  { rung: 0, relieves: ['memory'], act: bootedParkedRung },
   { rung: 1, relieves: ['disk'], act: idleOutputsRung },
   { rung: 2, relieves: ['disk'], act: parkedRung },
   { rung: 3, relieves: ['disk'], act: cachesRung },
@@ -548,7 +570,7 @@ export async function runLadder(
   const { force } = input;
   if (force) {
     for (const { rung, act } of RUNGS) {
-      if (rung < (input.fromRung ?? 1)) continue;
+      if (rung < (input.fromRung ?? 0)) continue;
       const context: RungContext = {
         ...input,
         rung,
@@ -574,7 +596,7 @@ export async function runLadder(
   if (pressure.level === 'normal') return { actions, pressure };
   let current = pressure;
   for (const { rung, relieves, act } of RUNGS) {
-    if (rung < (input.fromRung ?? 1)) continue;
+    if (rung < (input.fromRung ?? 0)) continue;
     current = await input.remeasure();
     if (current.level === 'normal') break;
     const causes = causesOf(current, relieves);

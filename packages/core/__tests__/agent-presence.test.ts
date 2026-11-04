@@ -78,4 +78,23 @@ describe('agentActionGesture', () => {
     expect(agentActionGesture({ x: 1, y: 1 }, null, '@e2')).toBeNull();
     expect(agentActionGesture({ positionals: ['@e2'] }, tree, '@e2')).toBeNull();
   });
+
+  test("without a snapshot the device's screen measures the point, and a snapshot's viewport wins over it", () => {
+    const screen = { width: 402, height: 874 };
+    const scroll = { x1: 201, y1: 721, x2: 201, y2: 153, durationMs: 400 };
+    expect(agentActionGesture(scroll, null, undefined, screen)).toEqual({
+      kind: 'swipe',
+      from: { x: 0.5, y: 721 / 874 },
+      to: { x: 0.5, y: 153 / 874 },
+      durationMs: 400,
+    });
+    expect(agentActionGesture({ x: 201, y: 437, durationMs: 0 }, { viewport: null, nodes: [] }, '@e2', screen)).toEqual(
+      {
+        kind: 'tap',
+        from: { x: 0.5, y: 0.5 },
+        durationMs: 0,
+      },
+    );
+    expect(agentActionGesture({ x: 200, y: 400 }, tree, undefined, screen)?.from).toEqual({ x: 0.5, y: 0.5 });
+  });
 });

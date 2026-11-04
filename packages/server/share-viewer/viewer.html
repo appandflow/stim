@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="robots" content="noindex" />
     <meta name="color-scheme" content="light dark" />
-    <title>Shared app</title>
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#15121d" media="(prefers-color-scheme: dark)" />
+    <title>{{title}}</title>
     <link rel="stylesheet" href="/s/assets/viewer.css" />
   </head>
   <body
@@ -17,6 +19,7 @@
     data-platform="{{platform}}"
     data-buttons="{{buttons}}"
     data-can-rotate="{{rotate}}"
+    data-webrtc="{{webrtc}}"
   >
     <header class="topbar">
       <p class="status" id="status" role="status" data-state="waiting">
@@ -66,6 +69,44 @@
         </span>
       </form>
       <span class="rule"></span>
+      <div class="options" id="options" hidden>
+        <button
+          type="button"
+          class="iconbtn"
+          id="options-button"
+          title="Options"
+          aria-label="Options"
+          aria-haspopup="dialog"
+          aria-expanded="false"
+          aria-controls="options-panel"
+        >
+          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 8h9M17 8h3M4 16h3M11 16h9" />
+            <circle cx="15" cy="8" r="2" />
+            <circle cx="9" cy="16" r="2" />
+          </svg>
+        </button>
+        <div class="options-panel" id="options-panel" role="dialog" aria-label="Options" hidden>
+          <label class="switch-row" for="sync-clipboard">
+            <span class="switch-label" id="sync-title">Sync clipboard</span>
+            <input class="switch" id="sync-clipboard" type="checkbox" role="switch" />
+          </label>
+          <p class="options-help" id="sync-help">
+            Copy text between this browser and the device while this page is focused.
+          </p>
+          <p class="options-help" id="sync-note" hidden></p>
+          <button type="button" class="link" id="paste-device" hidden>Paste to device</button>
+          <button type="button" class="link" id="copy-device">Copy from device</button>
+          <textarea
+            class="copy-fallback"
+            id="copy-fallback"
+            rows="3"
+            readonly
+            hidden
+            aria-label="Device clipboard text"
+          ></textarea>
+        </div>
+      </div>
       <button type="button" class="iconbtn" id="full" title="Fullscreen" aria-label="Fullscreen">
         <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M10 10L4 4M4 4h5.5M4 4v5.5M14 14l6 6M20 20h-5.5M20 20v-5.5" />
@@ -78,7 +119,9 @@
         <div class="aperture" id="aperture">
           <canvas id="screen" aria-label="Shared device screen" role="img"></canvas>
           <canvas id="overlay" aria-hidden="true"></canvas>
+          <p class="away" id="away" role="status">Waiting for the device&hellip;</p>
           <p class="note" id="note" role="status"></p>
+          <button type="button" class="chip" id="copy-chip" hidden>Copy from device</button>
         </div>
         <img class="layer" id="bezel-front" alt="" draggable="false" hidden />
       </div>
@@ -124,14 +167,6 @@
           </svg>
         </button>
       </div>
-      <div class="group" data-group="clipboard">
-        <button type="button" id="copy" title="Copy device clipboard" aria-label="Copy device clipboard">
-          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="6" y="5" width="12" height="16" rx="2.5" />
-            <path d="M9 5V4h6v1M9 11h6M9 15h4" />
-          </svg>
-        </button>
-      </div>
     </nav>
     <footer>
       <p class="credit">
@@ -148,7 +183,10 @@
     </template>
     <script src="/s/assets/overlay.js"></script>
     <script src="/s/assets/gestures.js"></script>
+    <script src="/s/assets/keys.js"></script>
     <script src="/s/assets/people.js"></script>
+    <script src="/s/assets/webrtc.js"></script>
+    <script src="/s/assets/reconnect.js"></script>
     <script src="/s/assets/viewer.js"></script>
   </body>
 </html>

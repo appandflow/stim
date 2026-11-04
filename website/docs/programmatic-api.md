@@ -254,7 +254,7 @@ This API does not refresh the source or install dependencies. Use
 The bundled server exposes plain warming to its originating Desktop through
 the private `desktop-worktree-warm` subscription. It admits the resolved
 workspaces and drains cancellation before releasing them. Paired phones and
-adopted server connections cannot invoke it; Desktop buttons migrate separately.
+network connections cannot invoke it; Desktop buttons migrate separately.
 
 ## Remove a worktree
 
@@ -326,6 +326,12 @@ report and owned cleanup succeed. Recording waits asynchronously for the config
 lock, honors `signal`, and rejects unavailable state. `stim.runningPath` is null because
 you imported the library rather than running the executable. Existing remote
 approval checks can refresh their own pending credential records.
+
+`remoteMachines({ signal? })` returns `{ machines, findings }` as `stim remote list --json`
+prints it: each `remote.machines` entry in placement order with its build and
+device-host report, the fingerprint of the server key this machine pinned for it,
+its reachability and the revoke commands to run there. It works from any directory
+and asks no machine for anything new.
 
 `repairDoctor({ platform?, signal?, beforeRepair? })` applies the same project repairs as
 `stim doctor --fix`, then returns `{ report, exitCode }`. Stop native builds in

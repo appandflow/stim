@@ -28,7 +28,9 @@ STIM_HOME home runs it like any other.
 The stim-daemon runs a pass in its own process on each tick when a check is
 due: a disk and memory reading for status (every minute), hosted idle stops
 (every 5 minutes), directory sizes (hourly), finished worktrees (every 15
-minutes) and the age sweep (daily). Pressure itself is the daemon's: each tick
+minutes) and the age sweep (daily). The reading plans nothing, the idle check
+plans only idle stops, and the cap trims follow the size, worktree and sweep
+checks. Pressure itself is the daemon's: each tick
 classifies the machine normal, high or critical and runs the pressure ladder
 above normal (stim guide lifecycle budget). While no daemon holds the home (on
 Windows, which has none, or when it cannot start), stim doctor runs the same
@@ -153,6 +155,15 @@ In on mode a pass runs, cheapest to rebuild first:
      daemons, unpinned Gradle versions unmodified for
      maintenance.gradleVersionIdleDays, Stim TMPDIR leftovers unmodified for 24
      hours, and the worktree trash.
+  9. the age sweep also prunes what outlived the thing it describes, by the
+     rules gc --delete applies: status cache files (disk-usage, pull-request,
+     git-merge) of folders and worktrees that are provably gone, process lock
+     directories that hold no claim, expired device lease files, and archives
+     past the archive.* retention (guide settings). A lease whose workspace is
+     pinned with maintenance.keep or in use stays; so does anything Stim cannot
+     show stale, each logged as a kept record with its reason. These steps
+     run whatever maintenance.olderThanDays is; maintenance.sweepHours 0 turns
+     them off with the rest of the sweep.
 The age sweep runs every maintenance.sweepHours (24) on a stim-daemon tick, or,
 while no daemon holds the home, in stim doctor, start, ios or android (on
 Windows also in the background process other top-level commands start); never
@@ -168,7 +179,7 @@ protectRecentHours, named by a project's last builds, a parked device or a
 live build lock, or in a Metro store with a running or unverifiable dev
 server. Anything the pass cannot verify is kept. A device is deleted only when
 its workspace is idle: no dev server, native run, build, lease, managed lock,
-driven or busy device, live web share, and no recorded use within the window. A pass stops a
+driven or busy device, live or waiting web share, and no recorded use within the window. A pass stops a
 dev server only by IDLE STOP above and never stops watchman; removing a
 finished worktree or orphaned directory does tear down that workspace's own
 dev server, owned devices and Chrome profile, as gc --delete does. ccache evicts by itself under
@@ -203,6 +214,12 @@ In report mode actions and explaining skips are logged only when newly
 planned; in on mode every action taken, failure and explaining skip is logged
 with its bytes, and a pass record carries the bytes freed. Removal of a
 worktree or orphaned directory is logged to the machine log only.
+A merged or ended worktree the worktree check keeps, and with
+maintenance.removeIdleWorktrees any other linked worktree it keeps, gets a
+maintenance_skip line with its path, the reason, and a code (locked, dirty,
+unpushed, in-use, submodules, last-use-unknown, recent-activity for the grace
+window, and the other worktree skip codes), logged again when the code
+changes. stim gc lists every worktree's reason in its worktree section.
 An iOS build that fails on a corrupt compilation cache logs the emptying,
 or why Stim left the cache alone, with trigger "ios build", in every mode;
 see \`stim guide errors STIM_COMPILATION_CACHE_CORRUPT\`.
@@ -301,7 +318,7 @@ pressure ladder, trims oversized workspace logs
 (\`guide cleanup disk\`) and removes orphaned workspace directories, never a
 checkout. Device recordings can also go without either: stim-server prunes
 them, and turning recording.enabled off deletes them (\`guide cleanup disk\`). \`stim stop\` shuts a device
-DOWN and leaves it assigned, which is what makes returning to a branch cost a
+DOWN (an owned iOS simulator at the end of its booted grace period) and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
 
 Before shutting down, parking or deleting an owned device, Stim best-effort
@@ -366,7 +383,9 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   beginning "could not archive:" and removal continues with empty stdout.
 
   Retention runs on every worktree removal, archived or not, once an archive
-  exists. It deletes records past their age or count limit first, then expires
+  exists, and in automatic maintenance's daily age sweep, so archives that
+  outlive their limits go without another removal (a worktree archive that a
+  claim holds stays). It deletes records past their age or count limit first, then expires
   recordings, agent actions and logs by age from removedAt; trims per-workspace
   logs (oldest rotated generations, then build logs, then oldest other files);
   and removes the largest kind of the oldest archive while over total caps.
@@ -419,8 +438,9 @@ inside ~/.stim, such as the private homes of hosted sessions, are not listed.
 A list that cannot be read or written never fails the command that tried.
 Unscoped gc lists the other homes that still exist: their private size, workspace
 count, last-seen time, the devices their ledgers name (owned by that home,
-never this one) and the exact commands that tear each down, from each
-workspace root: \`STIM_HOME=<home> stim worktree remove\`, then
+never this one) and the exact commands that tear each down, from the root of
+each linked worktree, or from the project folder in a source checkout:
+\`STIM_HOME=<home> stim worktree remove\`, then
 \`STIM_HOME=<home> stim gc --delete\`, then removing the directory. A scoped
 STIM_HOME lists nothing: it owns only its own ledger.
 A home whose directory is gone from a mounted volume is listed as gone, and
@@ -633,7 +653,8 @@ SWEEPING FINISHED WORKTREES
   an unexpired device lease. When the simulator or emulator list cannot be
   read, the worktree counts as in use. A device left booted keeps the
   worktree until \`stim stop\` in it, or its idle stage, shuts the device
-  down. A worktree that holds the running stim or the realpath of
+  down. A simulator that \`stim stop\` left booted for its grace period
+  (\`guide lifecycle pool\`) does not keep it. A worktree that holds the running stim or the realpath of
   the \`stim\` on PATH is in use too, and \`stim worktree remove\` refuses it
   even with --force, as it refuses an installed stim-server service's checkout.
 
@@ -761,7 +782,7 @@ SWEEPING FINISHED WORKTREES
   deleted do not block removal. Closed, they do: a closed pull request whose
   remote branch is gone keeps the worktree as unpushed. An open pull request
   never makes a worktree finished. When gh is
-  not installed, not signed in, or fails, the JSON pullRequestUnknown field
+  not installed, not signed in, rate limited, or fails, the JSON pullRequestUnknown field
   and the report say why, and gc judges from git alone. A detached HEAD is
   not looked up. \`stim worktree remove\` makes the same check when
   local-only commits alone would refuse the removal, and accepts a merged
@@ -902,6 +923,15 @@ ON THE SOURCE CHECKOUT
   Either reclaim archives each workspace it removes, as removal of a linked
   worktree does.
 
+FROM A SUBFOLDER OF A LINKED WORKTREE
+  A linked worktree is removed only when the target is its root: run from the
+  worktree root, or pass the root path. Run from a subfolder (for example
+  apps/mobile), or given one, \`worktree remove\` reclaims only the nearest
+  registered project at or above that folder and the projects nested under it,
+  leaves the tree and the other projects alone, and refuses with exit 1 when no
+  project is registered at or above it. It ends with:
+    Reclaimed the environment; the working tree stays (it was run from a subfolder of the worktree).
+
 The delete paths and \`stop\` do not check simulator occupancy. An explicit
 \`stim stop\` shuts down this workspace's Stim-owned simulator, including a
 simulator used by a UI-test runner. It never shuts down an unowned simulator.
@@ -955,19 +985,22 @@ BUILD LOCKS
   removing it would put a second workspace on the same compile.
   \`gc --delete\` also removes the empty directories under ~/.stim/process-locks
   that removed projects and worktrees leave behind; it never touches a lock
-  that holds a claim.
+  that holds a claim. The daily age sweep removes them too.
 
 DEVICE LEASES
   A workspace can hold a timed lease on a physical device. The lease is one
   file under ~/.stim/device-locks, and it expires on its own. \`gc\` reports
   the lease files whose expiry has passed; \`gc --delete\` removes those
   files, re-reading each one under its own lock first, so a lease renewed in
-  the meantime survives. Two kinds are reported and KEPT: a file that does
+  the meantime survives. The daily age sweep removes them the same way, and
+  keeps one whose workspace is pinned with maintenance.keep or in use. Two
+  kinds are reported and KEPT: a file that does
   not parse, which no run may take the device around, and an unexpired lease
   whose holder directory is gone. \`stim status\` lists every lease file with
   its holder and expiry, including holders no config knows. \`stop\` and
   \`worktree remove\` release the leases of the workspace they act on, and
-  nothing else deletes a lease file: never remove another workspace's.
+  nothing else deletes a lease file but the daily age sweep, for an expired
+  one: never remove another workspace's.
   They also remove the \`adb reverse\` that an \`android --device\` run added
   for this workspace's Metro port on that phone, using the serial and port the
   run recorded in its workspace state; any other reverse on the phone stays.

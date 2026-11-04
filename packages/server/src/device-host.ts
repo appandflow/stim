@@ -1,6 +1,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { connect, type AddressInfo } from 'node:net';
 import {
@@ -15,6 +16,7 @@ import {
   clearClaimChild,
   ClaimRefusedError,
   markClaimChildPending,
+  clearFreeClaimSet,
   processGroupAlive,
   releaseClaim,
   setClaimChild,
@@ -27,6 +29,7 @@ import {
   createDebugLog,
   type DebugLog,
   deviceHostArea,
+  deviceHostAreasRoot,
   HOSTED_PARKED_CANDIDATES,
   deviceHostRoot,
   getConcurrencyLimits,
@@ -34,6 +37,7 @@ import {
   getPlatformDeviceLimits,
   hostedIdleStopHours,
   isJsonObject,
+  parseHostedMacosDevice,
   parseHostedPlatformDevice,
   hostedDeviceId,
   hostedMemoryRefusal,
@@ -74,6 +78,8 @@ import {
   DEVICE_HOST_LIMITS,
   hostedWorkerSettleMs,
   type DeviceHostLimits,
+  MAX_REVERSE_PORTS,
+  isTcpPort,
 } from '@stim-cli/core/state';
 import { readDeviceHostClients, writeJson } from './registry.ts';
 import { readHostedSessionRows } from './hosted-sessions.ts';
@@ -111,7 +117,15 @@ interface OwnedSession {
     closing?: boolean;
   };
   links?: MetroLinks;
+  reverses?: Map<number, ReverseBridge>;
+  reversing?: Promise<unknown>;
   viewer?: { close: () => Promise<void> };
+}
+
+interface ReverseBridge {
+  bridge: MetroBridge;
+  links: MetroLinks;
+  workerPort: number;
 }
 
 export interface DeviceHostOptions {
@@ -125,7 +139,11 @@ export interface DeviceHostOptions {
   /** Takes the native app a build on this machine retained under `handoff`, when `client` may have it, or says why not. */
   builtBundle?: (client: string, handoff: string, sha256: string) => { bundle: string; release: () => void } | string;
   limits?: Partial<DeviceHostLimits>;
+  /** How long a stopped session's home stays after it stopped, so its client can copy the final logs. Defaults to an hour. */
+  homeGraceMs?: number;
 }
+
+const HOSTED_HOME_GRACE_MS = 3_600_000;
 
 type HostedViewTarget = { home: string; claim: ClaimHandle } & (
   | { platform: 'ios'; session: HostedDeviceSession & { device: HostedIosDevice } }
@@ -239,11 +257,16 @@ export class DeviceHost {
   private readonly revoked = new Set<string>();
   private readonly probes = new Map<WorkerRun, string>();
   private closed = false;
+  private readonly detachedSessions = new Set<string>();
+  private readonly resuming = new Map<string, Promise<void>>();
   private lastIdleSweep: number | undefined;
   private clientActive = new Set<string>();
   private clientsSeen = new Set<string>();
   private readonly idleKept = new Map<string, string>();
   private reconciling?: Promise<void>;
+  private reclaiming?: Promise<void>;
+  private reclaimOrphans = false;
+  private readonly homeNotes = new Map<string, string>();
   private draining: string | null = null;
   private readonly limits: DeviceHostLimits;
   private readonly debug: DebugLog;
@@ -279,18 +302,21 @@ export class DeviceHost {
     this.transaction((records) => {
       const record = records.find((each) => each.id === id);
       if (!record) throw new Error('Hosted session journal no longer contains this reservation.');
+      const before = record.state;
       update(record);
+      if (record.state !== 'stopped') delete record.stoppedAt;
+      else if (before !== 'stopped') record.stoppedAt = new Date().toISOString();
     });
   }
 
-  private acquire(record: HostedDeviceSession): OwnedSession {
+  private acquire(record: Pick<HostedDeviceSession, 'id'> & { client?: string }): OwnedSession {
     const existing = this.owned.get(record.id);
     if (existing) return existing;
     const attempt = tryAcquireClaim({
       root: join(deviceHostRoot(), `${record.id}.claims`),
       mode: 'exclusive',
       label: 'hosted device session',
-      details: { session: record.id, client: record.client },
+      details: { session: record.id, ...(record.client === undefined ? {} : { client: record.client }) },
     });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (!attempt.acquired)
@@ -534,11 +560,13 @@ export class DeviceHost {
             'systemImage',
             'deviceProfile',
             'parked',
+            'stoppedAt',
             'notice',
             'appAttempt',
             'agent',
             'metroPort',
             'clientMetroPort',
+            'reverses',
             'clientAbsentMs',
             'idleStop',
           ] as const)
@@ -646,9 +674,20 @@ export class DeviceHost {
     }
   }
 
+  private attached(id: string): boolean {
+    return this.owned.has(id) && !this.resuming.has(id);
+  }
+
+  private attachedOwner(id: string): OwnedSession | undefined {
+    return this.resuming.has(id) ? undefined : this.owned.get(id);
+  }
+
   private observed(record: HostedDeviceSession): HostedDeviceSession {
     const observed = { ...record };
     delete observed.parked;
+    delete observed.stoppedAt;
+    if (this.resuming.has(record.id))
+      return { ...observed, state: 'unknown', notice: 'This server is resuming the session; attach again shortly.' };
     if (record.state !== 'stopped' && !this.owned.has(record.id))
       return {
         ...observed,
@@ -736,7 +775,7 @@ export class DeviceHost {
       return refused('bad-request', 'Metro needs its session and, when given, a client Metro port.');
     try {
       const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
-      if (!record || record.state !== 'ready' || this.closed || !this.owned.has(record.id))
+      if (!record || record.state !== 'ready' || this.closed || !this.attached(record.id))
         throw new Error('Only a ready session attached to this owner can open Metro.');
       if (record.platform !== 'ios' && record.platform !== 'android')
         throw new Error('Hosted Metro supports iOS and Android sessions only.');
@@ -753,53 +792,63 @@ export class DeviceHost {
         await this.restoreAndroidMetro(record, owned);
         return { result: { port } };
       }
-      const devClientPort = record.platform === 'ios' ? (params.clientMetroPort as number | undefined) : undefined;
-      const bridge = createMetroBridge((owned.links ??= createMetroLinks()));
-      const inUse = () =>
-        Object.assign(
-          new Error(
-            `Port ${devClientPort} is in use on the hosting Mac, and an Expo dev client loads its bundle from the client's Metro port.`,
-          ),
-          { code: 'device-busy' as const },
-        );
-      const ready = (async () => {
-        if (devClientPort !== undefined && (await loopbackAccepts(devClientPort))) throw inUse();
-        return new Promise<number>((resolve, reject) => {
-          bridge.server.once('error', (error: NodeJS.ErrnoException) =>
-            reject(devClientPort !== undefined && error.code === 'EADDRINUSE' ? inUse() : error),
-          );
-          bridge.server.listen(devClientPort ?? record.metroPort ?? 0, '127.0.0.1', () =>
-            resolve((bridge.server.address() as AddressInfo).port),
-          );
-        });
-      })();
-      const metro: NonNullable<OwnedSession['metro']> = {
-        bridge,
-        ready,
-        clientMetroPort: params.clientMetroPort as number | undefined,
-      };
-      owned.metro = metro;
-      try {
-        const port = await ready;
-        if (owned.stopping || this.closed || !this.options.allowed(client))
-          throw new Error('The session lost its Metro approval while opening.');
-        this.change(record.id, (current) => {
-          current.metroPort = port;
-          if (record.platform === 'android') current.clientMetroPort = params.clientMetroPort as number;
-        });
-        metro.port = port;
-        await this.restoreAndroidMetro(record, owned);
-        return { result: { port } };
-      } catch (error) {
-        await bridge.close();
-        if (owned.metro === metro) delete owned.metro;
-        throw error;
-      }
+      const clientMetroPort = typeof params.clientMetroPort === 'number' ? params.clientMetroPort : undefined;
+      return { result: { port: await this.openMetro(record, owned, clientMetroPort) } };
     } catch (error) {
       return refused(
         (error as { code?: unknown }).code === 'device-busy' ? 'device-busy' : 'action-failed',
         (error as Error).message,
       );
+    }
+  }
+
+  /** Listens the session's Metro bridge where its app expects Metro, and records the port. */
+  private async openMetro(
+    record: HostedDeviceSession,
+    owned: OwnedSession,
+    clientMetroPort: number | undefined,
+  ): Promise<number> {
+    const devClientPort = record.platform === 'ios' ? clientMetroPort : undefined;
+    const bridge = createMetroBridge((owned.links ??= createMetroLinks()));
+    const inUse = () =>
+      Object.assign(
+        new Error(
+          `Port ${devClientPort} is in use on the hosting Mac, and an Expo dev client loads its bundle from the client's Metro port.`,
+        ),
+        { code: 'device-busy' as const },
+      );
+    const ready = (async () => {
+      if (devClientPort !== undefined && (await loopbackAccepts(devClientPort))) throw inUse();
+      return new Promise<number>((resolve, reject) => {
+        bridge.server.once('error', (error: NodeJS.ErrnoException) =>
+          reject(devClientPort !== undefined && error.code === 'EADDRINUSE' ? inUse() : error),
+        );
+        bridge.server.listen(devClientPort ?? record.metroPort ?? 0, '127.0.0.1', () =>
+          resolve((bridge.server.address() as AddressInfo).port),
+        );
+      });
+    })();
+    const metro: NonNullable<OwnedSession['metro']> = {
+      bridge,
+      ready,
+      clientMetroPort,
+    };
+    owned.metro = metro;
+    try {
+      const port = await ready;
+      if (owned.stopping || this.closed || !this.options.allowed(record.client))
+        throw new Error('The session lost its Metro approval while opening.');
+      this.change(record.id, (current) => {
+        current.metroPort = port;
+        if (record.platform === 'android') current.clientMetroPort = clientMetroPort;
+      });
+      metro.port = port;
+      await this.restoreAndroidMetro(record, owned);
+      return port;
+    } catch (error) {
+      await bridge.close();
+      if (owned.metro === metro) delete owned.metro;
+      throw error;
     }
   }
 
@@ -892,27 +941,40 @@ export class DeviceHost {
       const owned = this.owned.get(record.id);
       if (owned?.installing || owned?.data)
         throw new Error('Wait for this session native launch before closing its Metro bridge.');
-      if (owned) await this.closeMetro(owned);
+      if (owned) await this.closeMetro(owned, false);
       return { result: { port: null } };
     } catch (error) {
       return refused('action-failed', (error as Error).message);
     }
   }
 
-  /** Holds a connection the client opened as an idle link that the session's Metro bridge pairs with one stream. */
+  /**
+   * Holds a connection the client opened as an idle link. Without `port` the session's Metro bridge pairs it with one
+   * stream; with `port`, the bridge of that reversed client port does.
+   */
   metroLink(client: string, params: unknown, link: MetroLink): AppAnswer<Record<string, never>> {
     if (this.closed || !this.options.allowed(client))
       return refused('forbidden', 'Current device-host approval is required.');
-    if (!isJsonObject(params) || typeof params.session !== 'string')
-      return refused('bad-request', 'A Metro link needs a session.');
+    if (
+      !isJsonObject(params) ||
+      typeof params.session !== 'string' ||
+      (params.port !== undefined && !isTcpPort(params.port))
+    )
+      return refused('bad-request', 'A Metro link needs a session and, when given, a port.');
     try {
       const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
       if (!record) return refused('unknown-session', 'This client has no such hosted session.');
-      const owned = this.owned.get(record.id);
+      const owned = this.attachedOwner(record.id);
       if (record.state !== 'ready' || !owned || owned.stopping)
         throw new Error('Only a ready session attached to this owner can link Metro.');
       if (record.platform !== 'ios' && record.platform !== 'android')
         throw new Error('Hosted Metro supports iOS and Android sessions only.');
+      if (typeof params.port === 'number') {
+        const reverse = owned.reverses?.get(params.port);
+        if (!reverse) throw new Error(`This session does not reverse port ${params.port}.`);
+        if (!reverse.links.add(link)) throw new Error('This session reverse bridge is closing.');
+        return { result: {} };
+      }
       if (!(owned.links ??= createMetroLinks()).add(link)) throw new Error('This session Metro bridge is closing.');
       return { result: {} };
     } catch (error) {
@@ -921,10 +983,235 @@ export class DeviceHost {
   }
 
   metroUnlink(link: MetroLink): void {
-    for (const owned of this.owned.values()) owned.links?.remove(link);
+    for (const owned of this.owned.values()) {
+      owned.links?.remove(link);
+      for (const reverse of owned.reverses?.values() ?? []) reverse.links.remove(link);
+    }
   }
 
-  private async closeMetro(owned: OwnedSession): Promise<void> {
+  /**
+   * Makes the listed client ports reachable from the session's device at the same `localhost` ports, and closes the
+   * bridges of every other port. A simulator shares this Mac's loopback, so its bridge listens on the port itself and
+   * an occupied port is refused. An emulator has its own, so its bridge listens on a loopback port of this Mac's choosing
+   * and the emulator's `adb reverse` points at it. The worker never connects to the client: each accepted connection
+   * rides an idle link the client opened for that port.
+   */
+  async reverseSet(
+    client: string,
+    params: unknown,
+  ): Promise<AppAnswer<{ ports: { port: number; workerPort: number }[] }>> {
+    if (this.closed || !this.options.allowed(client))
+      return refused('forbidden', 'Current device-host approval is required.');
+    if (
+      !isJsonObject(params) ||
+      typeof params.session !== 'string' ||
+      !Array.isArray(params.ports) ||
+      params.ports.length > MAX_REVERSE_PORTS ||
+      !params.ports.every(isTcpPort)
+    )
+      return refused('bad-request', `Reverse ports need a session and at most ${MAX_REVERSE_PORTS} TCP ports.`);
+    try {
+      const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
+      if (!record) return refused('unknown-session', 'This client has no such hosted session.');
+      const owned = this.attachedOwner(record.id);
+      if (record.state !== 'ready' || !owned || owned.stopping || this.closed)
+        throw new Error('Only a ready session attached to this owner can reverse ports.');
+      if (record.platform !== 'ios' && record.platform !== 'android')
+        throw new Error('Reverse ports support hosted iOS and Android sessions only.');
+      const ports = [...new Set(params.ports)].toSorted((a, b) => a - b);
+      if (
+        record.platform === 'android' &&
+        record.clientMetroPort !== undefined &&
+        ports.includes(record.clientMetroPort)
+      )
+        throw new Error(`Port ${record.clientMetroPort} is the session's Metro port, which Stim already bridges.`);
+      return { result: { ports: await this.syncReverses(record, owned, ports) } };
+    } catch (error) {
+      return refused(
+        error instanceof Error && 'code' in error && error.code === 'device-busy' ? 'device-busy' : 'action-failed',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  private syncReverses(
+    record: HostedDeviceSession,
+    owned: OwnedSession,
+    ports: readonly number[],
+  ): Promise<{ port: number; workerPort: number }[]> {
+    const run = () => this.syncReversesNow(record, owned, ports);
+    const task = (owned.reversing ?? Promise.resolve()).then(run, run);
+    owned.reversing = task.catch(() => {});
+    return task;
+  }
+
+  private async syncReversesNow(
+    record: HostedDeviceSession,
+    owned: OwnedSession,
+    ports: readonly number[],
+  ): Promise<{ port: number; workerPort: number }[]> {
+    const lost = () => owned.stopping || this.closed || !this.options.allowed(record.client);
+    if (lost()) throw new Error('The session lost its approval while reversing ports.');
+    const reverses = (owned.reverses ??= new Map());
+    const opened: number[] = [];
+    const rollBack = async () => {
+      if (record.platform === 'android' && opened.length > 0)
+        await this.applyAndroidReverses(record, owned, [], opened, reverses).catch(() => {});
+      for (const port of opened) {
+        const reverse = reverses.get(port);
+        reverses.delete(port);
+        reverse?.links.close();
+        await reverse?.bridge.close().catch(() => {});
+      }
+    };
+    try {
+      for (const port of ports) {
+        if (reverses.has(port)) continue;
+        reverses.set(port, await this.openReverse(record, port));
+        opened.push(port);
+        if (lost() || owned.reverses !== reverses)
+          throw new Error('The session lost its approval while reversing ports.');
+      }
+      if (record.platform === 'android' && ports.length > 0)
+        await this.applyAndroidReverses(record, owned, ports, [], reverses);
+    } catch (error) {
+      await rollBack();
+      throw error;
+    }
+    const dropped = [...reverses.keys()].filter((port) => !ports.includes(port));
+    if (record.platform === 'android' && dropped.length > 0)
+      await this.applyAndroidReverses(record, owned, [], dropped, reverses);
+    for (const port of dropped) {
+      const reverse = reverses.get(port);
+      reverses.delete(port);
+      reverse?.links.close();
+      await reverse?.bridge.close();
+    }
+    const bound = ports.flatMap((port) => {
+      const reverse = reverses.get(port);
+      return reverse ? [{ port, workerPort: reverse.workerPort }] : [];
+    });
+    this.change(record.id, (current) => {
+      if (bound.length === 0) delete current.reverses;
+      else current.reverses = Object.fromEntries(bound.map(({ port, workerPort }) => [String(port), workerPort]));
+    });
+    return bound;
+  }
+
+  private async openReverse(record: HostedDeviceSession, port: number): Promise<ReverseBridge> {
+    const links = createMetroLinks();
+    const bridge = createMetroBridge(links);
+    const simulator = record.platform === 'ios';
+    const busy = () =>
+      Object.assign(
+        new Error(
+          `Port ${port} is in use on the hosting Mac, and a hosted simulator reaches this client's server there. Free it there, or reverse another port.`,
+        ),
+        { code: 'device-busy' as const },
+      );
+    const listen = (at: number) =>
+      new Promise<number>((resolve, reject) => {
+        const failed = (error: NodeJS.ErrnoException) => reject(error);
+        bridge.server.once('error', failed);
+        bridge.server.listen(at, '127.0.0.1', () => {
+          bridge.server.off('error', failed);
+          const address = bridge.server.address();
+          if (address && typeof address === 'object') resolve(address.port);
+          else reject(new Error('The reverse bridge is not listening on TCP.'));
+        });
+      });
+    try {
+      if (simulator) {
+        if (await loopbackAccepts(port)) throw busy();
+        return {
+          bridge,
+          links,
+          workerPort: await listen(port).catch((error: NodeJS.ErrnoException) => {
+            throw error.code === 'EADDRINUSE' ? busy() : error;
+          }),
+        };
+      }
+      const recorded = record.reverses?.[String(port)];
+      const workerPort = await (recorded === undefined ? listen(0) : listen(recorded).catch(() => listen(0)));
+      return { bridge, links, workerPort };
+    } catch (error) {
+      links.close();
+      await bridge.close().catch(() => {});
+      throw error;
+    }
+  }
+
+  private async applyAndroidReverses(
+    record: HostedDeviceSession,
+    owned: OwnedSession,
+    ports: readonly number[],
+    dropped: readonly number[],
+    reverses: ReadonlyMap<number, ReverseBridge>,
+  ): Promise<void> {
+    if (owned.stopping || owned.installing || owned.data)
+      throw new Error('This hosted session has a native operation in progress.');
+    const run = this.run(record, owned, 'reverse-ports', undefined, owned.claim, false, {
+      reverses: ports.flatMap((port) => {
+        const reverse = reverses.get(port);
+        return reverse ? [{ devicePort: port, bridgePort: reverse.workerPort }] : [];
+      }),
+      removed: dropped.flatMap((port) => {
+        const workerPort = reverses.get(port)?.workerPort;
+        return workerPort === undefined ? [] : [workerPort];
+      }),
+    });
+    owned.run = run;
+    const done = (async () => {
+      const outcome = await run.done;
+      if (!outcome.settled || outcome.notice || !isJsonObject(outcome.value) || outcome.value.state !== 'ready') {
+        const error = new Error(
+          outcome.notice ??
+            (isJsonObject(outcome.value) && typeof outcome.value.notice === 'string'
+              ? outcome.value.notice
+              : 'Hosted Android reverse ports were not established.'),
+        );
+        if (!outcome.settled && !owned.stopping) this.failed(record.id, error);
+        throw error;
+      }
+    })();
+    const settled = done.catch(() => {});
+    owned.data = settled;
+    try {
+      await done;
+    } finally {
+      if (owned.data === settled) delete owned.data;
+    }
+  }
+
+  private async closeReverses(owned: OwnedSession): Promise<void> {
+    const reverses = owned.reverses;
+    delete owned.reverses;
+    await owned.reversing;
+    if (!reverses) return;
+    await Promise.all(
+      [...reverses.values()].map(async ({ bridge, links }) => {
+        links.close();
+        await bridge.close().catch(() => {});
+      }),
+    );
+  }
+
+  private async resumeReverses(record: HostedDeviceSession, owned: OwnedSession): Promise<void> {
+    try {
+      await this.syncReverses(
+        record,
+        owned,
+        Object.keys(record.reverses ?? {})
+          .map(Number)
+          .toSorted((a, b) => a - b),
+      );
+    } catch (error) {
+      process.stderr.write(`Hosted session ${record.id} reverse ports were not restored: ${oneLine(error)}\n`);
+    }
+  }
+
+  private async closeMetro(owned: OwnedSession, reverses = true): Promise<void> {
+    if (reverses) await this.closeReverses(owned);
     owned.links?.close();
     delete owned.links;
     const metro = owned.metro;
@@ -945,7 +1232,7 @@ export class DeviceHost {
   viewTarget(client: string, session: string, probeRunning = false): HostedViewTarget {
     if (this.closed || !this.options.allowed(client)) throw new Error('Current device-host approval is required.');
     const record = readHostedSessions().find((each) => each.client === client && each.id === session);
-    const owned = this.owned.get(session);
+    const owned = this.attachedOwner(session);
     if (!record || record.state !== 'ready' || !record.device || !owned)
       throw new Error(
         'Only a ready session attached to this server can be viewed. Explicit stop must reconcile a lost owner.',
@@ -1086,7 +1373,7 @@ export class DeviceHost {
         if (hostedMacosBundleId(offer.bundleId, record.appSlot!).length + '.plist'.length > 255)
           throw new Error('The hosted macOS bundle identity exceeds 249 characters for its preferences plist.');
       }
-      if (record.state !== 'ready' || this.closed || !this.owned.has(record.id))
+      if (record.state !== 'ready' || this.closed || !this.attached(record.id))
         throw new Error(
           'Only a ready session attached to this server accepts an app. Explicit stop must reconcile a lost owner.',
         );
@@ -1113,7 +1400,7 @@ export class DeviceHost {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
     try {
       const record = this.appSession(client, params);
-      if (record.state !== 'ready' || this.closed || !this.owned.has(record.id))
+      if (record.state !== 'ready' || this.closed || !this.attached(record.id))
         throw new Error(
           'Only a ready session attached to this server receives an app. Explicit stop must reconcile a lost owner.',
         );
@@ -1135,7 +1422,7 @@ export class DeviceHost {
     try {
       const record = this.appSession(client, params);
       const attempt = (params as { attempt: string }).attempt;
-      if (record.state !== 'ready' || this.closed || !this.owned.has(record.id) || record.appAttempt !== attempt)
+      if (record.state !== 'ready' || this.closed || !this.attached(record.id) || record.appAttempt !== attempt)
         throw new Error(
           'Only the current app attempt of a ready session attached to this server receives an app. Explicit stop must reconcile a lost owner.',
         );
@@ -1343,7 +1630,7 @@ export class DeviceHost {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
     try {
       const record = this.appSession(client, params);
-      if (record.state !== 'ready' || this.closed || !this.owned.has(record.id))
+      if (record.state !== 'ready' || this.closed || !this.attached(record.id))
         throw new Error(
           'Only a ready session attached to this server can install an app. Explicit stop must reconcile a lost owner.',
         );
@@ -1905,9 +2192,98 @@ export class DeviceHost {
 
   reconcileStopped(): Promise<void> {
     if (this.closed) return Promise.resolve();
-    return (this.reconciling ??= this.retireStopped().finally(() => {
-      this.reconciling = undefined;
+    return (this.reconciling ??= this.retireStopped()
+      .then(() => this.reclaimEndedHomes(true))
+      .finally(() => {
+        this.reconciling = undefined;
+      }));
+  }
+
+  /**
+   * Removes the home of every session that stopped at least `homeGraceMs` ago, and with `orphans` the home of every
+   * id the journal does not list. A session the journal lists as stopped without `stoppedAt` is stamped now, so it
+   * is removed one grace period later. The journal keeps the stopped entries.
+   */
+  reclaimEndedHomes(orphans = false): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    this.reclaimOrphans ||= orphans;
+    return (this.reclaiming ??= this.reclaimHomes().finally(() => {
+      this.reclaiming = undefined;
     }));
+  }
+
+  private async reclaimHomes(): Promise<void> {
+    try {
+      const now = Date.now();
+      if (readHostedSessions().some((record) => record.state === 'stopped' && !record.stoppedAt))
+        this.transaction((records) => {
+          for (const record of records)
+            if (record.state === 'stopped' && !record.stoppedAt) record.stoppedAt = new Date(now).toISOString();
+        });
+      const records = readHostedSessions();
+      for (const record of records) {
+        if (this.closed) return;
+        if (
+          record.state === 'stopped' &&
+          !record.parked &&
+          this.homeExpired(record, now) &&
+          existsSync(deviceHostArea(record.id))
+        )
+          await this.reclaimHome(record.id);
+      }
+      if (this.reclaimOrphans) {
+        this.reclaimOrphans = false;
+        const listed = new Set(records.map((record) => record.id));
+        for (const id of readdirSync(deviceHostAreasRoot())) {
+          if (this.closed) return;
+          if (/^[a-f0-9-]{36}$/.test(id) && !listed.has(id)) await this.reclaimHome(id);
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
+      this.noteHome('sweep', `Hosted session homes were not reclaimed: ${oneLine(error)}`);
+      return;
+    }
+    this.noteHome('sweep', null);
+  }
+
+  private noteHome(key: string, note: string | null): void {
+    if (note === null) this.homeNotes.delete(key);
+    else if (this.homeNotes.get(key) !== note) {
+      this.homeNotes.set(key, note);
+      process.stderr.write(`${note}\n`);
+    }
+  }
+
+  private homeExpired(record: HostedDeviceSession, now: number): boolean {
+    return now - Date.parse(record.stoppedAt ?? '') >= (this.options.homeGraceMs ?? HOSTED_HOME_GRACE_MS);
+  }
+
+  private async reclaimHome(id: string): Promise<void> {
+    if (this.owned.has(id)) return;
+    let owned: OwnedSession;
+    try {
+      owned = this.acquire({ id });
+    } catch {
+      return;
+    }
+    try {
+      const record = readHostedSessions().find((each) => each.id === id);
+      if (record && (record.state !== 'stopped' || record.parked || !this.homeExpired(record, Date.now()))) return;
+      const area = deviceHostArea(id);
+      if (!ownsNoDevice(join(area, 'home'), record?.platform)) return;
+      for (const entry of readdirSync(area)) {
+        if (!entry.endsWith('.claims')) continue;
+        const cleared = clearFreeClaimSet({ root: join(area, entry), label: 'hosted agent driver' });
+        if (cleared.status !== 'cleared') return;
+      }
+      await rm(area, { recursive: true, force: true });
+      this.noteHome(id, null);
+    } catch (error) {
+      this.noteHome(id, `Hosted session ${id} home kept: ${oneLine(error)}`);
+    } finally {
+      this.release(id, owned);
+    }
   }
 
   private async evictParked(): Promise<void> {
@@ -2007,16 +2383,22 @@ export class DeviceHost {
     }
   }
 
+  /** Sessions `close()` left running for the next server to resume; their agent state stays on disk. */
+  detached(): ReadonlySet<string> {
+    return this.detachedSessions;
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     for (const probe of this.probes.keys()) probe.cancel();
+    await Promise.allSettled(this.resuming.values());
     await Promise.all([...this.owned.values()].map((owned) => this.closeMetro(owned)));
     await Promise.all([...this.owned.values()].map((owned) => this.closeView(owned)));
     try {
       for (const record of readHostedSessions()) {
         if (!this.owned.has(record.id)) continue;
         try {
-          this.beginStop(record);
+          if (!(await this.detach(record))) this.beginStop(record);
         } catch (error) {
           this.failed(record.id, error);
         }
@@ -2031,15 +2413,198 @@ export class DeviceHost {
     await Promise.all([...this.owned.values()].map((owned) => owned.stopping ?? owned.run?.done));
     await Promise.all([...this.probes.keys()].map((probe) => probe.done));
     await this.reconciling?.catch(() => {});
+    await this.reclaiming?.catch(() => {});
+  }
+
+  private async detach(record: HostedDeviceSession): Promise<boolean> {
+    const owned = this.owned.get(record.id);
+    if (!owned || !this.detachable(record, owned)) return false;
+    try {
+      owned.run?.cancel();
+      if (owned.run && !(await owned.run.done).settled) return false;
+      await this.settleLogs(owned);
+      releaseClaim(takeHostedInputClaim(owned.claim));
+    } catch {
+      return false;
+    }
+    this.release(record.id, owned);
+    if (this.owned.has(record.id)) return false;
+    this.detachedSessions.add(record.id);
+    return true;
+  }
+
+  private detachable(record: HostedDeviceSession, owned: OwnedSession): boolean {
+    return (
+      record.state === 'ready' &&
+      record.platform !== 'macos' &&
+      owned.reachedReady === true &&
+      !owned.stopping &&
+      !owned.installing &&
+      !owned.data &&
+      !owned.imagePhase &&
+      !this.revoked.has(record.id) &&
+      this.options.allowed(record.client)
+    );
+  }
+
+  working(): number {
+    try {
+      const records = readHostedSessions();
+      return [...this.owned].filter(([id, owned]) => {
+        const record = records.find((each) => each.id === id);
+        return !record || !this.detachable(record, owned);
+      }).length;
+    } catch {
+      return this.owned.size;
+    }
+  }
+
+  async resumeSessions(): Promise<void> {
+    let records: HostedDeviceSession[];
+    try {
+      records = readHostedSessions();
+    } catch (error) {
+      process.stderr.write(`Hosted session resume could not read its journal: ${oneLine(error)}\n`);
+      return;
+    }
+    for (const record of records) {
+      if (
+        this.closed ||
+        record.state !== 'ready' ||
+        record.platform === 'macos' ||
+        !record.device ||
+        this.owned.has(record.id) ||
+        this.revoked.has(record.id) ||
+        !this.options.allowed(record.client)
+      )
+        continue;
+      try {
+        await this.resume(record);
+      } catch (error) {
+        process.stderr.write(`Hosted session ${record.id} not resumed: ${oneLine(error)}\n`);
+      }
+    }
+  }
+
+  private async resume(snapshot: HostedDeviceSession): Promise<void> {
+    const owned = this.acquire(snapshot);
+    const resuming = this.settleResume(snapshot, owned);
+    this.resuming.set(snapshot.id, resuming);
+    try {
+      await resuming;
+    } finally {
+      this.resuming.delete(snapshot.id);
+    }
+  }
+
+  private async settleResume(snapshot: HostedDeviceSession, owned: OwnedSession): Promise<void> {
+    let keep = false;
+    try {
+      const record = readHostedSessions().find((each) => each.id === snapshot.id);
+      const recorded = record?.device;
+      if (!record || !recorded || record.state !== 'ready' || !this.options.allowed(record.client)) return;
+      const run = this.run(record, owned, 'resume');
+      owned.run = run;
+      const outcome = await run.done;
+      if (!outcome.settled) {
+        keep = true;
+        this.failed(record.id, new Error(outcome.notice ?? 'The resume worker group is unresolved.'));
+        return;
+      }
+      if (owned.stopping) {
+        keep = true;
+        return;
+      }
+      const value = outcome.value;
+      const device = isJsonObject(value) ? parseHostedPlatformDevice(value.device, record.platform) : null;
+      const home = join(deviceHostArea(record.id), 'home');
+      let verified = false;
+      if (!outcome.notice && isJsonObject(value) && value.state === 'ready' && device) {
+        try {
+          assertSessionDevice(record, device);
+          assertHostedDeviceLedger(home, hostedDeviceId(device), record.platform);
+          verified =
+            hostedDeviceId(readHostedDevice(home, record.platform)) === hostedDeviceId(device) &&
+            hostedDeviceId(recorded) === hostedDeviceId(device);
+        } catch {}
+      }
+      if (!verified || !this.options.allowed(record.client) || this.revoked.has(record.id)) {
+        const why =
+          outcome.notice ??
+          (isJsonObject(value) && typeof value.notice === 'string' ? value.notice : 'its device was not verified');
+        process.stderr.write(
+          `Hosted session ${record.id} could not be resumed (${why.replace(/[\r\n]+/g, ' ')}); stopping it.\n`,
+        );
+        this.beginStop(record);
+        keep = true;
+        return;
+      }
+      owned.reachedReady = true;
+      keep = true;
+      this.detachedSessions.delete(record.id);
+      const attempt = this.resumeApp(record, owned);
+      if (this.closed || attempt === undefined) return;
+      if (record.metroPort !== undefined) await this.resumeMetro(record, owned, attempt);
+      if (record.reverses !== undefined) await this.resumeReverses(record, owned);
+      if (!owned.stopping && !this.closed) await this.startAgent(record, attempt, 0);
+      process.stderr.write(`Hosted session ${record.id} resumed.\n`);
+    } finally {
+      if (!keep && !owned.stopping) this.release(snapshot.id, owned);
+    }
+  }
+
+  private resumeApp(record: HostedDeviceSession, owned: OwnedSession): string | undefined {
+    if (!record.appAttempt) return undefined;
+    try {
+      const app = readHostedAppMetadata(record.id, record.appAttempt);
+      if (app.state === 'installed') {
+        owned.installedAttempt = record.appAttempt;
+        return record.appAttempt;
+      }
+      if (app.state === 'installing')
+        changeHostedApp(record.id, record.appAttempt, (current) => {
+          current.state = 'unknown';
+          current.notice = 'The install was interrupted by a server restart; offer the app again.';
+        });
+    } catch (error) {
+      process.stderr.write(`Hosted app ${record.id} could not be read: ${oneLine(error)}\n`);
+    }
+    return undefined;
+  }
+
+  private async resumeMetro(record: HostedDeviceSession, owned: OwnedSession, attempt: string): Promise<void> {
+    try {
+      const clientMetroPort =
+        record.platform === 'android'
+          ? record.clientMetroPort
+          : readHostedAppMetadata(record.id, attempt).devClientScheme !== undefined
+            ? record.metroPort
+            : undefined;
+      if (record.platform !== 'android' || clientMetroPort !== undefined)
+        await this.openMetro(record, owned, clientMetroPort);
+    } catch (error) {
+      process.stderr.write(`Hosted session ${record.id} Metro was not restored: ${oneLine(error)}\n`);
+    }
   }
 
   private run(
     record: HostedDeviceSession,
     owned: OwnedSession,
-    mode: 'prepare' | 'stop' | 'install' | 'app-state' | 'logs' | 'reverse' | 'park' | 'adopt',
+    mode:
+      | 'prepare'
+      | 'stop'
+      | 'install'
+      | 'app-state'
+      | 'logs'
+      | 'reverse'
+      | 'reverse-ports'
+      | 'park'
+      | 'adopt'
+      | 'resume',
     attempt?: string,
     claim: ClaimHandle = owned.claim,
     finalLogs = false,
+    extra: object = {},
   ): WorkerRun {
     const home = join(deviceHostArea(record.id), 'home');
     mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -2061,6 +2626,7 @@ export class DeviceHost {
         attempt,
         metroPort: mode === 'install' || mode === 'reverse' ? owned.metro?.port : undefined,
         clientMetroPort: mode === 'install' || mode === 'reverse' ? owned.metro?.clientMetroPort : undefined,
+        ...extra,
       },
       claim,
       timeoutMs:
@@ -2068,7 +2634,9 @@ export class DeviceHost {
           ? this.limits.stopMs
           : mode === 'logs' || mode === 'app-state'
             ? this.limits.logsMs
-            : this.limits.prepareMs,
+            : mode === 'resume'
+              ? this.limits.offerMs
+              : this.limits.prepareMs,
       maxOutputBytes: 16_384,
     });
   }
@@ -2214,6 +2782,18 @@ export class DeviceHost {
     }
     return { done, cancel };
   }
+}
+
+function ownsNoDevice(home: string, platform: HostedDeviceSession['platform'] | undefined): boolean {
+  const ledger = readHostedDeviceLedger(home);
+  if (ledger) return !ledger.ios.length && !ledger.android.length && !ledger.web.length;
+  if (platform === 'macos') return true;
+  if (!existsSync(join(home, 'hosted-device.json'))) return true;
+  return platform === undefined && parseHostedMacosDevice(readJsonObject(join(home, 'hosted-device.json'))) !== null;
+}
+
+function oneLine(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).replace(/[\r\n]+/g, ' ');
 }
 
 function sameRequest(a: HostedDeviceRequest, b: HostedDeviceRequest): boolean {

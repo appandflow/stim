@@ -11,7 +11,7 @@ import { readClaimSet } from '../../ownership-claim.ts';
 import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
-import { existingBuildDirs, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
+import { existingBuildDirsAsync, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { workspaceBuildInProgress } from './idle.ts';
 import { mapLimited, sizeConcurrency } from './limited.ts';
 import { canonicalPath } from './paths.ts';
@@ -345,18 +345,20 @@ export function workspaceBuildReasons(root: string, { nativeRun = true }: { nati
   return workspaceBuildInProgress(root) ? [...reasons, BUILD_IN_PROGRESS] : reasons;
 }
 
-async function workspaceBuildReasonsAsync(
+export async function workspaceBuildReasonsAsync(
   root: string,
   signal: AbortSignal,
   operation?: StimContext,
+  { nativeRun = true }: { nativeRun?: boolean } = {},
 ): Promise<string[]> {
-  const reasons = await workspaceInUseAsync(root, BUILD_CHECKS, signal, operation);
+  const reasons = await workspaceInUseAsync(root, { ...BUILD_CHECKS, nativeRun }, signal, operation);
   return workspaceBuildInProgress(root) ? [...reasons, BUILD_IN_PROGRESS] : reasons;
 }
 
 async function inTreeBuildDirs(root: string, signal?: AbortSignal): Promise<string[]> {
   const dirs: string[] = [];
-  for (const path of existingBuildDirs(root)) if (!(await regenerableDirProblem(root, path, signal))) dirs.push(path);
+  for (const path of await existingBuildDirsAsync(root))
+    if (!(await regenerableDirProblem(root, path, signal))) dirs.push(path);
   return dirs;
 }
 
@@ -650,7 +652,7 @@ export async function clearWorkspaceOutputs(
           );
           if (again?.keptReason) return again.keptReason;
           const inTree: { path: string; problem: string | null }[] = [];
-          for (const path of lighten ? existingBuildDirs(root) : [])
+          for (const path of lighten ? await existingBuildDirsAsync(root) : [])
             inTree.push({ path, problem: await regenerableDirProblem(root, path, signal) });
           for (const path of [
             ...workspaceOutputPaths(entry.dir),

@@ -459,14 +459,25 @@ export async function releaseWorkspaceLeasesAsync(
   }
 }
 
+function dropExpiredLease(entry: LeaseFileEntry, io: LeaseIo): boolean {
+  const current = parseLease(io.readLease(entry.path));
+  if (!current || !leaseIsExpired(current, io.now())) return false;
+  io.removeLease(entry.path);
+  return true;
+}
+
 export function removeExpiredLease(entry: LeaseFileEntry, io: LeaseIo = fileLeaseIo): boolean {
   const lease = entry.lease;
   if (!lease) return false;
-  return io.withLeaseLock(deviceLeaseLockPath(lease.platform, lease.id), (): boolean => {
-    const current = parseLease(io.readLease(entry.path));
-    if (!current || !leaseIsExpired(current, io.now())) return false;
-    io.removeLease(entry.path);
-    return true;
+  return io.withLeaseLock(deviceLeaseLockPath(lease.platform, lease.id), () => dropExpiredLease(entry, io));
+}
+
+export async function removeExpiredLeaseAsync(entry: LeaseFileEntry, signal?: AbortSignal): Promise<boolean> {
+  const lease = entry.lease;
+  if (!lease) return false;
+  return withDirLockAsync(deviceLeaseLockPath(lease.platform, lease.id), () => dropExpiredLease(entry, fileLeaseIo), {
+    ensureParent: () => mkdirSync(deviceLocksDir(), { recursive: true }),
+    signal,
   });
 }
 

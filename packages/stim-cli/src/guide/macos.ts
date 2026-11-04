@@ -219,8 +219,14 @@ actions are no longer returned, and a failed open is not shown.
 OWNERSHIP AND LOCAL VIEWING
 
 The supervisor owns a process-identity claim with the app as its child. Stop
-signals only verified recorded identities. An unverifiable or malformed owner
-refuses with STIM_MACOS_OWNER_UNVERIFIED; other apps remain untouched.
+signals only verified recorded identities. That includes the commands the app
+started that are still running, even mid-operation: they get SIGTERM, then
+SIGKILL, as the app does. They are its direct children and the helpers in their
+process groups, such as a Desktop test copy's stim-server and its adb client; a
+daemon in a group of its own, such as the shared adb server, is left alone. A
+process whose identity cannot be read is skipped with a warning. An unverifiable
+or malformed owner refuses with STIM_MACOS_OWNER_UNVERIFIED; other apps remain
+untouched.
 
 Stim Desktop shows this app in its workspace, with Build and run, Open app (local
 apps only) and Stop, and a live preview that updates itself while the app runs. Capture and Open app verify the recorded executable, bundle
@@ -267,8 +273,8 @@ input.window { session, window: <id from macos-windows> } brings that window to
 the front of the app, and capture and input stay on it while another window
 comes forward on the Mac. input.window { session, window: null } follows the
 front window again. The pin also ends when its window closes or minimizes, or
-when the Control session that set it ends for any reason, including release,
-takeover, disconnect and the five-minute idle timeout, since viewers without
+when the last Control session on the app ends for any reason, including release,
+disconnect and the five-minute idle timeout, since viewers without
 Control cannot unpin; macos-windows reports pinned true while it holds. Choosing
 a window while the app shows a modal dialog, or one that just closed, is dropped
 without ending Control. The phone's Control toolbar and Stim Desktop's app card and
@@ -313,8 +319,9 @@ logs.
 Clicks on views that reject the first mouse, such as custom views and SwiftUI
 onTapGesture regions, do not land while the app is in the background. Use
 Desktop's Open app to bring the app to the front for those views.
-Control holds one exclusive server session per owned app, ends on disconnect,
-revocation, takeover or five minutes without input, and does not take a CLI
+Several clients can hold Control of one owned app at once, sharing its one input
+session; each ends on disconnect, revocation or five minutes without input. An
+input the app refuses ends Control for all of them. Control does not take a CLI
 simulator/device lock. Each action rechecks the exact owned process and that the
 captured window is still the app's front standard window, or the pinned one. The
 app's other windows are allowed; input goes to the captured window, and a sheet attached to it takes
@@ -483,7 +490,7 @@ script such as mini-desktop.sh use these instead:
   rclick                     unavailable: secondary click is not supported
   quit                       stim stop (verified stop; the host frees the slot
                              and removes the app's defaults)
-  clean                      stim worktree remove
+  clean                      stim worktree remove, run from the worktree root
   3 concurrent slots         concurrency.maxMacosApps and concurrency.maxDevices
                              on the host, counted apart from simulators and
                              emulators; one bundle id slot per session

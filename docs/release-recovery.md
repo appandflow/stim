@@ -13,13 +13,18 @@ RELEASE.md section 4 step 4 checks three `CI` jobs and the merge-queue
 - No push `CI` run, or `cancelled` gate jobs: a pull request landed on `main`
   before the run finished and the branch's concurrency group cancelled it. This
   is not a failure of the commit. Dispatch `ci.yml` on `release-ci/X.Y.Z` at the
-  same commit as step 4 shows and check that run's three jobs. Do not re-run the
-  cancelled run: it would cancel the newest `main` run.
+  same commit as step 4 shows (`-f full=false`) and check that run's three jobs.
+  Do not re-run the cancelled run: it would cancel the newest `main` run.
 - A red gate job: the candidate failed. Fix it with a new commit and repeat
   steps 2 to 4. Do not tag.
-- `test (windows)`, `test (macos)`, the process-inspection jobs, the full Windows
-  suite and `Native E2E` are not part of the gate. Their failures follow
-  RELEASE.md section 5.
+- `test (windows)`, `test (macos)`, the process-inspection jobs and `Native E2E`
+  gate a stable version only through its `Full suite (native E2E)` run (RELEASE.md
+  section 4, step 4). The full Windows suite never gates. Their nightly
+  failures follow RELEASE.md section 5.
+- A tag push that fails in its first job with `No successful "Full suite (native
+E2E)" run`: the stable version has no green `Full suite` run on that commit.
+  Nothing was published. Dispatch the suite on a branch at the tagged commit,
+  and re-run the failed job once it passes.
 
 ## A tag exists but npm does not have it
 
@@ -43,14 +48,6 @@ fails the run red, because the freshly computed `DIST_TAG` no longer matches
 what actually got published, and a backfill publish for the old version can
 re-point `latest` or `next` backwards onto it -- confirm with
 `npm dist-tag ls <package>` afterward if you do this.
-
-## Post-release validation failed
-
-The `Post-release validation` run starts from the same tag as `Release` and
-holds the full Windows unit suite. It never blocks or fails the publish, and a
-red run is not a reason to retry the publish, delete the tag or deprecate the
-version. Follow RELEASE.md section 5. Re-running `Release` does not re-run it;
-re-run `Post-release validation` itself.
 
 ## Smoke job failed after the publish job passed
 

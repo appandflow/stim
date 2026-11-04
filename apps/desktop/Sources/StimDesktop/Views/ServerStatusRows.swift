@@ -21,6 +21,9 @@ struct ServerStatusRows: View {
     case .running(let health, let owned):
       Text("stim-server \(health.version) on port \(String(server.port))\(owned ? "" : ", started outside Stim Desktop")")
         .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      if let refusal = server.connectionRefusal {
+        Text(abbreviatingHome(refusal)).foregroundStyle(Palette.error).textSelection(.enabled)
+      }
       if StimHome.isDefault(stimHome), !health.servesDefaultHome() {
         Text(
           "This server keeps its state in \(abbreviatingHome(health.stimHome)), not ~/.stim.\(FeatureFlags.isEnabled(.phoneApp) ? " Phones paired now stop working when Stim Desktop serves ~/.stim again." : "")"

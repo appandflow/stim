@@ -1,5 +1,5 @@
 export * from '@stim-cli/core/protocol';
-import { SETTING_SCOPES } from '@stim-cli/core/state';
+import { MAX_REVERSE_PORTS, SETTING_SCOPES } from '@stim-cli/core/state';
 
 import {
   PROTOCOL_VERSION,
@@ -7,6 +7,8 @@ import {
   FEATURES,
   type Method,
   PUSH_TOKEN_PATTERN,
+  SHARE_SLUG_PATTERN,
+  RESERVED_SHARE_SLUGS,
   ERROR_CODES,
   LOG_SOURCES,
   LOG_LEVELS,
@@ -1219,7 +1221,7 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['report'],
             additionalProperties: false,
-            properties: { report: { enum: ['gc', 'gc-history', 'builds'] } },
+            properties: { report: { enum: ['gc', 'gc-history', 'builds', 'remote'] } },
           },
           {
             type: 'object',
@@ -1536,7 +1538,20 @@ export function protocolJsonSchema(): JsonSchema {
             },
           }),
           request('device-host.metro.close', session({})),
-          request('device-host.metro.link', session({})),
+          request('device-host.metro.link', session({ port: { type: 'integer', minimum: 1, maximum: 65535 } })),
+          request(
+            'device-host.reverse.set',
+            session(
+              {
+                ports: {
+                  type: 'array',
+                  maxItems: MAX_REVERSE_PORTS,
+                  items: { type: 'integer', minimum: 1, maximum: 65535 },
+                },
+              },
+              ['ports'],
+            ),
+          ),
           request('device-host.agent.link', session({})),
           request(
             'device-host.frames.subscribe',
@@ -1559,6 +1574,7 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: { subscription: { type: 'string' } },
           }),
+          request('device-host.webrtc.offer', session({ sdp: { type: 'string', maxLength: 65536 } }, ['sdp'])),
           request('device-host.presence.subscribe', session({})),
           request('device-host.unsubscribe', {
             type: 'object',
@@ -1788,6 +1804,46 @@ export function protocolJsonSchema(): JsonSchema {
             required: ['request'],
             additionalProperties: false,
             properties: { request: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' } },
+          }),
+          request('desktop.setup.subscribe', {
+            type: 'object',
+            required: ['ticket', 'expires', 'capabilities'],
+            additionalProperties: false,
+            properties: {
+              ticket: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
+              expires: { type: 'string', minLength: 1, maxLength: 64 },
+              capabilities: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 2,
+                uniqueItems: true,
+                items: { enum: ['build', 'device-host'] },
+              },
+            },
+          }),
+          request('desktop.setup.answer', {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['journal', 'answer', 'capability'],
+                additionalProperties: false,
+                properties: {
+                  journal: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+                  answer: { enum: ['approve', 'refuse'] },
+                  capability: { enum: ['build', 'device-host'] },
+                },
+              },
+              {
+                type: 'object',
+                required: ['journal', 'answer', 'permission'],
+                additionalProperties: false,
+                properties: {
+                  journal: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+                  answer: { const: 'skip' },
+                  permission: { enum: ['screenRecording', 'deviceControl'] },
+                },
+              },
+            ],
           }),
           request('desktop.build.subscribe', {
             type: 'object',
@@ -2272,6 +2328,8 @@ export function protocolJsonSchema(): JsonSchema {
               physical: { type: 'boolean' },
               control: { type: 'boolean' },
               expiresMinutes: { type: 'integer', minimum: 1, maximum: 480 },
+              expiresAt: { type: 'string', minLength: 20, maxLength: 40 },
+              token: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
               password: { type: 'string', minLength: 8, maxLength: 128 },
               passwordless: { type: 'boolean' },
               view: {
@@ -2279,13 +2337,18 @@ export function protocolJsonSchema(): JsonSchema {
                 additionalProperties: false,
                 properties: { password: { type: 'string', minLength: 8, maxLength: 128 } },
               },
+              slug: { type: 'string', pattern: SHARE_SLUG_PATTERN, not: { enum: [...RESERVED_SHARE_SLUGS] } },
             },
           }),
           request('share.stop', {
             type: 'object',
             required: ['workspace'],
             additionalProperties: false,
-            properties: { workspace: { type: 'string', minLength: 1 }, id: { type: 'string', minLength: 1 } },
+            properties: {
+              workspace: { type: 'string', minLength: 1 },
+              id: { type: 'string', minLength: 1 },
+              slot: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
+            },
           }),
           optionalParams('share.list', { type: 'object', maxProperties: 0 }),
           request('presence.publish', {
@@ -2501,6 +2564,28 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ServerEvent: {
         oneOf: [
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'journal', 'asking'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'desktop-setup-progress' },
+              subscription: { type: 'string' },
+              journal: { type: 'object' },
+              asking: { enum: ['build', 'device-host', null] },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'exitCode', 'output'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'desktop-setup-ended' },
+              subscription: { type: 'string' },
+              exitCode: { type: 'integer' },
+              output: {},
+            },
+          },
           {
             type: 'object',
             required: ['event', 'subscription', 'stream', 'message'],
@@ -2732,6 +2817,16 @@ export function protocolJsonSchema(): JsonSchema {
                   },
                 },
               },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'message'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'webrtc-closed' },
+              subscription: { type: 'string' },
+              message: { type: 'string' },
             },
           },
           {

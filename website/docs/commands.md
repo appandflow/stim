@@ -106,7 +106,7 @@ inspected platforms in Stim's state, which also registers the project for
 `stim status`, so `stim guide` can tell when doctor is due again. A run in a
 directory that is not an app records nothing.
 
-The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote Machines > Add**.
+The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Connections > This machine uses > Add**.
 
 The `readiness-markers-missing` note appears when no JavaScript or TypeScript source under the app directory contains `[stim:readiness]`. The scan skips `node_modules`, the native project and build output directories (`ios`, `android`, `macos`, `windows`, `Pods`, `build`, `dist`, `web-build`, `coverage`) and dot-directories. It does not read shared packages outside the app directory, and it reports nothing in an app with more than 5000 source files. It points to `stim guide lifecycle readiness` and the [app-declared readiness](./dev-server-and-logs.md#recommended-app-declared-readiness) logs.
 
@@ -312,6 +312,7 @@ stim ports
 stim ports get <label>
 stim ports stop [label] [--dry-run]
 stim ports release [label]
+stim ports reverse <label|port> [--remove] [--json]
 ```
 
 Reserves TCP ports 8900–8999 for web or API servers started by the
@@ -322,7 +323,20 @@ Allocation reads native TCP tables through `netstat` on macOS and Windows and
 each port with `lsof` and loopback connects instead, and refuses only when
 none of them can answer. Stopping listeners still requires `lsof` on macOS and
 Linux, or `netstat` on Windows.
-`ports` lists named allocations and Metro, marked managed.
+`ports` lists named allocations and Metro, marked managed, and the ports the
+workspace reverses. `ports --json` prints one payload with `ports`, `metroPort`
+and `reverses`.
+
+`ports reverse <label|port>` makes a server on this machine reachable at the
+same `localhost:<port>` from the workspace's devices, like `adb reverse`. It
+takes a label from `ports get` or a raw port, records it for the workspace (at
+most 16), and applies it to the devices the workspace has now. A local iOS
+simulator shares this Mac's loopback and needs nothing, an Android emulator or
+phone gets `adb reverse tcp:<port> tcp:<port>`, and an iPhone is refused because
+USB carries no reverse forward. Hosted devices are bridged through the Metro supervisor's links to the host; see [Remote machines](./remote-machines.md#reverse-ports-on-hosted-devices). `--remove` removes it, and `--json` prints
+`action`, `port`, `ports` and a `devices` list whose `status` is `reachable`,
+`applied`, `removed`, `pending`, `unsupported` or `failed`. See
+[Reverse ports](./dev-server-and-logs.md#reverse-ports).
 
 Labels start with a letter and contain up to 64 letters, digits, underscores,
 or hyphens. `metro` is reserved for `stim start` and `stim stop`.
@@ -1069,7 +1083,20 @@ Stim adds what agent-device needs to reach the device:
   leased phone wins over the slot's simulator or emulator.
 - `--remote-config` for a [hosted iOS](./owned-devices.md#run-ios-on-another-mac)
   or [hosted Android](./remote-machines.md) session.
-- `--session stim-<slot>-<platform>` unless you pass `--session`.
+- `--session stim-<slot>-<platform>` unless you pass `--session`. A hosted session's
+  name ends with the first eight hex digits of the workspace id
+  (`stim-default-ios-1a2b3c4d`), because agent-device keeps one saved remote
+  connection per session name on the machine and two workspaces would otherwise
+  share it. The name stays the same across commands in one workspace.
+- For a hosted session whose host no longer holds the agent-device session (its
+  stim-server restarted, or no command reached the session for an hour, so agent-device
+  answers `SESSION_NOT_FOUND`), a
+  single-action command (`snapshot`, `press`, `tap`, `scroll`, `type` and the like)
+  opens the app the workspace last launched on the same session and runs once more.
+  The output of that command is held until it ends, and only the last run's output
+  is printed. The command acts on that app's screen as it is after the reopen, so take a
+  fresh snapshot when a coordinate gesture matters. Multi-step commands such as `batch`
+  are not retried.
 - `AGENT_DEVICE_STATE_DIR`, the workspace's
   [agent-device state directory](./dev-server-and-logs.md#agent-device-actions),
   except for a hosted session, which keeps agent-device's own.
@@ -1091,7 +1118,11 @@ stays parseable and interactive commands such as `record` and `logs` work.
 After each command, Stim shows the action to stim-server viewers that ask for
 presence: `Agent · press` and where it landed. A `snapshot --json` taken through
 the wrapper lets Stim outline the element a later `press @ref` acts on; text
-snapshots give the point only. macOS apps are not covered; see
+snapshots give the point only. stim-server measures a point that has no JSON snapshot in
+the device's own screen, and shows the actions of agent-device you run
+directly too, from agent-device's session records for the workspace's device, about
+a second after each one, for an owned simulator or emulator. A leased phone and macOS
+apps are not covered that way; see
 [native Mac agent actions](./macos.md#agent-actions).
 
 :::tip[Ask your agent]
@@ -1107,8 +1138,9 @@ check stim logs --source agent.
 ## `share`
 
 ```text
-stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--view-password [value]] [--device] [--slot <name>] [--json]
-stim share stop [--json]
+stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--view-password [value]] [--slug <name>] [--device] [--slot <name>] [--json]
+stim share ios|android --reuse [--expires <minutes>] [--device] [--slot <name>] [--json]
+stim share stop [--forget] [--json]
 stim share list [--json]
 ```
 
@@ -1118,10 +1150,15 @@ runs inside this Stim home's stim-server, which `stim share` starts in the
 background when none runs, and is served through Tailscale Funnel. The
 password is generated unless you set one with `--password` or drop it with
 `--no-password`. With `--control`, `--view-password` adds a second password that
-only watches. Viewers see each other's touches live. Every share expires (60 minutes by default, at most 480) and ends with
-`stim share stop`, `stim stop` (without `--slot`), `stim worktree remove`, its
-device, or stim-server. It refuses with `STIM_SERVER_NOT_RUNNING` when it cannot start a
-stim-server and `STIM_SHARE_REFUSED` with the reason otherwise, including at once on Windows. See
+only watches. `--slug <name>` makes the link `/s/<name>/` instead of a random
+token and needs a password. Viewers see each other's touches live. Every share expires (60 minutes by default, at most 480) and ends with
+`stim share stop`, `stim stop` (the workspace, or one slot with `--slot`),
+`stim worktree remove`, or stim-server. A device that goes away, as it does when
+you rebuild or relaunch the app, only makes it wait and resume. It refuses with
+`STIM_SERVER_NOT_RUNNING` when it cannot start a stim-server and
+`STIM_SHARE_REFUSED` with the reason otherwise, including at once on Windows. `--reuse` starts the saved link and passwords of the workspace's last share of
+that target again, until it expires, and `stop --forget` also deletes the saved
+links. See
 [Share a running app](./share.md) for the requirements and the security model.
 
 ## `logs`
@@ -1191,7 +1228,12 @@ stim stop [--slot <name>] [--json]
 
 Without `--slot`, stops the supervisor and all log collectors, shuts down every
 owned local device, ends an owned remote session, and frees the port. Owned
-local devices stay assigned for reuse. A dev server left behind by a supervisor
+local devices stay assigned for reuse. An owned iOS simulator stays booted for
+`pool.bootedGraceMinutes` when macOS memory pressure is normal, a device slot
+is free and `daemon.mode` is `on`: the stim-daemon shuts it down when the grace
+period passes or under memory pressure, and `--json` reports it as
+`device.ios.status` `kept-booted` with `until`. Run
+`STIM_POOL_BOOTED_GRACE_MINUTES=0 stim stop` to shut it down at once. A dev server left behind by a supervisor
 that died is stopped when its recorded process identity still matches. An
 external server on the reserved port is left running, the port stays reserved
 while that server runs from this project, and a process whose ownership cannot
@@ -1499,7 +1541,12 @@ stim remote remove janics-mac-mini
 
 The states are the ones `stim doctor --json` reports under `remoteMachines`
 (`build` here) and `deviceHosts` (`deviceHost` here). `list --json` prints
-`{ machines: [{ machine, priority, build, deviceHost }], findings }`; `add
+`{ machines: [{ machine, priority, build, deviceHost, serverKeyFingerprint, reachability, revoke }], findings }`,
+where `serverKeyFingerprint` is the fingerprint of the stim-server key this
+machine pinned for it (`null` before it answered), `reachability` is
+`reachable`, `unreachable`, `key-changed` or `unknown` from this run's contact,
+and `revoke` lists the `stim-server devices revoke <id>` commands a person on
+that machine runs to withdraw its approvals; `add
 --json` prints `{ machine, added, machines, build, deviceHost, findings }`,
 where `machines` is the list after the change; `remove --json` prints
 `{ machine, removed, forgot, machines, revoke, pending }`, where `pending` means a request
@@ -1524,6 +1571,17 @@ behind its upstream, and whether its branch is merged, as a
 only for live environments; `stim status --watch` shows it for every worktree. See
 [Parallel environments](./worktrees.md#parallel-environments) for the JSON
 fields.
+
+One-shot `stim status` takes simulator state and device slot usage from the
+device listing that a boot admission took in the last 10 seconds, when there
+is one, and runs `simctl list` itself otherwise. It also lists itself when that
+listing lacks a simulator or, for the emulator listing, an owned emulator that a
+workspace records. Under a burst of starting workspaces the admissions keep that
+listing fresh, so status does not wait on a slow `simctl`. The listing can be up
+to 10 seconds old plus the time it took, and a boot admission lists before it
+boots a device, so a device that boots or stops after that listing can show its
+earlier state for that long. `stim status --watch` always lists the devices
+itself.
 
 Each workspace is marked with its lifecycle phase: `[warming: <step>]` while
 `stim worktree warm` runs in it, or `[ready]` after a warm until its first run.
@@ -1637,9 +1695,13 @@ its data folder. `buildBytes` is Stim's own folder for the workspace, with Xcode
 derived data, Gradle outputs and logs. `nodeModulesBytes` counts APFS clones in
 full; `nodeModulesPrivateBytes` is what deleting `node_modules` would free, the
 blocks no copy-on-write clone or outside hard link shares, and is `null` off
-APFS or without the Command Line Tools. The watcher runs `du` off its refresh path, at
-most every 5 minutes per folder while the environment is active and every hour
-otherwise, and one-shot `stim status` reads its cached sizes.
+APFS or without the Command Line Tools. Both `node_modules` figures are `null`
+again after a reinstall or a fresh clone until the tree is measured, and they
+are the measurement `stim gc` and the daemon's cleanup use. The watcher
+measures off its refresh path, at most every 5 minutes per folder while the
+environment is active and every hour otherwise, and measures `node_modules`
+when its install changes and at least every 6 hours. One-shot `stim status`
+reads the cached sizes.
 
 An environment carries `agents` when a coding-agent session works in it:
 `[{ tool, sessionId, title?, cwd, startedAt?, lastActiveAt?, pid?, openUrl?, webUrl? }]`,
@@ -1937,7 +1999,7 @@ be read. Stim counts as drivers a live agent-device session (its recorded
 processes must still be alive with their recorded start times, so a stale or
 reused pid does not count), an unexpired `stim device lock`, a host process
 that names the device (Argent, xcodebuild test runners, idb, Maestro, Appium,
-`simctl io|spawn`), and on Android a `uiautomator`, `androidx.test` or Argent
+`simctl io|spawn`, except the screenshots stim-server itself takes of the device), and on Android a `uiautomator`, `androidx.test` or Argent
 helper process.
 `lastActivityAt` is the newest of the device's app log records, changes to the
 workspace's `client.ndjson` and `device.ndjson` logs, the platform's Metro
@@ -2126,8 +2188,10 @@ Stim registry entry. Git-created branches stay. An existing Stim ownership
 record permits deleting a branch only when it has no unique commits. On the
 source checkout it only reclaims the environment: from the checkout root, every
 registered project under it; from a subfolder, only the project at or above that
-folder (with the projects nested under it), and it refuses when none is registered there. A bare repository directory
-is refused because it is not a worktree. `--force` permits removal
+folder (with the projects nested under it), and it refuses when none is registered
+there. A linked worktree is removed only from its root, or when you pass its root
+path; from a subfolder it reclaims only that project and leaves the tree. A bare
+repository directory is refused because it is not a worktree. `--force` permits removal
 with uncommitted, untracked, or unpushed work or initialized submodules. A
 worktree locked with `git worktree lock` is refused until you unlock it.
 
@@ -2441,7 +2505,8 @@ creation and last-seen times, and the simulators and emulators its created-devic
 ledger names. Homes inside `~/.stim`, such as hosted session homes, are not listed.
 For each listed home that still exists, gc reports its private size, workspace count,
 last-seen time, devices and the exact teardown commands:
-`STIM_HOME=<home> stim worktree remove` from each workspace root, then
+`STIM_HOME=<home> stim worktree remove` from the root of each linked worktree, or from the
+project folder in a source checkout, then
 `STIM_HOME=<home> stim gc --delete`, then removing the directory. A home whose
 directory is gone from a mounted volume is listed as gone, and any of its devices
 still on the machine appear as orphaned from that home with the command that deletes
@@ -2624,7 +2689,8 @@ Each entry's
 blocks no copy-on-write clone or outside hard link shares, and is `null` for
 other directories, off APFS and without the Command Line Tools. gc reuses a
 size for up to an hour while no entry was added to or removed from the
-directory (for `node_modules` and Pods, while their install is unchanged),
+directory (for `node_modules` and Pods, for up to six hours while their install
+is unchanged, the measurement `stim status` and the daemon share),
 measures the rest with one `du` or private-size walk per directory, 4 at a time with a
 10-second limit each, and reports a directory it could not measure in time as
 `null`.

@@ -6,9 +6,9 @@ struct PairedMachineSection: View {
   var entry: PairedServers.Entry
   var session: ServerSession?
   var status: PairedStatus?
-  var work: [RemoteWork]
+  var work: [ForeignWork]
 
-  private var name: String { session?.name ?? entry.pairing?.name ?? "Paired machine" }
+  private var name: String { PairedServerWording.displayName(session?.name ?? entry.pairing?.name ?? "") }
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.xxl) {
@@ -31,20 +31,22 @@ struct PairedMachineSection: View {
           }
         }
       }
-      list("Hosted devices", items: work.filter(\.isHostedDevice), empty: "No hosted devices")
-      list("Offloaded builds", items: work.filter { !$0.isHostedDevice }, empty: "No offloaded builds")
+      list("\(name)'s hosted devices", items: work.filter { $0.kind.isHostedDevice }, empty: "No hosted devices")
+      list("\(name)'s offloaded builds", items: work.filter { !$0.kind.isHostedDevice }, empty: "No offloaded builds")
     }
   }
 
   private var subtitle: String {
-    var parts = ["\(entry.status.title) \u{00B7} \(PairedServerWording.access(entry.pairing?.capabilities ?? ["read"]))"]
+    var parts = [
+      "Viewing \u{00B7} \(entry.status.title) \u{00B7} \(PairedServerWording.access(entry.pairing?.capabilities ?? ["read"]))"
+    ]
     if let since = session?.offlineSince, status?.payload != nil {
       parts.append("offline since \(since.formatted(date: .omitted, time: .shortened))")
     }
     return parts.joined(separator: ", ")
   }
 
-  private func list(_ title: String, items: [RemoteWork], empty: String) -> some View {
+  private func list(_ title: String, items: [ForeignWork], empty: String) -> some View {
     VStack(alignment: .leading, spacing: Space.md) {
       SectionLabel(title: title)
       Card {
@@ -54,7 +56,7 @@ struct PairedMachineSection: View {
           }
           ForEach(items) { item in
             if item.id != items.first?.id { Divider() }
-            row(icon: item.icon, title: item.title, detail: "\(name) \u{00B7} \(item.place)", value: nil)
+            row(icon: item.icon, title: item.title, detail: item.place(serverName: name, now: Date()), value: nil)
           }
         }
       }
@@ -74,29 +76,9 @@ struct PairedMachineSection: View {
   }
 }
 
-extension RemoteWork {
-  fileprivate var isHostedDevice: Bool {
-    if case .hostedDevice = kind { return true }
-    return false
-  }
-
+extension ForeignWork {
   fileprivate var icon: String {
     if case .hostedDevice(let device) = kind { return device.ref.platform == "android" ? "smartphone" : "iphone" }
     return "hammer"
-  }
-
-  fileprivate var title: String {
-    switch kind {
-    case .hostedDevice(let device): return "\(device.ref.model) \u{00B7} \(workspaceTitle)"
-    case .offloadedBuild(let build): return "\(platformName(build.platform)) build \u{00B7} \(workspaceTitle)"
-    }
-  }
-
-  fileprivate var place: String {
-    switch kind {
-    case .hostedDevice: return "running on \(host)"
-    case .offloadedBuild(let build):
-      return ["building on \(host)", build.remote(at: Date())?.phase].compactMap { $0 }.joined(separator: " \u{00B7} ")
-    }
   }
 }

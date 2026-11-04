@@ -1,10 +1,11 @@
 import assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExecOptions, Executor } from '../exec.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { isBundleActivityLine } from '../supervisor/server-expo.ts';
 import {
   LAUNCH_ERROR,
@@ -162,7 +163,7 @@ describe('ios', () => {
         },
       },
     );
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       appPath,
       artifactDurationMs: 500,
@@ -1129,6 +1130,102 @@ describe('skipping an install the device already holds', () => {
     expect(result.skipped).toBe(true);
     expect(exec.calls.some((c) => c.includes('write'))).toBe(false);
     expect(result.devClientPreparationDurationMs).toBeUndefined();
+  });
+});
+
+describe.skipIf(!existsSync('/usr/bin/sqlite3'))('installIosApp paste permission', () => {
+  const BUNDLE = "com.example.pa'ste";
+  const OWNED = 'UDID-OWNED';
+  const FOREIGN = 'UDID-FOREIGN';
+  let dir: string;
+  let home: string;
+  let database: string;
+  const previousHome = process.env.STIM_HOME;
+
+  function sqlite(...args: string[]): string {
+    return execFileSync('/usr/bin/sqlite3', [database, ...args], { encoding: 'utf8' }).trim();
+  }
+
+  function simctlList(sims: { udid: string; name: string }[]): string {
+    return JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-27-0': sims.map((sim) => ({
+          ...sim,
+          state: 'Booted',
+          isAvailable: true,
+          deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro',
+          dataPath: dir,
+        })),
+      },
+    });
+  }
+
+  function sqliteBackedExec(sims: { udid: string; name: string }[]): RecordingExec {
+    const exec = recordingExec({ outputs: { 'simctl list devices': simctlList(sims) } });
+    const record = exec.runFile.bind(exec);
+    exec.runFile = (file, args = [], opts) => {
+      const out = record(file, args, opts);
+      return file === '/usr/bin/sqlite3' ? execFileSync(file, args, { encoding: 'utf8' }) : out;
+    };
+    return exec;
+  }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'stim-paste-tcc-'));
+    home = mkdtempSync(join(tmpdir(), 'stim-paste-home-'));
+    process.env.STIM_HOME = home;
+    mkdirSync(join(dir, 'Library', 'TCC'), { recursive: true });
+    database = join(dir, 'Library', 'TCC', 'TCC.db');
+    sqlite(
+      `create table access (service TEXT NOT NULL, client TEXT NOT NULL, client_type INTEGER NOT NULL, auth_value INTEGER NOT NULL, auth_reason INTEGER NOT NULL, auth_version INTEGER NOT NULL, csreq BLOB, policy_id INTEGER, indirect_object_identifier_type INTEGER, indirect_object_identifier TEXT NOT NULL DEFAULT 'UNUSED', indirect_object_code_identity BLOB, flags INTEGER, last_modified INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)), pid INTEGER, pid_version INTEGER, boot_uuid TEXT NOT NULL DEFAULT 'UNUSED', last_reminded INTEGER NOT NULL DEFAULT 0, one_time_reprompt_eligible INTEGER, reminder_count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (service, client, client_type, indirect_object_identifier))`,
+      `insert into access (service, client, client_type, auth_value, auth_reason, auth_version) values ('kTCCServicePasteboard', '${BUNDLE.replaceAll("'", "''")}', 0, 3, 2, 2), ('kTCCServicePasteboard', 'com.example.other', 0, 3, 2, 2), ('kTCCServiceLiverpool', 'com.apple.SeymourServices', 0, 2, 4, 1)`,
+    );
+    recordCreatedDevice('ios', OWNED);
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const rows = () =>
+    sqlite("select service || '|' || client || '|' || auth_value from access order by service, client").split('\n');
+
+  test('an owned simulator allows paste for the installed bundle only, replacing the denial the first read wrote', async () => {
+    const exec = sqliteBackedExec([{ udid: OWNED, name: 'stim-app (iPhone 18 Pro 27.0)' }]);
+    const result = await installIosApp({ udid: OWNED, appPath: '/tmp/A.app', bundleId: BUNDLE }, { exec });
+    expect(result.ok).toBe(true);
+    expect(result.pasteboardNote).toBeUndefined();
+    expect(rows()).toEqual([
+      'kTCCServiceLiverpool|com.apple.SeymourServices|2',
+      'kTCCServicePasteboard|com.example.other|3',
+      `kTCCServicePasteboard|${BUNDLE}|2`,
+    ]);
+    const order = exec.calls.map((call) => (call[0] === '/usr/bin/sqlite3' ? 'sqlite3' : call[2]));
+    expect(order.indexOf('install')).toBeLessThan(order.indexOf('sqlite3'));
+  });
+
+  test('a simulator Stim does not own is left alone', async () => {
+    const exec = sqliteBackedExec([
+      { udid: OWNED, name: 'stim-app (iPhone 18 Pro 27.0)' },
+      { udid: FOREIGN, name: 'stim-lookalike (iPhone 18 Pro 27.0)' },
+    ]);
+    const result = await installIosApp({ udid: FOREIGN, appPath: '/tmp/A.app', bundleId: BUNDLE }, { exec });
+    expect(result.ok).toBe(true);
+    expect(result.pasteboardNote).toContain('not a Stim-owned simulator');
+    expect(exec.calls.some((call) => call[0] === '/usr/bin/sqlite3')).toBe(false);
+    expect(rows()).toContain(`kTCCServicePasteboard|${BUNDLE}|3`);
+  });
+
+  test('a missing TCC.db keeps the install and reports that paste was not allowed', async () => {
+    rmSync(database);
+    const exec = sqliteBackedExec([{ udid: OWNED, name: 'stim-app (iPhone 18 Pro 27.0)' }]);
+    const result = await installIosApp({ udid: OWNED, appPath: '/tmp/A.app', bundleId: BUNDLE }, { exec });
+    expect(result.ok).toBe(true);
+    expect(result.pasteboardNote).toContain('no TCC.db');
+    expect(existsSync(database)).toBe(false);
   });
 });
 

@@ -27,7 +27,7 @@ import {
   readDaemonSnapshot,
   readJsonObject,
 } from '@stim-cli/core/state';
-import { writeCacheFile } from '../status-measures.ts';
+import { writeCacheFile } from '../cache-file.ts';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { recordCapacityRefusal, recordCapacityWait } from './stats.ts';
 import {
@@ -416,6 +416,21 @@ async function listedAsync<T>(source: () => Promise<T>, empty: T): Promise<T> {
   }
 }
 
+/** The counts of {@link countLiveOwnedDevicesByPlatform}, read without blocking the event loop. */
+export async function countLiveOwnedDevicesByPlatformAsync(
+  sources: AsyncInventorySources,
+): Promise<HostedLocalPlatformCounts | { unknown: string }> {
+  try {
+    const inventory = await readInventoryAsync(sources);
+    if ('code' in inventory) return { unknown: inventory.message };
+    const keys = inventoryKeys(inventory);
+    return { ios: platformCount(keys, 'ios'), android: platformCount(keys, 'android') };
+  } catch (error) {
+    if (isClaimRefusal(error)) return { unknown: error.message };
+    throw error;
+  }
+}
+
 export async function countLiveOwnedDevicesFrom(
   sources: AsyncInventorySources,
   { exclude = [] }: { exclude?: DeviceCountExclusion[] } = {},
@@ -745,16 +760,54 @@ interface SharedListing {
   adb: AdbDevices | null;
 }
 
-function readSharedListing(at: number): SharedListing | null {
+const SHARED_LISTING_SCHEMA = 1;
+
+function isSimRecord(value: unknown): value is SimRecord {
+  if (!isJsonObject(value)) return false;
+  return (
+    ['udid', 'name', 'state', 'runtime', 'deviceTypeIdentifier'].every((field) => typeof value[field] === 'string') &&
+    typeof value.available === 'boolean' &&
+    (value.dataPathSize === undefined || typeof value.dataPathSize === 'number')
+  );
+}
+
+function readSharedListing(at: number, { complete = false }: { complete?: boolean } = {}): SharedListing | null {
   const record = readJsonObject(deviceListingCacheFile());
   const listedAt = record?.listedAt;
   const sims = record?.sims;
   if (typeof listedAt !== 'number' || !Array.isArray(sims) || at < listedAt || at - listedAt > INVENTORY_REFRESH_MS)
     return null;
+  if (complete && (record?.schema !== SHARED_LISTING_SCHEMA || !sims.every(isSimRecord))) return null;
   const adb = isJsonObject(record?.adb) ? record.adb : null;
   if (adb && Array.isArray(adb.emulators) && Array.isArray(adb.physical) && Array.isArray(adb.unhealthy))
     return { listedAt, sims, adb: { emulators: adb.emulators, physical: adb.physical, unhealthy: adb.unhealthy } };
   return { listedAt, sims, adb: null };
+}
+
+/**
+ * The simulator records (and the emulator listing, when the writer took one) of the last device listing a boot
+ * admission took, while it is at most `INVENTORY_REFRESH_MS` old. Null when the file is missing, stale, corrupt or
+ * written without simulator records, and when it lacks a simulator `config` records, which a boot admission creates
+ * after listing. The emulator listing is dropped when it lacks a recorded owned emulator.
+ */
+export function readFreshDeviceListing(
+  config: Config | null,
+  at: number = Date.now(),
+): Pick<SharedListing, 'sims' | 'adb'> | null {
+  const listing = readSharedListing(at, { complete: true });
+  if (!listing) return null;
+  const listedUdids = new Set(listing.sims.map((sim) => sim.udid));
+  const slots = Object.values(config?.projects || {}).flatMap((project) => projectDeviceSlots(project));
+  if (slots.some(({ platforms }) => platforms.ios?.deviceUdid && !listedUdids.has(platforms.ios.deviceUdid)))
+    return null;
+  const ports = new Set(listing.adb ? liveEmulatorPorts(listing.adb).map((entry) => entry.consolePort) : []);
+  const emulatorsListed = slots.every(
+    ({ platforms }) =>
+      !platforms.android?.owned ||
+      typeof platforms.android.consolePort !== 'number' ||
+      ports.has(platforms.android.consolePort),
+  );
+  return { sims: listing.sims, adb: emulatorsListed ? listing.adb : null };
 }
 
 function takeBootMarker(device: BootingDevice): ClaimHandle {
@@ -829,7 +882,7 @@ export async function withDeviceBootAdmission<T>(
   {
     root,
     max: maxOption,
-    platformMax = getPlatformDeviceLimits(),
+    platformMax: platformMaxOption,
     sources = {},
     lockWaitMs = ADMISSION_LOCK_WAIT_MS,
     out = () => {},
@@ -854,8 +907,16 @@ export async function withDeviceBootAdmission<T>(
     memory?: () => { level: string | null; availableBytes: number | null } | null;
   },
 ): Promise<T> {
-  const admission = maxOption === undefined ? admissionLimits() : null;
-  const max = maxOption ?? admission?.maxDevices ?? 0;
+  let admission: ReturnType<typeof admissionLimits> | null = null;
+  let max = maxOption ?? 0;
+  let platformMax: Partial<Record<CappedPlatform, number>> = platformMaxOption ?? {};
+  let ownCap = 0;
+  const readLimits = () => {
+    admission = maxOption === undefined ? admissionLimits() : null;
+    max = maxOption ?? admission?.maxDevices ?? 0;
+    platformMax = platformMaxOption ?? getPlatformDeviceLimits();
+    ownCap = isCappedPlatform(device.platform) ? (platformMax[device.platform] ?? 0) : 0;
+  };
   const requireMembership = () => {
     if (automatic && !automaticMachineEnabled('device', 'local'))
       throw new DeviceAdmissionRefusal({
@@ -866,7 +927,6 @@ export async function withDeviceBootAdmission<T>(
   };
   signal?.throwIfAborted();
   requireMembership();
-  const ownCap = isCappedPlatform(device.platform) ? (platformMax[device.platform] ?? 0) : 0;
   const workspace = workspaceId(root);
   device = { ...device, workspace, displayName, root };
   const wake = daemonWaiter('boot');
@@ -892,6 +952,7 @@ export async function withDeviceBootAdmission<T>(
   const round = () => {
     signal?.throwIfAborted();
     requireMembership();
+    readLimits();
     const waiters = liveWaiters('boot');
     const mine = waiters.findIndex((holder) => holder.claimId === ticket?.claimId);
     const ahead = mine < 0 ? waiters : waiters.slice(0, mine);
@@ -1024,7 +1085,7 @@ export async function withDeviceBootAdmission<T>(
         sims: read.sims,
         adb: recordsOwnedEmulator(read.config) ? read.adb : null,
       };
-      writeCacheFile(deviceListingCacheFile(), listing);
+      writeCacheFile(deviceListingCacheFile(), { schema: SHARED_LISTING_SCHEMA, ...listing });
     }
     return decide(read) ?? admit();
   };

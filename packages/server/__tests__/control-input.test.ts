@@ -1,5 +1,11 @@
 import { expect, it } from 'vitest';
-import { adbInputArgs, parseInput, type SessionTarget } from '../src/control.ts';
+import {
+  adbInputArgs,
+  isExtendedDeviceKey,
+  parseInput,
+  pasteTypingChunks,
+  type SessionTarget,
+} from '../src/control.ts';
 import { MAX_CLIPBOARD_BYTES } from '../src/protocol.ts';
 
 const target = (platform: SessionTarget['platform']): SessionTarget => ({ platform, postures: [] });
@@ -14,17 +20,32 @@ it.each(['ios', 'android'] as const)('accepts the arrows and Escape as input.key
   }
 });
 
-it.each(['ios', 'android'] as const)('refuses other keys and any modifier as input.key on %s', (platform) => {
-  for (const params of [
-    { key: 'tab' },
-    { key: 'a' },
-    { key: 'return' },
-    { key: 'f1' },
-    { key: 'left', modifiers: ['shift'] },
-    { key: 'left', modifiers: 'shift' },
-    {},
-  ]) {
-    expect(parse(platform, params)).toHaveProperty('code', 'bad-request');
+it.each(['ios', 'android'] as const)(
+  'takes a hardware keyboard key with its modifiers as input.key on %s',
+  (platform) => {
+    expect(parse(platform, { key: 'a', modifiers: ['command'] })).toEqual({
+      value: { session: 's', command: { input: 'key', key: 'a', modifiers: ['command'] } },
+    });
+    expect(parse(platform, { key: 'left', modifiers: ['shift', 'option'] })).toHaveProperty('value');
+    expect(parse(platform, { key: 'tab' })).toHaveProperty('value');
+    for (const params of [
+      { key: 'f1' },
+      { key: 'a', modifiers: ['command', 'command'] },
+      { key: 'a', modifiers: ['meta'] },
+      { key: 'left', modifiers: 'shift' },
+      {},
+    ]) {
+      expect(parse(platform, params)).toHaveProperty('code', 'bad-request');
+    }
+  },
+);
+
+it('keeps a physical Android phone to the arrows and Escape without modifiers', () => {
+  const physical = (params: Record<string, unknown>) =>
+    parseInput('input.key', { session: 's', ...params }, () => ({ ...target('android'), physical: true }));
+  expect(physical({ key: 'left' })).toHaveProperty('value');
+  for (const params of [{ key: 'a' }, { key: 'tab' }, { key: 'left', modifiers: ['shift'] }]) {
+    expect(physical(params)).toHaveProperty('code', 'bad-request');
   }
 });
 
@@ -47,6 +68,28 @@ it('presses the Android D-pad and Escape key events for input.key over adb', () 
       ['shell', 'input', 'keyevent', `KEYCODE_${code}`],
     ]);
   }
+});
+
+it('presses a chord over adb as one key combination, with Command acting as Control', () => {
+  expect(adbInputArgs({ input: 'key', key: 'a', modifiers: ['command'] })).toEqual([
+    ['shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_A'],
+  ]);
+  expect(adbInputArgs({ input: 'key', key: 'left', modifiers: ['shift', 'option'] })).toEqual([
+    ['shell', 'input', 'keycombination', 'KEYCODE_SHIFT_LEFT', 'KEYCODE_ALT_LEFT', 'KEYCODE_DPAD_LEFT'],
+  ]);
+  expect(adbInputArgs({ input: 'key', key: 'backspace', modifiers: [] })).toEqual([
+    ['shell', 'input', 'keyevent', 'KEYCODE_DEL'],
+  ]);
+  expect(adbInputArgs({ input: 'key', key: '7', modifiers: ['command', 'control'] })).toEqual([
+    ['shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_7'],
+  ]);
+});
+
+it('sends only a bare arrow or Escape to the emulator gRPC keyboard and leaves other keys to adb', () => {
+  expect(isExtendedDeviceKey('left', [])).toBe(false);
+  expect(isExtendedDeviceKey('escape', undefined)).toBe(false);
+  expect(isExtendedDeviceKey('tab', [])).toBe(true);
+  expect(isExtendedDeviceKey('left', ['shift'])).toBe(true);
 });
 
 const touch = (platform: SessionTarget['platform'], params: Record<string, unknown>, extra?: Partial<SessionTarget>) =>
@@ -133,4 +176,17 @@ it('refuses the clipboard on a web page, a native macOS app and a physical iPhon
     expect(clipboardGet(platform, {}, extra)).toHaveProperty('code', 'bad-request');
   }
   expect(clipboardSet('android', { text: 'a' }, { physical: true })).toHaveProperty('value');
+});
+
+it('splits a typeable paste into input.text pieces and turns CRLF into one Return', () => {
+  expect(pasteTypingChunks('hello')).toEqual(['hello']);
+  expect(pasteTypingChunks('x'.repeat(256))).toEqual(['x'.repeat(256)]);
+  expect(pasteTypingChunks('x'.repeat(257))).toEqual(['x'.repeat(256), 'x']);
+  expect(pasteTypingChunks(`a\tb\r\nc\n${'y'.repeat(600)}`)?.join('')).toBe(`a\tb\nc\n${'y'.repeat(600)}`);
+});
+
+it('leaves a paste to Command-V when the HID keyboard cannot type it', () => {
+  for (const text of ['', 'h\u00e9llo', 'smile \u{1f600}', 'bell\u0007', 'back\bspace', 'lone\rreturn']) {
+    expect(pasteTypingChunks(text)).toBeNull();
+  }
 });

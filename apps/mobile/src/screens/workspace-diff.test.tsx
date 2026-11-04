@@ -114,7 +114,7 @@ test('keeps older servers view-only without sending an unsupported request', asy
   mockFeatures = [];
   const screen = await render(<WorkspaceDiff path="/fixture" group="changed" />);
   expect(mockRequest).not.toHaveBeenCalled();
-  expect(screen.getByText('Update Stim on the Mac to view workspace diffs.')).toBeTruthy();
+  expect(screen.getByText('Update Stim on the machine to view workspace diffs.')).toBeTruthy();
 });
 
 test('omits trailing newline rows while preserving blank lines within new file contents', async () => {

@@ -13,7 +13,7 @@ extension OversightCategory {
     case .looping: return "Agent repeats the same failure"
     case .finished: return "Work finished or PR ready"
     case .machine: return "Machine in trouble"
-    case .control: return "Someone takes over your device"
+    case .control: return "Someone else drives your device"
     case .buildRequest: return "A Mac asks to build here"
     case .attention: return "Needs you"
     }

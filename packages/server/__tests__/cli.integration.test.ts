@@ -1,10 +1,11 @@
+import assert from 'node:assert';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
 import { decodeSecret, keyFingerprint, secretValues } from '@stim-cli/core/noise-session';
-import { createPairingToken, readDevices, serverIdentity, spendSecret } from '../src/registry.ts';
+import { createPairingToken, readDevices, serverIdentity, spendSecret, touchDevice } from '../src/registry.ts';
 import { setupClient } from './noise-client.ts';
 
 const BIN = join(import.meta.dirname, '..', 'bin', 'stim-server.ts');
@@ -101,21 +102,89 @@ describe('--json', () => {
     expect(Date.parse(output.expiresAt)).toBeGreaterThan(Date.now());
   });
 
-  it('devices lists paired devices by key fingerprint, without their public keys', () => {
-    const keyPair = generateNoiseKeyPair();
-    spend(createPairingToken().token, 'Phone', keyPair);
+  it('devices lists each record with its kind, access and owner, by key fingerprint, without public keys', () => {
+    const phoneKey = generateNoiseKeyPair();
+    spend(createPairingToken(Date.now(), ['read', 'control']).token, 'Phone', phoneKey);
+    const machine = setupClient(['build', 'device-host'], 'Laptop');
     const { devices } = run('devices', '--json') as { devices: Record<string, unknown>[] };
-    expect(devices).toHaveLength(1);
-    expect(Object.keys(devices[0]!).toSorted()).toEqual([
-      'capabilities',
-      'from',
-      'id',
-      'keyFingerprint',
-      'lastSeenAt',
-      'name',
-      'pairedAt',
+    const machineKey = keyFingerprint(machine.keyPair.publicKey);
+    const shape = ({ id, pairedAt, lastSeenAt, ...rest }: Record<string, unknown>) => {
+      expect(typeof id).toBe('string');
+      expect(Date.parse(String(pairedAt))).not.toBeNaN();
+      expect(Date.parse(String(lastSeenAt))).not.toBeNaN();
+      return rest;
+    };
+    const client = { name: 'Laptop', from: 'test', keyFingerprint: machineKey, owner: 'theirs-running-here' };
+    expect(devices.map(shape)).toEqual([
+      {
+        name: 'Phone',
+        from: 'test',
+        keyFingerprint: keyFingerprint(phoneKey.publicKey),
+        capabilities: ['read', 'control'],
+        kind: 'phone',
+        access: ['view', 'control'],
+        owner: 'this-machine',
+      },
+      { ...client, capabilities: ['build'], kind: 'build-client', access: ['build'] },
+      { ...client, capabilities: ['device-host'], kind: 'device-host-client', access: ['run-devices'] },
     ]);
-    expect(devices[0]).toMatchObject({ name: 'Phone', keyFingerprint: keyFingerprint(keyPair.publicKey) });
+  });
+
+  it('devices lists the entries it cannot read beside the records, and an empty list when there are none', () => {
+    spend(createPairingToken().token, 'Phone');
+    expect(run('devices', '--json')).toMatchObject({ unreadable: [] });
+    const file = join(home, 'server', 'devices.json');
+    const [phone] = readDevices();
+    assert(phone);
+    writeFileSync(file, JSON.stringify({ version: 2, devices: [{ id: 'bad', name: 5 }, phone, 'opaque'] }));
+    expect(run('devices', '--json')).toMatchObject({
+      devices: [{ id: phone.id }],
+      unreadable: [
+        { file: 'devices.json', index: 0, id: 'bad' },
+        { file: 'devices.json', index: 2 },
+      ],
+    });
+  });
+
+  it('devices lists a registry file that a newer Stim wrote as a whole, without reading its records', () => {
+    spend(createPairingToken().token, 'Phone');
+    writeFileSync(join(home, 'server', 'devices.json'), JSON.stringify({ version: 3, devices: [{ id: 'future' }] }));
+    expect(run('devices', '--json')).toMatchObject({ devices: [], unreadable: [{ file: 'devices.json', version: 3 }] });
+    const refused = spawnSync(process.execPath, [BIN, 'devices', 'revoke', 'nope'], {
+      env: { ...process.env, STIM_HOME: home, PATH: '' },
+      encoding: 'utf8',
+    });
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain('devices.json is registry version 3, written by a newer Stim');
+  });
+
+  it('devices reports Stim Desktop as desktop, any other or unrecorded app as phone, and the recorded app additively', () => {
+    const desktop = spend(createPairingToken().token, 'Studio Mac')?.device;
+    const phone = spend(createPairingToken().token, 'Phone')?.device;
+    const legacy = spend(createPairingToken().token, 'Old phone')?.device;
+    const machine = setupClient(['build'], 'Studio Mac');
+    const build = machine.records.build;
+    assert(desktop && phone && legacy && build);
+    touchDevice(desktop.id, { name: 'Stim Desktop', version: '1.4.0' });
+    touchDevice(phone.id, { name: 'stim-mobile', version: '0.9.0' });
+    touchDevice(build.id, { name: 'Stim Desktop', version: '1.4.0' });
+    expect(run('devices', '--json')).toMatchObject({
+      devices: [
+        {
+          id: desktop.id,
+          kind: 'desktop',
+          clientApp: 'Stim Desktop',
+          clientVersion: '1.4.0',
+          access: ['view'],
+          owner: 'this-machine',
+          capabilities: ['read'],
+        },
+        { id: phone.id, kind: 'phone', clientApp: 'stim-mobile', clientVersion: '0.9.0' },
+        { id: legacy.id, kind: 'phone' },
+        { id: build.id, kind: 'build-client', clientApp: 'Stim Desktop' },
+      ],
+    });
+    expect(readDevices().find((record) => record.id === legacy.id)).not.toHaveProperty('clientApp');
   });
 });
 
@@ -145,6 +214,48 @@ describe('control', () => {
     expect(plain('devices', 'grant', 'nope', '--read').stderr).toContain('no paired device or approved client nope');
     expect(plain('devices', '--control').status).toBe(1);
   }, 20_000);
+
+  it('devices rename renames a record and refuses an unknown id or an unprintable name', () => {
+    const phone = spend(createPairingToken().token, 'Phone')?.device;
+    assert(phone);
+    expect(plain('devices', 'rename', phone.id, 'Kitchen iPad').stdout).toBe(`Renamed ${phone.id}.\n`);
+    const unknown = plain('devices', 'rename', 'nope', 'Name');
+    expect(unknown.status).toBe(1);
+    expect(unknown.stderr).toContain('no paired device or approved client nope');
+    expect(plain('devices', 'rename', phone.id, 'two\nlines').status).toBe(1);
+    expect(plain('devices', 'rename', phone.id).status).toBe(1);
+    expect(readDevices()).toEqual([{ ...phone, name: 'Kitchen iPad' }]);
+  }, 20_000);
+});
+
+describe('entries it cannot read', () => {
+  it('stay as they are through a rename, and a rename, grant or revoke that names one is refused', () => {
+    const phone = spend(createPairingToken().token, 'Phone')?.device;
+    assert(phone);
+    const file = join(home, 'server', 'devices.json');
+    const bad = '{"id":"bad","name":5}';
+    writeFileSync(file, `{"version":2,"devices":[${bad},${JSON.stringify(phone)}]}`);
+    const plain = (...args: string[]) =>
+      spawnSync(process.execPath, [BIN, ...args], {
+        env: { ...process.env, STIM_HOME: home, PATH: '' },
+        encoding: 'utf8',
+      });
+
+    expect(plain('devices', 'rename', phone.id, 'Kitchen').status).toBe(0);
+    expect(readFileSync(file, 'utf8')).toContain(bad);
+    const before = readFileSync(file, 'utf8');
+    for (const args of [
+      ['devices', 'rename', 'bad', 'Name'],
+      ['devices', 'grant', 'bad', '--control'],
+      ['devices', 'revoke', 'bad'],
+    ]) {
+      const refused = plain(...args);
+      expect(refused.status).toBe(1);
+      expect(refused.stderr).toContain('bad is an entry of devices.json that this stim-server cannot read');
+    }
+    expect(readFileSync(file, 'utf8')).toBe(before);
+    expect(plain('devices').stdout).toContain('unreadable  devices.json entry 0  bad');
+  }, 20_000);
 });
 
 describe.each(['build', 'device-host'] as const)('%s approval', (capability) => {
@@ -161,6 +272,7 @@ describe.each(['build', 'device-host'] as const)('%s approval', (capability) => 
     expect(result.stderr).toContain(`--${capability} applies only to \`stim-server setup\``);
     expect(readdirSync(home)).not.toContain('server');
     const id = setupClient([capability]).records[capability]!.id;
+    expect(plain('devices', 'rename', id, 'Renamed').status).toBe(0);
     const granted = plain('devices', 'grant', id, `--${capability}`);
     expect(granted.status).toBe(1);
     expect(granted.stderr).toContain('stim-server setup');

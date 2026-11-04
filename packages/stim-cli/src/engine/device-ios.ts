@@ -387,11 +387,31 @@ export async function ensureOwnedIosDevice({
     runtime: flags.runtime || settings.ios?.runtime,
   });
 
-  const adopted =
+  const taken =
     parkedMaxSetting('ios').max > 0
       ? await withIosDeviceNameLock(() => takeParkedIosSim({ projectPath, slot, label, choice, out }))
       : null;
-  if (adopted) {
+  if (taken) {
+    const adopted = taken.device;
+    if (taken.booted) {
+      await resetAdoptedSim(adopted.deviceUdid, out);
+      const { record: configured, rebooted } = await configureOwnedIosSim({
+        record: adopted,
+        projectPath,
+        slot,
+        profile: simslimProfile,
+        slimByDefault: simslimDefault,
+        out,
+        reconcileIosSimulator,
+      });
+      if (rebooted) await muteBootedSimulator(adopted.deviceUdid, out);
+      return {
+        ...configured,
+        deviceType: choice.deviceType,
+        runtime: choice.runtime,
+        booted: adopted.deviceUdid,
+      };
+    }
     const booting = startIosBoot(
       adopted.deviceUdid,
       (boot) =>
@@ -540,7 +560,7 @@ async function takeParkedIosSim({
   label: string;
   choice: IosCreationChoice;
   out: Notify;
-}): Promise<AdoptedRecord | null> {
+}): Promise<{ device: AdoptedRecord; booted: boolean } | null> {
   const candidates = selectParked(readParked('ios'), {
     deviceTypeIdentifier: choice.deviceTypeId,
     runtimeIdentifier: choice.runtimeId,
@@ -598,13 +618,17 @@ async function takeParkedIosSim({
     };
     const adopted = await adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device });
     if (!adopted) continue;
-    await requireOwnedIosSim(parked.udid);
+    const current = await requireOwnedIosSim(parked.udid);
     try {
       await renameIosSim(parked.udid, name);
     } catch {}
-    return adopted.schemeApprovals && adopted.schemeApprovals.length > 0
-      ? { ...device, schemeApprovals: adopted.schemeApprovals }
-      : device;
+    return {
+      device:
+        adopted.schemeApprovals && adopted.schemeApprovals.length > 0
+          ? { ...device, schemeApprovals: adopted.schemeApprovals }
+          : device,
+      booted: current.state === 'Booted',
+    };
   }
   return null;
 }

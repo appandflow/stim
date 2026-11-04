@@ -1,19 +1,36 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { workspaceStateDir } from '@stim-cli/core';
+import { workspaceId, workspaceStateDir } from '@stim-cli/core';
 import { readAgentSnapshot, serverLocalSocket, workspaceAgentDeviceDir } from '@stim-cli/core/state';
 
 const cli = fileURLToPath(new URL('../../bin/cli.ts', import.meta.url));
 
 const FAKE_AGENT_DEVICE = `
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 const args = process.argv.slice(2);
+const log = (name, value) => appendFileSync(join(process.env.STIM_HOME, name), value + '\\n');
+if (args[0] === 'open') {
+  log('opens', JSON.stringify(args));
+  writeFileSync(join(process.env.STIM_HOME, 'opened'), '');
+  process.stdout.write('opened: a snapshot of the app\\n');
+  process.exit(0);
+}
+if (args[0] === 'tap' || args[0] === 'batch') {
+  log('taps', JSON.stringify(args));
+  if (!existsSync(join(process.env.STIM_HOME, 'opened'))) {
+    process.stdout.write(JSON.stringify({ success: false, error: { code: process.env.LOST_AS_LEASE ? 'INVALID_ARGS' : 'SESSION_NOT_FOUND' } }) + '\\n');
+    process.stderr.write(process.env.LOST_AS_LEASE ? 'Error (INVALID_ARGS): No active proxy device lease for this session; run open first.\\n' : 'Error (SESSION_NOT_FOUND): iOS snapshot requires an active app session on the target device. Run open first\\n');
+    process.exit(1);
+  }
+  process.stdout.write(JSON.stringify({ success: true }) + '\\n');
+  process.exit(0);
+}
 if (args[0] === 'snapshot') {
   process.stdout.write(JSON.stringify({ nodes: [{ ref: 'e2', rect: { x: 100, y: 200, width: 200, height: 100 } }], viewport: { width: 400, height: 800 } }) + '\\n');
   process.exit(0);
@@ -59,10 +76,10 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-const run = (args: string[], cwd = app) =>
+const run = (args: string[], cwd = app, env: NodeJS.ProcessEnv = {}) =>
   spawnSync(process.execPath, [cli, 'agent-device', ...args], {
     cwd,
-    env: { ...process.env, STIM_HOME: home, STIM_AGENT_DEVICE_BIN: bin, STIM_DAEMON: 'off' },
+    env: { ...process.env, STIM_HOME: home, STIM_AGENT_DEVICE_BIN: bin, STIM_DAEMON: 'off', ...env },
     encoding: 'utf8',
     timeout: 60_000,
   });
@@ -154,7 +171,15 @@ test.skipIf(process.platform === 'win32')(
       let stdout = '';
       child.stdout.on('data', (chunk: Buffer) => (stdout += chunk));
       await new Promise((resolve) => child.once('close', resolve));
-      expect(JSON.parse(stdout).argv).toEqual(['press', '@e1', '--json', '--remote-config', config]);
+      expect(JSON.parse(stdout).argv).toEqual([
+        'press',
+        '@e1',
+        '--json',
+        '--session',
+        `stim-default-ios-${workspaceId(app).slice(0, 8)}`,
+        '--remote-config',
+        config,
+      ]);
       expect(published).toEqual([
         { workspace: app, platform: 'ios', command: 'press', phase: 'start' },
         { workspace: app, platform: 'ios', command: 'press', phase: 'end' },
@@ -166,3 +191,98 @@ test.skipIf(process.platform === 'win32')(
   },
   60_000,
 );
+
+describe.skipIf(process.platform === 'win32')('hosted reopen', () => {
+  test.each([
+    ['SESSION_NOT_FOUND', {}],
+    ['No active proxy device lease', { LOST_AS_LEASE: '1' }],
+  ])(
+    'a hosted command the restarted host no longer knows (%s) opens the recorded app on the same session and runs again',
+    (_message, env) => {
+      const config = join(home, 'hosted', 'agent.json');
+      mkdirSync(workspaceStateDir(app), { recursive: true });
+      writeFileSync(
+        join(workspaceStateDir(app), 'state.json'),
+        JSON.stringify({
+          ios: {
+            host: {
+              machine: 'local:mini',
+              session: '4f88400a-48eb-4a07-ba6a-734c42768b2a',
+              agent: { driver: 'agent-device', remoteConfig: config, command: 'x' },
+            },
+          },
+          launches: {
+            ios: {
+              appId: 'com.example.app',
+              deviceId: 'hosted',
+              metroPort: 8082,
+              release: false,
+              launchedAt: '2026-11-03T00:00:00.000Z',
+            },
+          },
+        }),
+      );
+      const result = run(['tap', '@e1', '--json'], app, env);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(`${JSON.stringify({ success: true })}\n`);
+      expect(result.stderr).toContain('opening com.example.app again');
+      expect(
+        readFileSync(join(home, 'opens'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line)),
+      ).toEqual([
+        [
+          'open',
+          'com.example.app',
+          '--session',
+          `stim-default-ios-${workspaceId(app).slice(0, 8)}`,
+          '--remote-config',
+          config,
+        ],
+      ]);
+      expect(readFileSync(join(home, 'taps'), 'utf8').trim().split('\n')).toHaveLength(2);
+    },
+    60_000,
+  );
+});
+
+test.skipIf(process.platform === 'win32')(
+  'a multi-step hosted command is never run again after the host lost the session',
+  () => {
+    const config = join(home, 'hosted', 'agent.json');
+    mkdirSync(workspaceStateDir(app), { recursive: true });
+    writeFileSync(
+      join(workspaceStateDir(app), 'state.json'),
+      JSON.stringify({
+        ios: {
+          host: {
+            machine: 'local:mini',
+            session: '4f88400a-48eb-4a07-ba6a-734c42768b2a',
+            agent: { driver: 'agent-device', remoteConfig: config, command: 'x' },
+          },
+        },
+        launches: {
+          ios: {
+            appId: 'com.example.app',
+            deviceId: 'hosted',
+            metroPort: 8082,
+            release: false,
+            launchedAt: '2026-11-03T00:00:00.000Z',
+          },
+        },
+      }),
+    );
+    const result = run(['batch', '--json']);
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({ success: false });
+    expect(existsSync(join(home, 'opens'))).toBe(false);
+  },
+  60_000,
+);
+
+test('a local device that answers the same error is not reopened', () => {
+  const result = run(['tap', '@e1']);
+  expect(result.status).toBe(1);
+  expect(existsSync(join(home, 'opens'))).toBe(false);
+});

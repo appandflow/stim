@@ -173,7 +173,7 @@ export function ViewerKeyboard({
               setNote(
                 extendedKeys
                   ? t`Modifiers apply to one letter or digit at a time. Use the extra keys for navigation.`
-                  : t`Update Stim on the Mac to use modifiers with letters and digits. The extra keys and shortcuts still work.`,
+                  : t`Update Stim on the machine to use modifiers with letters and digits. The extra keys and shortcuts still work.`,
               );
               return;
             }

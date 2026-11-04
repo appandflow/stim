@@ -134,7 +134,7 @@ function RootLayoutContent() {
                   <Stack.Screen name="licenses" options={{ title: t`Open Source Licenses` }} />
                   <Stack.Screen name="license" options={{ title: '' }} />
                   <Stack.Screen name="pair" options={{ title: t`Pair a Machine`, presentation: 'modal' }} />
-                  <Stack.Screen name="rename" options={{ title: t`Rename Machine`, presentation: 'modal' }} />
+                  <Stack.Screen name="rename" options={{ title: t`Rename on This Phone`, presentation: 'modal' }} />
                   <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
                   <Stack.Screen name="mac/[id]/workspace" options={{ title: t`Workspace` }} />
                   <Stack.Screen name="mac/[id]/logs" options={{ title: t`Logs` }} />

@@ -111,22 +111,22 @@
   },
   "packages/server": {
     "src": {
-      "as": 310,
-      "nonNull": 119
+      "as": 314,
+      "nonNull": 120
     },
     "test": {
-      "as": 285,
-      "nonNull": 403
+      "as": 299,
+      "nonNull": 431
     }
   },
   "packages/stim-cli": {
     "src": {
-      "as": 831,
-      "nonNull": 340
+      "as": 828,
+      "nonNull": 337
     },
     "test": {
-      "as": 437,
-      "nonNull": 608
+      "as": 438,
+      "nonNull": 612
     }
   },
   "packages/transport": {

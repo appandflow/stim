@@ -151,14 +151,19 @@ import Testing
     let plain = try #require(server.take("input.clipboard.set"))
     #expect(plain.params == ["session": .string("c1"), "text": .string("h\u{e9}llo\n\u{1F600}")])
     plain.reply.resume(returning: .object([:]))
-    try await set.value
+    _ = try await set.value
 
     let paste = Task { try await stream.setClipboard("x", paste: true) }
     await settle()
     let pasted = try #require(server.take("input.clipboard.set"))
     #expect(pasted.params["paste"] == .bool(true))
     pasted.reply.resume(returning: .object([:]))
-    try await paste.value
+    #expect(try await paste.value == false)
+
+    let typedPaste = Task { try await stream.setClipboard("x", paste: true) }
+    await settle()
+    try #require(server.take("input.clipboard.set")).reply.resume(returning: .object(["typed": .bool(true)]))
+    #expect(try await typedPaste.value == true)
 
     let read = Task { try await stream.clipboard() }
     await settle()
@@ -174,7 +179,7 @@ import Testing
     let accepted = Task { try await stream.setClipboard(atLimit, paste: false) }
     await settle()
     try #require(server.take("input.clipboard.set")).reply.resume(returning: .object([:]))
-    try await accepted.value
+    _ = try await accepted.value
 
     let wide = String(repeating: "\u{e9}", count: 4097)
     await #expect(throws: ClipboardTooLarge(bytes: wide.utf8.count)) { try await stream.setClipboard(wide, paste: false) }
@@ -250,6 +255,30 @@ import Testing
     let up = try #require(server.requests.last { $0.method == "input.touch" })
     #expect(up.params["x"] == .number(0.4) && up.params["session"] == .string(session))
     #expect(server.requests.contains { $0.method == "control.end" })
+  }
+
+  @Test func sendsTheSecondFingerOfEveryPhaseAndLiftsBothWhenTheSessionEnds() async throws {
+    let (stream, server, _) = try await started()
+    #expect(stream.touch("down", x: 0.3, y: 0.5, second: (0.7, 0.5)))
+    #expect(stream.touch("move", x: 0.2, y: 0.5, second: (0.8, 0.5)))
+    stream.end()
+    await settle()
+    let touches = server.requests.filter { $0.method == "input.touch" }
+    #expect(touches.map { $0.params["phase"] } == [.string("down"), .string("move"), .string("up")])
+    for touch in touches {
+      #expect(touch.params["x2"] != nil && touch.params["y2"] != nil)
+    }
+    let up = try #require(touches.last)
+    #expect(up.params["x"] == .number(0.2) && up.params["x2"] == .number(0.8))
+    #expect(!stream.touch("down", x: 0.3, y: 0.5, second: (0.7, 0.5)))
+  }
+
+  @Test func sendsNoSecondFingerForAOneFingerTouch() async throws {
+    let (stream, server, _) = try await started()
+    stream.touch("down", x: 0.3, y: 0.5)
+    await settle()
+    let touch = try #require(server.take("input.touch"))
+    #expect(touch.params["x2"] == nil && touch.params["y2"] == nil)
   }
 
   @Test func keepsWhyControlEndedWhenTheTileReleasesAfterwards() async throws {

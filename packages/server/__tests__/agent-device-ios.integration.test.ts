@@ -1,10 +1,12 @@
 import { EventEmitter } from 'node:events';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -15,10 +17,16 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
-import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
+import {
+  claimRemoveCommand,
+  readClaimSet,
+  releaseClaim,
+  setClaimChild,
+  tryAcquireClaim,
+} from '@stim-cli/core/ownership-claim';
 import { keepAgentClaim, killKeptChild } from './fixtures/kept-agent-claim.ts';
 import type { ProcessIdentityStatus } from '@stim-cli/core/process-identity';
-import { AgentDeviceDriver } from '@stim-cli/agent-driver-agent-device';
+import { AgentDeviceDriver, recover } from '@stim-cli/agent-driver-agent-device';
 
 const fixture = vi.hoisted(() => ({
   version: '0.21.30',
@@ -34,6 +42,7 @@ const fixture = vi.hoisted(() => ({
   events: [] as string[],
   calls: [] as { path: string; body: string; headers: Record<string, string> }[],
   recordError: { code: '', message: '' },
+  maxLeaseTtl: '',
 }));
 
 vi.mock('@stim-cli/core/process-identity', async (original) => {
@@ -71,6 +80,7 @@ vi.mock('@stim-cli/core/process-identity', async (original) => {
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),
   spawn: (_command: string, _args: string[], options: { env: NodeJS.ProcessEnv }) => {
+    fixture.maxLeaseTtl = options.env.AGENT_DEVICE_LEASE_MAX_TTL_MS ?? '';
     const policy = JSON.parse(readFileSync(options.env.AGENT_DEVICE_DAEMON_POLICY!, 'utf8'));
     const canonical = JSON.stringify({
       devices: policy.devices.allow.map((device: { udid: string }) => device.udid),
@@ -361,6 +371,21 @@ test('allows screenshot artifacts but refuses uploads and stops forwarding after
   expect(fixture.calls).toEqual([]);
 });
 
+test('holds the session lease for an hour whatever window the client asks for', async () => {
+  await start();
+  expect(fixture.maxLeaseTtl).toBe('3600000');
+  const sent = async (method: string, params: object) => {
+    fixture.calls = [];
+    await rpc(params, method);
+    return JSON.parse(fixture.calls.at(-1)?.body ?? '{}').params;
+  };
+  expect(await sent('agent_device.lease.allocate', { ttlMs: 300_000 })).toMatchObject({ ttlMs: 3_600_000 });
+  expect(await sent('agent_device.lease.heartbeat', { leaseId: 'a'.repeat(32) })).toMatchObject({ ttlMs: 3_600_000 });
+  expect(await sent('agent_device.lease.release', { leaseId: 'a'.repeat(32), ttlMs: 5000 })).not.toHaveProperty(
+    'ttlMs',
+  );
+});
+
 const recordStart = (output?: string) => ({
   command: 'record',
   session: 'default',
@@ -405,7 +430,7 @@ test('writes a recording only in a private temp directory, one at a time, and re
 
   mkdirSync(join(recordings, 'left-by-a-crash'), { recursive: true });
   await start();
-  expect(existsSync(recordings)).toBe(false);
+  expect(readdirSync(recordings)).toEqual(['sessions']);
 });
 
 test.skipIf(process.platform === 'win32')(
@@ -418,6 +443,7 @@ test.skipIf(process.platform === 'win32')(
     const elsewhere = join(home, 'elsewhere');
     mkdirSync(elsewhere, { mode: 0o700 });
     await start();
+    rmSync(recordings, { recursive: true });
     symlinkSync(elsewhere, recordings, 'dir');
     const calls = fixture.calls.length;
     expect((await rpc(recordStart())).status).toBe(500);
@@ -427,11 +453,106 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+const SESSIONS = () => join(home, 'agent', 'sessions');
+
+function agentDeviceRecording(name = 'recording-0a1b2c.mp4', session = 'stim.s_default') {
+  const dir = join(SESSIONS(), session);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, name);
+  writeFileSync(file, 'x');
+  return file;
+}
+
+test.skipIf(process.platform === 'win32')(
+  'agent-device resolves its session directory off the Stim home, replacing one left there',
+  async () => {
+    mkdirSync(join(SESSIONS(), 'stim.s_old'), { recursive: true });
+    writeFileSync(join(SESSIONS(), 'stim.s_old', 'events.ndjson'), '');
+    await start();
+    expect(lstatSync(SESSIONS()).isSymbolicLink()).toBe(true);
+    const file = agentDeviceRecording();
+    expect(existsSync(join(SESSIONS(), 'stim.s_old'))).toBe(false);
+    const real = realpathSync(file);
+    expect(relative(realpathSync(home), real).startsWith('..')).toBe(true);
+    expect(relative(realpathSync(tmpdir()), real).startsWith('..')).toBe(false);
+    expect(statSync(dirname(dirname(real))).mode & 0o777).toBe(0o700);
+
+    await driver.stop();
+    expect(existsSync(real)).toBe(false);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'refuses to record when agent-device would write its session directory inside the Stim home',
+  async () => {
+    await start();
+    rmSync(SESSIONS());
+    mkdirSync(SESSIONS());
+    const calls = fixture.calls.length;
+    expect((await rpc(recordStart())).status).toBe(500);
+    expect(fixture.calls.slice(calls).some((call) => call.body.includes('"record"'))).toBe(false);
+  },
+);
+
+test.each([
+  { stop: 'client', maxRecordingMs: 600_000 },
+  { stop: 'time limit', maxRecordingMs: 200 },
+])(
+  'deletes a recording agent-device wrote in its own session directory over the size limit after a $stop stop',
+  async ({ maxRecordingMs }) => {
+    await driver.stop();
+    driver = new AgentDeviceDriver({
+      env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
+      stateDir: join(home, 'agent'),
+      claimRoot: join(home, 'claims'),
+      device: { session: SESSION, udid: UDID },
+      maxRecordingBytes: 10,
+      maxRecordingMs,
+    });
+    await start();
+    await rpc(recordStart());
+    const file = agentDeviceRecording();
+    writeFileSync(file, 'more than ten bytes');
+    const stop = { command: 'record', session: 'default', positionals: ['stop'] };
+    const answer =
+      maxRecordingMs < 600_000
+        ? await vi.waitFor(async () => {
+            if (existsSync(file)) throw new Error('waiting for the time-limit stop');
+            return JSON.parse((await rpc(stop)).text);
+          })
+        : JSON.parse((await rpc(stop)).text);
+    expect(answer).toMatchObject({ result: { ok: false, error: { details: { reason: 'STIM_RECORDING_TOO_LARGE' } } } });
+    expect(existsSync(file)).toBe(false);
+  },
+);
+
+test('a later recording leaves an earlier one that was not downloaded yet alone', async () => {
+  await driver.stop();
+  driver = new AgentDeviceDriver({
+    env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
+    stateDir: join(home, 'agent'),
+    claimRoot: join(home, 'claims'),
+    device: { session: SESSION, udid: UDID },
+    maxRecordingBytes: 10,
+  });
+  await start();
+  await rpc(recordStart());
+  const first = agentDeviceRecording('recording-first.mp4');
+  writeFileSync(first, '0123456789');
+  const stop = { command: 'record', session: 'default', positionals: ['stop'] };
+  expect(JSON.parse((await rpc(stop)).text)).toMatchObject({ result: { ok: true } });
+  await rpc(recordStart());
+  const second = agentDeviceRecording('recording-second.mp4');
+  writeFileSync(second, '0123456789');
+  expect(JSON.parse((await rpc(stop)).text)).toMatchObject({ result: { ok: true } });
+  expect(existsSync(first)).toBe(true);
+});
+
 test('a start the daemon refuses leaves no recording behind', async () => {
   await start();
   fixture.recordError = { code: 'COMMAND_FAILED', message: 'recorder failed to start' };
   expect((await rpc(recordStart())).status).toBe(200);
-  expect(readdirSync(dirname(dirname(forwardedRecord().params.positionals[1])))).toEqual([]);
+  expect(readdirSync(dirname(dirname(forwardedRecord().params.positionals[1])))).toEqual(['sessions']);
   fixture.recordError = { code: '', message: '' };
   expect((await rpc(recordStart())).status).toBe(200);
 });
@@ -620,4 +741,116 @@ test('a stop from another agent-device session keeps the running recording', asy
   expect(fixture.calls).toHaveLength(calls);
   expect((await rpc(recordStart())).status).toBe(400);
   expect((await rpc({ command: 'record', session: 'default', positionals: ['stop'] })).status).toBe(200);
+});
+
+function recorder(
+  pid: number,
+  udid = UDID,
+  simctl = '/Applications/Xcode.app/Contents/Developer/usr/bin/simctl',
+): string {
+  return `${pid} ${simctl} io ${udid} recordVideo --codec=h264 /var/folders/ab/T/stim-server-recordings-0/1/recording.mp4`;
+}
+
+test.each([
+  '/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl',
+  '/Applications/Xcode 27.app/Contents/Developer/usr/bin/simctl',
+])('stopping the driver ends its simulator recorder with SIGINT before the daemon: %s', async (simctl) => {
+  await start();
+  fixture.ps = [`${recorder(888890, UDID, simctl)}\n${recorder(888891, SESSION)}`];
+  fixture.identities = { 888890: 'same', 888891: 'same' };
+  expect((await rpc(recordStart())).status).toBe(200);
+  fixture.events = [];
+  await driver.stop();
+  expect(fixture.events).toEqual(['ps', 'signal:888890:SIGINT', 'daemon-stop', 'ps']);
+  expect(fixture.identities[888891]).toBe('same');
+  expect(readClaimSet(join(home, 'agent', 'recorder.claims')).live).toEqual([]);
+});
+
+test('stops the recording it started when its recorder process cannot be identified', async () => {
+  await start();
+  fixture.psError = true;
+  const answer = await rpc(recordStart());
+  expect(answer.status).toBe(500);
+  expect(forwardedRecord().params.positionals).toEqual(['stop']);
+  fixture.psError = false;
+  expect((await rpc(recordStart())).status).toBe(200);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'recovery stops a recorder whose stim-server is gone after checking its identity',
+  async () => {
+    const stateDir = join(home, 'agent');
+    const child = keepAgentClaim(join(stateDir, 'recorder.claims'));
+    try {
+      await recover({ env: {}, stateDir, claimRoot: join(home, 'claims') });
+      expect(process.kill).toHaveBeenCalledWith(child.pid, 'SIGINT');
+      await vi.waitFor(() => expect(readClaimSet(join(stateDir, 'recorder.claims')).live).toEqual([]));
+      await recover({ env: {}, stateDir, claimRoot: join(home, 'claims') });
+      expect(readClaimSet(join(stateDir, 'recorder.claims'))).toMatchObject({ live: [], dead: [], unresolved: [] });
+    } finally {
+      await killKeptChild(child);
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'recovery leaves a recorder it cannot identify running and names its claim',
+  async () => {
+    const root = join(home, 'agent', 'recorder.claims');
+    const child = keepAgentClaim(root);
+    const pid = Number(child.pid);
+    fixture.identities = { [pid]: 'unknown' };
+    const claim = readClaimSet(root)
+      .unresolved.map(({ path }) => path)
+      .join();
+    try {
+      await expect(
+        recover({ env: {}, stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') }),
+      ).rejects.toThrow(claimRemoveCommand(claim));
+      expect(fixture.events).toEqual([]);
+      delete fixture.identities[pid];
+      expect(readClaimSet(root).live).toMatchObject([{ child }]);
+    } finally {
+      delete fixture.identities[pid];
+      await killKeptChild(child);
+    }
+  },
+);
+
+test('a record start agent-device refuses adopts no recorder', async () => {
+  await start();
+  fixture.ps = [recorder(888890)];
+  fixture.identities = { 888890: 'same' };
+  fixture.recordError = { code: 'DEVICE_IN_USE', message: 'CoreSimulator host recording is already in progress' };
+  await rpc(recordStart());
+  fixture.recordError = { code: '', message: '' };
+  await driver.stop();
+  expect(fixture.events).not.toContain('signal:888890:SIGINT');
+  expect(fixture.identities[888890]).toBe('same');
+});
+
+test('stop still stops the daemon when the recorder is unresolved, then refuses', async () => {
+  await start();
+  fixture.ps = [`${recorder(888890)}\n${recorder(888891)}`];
+  fixture.identities = { 888890: 'same', 888891: 'same' };
+  expect((await rpc(recordStart())).status).toBe(500);
+  fixture.events = [];
+  await expect(driver.stop()).rejects.toThrow('hosted simulator recorder is unresolved');
+  expect(fixture.events).toEqual(['ps', 'daemon-stop', 'ps']);
+  fixture.ps = [''];
+});
+
+test('recovery leaves alone a recorder whose stim-server is alive', async () => {
+  const root = join(home, 'agent', 'recorder.claims');
+  const claim = tryAcquireClaim({ root, mode: 'exclusive' }).acquired;
+  if (!claim) throw new Error('The test recorder claim was not acquired.');
+  setClaimChild(claim, { pid: 888892, processToken: 'runner-888892' });
+  fixture.identities = { 888892: 'same' };
+  try {
+    await recover({ env: {}, stateDir: join(home, 'agent'), claimRoot: join(home, 'claims') });
+    expect(fixture.events).toEqual([]);
+    expect(readClaimSet(root).live).toMatchObject([{ claimId: claim.claimId }]);
+  } finally {
+    releaseClaim(claim);
+  }
 });

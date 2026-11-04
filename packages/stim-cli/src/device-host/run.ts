@@ -1,10 +1,18 @@
 import { ensureIosRuntime } from '../devices/ios-runtime.ts';
-import { hostedAppAttempt, hostedMacosAppSlot, isJsonObject, parseHostedOfferRequest } from '@stim-cli/core/state';
+import {
+  hostedAppAttempt,
+  hostedMacosAppSlot,
+  isJsonObject,
+  isTcpPort,
+  MAX_REVERSE_PORTS,
+  parseHostedOfferRequest,
+} from '@stim-cli/core/state';
 import { collectHostedAndroidLogs } from './android-logs.ts';
 import { collectHostedIosLogs } from './ios-logs.ts';
 import { runHostedDevice } from './worker.ts';
 import { hostedAppState } from './app-state.ts';
 import { runHostedAndroidDevice } from './android.ts';
+import type { HostedAndroidReverses } from './android-app.ts';
 import { runHostedMacosApp } from './macos.ts';
 import { inspectHostedDevice } from './offer.ts';
 import { androidImageInstallPolicy, ensureSystemImage } from '../devices/android-image.ts';
@@ -33,9 +41,11 @@ async function main(): Promise<void> {
       'image',
       'logs',
       'reverse',
+      'reverse-ports',
       'park',
       'inspect',
       'adopt',
+      'resume',
     ].includes(String(input.mode))
   )
     throw new Error('Invalid hosted worker request.');
@@ -106,8 +116,30 @@ async function main(): Promise<void> {
       throw new Error('Invalid hosted Metro port.');
   }
   if (input.mode === 'reverse' && input.platform !== 'android') throw new Error('Metro reverse requires Android.');
-  if (input.platform === 'macos' && ['park', 'inspect', 'adopt'].includes(String(input.mode)))
-    throw new Error('Hosted parking requires iOS or Android.');
+  let reverses: HostedAndroidReverses | undefined;
+  if (input.mode === 'reverse-ports') {
+    const listed: unknown[] = Array.isArray(input.reverses) ? input.reverses : [];
+    const add = listed.flatMap((each) =>
+      isJsonObject(each) && isTcpPort(each.devicePort) && isTcpPort(each.bridgePort)
+        ? [{ devicePort: each.devicePort, bridgePort: each.bridgePort }]
+        : [],
+    );
+    const dropped: unknown[] = Array.isArray(input.removed) ? input.removed : [];
+    const removed = dropped.filter(isTcpPort);
+    if (
+      input.platform !== 'android' ||
+      !Array.isArray(input.reverses) ||
+      !Array.isArray(input.removed) ||
+      add.length !== listed.length ||
+      removed.length !== dropped.length ||
+      add.length > MAX_REVERSE_PORTS ||
+      removed.length > MAX_REVERSE_PORTS
+    )
+      throw new Error('Invalid hosted Android reverse ports request.');
+    reverses = { add, removed };
+  }
+  if (input.platform === 'macos' && ['park', 'inspect', 'adopt', 'resume'].includes(String(input.mode)))
+    throw new Error('Hosted parking and resuming require iOS or Android.');
   if (input.platform === 'macos' && !hostedMacosAppSlot(input.appSlot))
     throw new Error('Invalid hosted macOS app slot.');
   if (input.mode === 'logs') {
@@ -143,7 +175,16 @@ async function main(): Promise<void> {
         )
       : input.platform === 'android'
         ? await runHostedAndroidDevice(
-            input.mode as 'prepare' | 'stop' | 'install' | 'reverse' | 'park' | 'inspect' | 'adopt',
+            input.mode as
+              | 'prepare'
+              | 'stop'
+              | 'install'
+              | 'reverse'
+              | 'reverse-ports'
+              | 'park'
+              | 'inspect'
+              | 'adopt'
+              | 'resume',
             {
               session: typeof input.session === 'string' ? input.session : '',
               consolePort: input.consolePort,
@@ -157,9 +198,10 @@ async function main(): Promise<void> {
                   clientMetroPort: input.clientMetroPort as number | undefined,
                 }
               : undefined,
+            reverses,
           )
         : await runHostedDevice(
-            input.mode as 'prepare' | 'stop' | 'install' | 'park' | 'inspect' | 'adopt',
+            input.mode as 'prepare' | 'stop' | 'install' | 'park' | 'inspect' | 'adopt' | 'resume',
             {
               ...(typeof input.deviceType === 'string' ? { deviceType: input.deviceType } : {}),
               ...(typeof input.runtime === 'string' ? { runtime: input.runtime } : {}),

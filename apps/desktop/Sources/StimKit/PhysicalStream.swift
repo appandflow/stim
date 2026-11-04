@@ -34,6 +34,7 @@ import Foundation
   private var generation = 0
   private var beginGeneration = 0
   private var pressed: (x: Double, y: Double)?
+  private var pressedSecond: (x: Double, y: Double)?
   private var keyframeRequest: Task<Void, Never>?
   private var fellBack = false
 
@@ -160,8 +161,9 @@ import Foundation
     }
   }
 
-  /// Starts driving the device, taking it over from an agent that drives it. The server refuses a workspace that
-  /// no longer owns the target session or holds the physical device's lease.
+  /// Starts controlling the device, alongside any other client or agent. `takeOver` lets a server without
+  /// `shared-control` take the device from them. The server refuses a workspace that no longer owns the target
+  /// session or holds the physical device's lease.
   public func begin() {
     guard let server else { return }
     switch control {
@@ -196,7 +198,7 @@ import Foundation
     beginGeneration += 1
     switch control {
     case .on(let session):
-      if let pressed { touch("up", x: pressed.x, y: pressed.y) }
+      if let pressed { touch("up", x: pressed.x, y: pressed.y, second: pressedSecond) }
       if let server { Task { _ = try? await server.request("control.end", ["session": .string(session)]) } }
     case .starting: break
     case .off, .failed: return
@@ -205,26 +207,46 @@ import Foundation
     control = .off(ended: nil)
   }
 
-  /// `x` and `y` are fractions of the upright screen, origin top-left.
-  public func touch(_ phase: String, x: Double, y: Double) {
-    guard case .on = control else { return }
+  /// `x` and `y` are fractions of the upright screen, origin top-left. `second` adds a second finger for a pinch or a
+  /// two-finger pan; every phase of one gesture carries it or none does. Returns whether a control session is on.
+  @discardableResult
+  public func touch(_ phase: String, x: Double, y: Double, second: (x: Double, y: Double)? = nil) -> Bool {
+    guard case .on = control else { return false }
     pressed = phase == "up" ? nil : (x, y)
-    send("input.touch", ["phase": .string(phase), "x": .number(x), "y": .number(y)])
+    pressedSecond = phase == "up" ? nil : second
+    var params: [String: JSONValue] = ["phase": .string(phase), "x": .number(x), "y": .number(y)]
+    if let second {
+      params["x2"] = .number(second.x)
+      params["y2"] = .number(second.y)
+    }
+    send("input.touch", params)
+    return true
   }
 
   public func text(_ text: String) {
     send("input.text", ["text": .string(text)])
   }
 
+  /// A key of `INPUT_KEYS` in `packages/core/protocol.ts` with the modifiers held: `command`, `shift`, `option`, `control`.
+  public func key(_ key: String, modifiers: [String]) {
+    send("input.key", ["key": .string(key), "modifiers": .array(modifiers.map { .string($0) })])
+  }
+
+  /// Whether the server takes the `device-keyboard` chords for this device, set by the view that shows it.
+  public var keyboardChords = false
+
   /// The most text `input.clipboard.set` takes, in UTF-8 bytes: `MAX_CLIPBOARD_BYTES` in `packages/core/protocol.ts`.
   public nonisolated static let maxClipboardBytes = 8192
 
-  /// Replaces the device clipboard's text, then pastes it into the focused field when `paste` is true.
-  public func setClipboard(_ text: String, paste: Bool) async throws {
+  /// Replaces the device clipboard's text, then pastes it into the focused field when `paste` is true. Returns true
+  /// when an iOS simulator typed the text instead of pasting it, so iOS showed no paste prompt.
+  @discardableResult
+  public func setClipboard(_ text: String, paste: Bool) async throws -> Bool {
     guard text.utf8.count <= Self.maxClipboardBytes else { throw ClipboardTooLarge(bytes: text.utf8.count) }
     var params: [String: JSONValue] = ["text": .string(text)]
     if paste { params["paste"] = .bool(true) }
-    _ = try await controlRequest("input.clipboard.set", params)
+    let result = try await controlRequest("input.clipboard.set", params)
+    return result.objectValue?["typed"]?.bool ?? false
   }
 
   public func clipboard() async throws -> String {
@@ -237,7 +259,7 @@ import Foundation
 
   private func controlRequest(_ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
     guard let server, case .on(let session) = control else {
-      throw ServerError(code: "not-connected", message: "Take over the device to use its clipboard.")
+      throw ServerError(code: "not-connected", message: "Control the device to use its clipboard.")
     }
     var params = params
     params["session"] = .string(session)

@@ -52,12 +52,12 @@ There are four native suites and one shared harness
 wrappers, the cleanup checks and the diagnostics dump so all drivers build and
 tear down the same app the same way):
 
-| suite      | driver                       | proves                                                  | platforms           | when                                        |
-| ---------- | ---------------------------- | ------------------------------------------------------- | ------------------- | ------------------------------------------- |
-| **smoke**  | `run-native-e2e.mjs --smoke` | one worktree builds, launches and stops                 | iOS, Linux, Windows | every push to `main`, `e2e-smoke`, dispatch |
-| **loop**   | `run-native-e2e.mjs`         | the dev loop works end to end                           | iOS, Linux, Windows | nightly, `e2e-loop`, dispatch               |
-| **caches** | `run-cache-e2e.mjs`          | each individual cache is engaged, storing and reused    | iOS, Linux          | `e2e-caches`, dispatch                      |
-| **pool**   | `run-pool-e2e.mjs`           | iOS simulators are parked, evicted, adopted, and reaped | iOS                 | `e2e-pool`, dispatch                        |
+| suite      | driver                       | proves                                                  | platforms           | when                                         |
+| ---------- | ---------------------------- | ------------------------------------------------------- | ------------------- | -------------------------------------------- |
+| **smoke**  | `run-native-e2e.mjs --smoke` | one worktree builds, launches and stops                 | iOS, Linux, Windows | `e2e-smoke`, dispatch, `Full suite` dispatch |
+| **loop**   | `run-native-e2e.mjs`         | the dev loop works end to end                           | iOS, Linux, Windows | nightly, `e2e-loop`, dispatch                |
+| **caches** | `run-cache-e2e.mjs`          | each individual cache is engaged, storing and reused    | iOS, Linux          | `e2e-caches`, dispatch                       |
+| **pool**   | `run-pool-e2e.mjs`           | iOS simulators are parked, evicted, adopted, and reaped | iOS                 | `e2e-pool`, dispatch                         |
 
 The `e2e-*` names are pull-request labels; the `e2e-all` label is loop, caches
 and pool together. See [CI](#ci) for the gate.
@@ -258,16 +258,19 @@ install, the tsdown build) and `windows-android-sdk` (JDK 17 plus the system
 image the `windows-latest` image lacks, with platform-tools and the emulator on
 PATH).
 
-- **`ci.yml`** -- fast and **blocking** on every push to `main` and every pull request. The
+- **`ci.yml`** -- fast and **blocking** on every push to `main` and every pull request: the
+  Linux jobs only, about 3 minutes on a pull request and 8 on a push, which adds the integration tests. The
   repository build matrix uses Node 22 and 24, runs frozen pnpm install, lint,
   format check, ESM build, typecheck, knip, Vitest, and the cross-platform E2E.
   A separate job builds on Node 22.18 and then runs `test/runtime-floor.mjs`
   under exactly Node 22.12.0, the published floor, then `test/runtime-refusal.mjs`
   under Node 18, where both built bins must refuse with `STIM_NODE_UNSUPPORTED`.
   Repository development needs
-  Node 22.18 or later because tsdown has the higher floor. A Windows lane,
-  `test (windows)`, repeats install, build, typecheck and the unit suite on
-  `windows-latest`. A macOS lane, `test (macos)`, runs on `macos-15` the unit
+  Node 22.18 or later because tsdown has the higher floor. With `full` (the
+  `Full suite` passes it; so does a dispatch, which defaults to it) the
+  workflow also runs a Windows lane,
+  `test (windows)`, which repeats install, build, typecheck and a Windows smoke
+  on `windows-latest`, `native process inspection` on macOS and Windows, and a macOS lane, `test (macos)`, which runs on `macos-15` the unit
   test files that skip or branch on darwin, which the Linux and Windows lanes
   cannot run. `scripts/ci-darwin-unit-test-files.mjs` derives the list from
   the test sources (`process.platform` compared with `'darwin'`, plus the
@@ -277,26 +280,53 @@ PATH).
   it is part of the `merge gate` poll on a pull request and does not run in the
   merge queue.
 
+- **`full-suite.yml`** -- "Full suite": calls `ci.yml`, `desktop.yml` and
+  `mobile.yml` with `full: true`, so the macOS and Windows jobs, the Desktop
+  tests and Release compile and the mobile license check run, and, on a
+  dispatch with `native` (the default), calls `e2e-native.yml` with
+  `suite: smoke`. It runs nightly at 04:30 UTC, on a dispatch, and on a pull
+  request that carries the `ci-full` label (re-run on every push to it; an
+  unrelated label does not start it). Its `full suite` job fails when any called
+  job failed or was cancelled. A stable release requires a green dispatched run
+  with the native E2E on the release commit (RELEASE.md section 4);
+  `scripts/full-suite-gate.mjs` checks it and `release.yml` and
+  `desktop-release.yml` run it for a stable tag.
+
+- **`nightly-failures.yml`** -- "Nightly failures": when a scheduled `Full
+suite`, `Native E2E` or `Stim CI dogfood` run fails, opens an issue titled
+  `Nightly failure: <workflow>` labeled `source: nightly` with the failed jobs
+  and the run link, or comments on the open one. It never closes an issue.
+
 - **`stim-ci.yml`** -- "Stim CI dogfood": builds, launches, probes and stops
   the mobile app on iOS (`xcode-27`) and Android (`ubuntu-latest`) and the
   Desktop app on macOS (`macos-15`) through the `stim-ci` action, twice per job
-  to cover the warm path. It runs on dispatch, on a pull request labeled
-  `e2e-smoke`, and on a push to `main` that changes `apps/mobile`,
-  `apps/desktop`, `packages/ci`, `packages/core`, `packages/stim-cli`,
-  `scripts/ci`, the action or the workflow. A change to the other packages or
-  to the lockfile does not start it on push; a pull request label or dispatch
-  runs it on demand.
+  to cover the warm path. It runs nightly at 09:00 UTC on `main`, on dispatch,
+  and on a pull request labeled `e2e-smoke` that changes `apps/mobile`,
+  `apps/desktop`, `packages`, `scripts/ci`, the action, the workflow or the
+  lockfile. A push to `main` does not start it, so a merge that breaks the app
+  lifecycle shows in the next nightly run; dispatch or the label runs it on
+  demand.
   No workflow uses a larger runner, because larger runners are billed per minute
   even on public repositories.
 
-- **`post-release.yml`** -- "Post-release validation": a pushed `v*` tag runs
-  the full Windows unit suite (`windows-full.yml`). It is a separate workflow
-  from `release.yml`, so the suite never delays or fails the npm publish, and a
-  failure shows as its own red run on the tag. The release gate in RELEASE.md
-  section 4 is the merge queue's `Merge gate` plus the `test (node 22)`,
-  `test (node 24)` and `published runtime (node 22.12.0)` jobs of the push `CI`
-  run on the release commit; the Windows, macOS and native jobs are checked
-  after publishing (RELEASE.md section 5).
+- The release gate in RELEASE.md section 4 is the merge queue's `Merge gate`
+  plus the `test (node 22)`, `test (node 24)` and `published runtime (node
+22.12.0)` jobs of the push `CI` run on the release commit, and, for a stable
+  version, a green `Full suite` run with the native E2E.
+
+- **`desktop.yml`** -- "Desktop". On a pull request or push to `main` that
+  touches a Desktop path (not its Markdown) it runs a Linux `checks` job (the
+  token, agent-prompt and ASCII checks) and a macOS `build` job that lints the Swift
+  formatting, compiles the debug configuration with `-Xswiftc -warnings-as-errors`
+  and checks the linked SDK, about 4 minutes plus the runner queue. It has no
+  build cache: a cached SwiftPM `.build` saved at most 20 to 50 seconds, within the
+  run-to-run noise, because a fresh checkout recompiles the package's own modules
+  and a restore of the whole directory costs a minute (#5108 covers a real fix
+  through `stim-ci`). With `full` (the `Full suite`, or a dispatch) the `build` job also stages the server, runs `swift test`, compiles the
+  Release configuration and the `stim-frames` helper, starts the
+  bundled server under the hardened runtime and packages an ad-hoc release,
+  about 15 to 20 more minutes. The Release compile is also built by every
+  `Desktop next` run on `main`.
 
 - **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner
   like the Android lane and holds it open behind Tailscale SSH or tmate.
@@ -306,8 +336,8 @@ PATH).
 
   | event               | suites                                                                                              |
   | ------------------- | --------------------------------------------------------------------------------------------------- |
-  | push to `main`      | smoke on iOS, Linux Android and Windows Android                                                     |
   | nightly schedule    | loop on iOS, Linux Android and Windows Android                                                      |
+  | `Full suite` call   | the smoke on iOS, Linux Android and Windows Android (a dispatch with `native`)                      |
   | `workflow_dispatch` | the `suite` input (`smoke` \| `loop` \| `caches` \| `pool` \| `all`, default `loop`)                |
   | pull request        | the union of its labels `e2e-smoke`, `e2e-loop`, `e2e-caches`, `e2e-pool`, `e2e-all`; none, nothing |
 
@@ -358,7 +388,9 @@ found`, and the build-cache lanes print `build cache: HIT <key>` or
 
 `merge-gate.yml` runs on every pull request with no path filter, so it exists
 even when `ci.yml`, `desktop.yml` and `mobile.yml` are skipped by their path
-filters. Its one job, `merge gate`, waits at least 75 seconds so later-starting
+filters. A pull request, the merge queue and a push to `main` start only Linux jobs and the
+Desktop debug compile, so that is all it waits for; a `ci-full` label or a dispatched
+`Full suite` on the head SHA adds the platform jobs to its wait. Its one job, `merge gate`, waits at least 75 seconds so later-starting
 workflows register, then polls (every 30 seconds, every 60 after ten minutes)
 until every other check run, workflow run and commit status on the head SHA has
 completed. It fails if any ended with a conclusion other than `success`,

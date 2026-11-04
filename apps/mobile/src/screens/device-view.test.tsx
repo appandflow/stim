@@ -1,6 +1,6 @@
 import 'react-native-unistyles/mocks';
 
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 import { Alert, Dimensions } from 'react-native';
 import { I18nProvider } from '@lingui/react';
 import { i18n } from '@lingui/core';
@@ -368,6 +368,97 @@ it('starts frameless and maps framed touches using the aperture layout rather th
   mockTouch.mockClear();
   await fireEvent(aperture, 'responderGrant', { nativeEvent: { locationX: -10, locationY: 300 } });
   expect(mockTouch).not.toHaveBeenCalled();
+});
+
+function responder(screen: Awaited<ReturnType<typeof render>>) {
+  const [view] =
+    screen.root?.queryAll((view) => view.props.onResponderGrant !== undefined && view.props.pointerEvents === 'auto') ??
+    [];
+  if (!view) throw new Error('No touch responder is rendered.');
+  return view;
+}
+
+const touchAt = (identifier: number, x: number, y: number) => ({ identifier, locationX: x, locationY: y });
+
+it('sends two fingers on an Android device as one gesture and ignores the survivor of a lifted finger', async () => {
+  mockArtwork = true;
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="android" slot="default" />
+    </I18nProvider>,
+  );
+  await fireEvent.press(screen.getByLabelText('More'));
+  await fireEvent.press(screen.getByLabelText('Device Frame'));
+  const aperture = responder(screen);
+  await fireEvent(aperture, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 800 } } });
+  const first = touchAt(1, 100, 400);
+  const second = touchAt(2, 300, 400);
+  await fireEvent(aperture, 'responderGrant', { nativeEvent: { changedTouches: [first], touches: [first] } });
+  await fireEvent(aperture, 'responderStart', {
+    nativeEvent: { changedTouches: [second], touches: [first, second] },
+  });
+  expect(mockTouch.mock.calls).toEqual([['down', 0.25, 0.5, undefined, { x: 0.75, y: 0.5 }]]);
+  mockTouch.mockClear();
+  const moved = [touchAt(1, 80, 400), touchAt(2, 320, 400)];
+  await fireEvent(aperture, 'responderMove', { nativeEvent: { changedTouches: moved, touches: moved } });
+  expect(mockTouch.mock.calls).toEqual([['move', 0.2, 0.5, undefined, { x: 0.8, y: 0.5 }]]);
+  mockTouch.mockClear();
+  await fireEvent(aperture, 'responderEnd', {
+    nativeEvent: { changedTouches: moved.slice(0, 1), touches: moved.slice(1) },
+  });
+  expect(mockTouch.mock.calls).toEqual([['up', 0.2, 0.5, undefined, { x: 0.8, y: 0.5 }]]);
+  mockTouch.mockClear();
+  await fireEvent(aperture, 'responderMove', {
+    nativeEvent: { changedTouches: moved.slice(1), touches: moved.slice(1) },
+  });
+  await fireEvent(aperture, 'responderEnd', { nativeEvent: { changedTouches: moved.slice(1), touches: [] } });
+  await fireEvent(aperture, 'responderRelease', { nativeEvent: { changedTouches: moved.slice(1), touches: [] } });
+  expect(mockTouch).not.toHaveBeenCalled();
+});
+
+it('sends a single Android finger as a tap without a second finger', async () => {
+  mockArtwork = true;
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="android" slot="default" />
+    </I18nProvider>,
+  );
+  await fireEvent.press(screen.getByLabelText('More'));
+  await fireEvent.press(screen.getByLabelText('Device Frame'));
+  const aperture = responder(screen);
+  await fireEvent(aperture, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 800 } } });
+  const finger = touchAt(1, 200, 400);
+  await fireEvent(aperture, 'responderGrant', { nativeEvent: { changedTouches: [finger], touches: [finger] } });
+  expect(mockTouch).not.toHaveBeenCalled();
+  await fireEvent(aperture, 'responderEnd', { nativeEvent: { changedTouches: [finger], touches: [] } });
+  await fireEvent(aperture, 'responderRelease', { nativeEvent: { changedTouches: [finger], touches: [] } });
+  expect(mockTouch.mock.calls).toEqual([
+    ['down', 0.5, 0.5, undefined, undefined],
+    ['up', 0.5, 0.5, undefined, undefined],
+  ]);
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+});
+
+it('sends a held Android finger as a one-finger touch once the second-finger wait passes', async () => {
+  jest.useFakeTimers();
+  mockArtwork = true;
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="android" slot="default" />
+    </I18nProvider>,
+  );
+  await fireEvent.press(screen.getByLabelText('More'));
+  await fireEvent.press(screen.getByLabelText('Device Frame'));
+  const aperture = responder(screen);
+  await fireEvent(aperture, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 800 } } });
+  const finger = touchAt(1, 200, 400);
+  await fireEvent(aperture, 'responderGrant', { nativeEvent: { changedTouches: [finger], touches: [finger] } });
+  expect(mockTouch).not.toHaveBeenCalled();
+  await act(() => jest.advanceTimersByTime(40));
+  expect(mockTouch.mock.calls).toEqual([['down', 0.5, 0.5, undefined, undefined]]);
 });
 
 it('keeps the frame presentation toggle available without a control lease or control permission', async () => {

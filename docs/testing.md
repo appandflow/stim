@@ -150,13 +150,37 @@ trimming dispositions and CI/tooling tradeoffs.
 
 ## CI scheduling
 
-Pull requests retain Linux unit and CLI/cache E2E checks, mobile tests,
-and strict Desktop Swift build/tests plus the frames helper. The Windows PR
-lane builds and typechecks the packages, then runs the existing executor,
-detached launcher, log command, cache provider and build-lock suites. These
-include real Windows subprocesses and filesystem/cache operations. The full
-`test:e2e` command also contains Unix shell fixtures and is not the Windows
-smoke lane.
+A pull request, the merge queue and a push to `main` run only fast Linux jobs:
+the Node 22 and 24 unit and cross-platform E2E jobs, the published-runtime
+check, the Mobile, Demo server and Docs checks for the paths they cover, the
+Desktop token and ASCII checks, and, when Desktop files change, the Desktop
+debug compile (`swift build -Xswiftc -warnings-as-errors`, about 4 minutes
+plus the macOS runner queue). A push to `main` adds the integration tests.
+Nothing that needs macOS or Windows, or takes more than about 10 minutes, runs
+there.
+
+The rest runs in the `Full suite` workflow (`full-suite.yml`), which calls
+`ci.yml`, `desktop.yml`, `mobile.yml` and, on a dispatch, `e2e-native.yml`:
+
+| trigger                                     | runs                                                                                                                                               |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| nightly at 04:30 UTC                        | `test (macos)`, `native process inspection` on macOS and Windows, `test (windows)`, the full Desktop job, the mobile license check, the Linux jobs |
+| `workflow_dispatch` with `native` (default) | the same plus the native E2E smoke on iOS, Linux Android and Windows Android; this run gates a stable release                                      |
+| the `ci-full` label on a pull request       | the same as nightly, on the pull request's merge commit; an unrelated label does not start it                                                      |
+
+The full Windows unit suite (`windows-full.yml`) runs on its own at 04:45 UTC and
+is not part of the `Full suite` or the release gate while
+[#3878](https://github.com/appandflow/stim/issues/3878) is open: it failed on
+most nights of the last two weeks and `Post-release validation` was red for four
+of the last five releases. Native E2E keeps its own nightly loop at 07:00 UTC and its `e2e-*` pull request
+labels. A failing nightly `Full suite`, `Native E2E` or `Stim CI dogfood` run
+files or updates an issue titled `Nightly failure: <workflow>`
+(`nightly-failures.yml`), labeled `source: nightly`.
+
+Add `ci-full` to a pull request that changes native tool calls, Desktop Swift,
+the frames helper, or code that branches on `process.platform`, and wait for
+the `Full suite` run before the fresh review. For a branch without a pull
+request, run `gh workflow run full-suite.yml --ref <branch>`.
 
 A PR that only modifies existing root test files runs those changed files,
 including affected integrations, on Node 22 and 24. Other changes run the fast
@@ -175,15 +199,12 @@ reports to compare case and file costs on the same runner type. Required
 full suites still run before merge; local affected selection does not change
 that gate.
 
-CI runs the complete Windows unit suite nightly at 06:00 UTC and on manual
-dispatch. A pushed `v*` tag starts `Post-release validation`
-(`post-release.yml`), which runs that same suite in its own workflow. It is
-separate from the npm Release workflow, so it neither delays nor fails the
-publish, and it does not gate a release until
-[#3878](https://github.com/appandflow/stim/issues/3878).
-Desktop release packaging runs nightly at 05:00 UTC and on manual Desktop
-dispatch; the production Desktop release workflow still builds and packages
-its candidate. Scheduled validation never publishes a release.
+The Desktop workflow's full validation (`swift test`, the Release configuration
+compile, the `stim-frames` helper compile, the hardened-runtime server start and
+an ad-hoc release package) runs in the `Full suite`, or alone with
+`gh workflow run desktop.yml --ref <branch>`. A stable release requires a
+green `Full suite (native E2E)` run on the release commit (`RELEASE.md`).
+Scheduled validation never publishes a release.
 
 ## Fixture isolation
 

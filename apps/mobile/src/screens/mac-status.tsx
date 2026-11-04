@@ -18,6 +18,7 @@ import { Pill } from '@/components/pill';
 import { PlatformGlyph } from '@/components/platform-glyph';
 import { explainReadOnly, ScopeChip } from '@/components/read-only';
 import { SheetScreen } from '@/components/sheet-screen';
+import { CodeText } from '@/components/code-text';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { UsageCharts } from '@/components/usage-charts';
@@ -215,7 +216,7 @@ export function MacStatus({ id }: { id: string }) {
           footer={
             report.free.length ? (
               <Text variant="footnote" tone="tertiary" style={styles.note}>
-                <Trans>Read-only here. Free space and manage these on your Mac, in Stim Desktop or with stim.</Trans>
+                <Trans>Read-only here. Free space and manage these on the machine, in Stim Desktop or with stim.</Trans>
               </Text>
             ) : null
           }
@@ -245,7 +246,7 @@ export function MacStatus({ id }: { id: string }) {
               <Text variant="footnote" tone="tertiary" style={styles.note}>
                 {report.inventory
                   ? t`Stim acts only on devices this Stim home created. The others are listed so you can see their size; manage them in Xcode or Android Studio.`
-                  : t`Stim-owned devices that stim status has measured. The Mac lists every simulator and emulator once stim-server serves machine details.`}
+                  : t`Stim-owned devices that stim status has measured. The machine lists every simulator and emulator once stim-server serves machine details.`}
               </Text>
               {report.notices.map((notice) => (
                 <Text key={notice} variant="footnote" tone="warning" style={styles.note}>
@@ -279,7 +280,7 @@ export function MacStatus({ id }: { id: string }) {
           note={
             <Text variant="footnote" tone="tertiary" style={styles.note}>
               <Trans>
-                Stim never deletes these. Remove one no device uses from Xcode or Android Studio on your Mac.
+                Stim never deletes these. Remove one no device uses from Xcode or Android Studio on the machine.
               </Trans>
             </Text>
           }
@@ -326,7 +327,7 @@ export function MacStatus({ id }: { id: string }) {
           trailing={<SizeText size={sum(report.caches)} />}
           note={
             <Text variant="footnote" tone="tertiary" style={styles.note}>
-              <Trans>Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache.</Trans>
+              <Trans>Shared caches builds refill. Empty one on the machine with stim gc --delete --cache.</Trans>
             </Text>
           }
           empty={t`No shared cache was found.`}
@@ -420,9 +421,9 @@ export function MacStatus({ id }: { id: string }) {
                       <Text variant="callout" numberOfLines={1}>
                         {machine.name}
                       </Text>
-                      <Text variant="footnote" tone={machine.tone}>
+                      <CodeText variant="footnote" tone={machine.tone}>
                         {machineLine(machine.title, machine.remedy)}
-                      </Text>
+                      </CodeText>
                       {offloaded ? (
                         <Text variant="footnote" tone="secondary">
                           {offloadLine(offloaded.today, offloaded.total)}
@@ -445,7 +446,7 @@ export function MacStatus({ id }: { id: string }) {
       {clients.length > 0 ? (
         <View style={styles.block}>
           <Text variant="headline" accessibilityRole="header">
-            <Trans>Builds for Other Macs</Trans>
+            <Trans>Builds for Other Machines</Trans>
           </Text>
           <Card>
             {clients.map((client, index) => (
@@ -531,7 +532,7 @@ function capacityLine(capacity: NonNullable<StatusPayload['capacity']>): string 
 
 function detailsNote(details: ReturnType<typeof useMachineDetails>): string | null {
   if (details.kind === 'unsupported')
-    return t`Update stim-server on the Mac to see caches, runtimes and what Stim can free.`;
+    return t`Update stim-server on the machine to see caches, runtimes and what Stim can free.`;
   if (details.kind === 'failed') {
     const { message } = details;
     return t`Disk details are unavailable: ${message}`;
@@ -858,13 +859,18 @@ function FreeItemRow({ row, home }: { row: FreeRow; home: string | null | undefi
 
 function worktreeLine(row: WorktreeRow): string | null {
   const nodeModules = sizeLabel(row.nodeModules);
+  const shared = row.nodeModulesShared ? sizeLabel(row.nodeModulesShared) : null;
   const deviceSize = sizeLabel(row.devices);
   const devices = plural(row.deviceCount, { one: `device ${deviceSize}`, other: `# devices ${deviceSize}` });
   const outputs = sizeLabel(row.outputs);
   const logs = sizeLabel(row.logs);
   const parts = [
     row.inCheckout,
-    row.nodeModules ? t`node_modules ${nodeModules}` : null,
+    row.nodeModules !== null && (row.nodeModules > 0 || shared)
+      ? shared
+        ? t`node_modules ${nodeModules} (${shared} shared)`
+        : t`node_modules ${nodeModules}`
+      : null,
     row.devices ? devices : null,
     row.outputs ? t`outputs ${outputs}` : null,
     row.logs ? t`logs ${logs}` : null,

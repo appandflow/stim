@@ -995,6 +995,16 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Parked emulators kept for adoption; 0 turns parking off',
   },
   {
+    key: 'pool.bootedGraceMinutes',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 15,
+    env: 'STIM_POOL_BOOTED_GRACE_MINUTES',
+    scopedHomeValue: 0,
+    description:
+      'Minutes a parked simulator stays booted when memory pressure is normal and a device slot is free, so the next ios adopts it without a boot; 0 shuts it down at once',
+  },
+  {
     key: 'daemon.mode',
     type: { kind: 'choice', choices: ['on', 'report', 'off'] },
     scopes: MACHINE,
@@ -1046,6 +1056,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       "Whether a machine approved for builds or device hosting here may update this machine's stim-server service to that machine's own stim-server build; releases from npm need no setting",
   },
   {
+    key: 'server.keepAwake',
+    type: { kind: 'boolean' },
+    scopes: MACHINE,
+    default: false,
+    description:
+      'Keep this Mac from idle system sleep while it runs on AC power and stim-server accepts connections from other machines on its tailnet or local network (caffeinate -s: the display may still sleep). A --loopback-only server holds nothing, and the setting has no effect on Linux and Windows',
+  },
+  {
     key: 'share.exposure',
     type: { kind: 'choice', choices: SHARE_EXPOSURES },
     scopes: MACHINE,
@@ -1071,6 +1089,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: SHARE_DEFAULT_PORT,
     description:
       'The loopback port the share listener binds in proxy mode, so your reverse proxy can name it. It is not used in tailscale mode, which picks a free port',
+  },
+  {
+    key: 'share.webrtc',
+    type: { kind: 'boolean' },
+    scopes: MACHINE,
+    default: false,
+    description:
+      'Whether web shares from this machine offer viewers a WebRTC data channel for video. A viewer opts in with ?transport=webrtc and falls back to WebSocket when WebRTC fails; off, shares neither advertise nor accept it. Needs the optional node-datachannel package, and for a hosted device the worker must also support it. Experimental',
   },
   {
     key: 'server.lanAddresses',

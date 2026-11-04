@@ -1,14 +1,18 @@
+import type { StimContext } from '@stim-cli/core';
 import { DEVICE_RECLAIM_REASON, type DaemonLadderAction } from '@stim-cli/core/state';
 import { workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceDeviceLastUseAt } from '../devices/activity.ts';
 import { idleShutdownDueMs, shutDownIdleDevices, writeIdleShutdownEvent } from '../devices/idle-shutdown.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
-import { countLiveOwnedDevicesByPlatform } from '../engine/device-capacity.ts';
+import { countLiveOwnedDevicesByPlatformAsync } from '../engine/device-capacity.ts';
 import { liveWaiters } from '../engine/wait-queue.ts';
 import { liveShareKeepReason, readWebShares, shareKeepReason } from '../local-server.ts';
-import { admissionLimits, getPlatformDeviceLimits } from '../workspace/config.ts';
+import { readParked } from '../devices/sim-pool.ts';
+import { shutDownBootedParkedIosSim } from '../devices/teardown.ts';
+import { admissionLimits, getPlatformDeviceLimits, loadConfig } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
+import { readDeferredMarks, shutDownDeferredIosSim, workspaceServing } from './booted-parked.ts';
 import { ownedHere, type IdlePassInput } from './idle.ts';
 
 /** A booted device of another workspace idle this long may be shut down for a run waiting to boot. */
@@ -33,6 +37,7 @@ export async function reclaimForBootWaiters({
   sims,
   act,
   log,
+  operation,
   now = Date.now(),
 }: {
   devices: readonly OwnedDeviceActivity[];
@@ -40,6 +45,8 @@ export async function reclaimForBootWaiters({
   sims: IosSimRecord[] | null;
   act: boolean;
   log: IdlePassInput['log'];
+  /** The daemon tick's context: the locked re-check reads processes and simulators without blocking its event loop. */
+  operation: StimContext;
   now?: number;
 }): Promise<DaemonLadderAction | null> {
   let waiters;
@@ -49,7 +56,7 @@ export async function reclaimForBootWaiters({
     return null;
   }
   if (!waiters.length || sims === null) return null;
-  const counts = countLiveOwnedDevicesByPlatform({ sims });
+  const counts = await countLiveOwnedDevicesByPlatformAsync({ sims });
   if ('unknown' in counts) return null;
   const { maxDevices } = admissionLimits();
   const platformCaps = getPlatformDeviceLimits();
@@ -69,6 +76,63 @@ export async function reclaimForBootWaiters({
       return root ? [root] : [];
     }),
   );
+  const booted = (udid: string) => sims.find((sim) => sim.udid === udid)?.state === 'Booted';
+  const parked = readParked('ios')
+    .filter((record) => record.bootedUntil !== undefined && booted(record.udid))
+    .toSorted((a, b) => a.parkedAt.localeCompare(b.parkedAt))[0];
+  const left = parked
+    ? undefined
+    : readDeferredMarks(loadConfig())
+        .filter((mark) => {
+          const root = safeCanonical(mark.root);
+          return root !== null && !waiting.has(root) && booted(mark.udid) && !workspaceServing(mark.root);
+        })
+        .toSorted((a, b) => a.until.localeCompare(b.until))[0];
+  const held = parked
+    ? {
+        udid: parked.udid,
+        name: parked.name,
+        what: 'a parked simulator',
+        label: `parked simulator ${parked.name}`,
+        shutDown: () => shutDownBootedParkedIosSim(parked.udid, { label: parked.name, operation }),
+      }
+    : left && {
+        udid: left.udid,
+        name: left.name,
+        what: 'a simulator that stop left booted',
+        label: `simulator ${left.name} that stop left booted`,
+        shutDown: () => shutDownDeferredIosSim(left, operation),
+      };
+  if (held && (totalFull || fullPlatforms.has('ios'))) {
+    const { label } = held;
+    const reason = `a run waits to boot and the booted devices fill ${totalFull ? `concurrency.maxDevices (${maxDevices})` : 'the ios cap'}; ${held.what} held booted goes first`;
+    if (!act) {
+      log('info', 'device_would_reclaim', `would shut down ${label}: ${reason}`);
+      return {
+        rung: 0,
+        kind: 'reclaim-device',
+        target: held.udid,
+        outcome: 'would',
+        bytes: 0,
+        detail: 'daemon.mode report acts on nothing',
+      };
+    }
+    const outcome = await held.shutDown();
+    const done = outcome?.status === 'torn-down';
+    const detail = done
+      ? `shut down ${label} for a waiting run: ${reason}`
+      : `kept ${label}: ${outcome?.reason ?? outcome?.status ?? 'its workspace is in use'}`;
+    log(done ? 'info' : 'warn', done ? 'device_reclaimed' : 'device_reclaim_kept', detail, { target: held.udid });
+    if (done || outcome?.status === 'failed')
+      return {
+        rung: 0,
+        kind: 'reclaim-device',
+        target: held.udid,
+        outcome: done ? 'done' : 'failed',
+        bytes: 0,
+        detail,
+      };
+  }
   const candidates = devices
     .flatMap((device) => {
       if (!ownedHere(device)) return [];
@@ -122,9 +186,9 @@ export async function reclaimForBootWaiters({
         RECLAIM_IDLE_MS,
         (event) => writeIdleShutdownEvent(device.project, event),
         Date.now(),
-        { only: device, reason: DEVICE_RECLAIM_REASON },
+        { only: device, reason: DEVICE_RECLAIM_REASON, operation },
       ),
-    { purpose: 'device queue reclaim', supervisor: false, managedLocks: false },
+    { purpose: 'device queue reclaim', supervisor: false, managedLocks: false, operation },
   );
   const done = run.ran && typeof run.value === 'number' && run.value > 0;
   const detail = done

@@ -29,7 +29,8 @@ import ImageIO
 // and y on the upright screen, and on an iOS simulator or an Android device optionally
 // "x2" and "y2" for a second finger, sent with every phase of its gesture; {"input": "text", "text": s}, printable ASCII where "\n"
 // is Return, "\t" is Tab and "\u{8}" is Delete; {"input": "key", "key": "left|right|up|down|escape",
-// "modifiers": []} on an iOS simulator or an Android device; and {"input": "button", "button":
+// "modifiers": []} on an Android device or emulator, and on an iOS simulator also tab, return, backspace, a-z and
+// 0-9 with command, shift, option and control held; and {"input": "button", "button":
 // "home|lock"}, or on an emulator also "back|app-switch"; {"input": "rotate", "direction":
 // "left|right"}; and on an emulator {"input": "posture", "posture":
 // "folded|half-open|unfolded"}. An emulator types and presses buttons only with a hardware
@@ -42,7 +43,9 @@ import ImageIO
 // ({"error": message} before a failed exit, {"inputError": message}, on a simulator
 // with several displays {"display": n} when display n is the one lit and streamed, or
 // on an emulator {"keyboard": "yes|no"} once it reports its hardware, or on an iPhone
-// {"stalled": message} while frames cannot arrive and {"stalled": null} once they can), 3 is an H.264 access unit (1-byte
+// {"stalled": message} while frames cannot arrive and {"stalled": null} once they can, or
+// {"videoDropped": n}, the count of frames the video encoder's rate control dropped, at most once a second
+// while it drops), 3 is an H.264 access unit (1-byte
 // flags with bit 0 set on a keyframe, 8-byte big-endian float capture time in
 // milliseconds since the epoch, 2-byte width, 2-byte height, Annex-B bytes), and 4 is an
 // access unit of the recording encoder, laid out like 3. Kind 5 adds a clockwise artwork
@@ -249,7 +252,10 @@ final class Pacer {
 }
 
 func videoEncoder() -> VideoEncoder {
-  VideoEncoder(maxEdge: Config().maxEdge, fps: Int(Config().fps), bitrate: Config().bitrate, output: Output.video)
+  let encoder = VideoEncoder(
+    maxEdge: Config().maxEdge, fps: Int(Config().fps), bitrate: Config().bitrate, output: Output.video)
+  encoder.droppedReport = { Output.notice(["videoDropped": $0]) }
+  return encoder
 }
 
 func recordEncoder() -> VideoEncoder {
@@ -285,16 +291,21 @@ final class JpegGate {
   func admit(_ config: Config, pacer: Pacer) -> Bool {
     let now = CFAbsoluteTimeGetCurrent()
     let wait = last + 1 / max(config.jpegFps ?? config.fps, 0.1) - now
-    if wait <= 0 {
+    if wait <= min(0.5 / max(config.fps, 0.1), 0.15 / max(config.jpegFps ?? config.fps, 0.1)) {
       last = now
       return true
     }
     if !retrying {
       retrying = true
-      pacer.queue.asyncAfter(deadline: .now() + wait) {
+      // launchd.plist(5) ProcessType Standard coalesces default-leeway timers, as Pacer notes.
+      let timer = DispatchSource.makeTimerSource(flags: .strict, queue: pacer.queue)
+      timer.schedule(deadline: .now() + wait, leeway: .nanoseconds(0))
+      timer.setEventHandler {
+        timer.cancel()
         self.retrying = false
         pacer.changed()
       }
+      timer.resume()
     }
     return false
   }
@@ -1131,30 +1142,28 @@ let deviceKeys: [String: (macCode: UInt16, androidCode: Int32)] = [
   "left": (0x7B, 21), "right": (0x7C, 22), "down": (0x7D, 20), "up": (0x7E, 19), "escape": (0x35, 111),
 ]
 
-// macOS virtual key codes of a US keyboard, which SimulatorKit's
-// hidUsageForCGKeyCode turns into HID usages and the emulator turns into evdev
-// keys; shifted characters also hold Shift (0x38).
-let keyCodes: [Character: (code: UInt16, shift: Bool)] = {
-  var map: [Character: (UInt16, Bool)] = [:]
-  let plain: [(String, UInt16)] = [
-    ("a", 0x00), ("s", 0x01), ("d", 0x02), ("f", 0x03), ("h", 0x04), ("g", 0x05), ("z", 0x06), ("x", 0x07),
-    ("c", 0x08), ("v", 0x09), ("b", 0x0B), ("q", 0x0C), ("w", 0x0D), ("e", 0x0E), ("r", 0x0F), ("y", 0x10),
-    ("t", 0x11), ("1", 0x12), ("2", 0x13), ("3", 0x14), ("4", 0x15), ("6", 0x16), ("5", 0x17), ("=", 0x18),
-    ("9", 0x19), ("7", 0x1A), ("-", 0x1B), ("8", 0x1C), ("0", 0x1D), ("]", 0x1E), ("o", 0x1F), ("u", 0x20),
-    ("[", 0x21), ("i", 0x22), ("p", 0x23), ("l", 0x25), ("j", 0x26), ("'", 0x27), ("k", 0x28), (";", 0x29),
-    ("\\", 0x2A), (",", 0x2B), ("/", 0x2C), ("n", 0x2D), ("m", 0x2E), (".", 0x2F), ("`", 0x32), (" ", 0x31),
-    ("\n", 0x24), ("\t", 0x30), ("\u{8}", 0x33),
-  ]
-  for (text, code) in plain { map[Character(text)] = (code, false) }
-  for letter in "abcdefghijklmnopqrstuvwxyz" { map[Character(letter.uppercased())] = (map[letter]!.0, true) }
-  let shifted: [(Character, Character)] = [
-    ("!", "1"), ("@", "2"), ("#", "3"), ("$", "4"), ("%", "5"), ("^", "6"), ("&", "7"), ("*", "8"), ("(", "9"),
-    (")", "0"), ("_", "-"), ("+", "="), ("{", "["), ("}", "]"), ("|", "\\"), (":", ";"), ("\"", "'"), ("<", ","),
-    (">", "."), ("?", "/"), ("~", "`"),
-  ]
-  for (character, base) in shifted { map[character] = (map[base]!.0, true) }
-  return map
-}()
+// The macOS virtual key codes of `input.key`'s keys and modifiers on an iOS simulator.
+let namedKeyCodes: [String: UInt16] = [
+  "escape": 0x35, "tab": 0x30, "return": 0x24, "backspace": 0x33, "left": 0x7B, "right": 0x7C, "down": 0x7D, "up": 0x7E,
+]
+let modifierKeyCodes: [String: UInt16] = ["command": 0x37, "shift": 0x38, "option": 0x3A, "control": 0x3B]
+
+func keyCode(named name: String) -> UInt16? {
+  if let code = namedKeyCodes[name] { return code }
+  guard name.count == 1, let character = name.first, let key = keyCodes[character], !key.shift else { return nil }
+  return key.code
+}
+
+/// Presses `name` while holding `modifiers`, which are macOS key codes, through `press`.
+func pressChord(_ name: String, modifiers: [UInt16], gap: UInt32, press: (UInt16, Bool) -> Void) -> Bool {
+  guard let code = keyCode(named: name) else { return false }
+  for modifier in modifiers { press(modifier, true) }
+  press(code, true)
+  usleep(gap)
+  press(code, false)
+  for modifier in modifiers.reversed() { press(modifier, false) }
+  return true
+}
 
 extension SimulatorSource: Source {
   func input(_ command: Command) {
@@ -1163,7 +1172,7 @@ extension SimulatorSource: Source {
         MainActor.assumeIsolated {
           guard let touch = self.duo?.touch(phase, point: point, revision: revision) else { return }
           self.inputQueue.async {
-            if self.hid?.isConnected != true { self.hid = SimulatorHID(udid: self.udid) }
+            if self.hid?.isConnected != true { self.hid = SimulatorHID(udid: self.udid, hardwareKeyboard: true) }
             self.hid?.touch(phase, at: touch.point, screenID: touch.screenID)
           }
         }
@@ -1191,7 +1200,7 @@ extension SimulatorSource: Source {
       }
       return
     }
-    if hid?.isConnected != true { hid = SimulatorHID(udid: udid) }
+    if hid?.isConnected != true { hid = SimulatorHID(udid: udid, hardwareKeyboard: true) }
     guard let hid else { return Output.notice(["inputError": "\(udid) could not be opened for input."]) }
     switch command {
     case .touch(let phase, let point, let second, let index):
@@ -1219,11 +1228,10 @@ extension SimulatorSource: Source {
       hid.button(button, down: true)
       usleep(100_000)
       hid.button(button, down: false)
-    case .key(let name, _):
-      guard let key = deviceKeys[name] else { return Output.notice(["inputError": "iOS takes no \(name) key."]) }
-      hid.hardwareKey(code: key.macCode, down: true)
-      usleep(10_000)
-      hid.hardwareKey(code: key.macCode, down: false)
+    case .key(let name, let modifiers):
+      let held = modifiers.compactMap { modifierKeyCodes[$0] }
+      let pressed = pressChord(name, modifiers: held, gap: 10_000) { hid.hardwareKey(code: $0, down: $1) }
+      if !pressed { Output.notice(["inputError": "iOS takes no \(name) key."]) }
     case .clipboard(.paste):
       let command: UInt16 = 0x37
       let v: UInt16 = 0x09

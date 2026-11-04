@@ -55,6 +55,10 @@ machine where those exist, the two hashes differ and each side fills its own
 entry. List them in the project's `.fingerprintignore` to bring the hashes back
 together.
 
+Stim also counts the `ios/Podfile.lock` checksum of a podspec that names the checkout
+path (the precompiled ExpoModulesCore) without that path, which Expo CLI does not,
+so after `pod install` the two hashes differ and each side fills its own entry.
+
 ```bash
 npm install --save-dev @stim-cli/expo-build-cache
 ```

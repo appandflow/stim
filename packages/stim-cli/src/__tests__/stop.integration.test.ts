@@ -23,12 +23,15 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 import { captureProcessToken } from '../process-identity.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
+import { readDeferredShutdowns } from '@stim-cli/core/state';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { recordPhoneReverse } from '../devices/phone-reverses.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { tryAcquireClaim } from '../ownership-claim.ts';
+import { serveShareList } from './_share-list-server.ts';
 
 test('a live legacy supervisor is retained without signalling or releasing its port', async () => {
   const { calls, opts } = seams({
@@ -830,6 +833,55 @@ describe('stop removes the adb reverses a --device run left on a physical phone'
     expect(readWorkspaceState(tmpRoot)?.phoneReverses).toEqual({ android: { serial: 'DEFAULT-PHONE', ports: [8083] } });
   });
 
+  test("stop removes an owned emulator's reverses of reversed ports as well as Metro's", async () => {
+    await updateWorkspaceStateAsync(tmpRoot, (state) => ({ ...state, reversePorts: [8901] }));
+    const events: string[] = [];
+    setExecutor(
+      makeExecutor({
+        runFileQuietAsync: async (_file, args) => {
+          if (args.includes('emu')) return 'stim-app\nOK\n';
+          events.push(args.join(' '));
+          return args.includes('--list')
+            ? 'host-21 tcp:8083 tcp:8083\nhost-21 tcp:8901 tcp:8901\nhost-21 tcp:9 tcp:9\n'
+            : '';
+        },
+      }),
+    );
+    const { opts } = seams({
+      root: tmpRoot,
+      project: { metroPort: 8083, platforms: { android: { avdName: 'stim-app', owned: true, consolePort: 5556 } } },
+      teardownAvd: async () => ({ status: 'skipped', reason: 'not under test' }),
+    });
+    await runStop(opts);
+    expect(events).toEqual([
+      '-s emulator-5556 reverse --list',
+      '-s emulator-5556 reverse --remove tcp:8083',
+      '-s emulator-5556 reverse --remove tcp:8901',
+    ]);
+    expect(readWorkspaceState(tmpRoot)?.reversePorts).toEqual([8901]);
+  });
+
+  test('stop removes reversed ports from an owned emulator when no Metro port is reserved', async () => {
+    await updateWorkspaceStateAsync(tmpRoot, (state) => ({ ...state, reversePorts: [8901] }));
+    const events: string[] = [];
+    setExecutor(
+      makeExecutor({
+        runFileQuietAsync: async (_file, args) => {
+          if (args.includes('emu')) return 'stim-app\nOK\n';
+          events.push(args.join(' '));
+          return args.includes('--list') ? 'host-21 tcp:8901 tcp:8901\n' : '';
+        },
+      }),
+    );
+    const { opts } = seams({
+      root: tmpRoot,
+      project: { platforms: { android: { avdName: 'stim-app', owned: true, consolePort: 5556 } } },
+      teardownAvd: async () => ({ status: 'skipped', reason: 'not under test' }),
+    });
+    await runStop(opts);
+    expect(events).toEqual(['-s emulator-5556 reverse --list', '-s emulator-5556 reverse --remove tcp:8901']);
+  });
+
   test('an unreachable phone does not fail stop, and its record is dropped', async () => {
     await recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8083);
     setExecutor(
@@ -921,6 +973,7 @@ test('the idle stop asks the supervisor to record an idle stop, and keeps its po
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor, launches }));
   await takeLease({ root: tmpRoot, platform: 'android', id: 'PHONE', kind: 'declared' });
   let request: unknown;
+  let teardownOptions: object | undefined;
 
   const r = await runIdleStop({
     root: tmpRoot,
@@ -935,10 +988,14 @@ test('the idle stop asks the supervisor to record an idle stop, and keeps its po
     },
     waitForDeath: async () => true,
     resolveMetro: async () => makeMetroResolution.missing(),
-    teardownIos: async () => ({ status: 'torn-down', label: 'stim-a' }),
+    teardownIos: async (_udid: string, opts: object) => {
+      teardownOptions = opts;
+      return { status: 'torn-down', label: 'stim-a' };
+    },
   });
 
   expect(r.ok).toBe(true);
+  expect(teardownOptions).not.toHaveProperty('deferShutdown');
   expect(request).toMatchObject({ by: 'stim daemon', idleMinutes: 15 });
   expect(r.outcomes.port).toMatchObject({ status: 'kept', port: 8083 });
   expect(getProject(tmpRoot)?.metroPort).toBe(8083);
@@ -1811,6 +1868,26 @@ test('stop --slot default never ends the workspace remote session', async () => 
   expect(result.outcomes.device.remote).toBeUndefined();
 });
 
+test('stop ends the web shares of the workspace, and stop --slot those of that slot only', async () => {
+  const asked: { method: string; params: unknown }[] = [];
+  const server = await serveShareList(
+    () => ({ shares: [] }),
+    (method, params) => asked.push({ method, params }),
+  );
+  try {
+    const { opts } = seams({ root: tmpRoot, project: { metroPort: 8083, platforms: {} }, collectors: {} });
+    await runStop(opts);
+    await runStop({ ...opts, slot: 'tablet' });
+    await runStop({ ...opts, slot: 'web' });
+  } finally {
+    await server.close();
+  }
+  expect(asked).toEqual([
+    { method: 'share.stop', params: { workspace: tmpRoot } },
+    { method: 'share.stop', params: { workspace: tmpRoot, slot: 'tablet' } },
+  ]);
+});
+
 test('stop --slot closes only the slot emulator sessions claimed in this workspace, or from its repository root after shutdown', async () => {
   const claims = join(tmpHome, 'agent-device-claims');
   mkdirSync(claims);
@@ -1897,4 +1974,95 @@ test('stop --slot closes only the slot emulator sessions claimed in this workspa
     else process.env.AGENT_DEVICE_CLAIMS_DIR = previousClaims;
     rmSync(other, { recursive: true, force: true });
   }
+});
+
+describe('stop leaves the owned simulator booted when the booted-park gates hold', () => {
+  const UNTIL = '2026-11-04T12:15:00.000Z';
+  const ownedIos = {
+    metroPort: 8083,
+    bundleId: 'com.example.app',
+    platforms: { ios: { deviceUdid: 'U1', owned: true } },
+  };
+  const echoingTeardown =
+    (calls: TeardownCall[]) =>
+    async (udid: string, opts: { del?: boolean; label?: string; deferShutdown?: { until: string } }) => {
+      calls.push({ udid, opts });
+      const defer = opts.deferShutdown;
+      return { status: 'torn-down', label: 'stim-a', ...(defer ? { deferredUntil: defer.until } : {}) };
+    };
+
+  test('asks teardown to defer the shutdown, and reports the simulator as kept booted without failing the run', async () => {
+    const { calls, opts } = seams({ project: ownedIos, deferIosShutdown: async () => UNTIL });
+    opts.teardownIos = echoingTeardown(calls.teardowns);
+    const r = await runStop(opts);
+    expect(calls.teardowns).toEqual([
+      {
+        udid: 'U1',
+        opts: {
+          del: false,
+          label: undefined,
+          workspace: '/proj/a',
+          deferShutdown: { until: UNTIL, slot: 'default', appId: 'com.example.app' },
+        },
+      },
+    ]);
+    expect(r.ok).toBe(true);
+    expect(r.outcomes.device.ios).toEqual({ status: 'kept-booted', label: 'stim-a', until: UNTIL });
+    expect(r.summary).toContain(`ios stim-a kept booted until ${clockTime(UNTIL)}`);
+  });
+
+  test.each([
+    ['a gate fails', { deferIosShutdown: async () => null }],
+    ['the caller never asks, as the daemon idle stop does not', {}],
+  ])('shuts it down at once when %s', async (_name, over) => {
+    const { calls, opts } = seams({ project: ownedIos, ...over });
+    opts.teardownIos = echoingTeardown(calls.teardowns);
+    const r = await runStop(opts);
+    expect(calls.teardowns).toEqual([{ udid: 'U1', opts: { del: false, label: undefined, workspace: '/proj/a' } }]);
+    expect(r.outcomes.device.ios).toEqual({ status: 'shut-down', label: 'stim-a' });
+  });
+
+  test('reads the gates once for every slot and never for a workspace with no owned simulator', async () => {
+    let reads = 0;
+    const deferIosShutdown = async () => {
+      reads += 1;
+      return UNTIL;
+    };
+    const twoSlots = {
+      ...ownedIos,
+      deviceSlots: { second: { ios: { deviceUdid: 'U2', owned: true } } },
+    };
+    const { calls, opts } = seams({ project: twoSlots, deferIosShutdown });
+    opts.teardownIos = echoingTeardown(calls.teardowns);
+    await runStop(opts);
+    expect(calls.teardowns.map((call) => ('udid' in call ? call.udid : call.avd))).toEqual(['U1', 'U2']);
+    expect(reads).toBe(1);
+
+    reads = 0;
+    const { opts: androidOnly } = seams({
+      project: { metroPort: 8083, platforms: { android: { avdName: 'stim-app', owned: true } } },
+      deferIosShutdown,
+    });
+    await runStop(androidOnly);
+    expect(reads).toBe(0);
+  });
+
+  test('stop --slot shuts the slot down at once, since the workspace server it leaves running would end the deferral', async () => {
+    const { calls, opts } = seams({
+      root: tmpRoot,
+      project: { metroPort: 8083, platforms: {}, deviceSlots: { second: { ios: { deviceUdid: 'U2', owned: true } } } },
+      deferIosShutdown: async () => UNTIL,
+    });
+    opts.teardownIos = echoingTeardown(calls.teardowns);
+    const r = await runStop({ ...opts, slot: 'second' });
+    expect(calls.teardowns).toEqual([{ udid: 'U2', opts: { del: false, label: undefined, workspace: tmpRoot } }]);
+    expect(r.outcomes.device.ios?.status).toBe('shut-down');
+  });
+
+  test('a shutdown at once forgets the deferral an earlier stop recorded', async () => {
+    await recordDeferredShutdown(tmpRoot, 'default', { udid: 'U1', until: UNTIL });
+    const { opts } = seams({ root: tmpRoot, project: ownedIos, deferIosShutdown: async () => null });
+    await runStop(opts);
+    expect(readDeferredShutdowns(readWorkspaceState(tmpRoot))).toEqual({});
+  });
 });

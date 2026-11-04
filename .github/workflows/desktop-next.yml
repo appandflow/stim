@@ -265,8 +265,43 @@ jobs:
           fi
           gh release upload "$TAG" --clobber "$out/Stim-$VERSION.dmg" "$out/Stim-$VERSION.zip" "$out/SHA256SUMS"
 
+      - name: Remove the signing keychain and API key
+        if: always()
+        run: |
+          if [ -n "${DESKTOP_KEYCHAIN:-}" ]; then security delete-keychain "$DESKTOP_KEYCHAIN" || true; fi
+          rm -rf "$RUNNER_TEMP/asc" "$RUNNER_TEMP/desktop-cert.p12" "$RUNNER_TEMP/desktop.provisionprofile"
+
+  # The group desktop-appcast is shared with the stable publish job in desktop-release.yml. GitHub keeps
+  # one running and one pending job per group and cancels an older pending job when a newer one queues;
+  # the group holds at most this job and one stable publish job, because each workflow's own concurrency
+  # group starts a run only after the previous one finished.
+  publish:
+    needs: [plan, build]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: desktop-appcast
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      SHA: ${{ needs.plan.outputs.sha }}
+      TAG: desktop-next-${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: stim-desktop-${{ env.VERSION }}
+          path: ${{ runner.temp }}/release
+
       - name: Add the build to the next channel of the appcast
-        if: env.PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -274,11 +309,10 @@ jobs:
             echo "::error::The desktop-latest release does not exist. Publish a stable desktop-v* release first."
             exit 1
           fi
-          out=apps/desktop/build/release
+          out=$RUNNER_TEMP/release
           scripts/desktop-publish-appcast.sh "$out/appcast-item.xml" "$out/appcast.xml"
 
       - name: Delete old next prereleases
-        if: env.PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -293,16 +327,9 @@ jobs:
           done < "$RUNNER_TEMP/old-next-tags"
 
       - name: Summarize
-        if: env.PUBLISH == 'true'
         run: |
           {
             echo "Published \`$VERSION\` from \`$SHA\` to the Sparkle \`next\` channel as the prerelease \`$TAG\`."
             echo
             echo "The stable appcast item, \`Stim.dmg\` and the Homebrew cask are unchanged."
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Remove the signing keychain and API key
-        if: always()
-        run: |
-          if [ -n "${DESKTOP_KEYCHAIN:-}" ]; then security delete-keychain "$DESKTOP_KEYCHAIN" || true; fi
-          rm -rf "$RUNNER_TEMP/asc" "$RUNNER_TEMP/desktop-cert.p12" "$RUNNER_TEMP/desktop.provisionprofile"

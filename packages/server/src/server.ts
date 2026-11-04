@@ -1,3 +1,4 @@
+import { hkdfSync } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync, watch, type FSWatcher } from 'node:fs';
 import {
   createServer,
@@ -17,6 +18,7 @@ import {
   archiveDir,
   serverLocalSocket,
   deviceHostArea,
+  deviceHostAreas,
   readArchive,
   readArchiveState,
   readBuildHistory,
@@ -53,13 +55,23 @@ import {
   type StatusViews,
   type WorkspaceSummary,
   type WorktreeRow,
+  type SetupCapability,
+  SHARE_TOKEN,
+  readShareLinks,
+  shareLinkKey,
 } from '@stim-cli/core/state';
 import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
 import type { DesktopBootstrap } from './desktop-bootstrap.ts';
 import { actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
+import { cachedPeerNode } from './peer-node.ts';
 import { parsePlatformRun } from './platform-run.ts';
 import { parsePlatformBuild } from './platform-build.ts';
-import { agentActionReaders, configuredAgentDriver, stoppingAgentDriver } from './agent-drivers.ts';
+import {
+  agentActionReaders,
+  configuredAgentDriver,
+  recoverAgentDrivers,
+  stoppingAgentDriver,
+} from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
 import { HOSTED_IDLE_SWEEP_MS } from './hosted-idle.ts';
@@ -74,11 +86,14 @@ import {
   ControlHub,
   parseControlBegin,
   parseInput,
+  take,
   SLOT_NAME,
   type Controller,
 } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
 import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
+import { defaultSetupDeps, type SetupDeps } from './setup.ts';
+import { startDesktopSetup, type DesktopSetup, type DesktopSetupAnswer } from './desktop-setup.ts';
 import {
   probeDirectories,
   STARTUP_PROBE_MS,
@@ -136,6 +151,8 @@ import {
   PUSH_TOKEN_PATTERN,
   REPLAY_RATES,
   RELOAD_PLATFORMS,
+  RESERVED_SHARE_SLUGS,
+  SHARE_SLUG_PATTERN,
   SERVER_UPDATE_METHODS,
   ARCHIVED_PAGE_LIMIT,
   type DesktopReportTarget,
@@ -172,6 +189,9 @@ import {
   type StimStopOptions,
 } from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
+import { pauseShareLinkAsync, pauseShareLinksAsync } from 'stim/share-links';
+import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
+import { restoreSavedShares } from './share-restore.ts';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
 import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions } from './push.ts';
@@ -199,6 +219,7 @@ import {
 import {
   acceptNoise,
   decodeSecret,
+  secretValues,
   HandshakeRefusal,
   HOME_UNAVAILABLE_MESSAGE,
   CLOSE_REFUSED,
@@ -222,12 +243,16 @@ import {
   type TailscaleTransport,
 } from '@stim-cli/transport-tailscale';
 import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
-import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
+import { DEFAULT_VIDEO_LIMITS, HOSTED_MAX_BITRATE, videoPacket, VideoGate, type AccessUnit } from './video.ts';
+import { openRtc } from './webrtc-sender.ts';
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
+import { androidScreen, simulatorScreen, type ScreenSize } from './device-screen.ts';
+import { LocalAgentPresence } from './local-agent-presence.ts';
 import { parsePresencePublish, PresenceHub, presenceKey } from './presence.ts';
 import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
+import { createKeepAwake, type KeepAwakeOptions, type KeepAwakeStatus } from './keep-awake.ts';
 import { runsAsService } from './service.ts';
 import { ShareRoute, tailscaleFunnel } from './share-route.ts';
 
@@ -263,6 +288,8 @@ function hostedPlacement(dir: string, platform: string, slot = 'default') {
 export interface ServerOptions {
   /** Private bootstrap received from the Desktop parent; never a persisted pairing capability. */
   desktopBootstrap?: DesktopBootstrap;
+  /** What `stim-server setup` runs with when Stim Desktop approves a request here; `defaultSetupDeps` by default. */
+  setupDeps?: () => SetupDeps;
   host?: { executable: string; name: string };
   name: string;
   hosts: string[];
@@ -271,6 +298,11 @@ export interface ServerOptions {
    * such as one forwarded by `tailscale serve` to a loopback port, so only this machine's own connections are served.
    */
   loopbackOnly?: boolean;
+  /**
+   * Holds a macOS power assertion that prevents idle system sleep on AC power while `setting` is true and the server
+   * listens on an address its transports added to `hosts`. Without it the server holds none.
+   */
+  keepAwake?: KeepAwakeOptions;
   /** Whether this machine can host simulators and apps for other machines; only a Mac can. Defaults to running on macOS. */
   hostsDevices?: boolean;
   port: number;
@@ -385,8 +417,12 @@ interface ServerHealth {
   stimBuild: string | null;
   protocol: number;
   stimHome: string;
-  /** The work a restart would cut off: offloaded builds and hosted sessions running now. */
-  busy: { builds: number; hostedSessions: number };
+  /**
+   * The work a restart would cut off: offloaded builds and hosted sessions running now. `hostedWork` counts the hosted
+   * sessions a restart would stop, because a native step is in flight or they cannot be resumed; the others are left
+   * running for the next server, which `resumes` says this one does.
+   */
+  busy: { builds: number; hostedSessions: number; hostedWork: number; resumes: true };
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
   nativeViewerOpened: boolean;
@@ -394,6 +430,7 @@ interface ServerHealth {
   loopbackOnly?: true;
   /** The local network addresses the server listens on now, from `server.lanAddresses`; absent when there are none. */
   lan?: { addresses: string[]; port: number };
+  keepAwake: KeepAwakeStatus;
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -487,6 +524,7 @@ const MACOS_ONLY_FEATURES: readonly string[] = [
   'duo-frames',
   'native-xcode-build',
   'native-xcode-toolchain',
+  'hosted-webrtc',
 ];
 /**
  * Test switch: set to 1, a `physical` target may resolve to an emulator its workspace leases with `stim device
@@ -1188,15 +1226,6 @@ function auditSafely(record: AuditRecord): void {
   }
 }
 
-function take(bucket: { tokens: number; at: number }, cost: number, perSecond: number, capacity: number): boolean {
-  const now = Date.now();
-  bucket.tokens = Math.min(capacity, bucket.tokens + ((now - bucket.at) / 1000) * perSecond);
-  bucket.at = now;
-  if (bucket.tokens < cost) return false;
-  bucket.tokens -= cost;
-  return true;
-}
-
 const trackers = new WeakMap<ServerSocket, RequestTracker>();
 
 function send(socket: ServerSocket, message: ServerMessage | string): void {
@@ -1240,11 +1269,36 @@ function leaseGrace(leaseFor: string): { leaseGraceMs?: number } {
   return { leaseGraceMs: Number(amount) * (unit === 's' ? 1000 : unit === 'm' ? 60_000 : 3_600_000) };
 }
 
+/** A share stopped on purpose must not come back when stim-server starts: marks its saved link stopped; why it could not. */
+async function markSavedStopped(mark: () => Promise<void>): Promise<string | null> {
+  try {
+    await mark();
+    return null;
+  } catch (cause) {
+    return cause instanceof Error ? cause.message : String(cause);
+  }
+}
+
+const SHARE_SLUG = new RegExp(SHARE_SLUG_PATTERN);
+
 /** Validates `share.start` params; returns why they are refused. */
 function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { workspace: string }) | string {
   if (!isJsonObject(params)) return 'params must be an object.';
-  const { workspace, platform, slot, physical, control, expiresMinutes, password, passwordless, view, ...rest } =
-    params;
+  const {
+    workspace,
+    platform,
+    slot,
+    physical,
+    control,
+    expiresMinutes,
+    expiresAt,
+    token,
+    password,
+    passwordless,
+    view,
+    slug,
+    ...rest
+  } = params;
   if (Object.keys(rest).length) return `share.start does not take ${Object.keys(rest).join(', ')}.`;
   if (typeof workspace !== 'string') return 'params.workspace must be a workspace path.';
   if (platform !== 'ios' && platform !== 'android') return 'params.platform must be ios or android.';
@@ -1269,7 +1323,25 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     if (view.password !== undefined && view.password === password)
       return 'The view password and the control password must differ.';
   }
-  const minutes = expiresMinutes ?? SHARE_EXPIRY.default;
+  if (slug !== undefined) {
+    if (typeof slug !== 'string' || !SHARE_SLUG.test(slug))
+      return 'params.slug must be 3 to 32 lowercase letters, digits or hyphens, starting and ending with a letter or digit.';
+    if (RESERVED_SHARE_SLUGS.includes(slug)) return `params.slug cannot be ${slug}: the share pages use that path.`;
+    if (passwordless) return 'A share with a slug needs a password: anyone can guess a slug.';
+  }
+  if (token !== undefined && slug !== undefined) return 'A share takes a slug or a token, not both.';
+  if (token !== undefined && (typeof token !== 'string' || !SHARE_TOKEN.test(token)))
+    return 'params.token must be a 43-character URL token.';
+  if (expiresAt !== undefined && expiresMinutes !== undefined)
+    return 'A share takes expiresMinutes or expiresAt, not both.';
+  let until: number | undefined;
+  if (expiresAt !== undefined) {
+    until = typeof expiresAt === 'string' ? Date.parse(expiresAt) : NaN;
+    if (!Number.isFinite(until) || until <= Date.now() || until > Date.now() + SHARE_EXPIRY.max * 60_000)
+      return `params.expiresAt must be a time within the next ${SHARE_EXPIRY.max} minutes.`;
+  }
+  const minutes =
+    until === undefined ? (expiresMinutes ?? SHARE_EXPIRY.default) : Math.ceil((until - Date.now()) / 60_000);
   if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > SHARE_EXPIRY.max)
     return `params.expiresMinutes must be a whole number of minutes from 1 to ${SHARE_EXPIRY.max}.`;
   return {
@@ -1279,9 +1351,12 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     ...(physical ? { physical } : {}),
     control: control === true,
     expiresMinutes: minutes,
+    ...(until === undefined ? {} : { expiresAt: until }),
+    ...(token === undefined ? {} : { token }),
     ...(typeof password === 'string' ? { password } : {}),
     ...(passwordless ? { passwordless } : {}),
     ...(view ? { view: typeof view.password === 'string' ? { password: view.password } : {} } : {}),
+    ...(typeof slug === 'string' ? { slug } : {}),
   };
 }
 
@@ -1363,13 +1438,14 @@ function isLink(path: string): boolean {
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const { transports, tailscale } = serverTransports(options);
   /** The tailnet node a transport reports for a peer, or null when none identifies it. */
-  async function peerNode(request: IncomingMessage, address: string): Promise<string | null> {
+  const peerNode = cachedPeerNode(async (request: IncomingMessage, address: string): Promise<string | null> => {
     for (const transport of transports) {
       const identity = await transport.identify?.({ address, request }).catch(() => null);
       if (identity) return identity.id;
     }
+    console.error(`stim-server: no transport identified the peer ${address}.`);
     return null;
-  }
+  });
   /**
    * The tailnet node each device-host client's latest authenticated connection came from. Its agent grant's bearer
    * token goes to a host name the client resolves, so the agent route also requires this node: a node that took the
@@ -1459,6 +1535,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       } finally {
         helperBuilding = false;
       }
+      if (helperPath) frames.helperReady();
     })();
   };
   const frameHelper = () => {
@@ -1516,7 +1593,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const retainedLifecycles = new Set<() => void>();
   const planQueues = new Map<string, Promise<void>>();
   const readDetailsReport = (
-    method: 'stats' | 'gc' | 'doctor' | 'gc-history' | 'builds',
+    method: 'stats' | 'gc' | 'doctor' | 'gc-history' | 'builds' | 'remote',
     cwd = homedir(),
     platform?: 'ios' | 'android',
     signal?: AbortSignal,
@@ -1543,6 +1620,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             }),
           };
         if (method === 'doctor') return await stim.doctor({ signal: abort.signal, platform });
+        if (method === 'remote') return await stim.remoteMachines({ signal: abort.signal });
         return method === 'gc'
           ? await stim.gc({ signal: abort.signal, measureBuildState: false })
           : await stim.stats({ signal: abort.signal });
@@ -1627,6 +1705,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     approved: (client, from) =>
       ('client' in from ? from.client === client : from.node !== null && agentNodes.get(client) === from.node) &&
       approved().deviceHost.some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+    tokenFor: (session) =>
+      Buffer.from(hkdfSync('sha256', serverIdentity().privateKey, session, 'stim hosted agent token v1', 32)).toString(
+        'base64url',
+      ),
     withdrawn: (session) => {
       hostedPresence.forget(session);
       for (const stream of agentStreams.get(session) ?? []) stream.destroy();
@@ -1736,6 +1818,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     allowed: (client) => buildAllowed({ id: client }),
   });
   const presence = new PresenceHub();
+  const localAgents = new LocalAgentPresence({
+    hub: presence,
+    follow: (workspace, onRecord, signal) =>
+      createStim({ projectRoot: workspace, env: options.env }).followLogs(
+        { sources: ['agent'], tail: 0, signal },
+        onRecord,
+      ),
+    screen: (platform, device) =>
+      platform === 'ios' ? simulatorScreen(device, options.env) : androidScreen(device, options.env),
+  });
   const control = new ControlHub({
     env: options.env,
     stimCli: options.stimCli,
@@ -1772,7 +1864,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const shares = new ShareHub({
     frames,
     control,
-    presence,
+    webrtc: () => {
+      try {
+        return loadConfig()?.share?.webrtc === true;
+      } catch {
+        return false;
+      }
+    },
+    presence: {
+      subscribe: (key, listener) => localAgents.subscribe(key, listener),
+      join: (key, who) => presence.join(key, who),
+      leave: (key, id) => presence.leave(key, id),
+    },
     subscribeStatus: (listener) =>
       statusFeed.subscribe({
         item: (payload) => listener.item(payload as unknown as StatusPayload),
@@ -1788,8 +1891,40 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     lookup: { adbEmulators },
     limits: leaseGrace(controlLimits.leaseFor),
     recordingChanged: () => recorder?.refresh(),
+    holdWorkspace: (workspace, stop) => holdNativeRun(workspace, { waitMs: SHARE_CLAIM_WAIT_MS, stop }),
     ...(options.shareServer ? { idle: options.shareServer.idle } : {}),
   });
+  const restoreShares = () =>
+    restoreSavedShares({
+      start: async (params) => {
+        const parsed = parseShareStart(params);
+        if (typeof parsed === 'string') return { code: 'bad-request', message: parsed };
+        const resolved = registeredWorkspace(parsed.workspace);
+        if ('code' in resolved) return { code: 'bad-request', message: resolved.message };
+        const started = await shares.start({ ...parsed, workspace: resolved.dir }, { restore: true });
+        return 'code' in started ? started : { started: true, id: started.id };
+      },
+      wanted: ({ workspace, key, share }) => {
+        const saved = readShareLinks(workspace)[key];
+        return (
+          saved?.state === 'live' &&
+          saved.token === share.token &&
+          saved.slug === share.slug &&
+          saved.expiresAt === share.expiresAt
+        );
+      },
+      end: async ({ workspace }, shareId) => {
+        await shares.stopOne(workspace, shareId);
+      },
+      wait: (ms) =>
+        new Promise((resolve) => {
+          setTimeout(resolve, ms).unref();
+        }),
+      closed: () => closing,
+      log: (line) => console.error(`stim-server: ${line}`),
+    }).catch((cause: unknown) =>
+      console.error(`stim-server: could not restore the saved web shares: ${String(cause)}`),
+    );
   const ownStimBuild = stimBuildDigest(dirname(options.stimCli));
   const machineUpdates = new MachineUpdates({
     version: options.serverVersion,
@@ -1908,6 +2043,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let revocationPoll: NodeJS.Timeout | null = null;
   let hostedIdleSweep: NodeJS.Timeout | null = null;
   let retireOnce: Promise<void> | undefined;
+  let restoredShares: Promise<void> | undefined;
   const watchServerDir = () => {
     if (watcher) return;
     let created: FSWatcher;
@@ -1932,14 +2068,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     watchServerDir();
     // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
     revocationPoll ??= setInterval(checkRevocations, 1000).unref();
-    hostedIdleSweep ??= setInterval(
-      () => hostedDevices.sweepIdle(),
-      options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS,
-    ).unref();
+    hostedIdleSweep ??= setInterval(() => {
+      hostedDevices.sweepIdle();
+      void hostedDevices.reclaimEndedHomes();
+    }, options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS).unref();
     push.refresh();
-    retireOnce ??= hostedDevices.reconcileStopped().catch((error: unknown) => {
-      process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
-    });
+    if (!options.shareServer) restoredShares ??= restoreShares();
+    retireOnce ??= Promise.resolve()
+      .then(() => recoverAgentDrivers(options.env, deviceHostAreas()))
+      .then(() => hostedDevices.resumeSessions())
+      .then(() => hostedDevices.reconcileStopped())
+      .catch((error: unknown) => {
+        process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
+      });
     if (options.frameHelper === undefined && !helperPath && !helperBuilding) buildHelper();
     if (options.statusAtBoot !== false) statusFeed.hold();
     if (options.record !== false) {
@@ -1961,7 +2102,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
    */
   function connection(socket: ServerSocket, peer: string | null, local: boolean, clientKey: string | null): void {
     const limitKey = peer ?? 'local';
+    const keyless = local && options.desktopBootstrap === undefined;
     const subscriptions = new Map<string, () => void | Promise<void | ProtocolError>>();
+    const setupRuns = new Map<string, DesktopSetup>();
     const keyframes = new Map<string, () => void>();
     const congestion = new Map<string, () => void>();
     const replays = new Map<string, Replayable>();
@@ -2067,7 +2210,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         );
       }
       device = chosen;
-      if (!local) touchDevice(device.id);
+      if (!local) touchDevice(device.id, params.client);
       if (access === 'device-host' && !local) {
         hostedDevices.clientSeen(device.id);
         let heardAt = Date.now();
@@ -2120,14 +2263,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-remedy',
               'desktop-device-tools',
               'desktop-plan',
+              'desktop-setup',
             ].includes(feature) ||
-              options.desktopBootstrap !== undefined) &&
+              keyless ||
+              desktopChallenge !== null) &&
+            (feature !== 'desktop-setup' || desktopChallenge !== null) &&
+            (feature !== 'desktop-local-authority' || keyless) &&
             (local ||
               ![
                 'desktop-plan',
                 'desktop-reports',
                 'desktop-machine-history',
                 'desktop-report-platform',
+                'desktop-report-remote',
                 'desktop-report-invalidate-target',
                 'desktop-settings',
                 'desktop-settings-schema',
@@ -2145,6 +2293,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-machine-access',
                 'desktop-remedy',
                 'desktop-device-tools',
+                'desktop-setup',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2182,7 +2331,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         auditSafely({
           at: new Date().toISOString(),
           device: { id: session.id, name: session.name },
-          action: raw.takeOver === true ? 'control.take-over' : 'control.begin',
+          action: 'control.begin',
           workspace: clip(raw.workspace),
           ...(typeof raw.platform === 'string' ? { platform: clip(raw.platform)! } : {}),
           ...(raw.platform === 'ios' || raw.platform === 'android'
@@ -2253,7 +2402,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if ('code' in parsed) return error(id, parsed.code, parsed.message);
       const { command: sent } = parsed.value;
       const cost = sent.input === 'clipboard' || sent.input === 'clipboard-get' ? CLIPBOARD_INPUT_COST : 1;
-      if (!take(inputs, cost, controlLimits.inputPerSecond, controlLimits.inputPerSecond)) {
+      const boundary = sent.input === 'touch' && (sent.phase === 'down' || sent.phase === 'up');
+      const debt = boundary ? controlLimits.inputPerSecond : 0;
+      if (!take(inputs, cost, controlLimits.inputPerSecond, controlLimits.inputPerSecond, debt)) {
         return error(id, 'limit-exceeded', `A connection can send ${controlLimits.inputPerSecond} inputs a second.`);
       }
       if (
@@ -2661,6 +2812,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const hint: FrameHint = {
         fps: Math.min(fps ?? FRAME_FPS.default, offersVideo ? FRAME_FPS.video : FRAME_FPS.max),
         maxEdge: maxEdge ?? FRAME_EDGE.default,
+        ...(hosted ? { maxBitrate: HOSTED_MAX_BITRATE } : {}),
       };
       const replayDir =
         platform === 'macos'
@@ -2846,7 +2998,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const stopPresence =
         target.presence === true && archive === undefined && !hosted && resolvedDir
-          ? presence.subscribe(
+          ? localAgents.subscribe(
               presenceKey(resolvedDir, frameTarget.platform, slot ?? 'default', physical === true),
               (participants) => {
                 if (!ended) send(socket, { event: 'presence', subscription, participants });
@@ -3426,13 +3578,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeGc(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket)) {
-        return error(
-          id,
-          'forbidden',
-          'Garbage collection requires the connection of the Stim Desktop that started this server.',
-        );
-      }
       if (
         !isJsonObject(params) ||
         Object.keys(params).some((key) => !['cwd', 'cache', 'olderThan', 'worktrees', 'delete'].includes(key)) ||
@@ -3464,8 +3609,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeRemedy(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket))
-        return error(id, 'forbidden', 'Repairs require the connection of the Stim Desktop that started this server.');
       const tool = isJsonObject(params) && params.action === 'device-tool' ? deviceToolRequest(params.request) : null;
       if (
         !isJsonObject(params) ||
@@ -3527,12 +3670,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeMachineAccess(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket))
-        return error(
-          id,
-          'forbidden',
-          'Requesting machine access requires the connection of the Stim Desktop that started this server.',
-        );
       if (
         !isJsonObject(params) ||
         Object.keys(params).some((key) => key !== 'cwd' && key !== 'ticket') ||
@@ -3550,12 +3687,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeWorktreeWarm(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket))
-        return error(
-          id,
-          'forbidden',
-          'Warming worktrees requires the connection of the Stim Desktop that started this server.',
-        );
       if (
         !isJsonObject(params) ||
         Object.keys(params).some((key) => key !== 'cwd') ||
@@ -3572,12 +3703,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeWorktreeRemove(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket))
-        return error(
-          id,
-          'forbidden',
-          'Removing worktrees requires the connection of the Stim Desktop that started this server.',
-        );
       if (
         !isJsonObject(params) ||
         Object.keys(params).some((key) => !['cwd', 'target', 'force'].includes(key)) ||
@@ -4262,73 +4387,44 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.worktree.warm.subscribe',
           'desktop.plan.get',
           'desktop.plan.cancel',
+          'desktop.setup.subscribe',
+          'desktop.setup.answer',
         ].includes(method)
       )
         return null;
-      // A server Desktop started holds its private key and admits only the socket that proved it; a server Desktop
-      // adopted or one run on its own has no key and keeps serving these methods to this user's local socket.
-      if (!local || (options.desktopBootstrap !== undefined && !desktopSessions.has(socket))) {
+      if (!keyless && !desktopSessions.has(socket)) {
         return Promise.resolve(
           error(
             id,
             'forbidden',
-            method === 'route.setup'
-              ? 'Phone connection setup requires the connection of the Stim Desktop that started this server.'
-              : method === 'desktop.doctor.run'
-                ? 'Running project doctor requires the connection of the Stim Desktop that started this server.'
-                : method === 'desktop.settings.write'
-                  ? 'Changing settings requires the connection of the Stim Desktop that started this server.'
-                  : method === 'desktop.reload.subscribe'
-                    ? 'Reloading apps requires the connection of the Stim Desktop that started this server.'
-                    : method === 'desktop.build.subscribe'
-                      ? 'Building artifacts requires the connection of the Stim Desktop that started this server.'
-                      : method === 'desktop.run.subscribe'
-                        ? 'Running apps requires the connection of the Stim Desktop that started this server.'
-                        : method === 'desktop.start.subscribe'
-                          ? 'Starting dev servers requires the connection of the Stim Desktop that started this server.'
-                          : method === 'desktop.stop.subscribe'
-                            ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
-                            : method.startsWith('desktop.')
-                              ? 'Desktop operations require the connection of the Stim Desktop that started this server.'
-                              : method.startsWith('device-host.sessions')
-                                ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
-                                : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
+            local
+              ? 'This stim-server holds the private key of the Stim Desktop that started it, which this connection did not prove.'
+              : `${method} works only on this machine's local Unix socket.`,
           ),
         );
       }
-      if (method === 'desktop.settings.write') {
+      if (method === 'desktop.setup.subscribe' || method === 'desktop.setup.answer') {
         if (!desktopSessions.has(socket)) {
           error(
             id,
             'forbidden',
-            'Changing settings requires the connection of the Stim Desktop that started this server.',
+            'Approving another machine requires the connection of the Stim Desktop that started this server.',
           );
           return Promise.resolve();
         }
+        if (method === 'desktop.setup.subscribe') subscribeDesktopSetup(id, params);
+        else answerDesktopSetup(id, params);
+        return Promise.resolve();
+      }
+      if (method === 'desktop.settings.write') {
         writeDesktopSetting(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.reload.subscribe') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Reloading apps requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         subscribeReload(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.plan.cancel') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Cancelling a plan requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         if (!isJsonObject(params) || Object.keys(params).length !== 1 || !validPlanRequest(params.request)) {
           error(id, 'bad-request', 'Choose the request of this connection to cancel.');
           return Promise.resolve();
@@ -4344,14 +4440,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return Promise.resolve();
       }
       if (method === 'desktop.plan.get') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Planning builds requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         if (
           !isJsonObject(params) ||
           Object.keys(params).some(
@@ -4404,34 +4492,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return Promise.resolve();
       }
       if (method === 'desktop.build.subscribe') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Building artifacts requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         subscribeBuild(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.run.subscribe') {
-        if (!desktopSessions.has(socket)) {
-          error(id, 'forbidden', 'Running apps requires the connection of the Stim Desktop that started this server.');
-          return Promise.resolve();
-        }
         subscribeRun(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.start.subscribe') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Starting dev servers requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         subscribeStart(id, params, owner);
         return Promise.resolve();
       }
@@ -4485,6 +4553,81 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return method === 'route.setup' ? setupRoute(id, params) : updateMachine(id, method, params);
     }
 
+    function subscribeDesktopSetup(id: RequestId, params: unknown): void {
+      if (
+        !isJsonObject(params) ||
+        Object.keys(params).some((key) => key !== 'ticket' && key !== 'expires' && key !== 'capabilities') ||
+        typeof params.ticket !== 'string' ||
+        typeof params.expires !== 'string' ||
+        !Array.isArray(params.capabilities) ||
+        !params.capabilities.length ||
+        new Set(params.capabilities).size !== params.capabilities.length
+      )
+        return error(id, 'bad-request', 'Choose a setup ticket, its expiry and build or device-host.');
+      const capabilities = params.capabilities.filter(
+        (capability): capability is SetupCapability => capability === 'build' || capability === 'device-host',
+      );
+      if (capabilities.length !== params.capabilities.length)
+        return error(id, 'bad-request', 'Choose a setup ticket, its expiry and build or device-host.');
+      const port = addresses[0]?.port;
+      if (port === undefined) return error(id, 'bad-request', 'This server has no port for setup to use.');
+      const ticket = decodeSecret(params.ticket);
+      if (ticket && setupRuns.has(secretValues(ticket).journal))
+        return error(id, 'bad-request', 'This connection already has that setup request open.');
+      let subscription: string | null = null;
+      let run: DesktopSetup;
+      try {
+        run = startDesktopSetup(
+          { ticket: params.ticket, expires: params.expires, capabilities },
+          port,
+          options.serverVersion,
+          (options.setupDeps ?? defaultSetupDeps)(),
+          {
+            progress: (journal, asking) => {
+              if (subscription) send(socket, { event: 'desktop-setup-progress', subscription, journal, asking });
+            },
+            ended: (exitCode, output) => {
+              setupRuns.delete(run.journal);
+              if (subscription) send(socket, { event: 'desktop-setup-ended', subscription, exitCode, output });
+            },
+          },
+        );
+      } catch (cause) {
+        return error(id, 'bad-request', cause instanceof Error ? cause.message : String(cause));
+      }
+      void cancelling.track(run.done);
+      subscription = openSubscription(id);
+      if (!subscription) return run.stop();
+      setupRuns.set(run.journal, run);
+      subscriptions.set(subscription, () => {
+        run.stop();
+        return run.done;
+      });
+    }
+
+    function answerDesktopSetup(id: RequestId, params: unknown): void {
+      const given: DesktopSetupAnswer | null = !isJsonObject(params)
+        ? null
+        : (params.answer === 'approve' || params.answer === 'refuse') &&
+            (params.capability === 'build' || params.capability === 'device-host') &&
+            Object.keys(params).every((key) => key === 'journal' || key === 'answer' || key === 'capability')
+          ? { answer: params.answer, capability: params.capability }
+          : params.answer === 'skip' &&
+              (params.permission === 'screenRecording' || params.permission === 'deviceControl') &&
+              Object.keys(params).every((key) => key === 'journal' || key === 'answer' || key === 'permission')
+            ? { answer: 'skip', permission: params.permission }
+            : null;
+      if (!given || !isJsonObject(params) || typeof params.journal !== 'string')
+        return error(
+          id,
+          'bad-request',
+          'Answer a setup request of this connection: approve or refuse with its capability, or skip with its permission.',
+        );
+      if (!setupRuns.get(params.journal)?.answer(given))
+        return error(id, 'bad-request', 'No setup request of this connection is waiting for that answer.');
+      send(socket, { id, result: {} });
+    }
+
     function readDesktopSettings(id: RequestId, method: string, params: unknown): void {
       if (method === 'desktop.settings.schema') {
         if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length)) {
@@ -4517,7 +4660,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (
         !isJsonObject(params) ||
-        !['doctor', 'gc', 'gc-history', 'builds'].includes(String(params.report)) ||
+        !['doctor', 'gc', 'gc-history', 'builds', 'remote'].includes(String(params.report)) ||
         Object.keys(params).some(
           (key) => key !== 'report' && (params.report !== 'doctor' || (key !== 'cwd' && key !== 'platform')),
         ) ||
@@ -4530,10 +4673,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(
           id,
           'bad-request',
-          'Choose report gc, gc-history or builds, or report doctor with an absolute cwd and optional ios/android platform.',
+          'Choose report gc, gc-history, builds or remote, or report doctor with an absolute cwd and optional ios/android platform.',
         );
       const target: DesktopReportTarget =
-        params.report === 'gc' || params.report === 'gc-history' || params.report === 'builds'
+        params.report === 'gc' ||
+        params.report === 'gc-history' ||
+        params.report === 'builds' ||
+        params.report === 'remote'
           ? { report: params.report }
           : {
               report: 'doctor',
@@ -4786,15 +4932,56 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return error(id, 'action-failed', (cause as Error).message);
         }
       }
+      if (method === 'device-host.webrtc.offer') {
+        if (typeof params.session !== 'string' || typeof params.sdp !== 'string')
+          return error(id, 'bad-request', 'A hosted session and an SDP offer are required.');
+        if (subscriptions.size >= MAX_SUBSCRIPTIONS)
+          return error(id, 'limit-exceeded', `A connection can hold ${MAX_SUBSCRIPTIONS} subscriptions.`);
+        const hostedSession = params.session;
+        const subscription = `s${nextSubscription++}`;
+        try {
+          const view = hostedViews.target(session.id, hostedSession);
+          const rtc = await openRtc(
+            params.sdp,
+            {
+              subscribe: (video, failed) =>
+                hostedViews.subscribe(
+                  session.id,
+                  hostedSession,
+                  { frame: () => {}, video, delayed: () => {}, failed },
+                  { fps: FRAME_FPS.video, maxEdge: 1280 },
+                ),
+              keyframe: () => view.frames.keyframe(view.device),
+              congested: () => view.frames.congested(view.device),
+            },
+            (reason) => {
+              if (!subscriptions.delete(subscription)) return;
+              send(socket, { event: 'webrtc-closed', subscription, message: reason });
+            },
+          );
+          subscriptions.set(subscription, () => rtc.close());
+          return send(socket, { id, result: { subscription, sdp: rtc.answer } });
+        } catch (cause) {
+          return error(id, 'action-failed', (cause as Error).message);
+        }
+      }
       if (method === 'device-host.presence.subscribe') {
-        if (typeof params.session !== 'string' || !hostedDevices.owns(session.id, params.session))
+        const hostedSession = params.session;
+        if (typeof hostedSession !== 'string' || !hostedDevices.owns(session.id, hostedSession))
           return error(id, 'unknown-session', 'This client has no such ready hosted session.');
         const subscription = openSubscription(id);
         if (!subscription) return;
         subscriptions.set(
           subscription,
-          hostedPresence.subscribe(params.session, (participants) =>
-            send(socket, { event: 'presence', subscription, participants }),
+          hostedPresence.subscribe(
+            hostedSession,
+            (participants) => send(socket, { event: 'presence', subscription, participants }),
+            async (): Promise<ScreenSize | null> => {
+              const target = hostedDevices.viewTarget(session.id, hostedSession);
+              if (target.platform === 'ios') return simulatorScreen(target.session.device.udid, options.env);
+              if (target.platform === 'android') return androidScreen(target.session.device.serial, options.env);
+              return null;
+            },
           ),
         );
         return;
@@ -4862,7 +5049,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                                 ? await hostedDevices.metroOpen(session.id, raw)
                                 : method === 'device-host.metro.ports'
                                   ? await hostedDevices.metroPorts(session.id, raw)
-                                  : await hostedDevices.metroClose(session.id, raw);
+                                  : method === 'device-host.reverse.set'
+                                    ? await hostedDevices.reverseSet(session.id, raw)
+                                    : await hostedDevices.metroClose(session.id, raw);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
@@ -4875,21 +5064,39 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (method === 'share.list') {
         if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length))
           return error(id, 'bad-request', 'share.list takes no parameters.');
-        return send(socket, { id, result: { shares: shares.list() } });
+        return send(socket, { id, result: { shares: shares.list(), starting: shares.startsInFlight } });
       }
       if (method === 'share.stop') {
         if (
           !isJsonObject(params) ||
           typeof params.workspace !== 'string' ||
           (params.id !== undefined && (typeof params.id !== 'string' || params.id === '')) ||
-          Object.keys(params).some((key) => key !== 'workspace' && key !== 'id')
+          (params.slot !== undefined && (typeof params.slot !== 'string' || !SLOT_NAME.test(params.slot))) ||
+          Object.keys(params).some((key) => key !== 'workspace' && key !== 'id' && key !== 'slot')
         )
-          return error(id, 'bad-request', 'share.stop needs params.workspace and takes an optional params.id.');
-        if (params.id === undefined)
-          return send(socket, { id, result: { stopped: await shares.stop(params.workspace) } });
-        const stopped = await shares.stopOne(params.workspace, params.id);
-        if (!stopped) return error(id, 'bad-request', `No share ${params.id} in this workspace.`);
-        return send(socket, { id, result: { stopped: [stopped] } });
+          return error(
+            id,
+            'bad-request',
+            'share.stop needs params.workspace and takes an optional params.id or params.slot.',
+          );
+        if (params.id !== undefined && params.slot !== undefined)
+          return error(id, 'bad-request', 'share.stop takes params.id or params.slot, not both.');
+        const workspace = params.workspace;
+        const slot = typeof params.slot === 'string' ? params.slot : undefined;
+        const row = params.id === undefined ? undefined : shares.list().find((each) => each.id === params.id);
+        if (params.id !== undefined && (!row || row.workspace !== workspace))
+          return error(id, 'bad-request', `No share ${params.id} in this workspace.`);
+        const unsaved = await markSavedStopped(() =>
+          row ? pauseShareLinkAsync(workspace, shareLinkKey(row)) : pauseShareLinksAsync(workspace, slot),
+        );
+        const stopped = row ? [await shares.stopOne(workspace, row.id)] : await shares.stop(workspace, undefined, slot);
+        if (unsaved)
+          return error(
+            id,
+            'action-failed',
+            `The share stopped, but its saved link could not be marked stopped (${unsaved}), so a stim-server restart can start it again. Run stim share stop --forget.`,
+          );
+        return send(socket, { id, result: { stopped: stopped.filter((each) => each !== null) } });
       }
       const parsed = parseShareStart(params);
       if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
@@ -4905,7 +5112,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
       const resolved = registeredWorkspace(parsed.workspace);
       if ('code' in resolved) return error(id, resolved.code, resolved.message);
-      presence.agent(
+      localAgents.published(
         presenceKey(resolved.dir, parsed.platform, parsed.slot ?? 'default', parsed.physical === true),
         parsed.command,
         parsed.phase,
@@ -5158,6 +5365,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
 
   function upgrade(request: IncomingMessage, socket: Socket, head: Buffer): void {
+    // Node's http server drops its own socket error listener once it emits 'upgrade'; without one, a peer that resets
+    // the connection after a refusal would raise an uncaught ECONNRESET.
+    socket.on('error', () => socket.destroy());
     if (startup.state !== 'ready') {
       socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
@@ -5253,6 +5463,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         records = spendSecret(accepted.lookup!, publicKey, name, from);
       } catch (error) {
         if (!(error instanceof RegistryUnavailable)) throw error;
+        console.error(`stim-server: could not record a new client: ${error.message}`);
         readApprovals();
         return refuse('home-unavailable');
       }
@@ -5270,13 +5481,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (host) {
       const node = peer ? await peerNode(request, peer) : null;
       if (node) agentNodes.set(host.id, node);
-      else agentNodes.delete(host.id);
+      else if (!peer) agentNodes.delete(host.id);
       if (ws.readyState !== ws.OPEN) return;
     }
     connection(accepted.socket, peer, false, publicKey);
   }
 
   function upgradeLocal(request: IncomingMessage, socket: Socket, head: Buffer): void {
+    // Node's http server drops its own socket error listener once it emits 'upgrade'; without one, a peer that resets
+    // the connection after a refusal would raise an uncaught ECONNRESET.
+    socket.on('error', () => socket.destroy());
     if (startup.state !== 'ready') {
       socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
@@ -5317,12 +5531,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ...health,
       startup,
       ...(options.host ? { host: await hostHealth() } : {}),
-      busy: { builds: builds.running(), hostedSessions: hostedDevices.active() },
+      busy: {
+        builds: builds.running(),
+        hostedSessions: hostedDevices.active(),
+        hostedWork: hostedDevices.working(),
+        resumes: true,
+      },
       tailscale: healthTailscale(state),
       route,
       nativeViewerOpened,
       ...(options.loopbackOnly ? { loopbackOnly: true as const } : {}),
       ...lanHealth(),
+      keepAwake: keepAwake.status(),
     };
     response
       .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
@@ -5330,6 +5550,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   const servers = new Map<string, { server: Server; sockets: Set<Socket> }>();
   const addresses: RunningServer['addresses'] = [];
+  const keepAwake = createKeepAwake({
+    setting: () => false,
+    ...options.keepAwake,
+    loopbackOnly: options.loopbackOnly === true,
+    remoteListening: () => [...servers.keys()].some((host) => !options.hosts.includes(host)),
+  });
   const close = async () => {
     const failures: unknown[] = [];
     const settle = async (work: Promise<unknown>) => {
@@ -5340,6 +5566,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
     };
     closing = true;
+    keepAwake.close();
     desktopReports.close();
     if (startupRetry) clearTimeout(startupRetry);
     if (setupPruneTimer) clearInterval(setupPruneTimer);
@@ -5360,8 +5587,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       presence.close();
       hostedPresence.close();
       await settle(control.close());
-      await settle(agentDrivers.close());
       await settle(hostedDevices.close());
+      await settle(agentDrivers.close({ keep: hostedDevices.detached() }));
       updates.close();
       recorder?.close();
       await Promise.all(
@@ -5579,6 +5806,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       retry = setTimeout(() => queueReconcile(), options.listenRetryMs ?? LISTEN_RETRY_MS);
       retry.unref();
     }
+    keepAwake.sync();
   };
   let retry: NodeJS.Timeout | null = null;
   let reconciling = Promise.resolve();
@@ -5589,6 +5817,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   queueReconcile();
   await reconciling;
+  keepAwake.sync();
   const stopWatching = binding.flatMap((transport) => (transport.watch ? [transport.watch(queueReconcile)] : []));
   let settle!: (state: StartupState) => void;
   const ready = new Promise<StartupState>((resolve) => {

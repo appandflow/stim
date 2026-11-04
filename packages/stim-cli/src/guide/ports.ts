@@ -1,3 +1,5 @@
+import { MAX_REVERSE_PORTS } from '@stim-cli/core/state';
+
 export default {
   summary: 'Workspace ports for web and API servers that Stim does not manage',
   body: () => `NAMED SERVER PORTS
@@ -73,6 +75,56 @@ a server this workspace started. gc reports allocations whose workspace no
 longer exists; gc --delete releases them. Unmounted or unresolved workspace
 paths are retained. Use the same current Stim version for cleanup: versions
 without ports do not know about named allocations.
+
+REVERSE PORTS
+
+  stim ports reverse api            # a named port from stim ports get
+  stim ports reverse 4318           # a raw port a tool of this workspace listens on
+  stim ports reverse --remove 4318
+  stim ports --json                 # allocations and reverses as one payload
+  stim ports reverse 4318 --json    # { action, port, ports, devices: [{ platform, device, status, detail }] }
+
+An app on one of the workspace's devices reaches a server on this machine at
+the same localhost:<port>, like adb reverse. reverse records the port in the
+workspace (at most ${MAX_REVERSE_PORTS}) and applies it to the devices the workspace has now; it is
+idempotent, so rerunning it repairs a lost reverse. Devices the workspace gets
+later receive it when stim android launches the app. metro and the
+workspace's Metro port are refused; Stim already makes Metro reachable.
+status is one of reachable (nothing to do), applied, removed, pending (the
+emulator is not running yet), unsupported or failed; unsupported and failed
+exit 1 after the port is recorded.
+- Local iOS simulator: shares this Mac's loopback, so the port is reachable
+  already. Nothing is applied.
+- Local Android emulator: adb reverse tcp:<port> tcp:<port>. stim reload
+  android re-applies it when missing, stim status reports
+  android-reverse-missing with the stim ports reverse remedy, and stim stop
+  removes it.
+- Android phone (android --device): adb reverse, removed by stim stop and
+  worktree remove together with the Metro reverse. Only the recorded ports are
+  removed.
+- iPhone (ios --device): refused. USB carries no reverse forward.
+- Hosted iOS and Android (--remote <machine>): reversed through the client's
+  links to the host. stim start must be running, because its Metro supervisor
+  opens those links, and the host needs hosted-reverse-ports (update
+  stim-server there otherwise). A hosted simulator shares the host's loopback,
+  so the host listens on the same port number; a port another process holds
+  on the host is refused. A hosted emulator gets adb reverse to a private
+  loopback port of the host. The host listens only on its own loopback, so any
+  process on that Mac can reach the port while the session lasts; it never
+  connects to this machine, and this machine forwards only the ports recorded
+  here. stim ios and stim android with --remote set the ports up again when
+  they place the app, stim reload android restores them, and a host restart
+  resumes them. Stopping the session ends them.
+- EAS Simulator sessions (--remote eas): not reversed; Stim has no route into
+  the session.
+stim stop removes the device-side reverses and keeps the recorded ports, so the
+next launch applies them again. worktree remove, gc --delete and automatic
+maintenance forget them with the workspace.
+
+Tools that advertise an address to the app, such as Appduct's daemon, need that
+address set to 127.0.0.1 (Appduct: advertisedIp in ~/.appduct/config.json).
+Run stim ports reverse <daemon port>, then deliver the link with
+stim agent-device open <app> "<link>".
 
 A shared API does not get a shared reservation. Pass its port by environment
 instead of allocating a separate label in every worktree.`,

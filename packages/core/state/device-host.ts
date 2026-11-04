@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { configDir } from '../index.ts';
 import { loadConfig } from './config.ts';
 import { isJsonObject } from './json-file.ts';
+import { isTcpPort, MAX_REVERSE_PORTS } from './reverse-ports.ts';
 import { coerceSettingText, settingDefinition, settingValueError } from './settings-registry.ts';
 import {
   hostedMacosAppSlot,
@@ -139,6 +140,8 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
   appSlot?: number;
   createdAt: string;
   parked?: { at: string };
+  /** When the session last became `stopped`; stim-server removes the session's home a grace period later. */
+  stoppedAt?: string;
   /** Milliseconds this server ran with no connection from the session's client since it was last connected. */
   clientAbsentMs?: number;
   /** Set when stim-server stopped this session because its client was gone for maintenance.idleStopHours. */
@@ -148,6 +151,7 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
   agent?: HostedAgentGrant;
   metroPort?: number;
   clientMetroPort?: number;
+  reverses?: Record<string, number>;
 }
 
 function machineSetting(key: string, env: NodeJS.ProcessEnv): { value: unknown } | { invalid: string } {
@@ -191,9 +195,26 @@ export function deviceHostRoot(): string {
   return join(configDir(), 'server', 'device-host-sessions');
 }
 
+export function deviceHostAreasRoot(): string {
+  return join(configDir(), 'device-host', 'sessions');
+}
+
 export function deviceHostArea(id: string): string {
   if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid hosted session id.');
-  return join(configDir(), 'device-host', 'sessions', id);
+  return join(deviceHostAreasRoot(), id);
+}
+
+/** The area of every hosted session that has one, whether or not the journal still lists it. */
+export function deviceHostAreas(): string[] {
+  const root = join(configDir(), 'device-host', 'sessions');
+  try {
+    return readdirSync(root)
+      .filter((id) => /^[a-f0-9-]{36}$/.test(id))
+      .map((id) => join(root, id));
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
+    throw error;
+  }
 }
 
 export function parseHostedChoice(value: unknown): HostedIosChoice | null {
@@ -418,7 +439,7 @@ export function readHostedSessions(): HostedDeviceSession[] {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       try {
-        if (readdirSync(join(configDir(), 'device-host', 'sessions')).length)
+        if (readdirSync(deviceHostAreasRoot()).length)
           throw new Error(`Hosted session journal is missing while worker areas remain: ${root}`, { cause: error });
       } catch (areaError) {
         if ((areaError as NodeJS.ErrnoException).code !== 'ENOENT') throw areaError;
@@ -459,6 +480,8 @@ export function readHostedSessions(): HostedDeviceSession[] {
           new Date(entry.parked.at).toISOString() !== entry.parked.at ||
           entry.state !== 'stopped' ||
           entry.platform === 'macos')) ||
+      (entry.stoppedAt !== undefined &&
+        (typeof entry.stoppedAt !== 'string' || !Number.isFinite(Date.parse(entry.stoppedAt)))) ||
       (entry.clientAbsentMs !== undefined &&
         (typeof entry.clientAbsentMs !== 'number' ||
           !Number.isFinite(entry.clientAbsentMs) ||
@@ -481,7 +504,13 @@ export function readHostedSessions(): HostedDeviceSession[] {
         (typeof entry.metroPort !== 'number' ||
           !Number.isInteger(entry.metroPort) ||
           entry.metroPort < 1 ||
-          entry.metroPort > 65535))
+          entry.metroPort > 65535)) ||
+      (entry.reverses !== undefined &&
+        (!isJsonObject(entry.reverses) ||
+          Object.keys(entry.reverses).length > MAX_REVERSE_PORTS ||
+          Object.entries(entry.reverses).some(
+            ([port, worker]) => !isTcpPort(Number(port)) || !isTcpPort(worker) || entry.platform === 'macos',
+          )))
     )
       throw new Error(`Malformed hosted session record: ${root}`);
     ids.add(entry.id);

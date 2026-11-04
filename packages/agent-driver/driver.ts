@@ -64,6 +64,9 @@ export interface AgentDriverInput {
   device?: HostedAgentDevice;
 }
 
+/** What stim-server hands a module's `recover`: the driver state and claim of one hosted session area. */
+export type AgentDriverRecoveryInput = Omit<AgentDriverInput, 'device'>;
+
 export interface AgentClientAccessInput {
   /** A grant naming this driver, as the client parsed it. */
   grant: HostedAgentIssuedGrant;
@@ -102,6 +105,11 @@ export interface AgentDriverModule {
   createAgentDriver(input: AgentDriverInput): HostedAgentDriver;
   client?: AgentDriverClient;
   actions?: AgentDriverActions;
+  /**
+   * Called when stim-server starts, once for each hosted session area this driver has state in. Stops what a driver
+   * run left behind for a stim-server process that is gone; rejects naming what it could not resolve.
+   */
+  recover?(input: AgentDriverRecoveryInput): Promise<void>;
 }
 
 export type LoadAgentDriverModuleResult = { module: AgentDriverModule } | { unavailable: string };
@@ -131,6 +139,8 @@ function moduleError(candidate: unknown, id: string): string | null {
   const actions = candidate.actions;
   if (actions !== undefined && (!isRecord(actions) || typeof actions.read !== 'function'))
     return 'the actions capability must implement read()';
+  if (candidate.recover !== undefined && typeof candidate.recover !== 'function')
+    return 'the recover capability must be a function';
   return null;
 }
 

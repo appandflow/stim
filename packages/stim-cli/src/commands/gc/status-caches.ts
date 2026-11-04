@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { basename, dirname } from 'node:path';
 import chalk from 'chalk';
-import { listStatusCacheEntries, type StatusCacheEntry } from '@stim-cli/core/state';
+import { listStatusCacheEntries, listStatusCacheEntriesAsync, type StatusCacheEntry } from '@stim-cli/core/state';
 import { formatBytes, isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
 import type { GcSkip } from './types.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
@@ -37,12 +37,18 @@ function judge(path: string | null, mountedVolumes: string[]): Verdict {
   return isOnMountedVolume(witness, mountedVolumes) ? 'gone' : 'unmounted';
 }
 
-export function classifyStatusCaches(
+export interface KeptStatusCaches {
+  dir: string;
+  verdict: 'unreadable' | 'unknown' | 'unmounted';
+  count: number;
+}
+
+export function judgeStatusCaches(
   entries: readonly StatusCacheEntry[],
   mountedVolumes: string[],
-): { stale: StaleStatusCache[]; skipped: GcSkip[] } {
+): { stale: StaleStatusCache[]; kept: KeptStatusCaches[] } {
   const stale: StaleStatusCache[] = [];
-  const kept = new Map<string, { dir: string; verdict: 'unreadable' | 'unknown' | 'unmounted'; count: number }>();
+  const kept = new Map<string, KeptStatusCaches>();
   for (const { kind, file, path, bytes } of entries) {
     const verdict = judge(path, mountedVolumes);
     if (verdict === 'present') continue;
@@ -56,15 +62,30 @@ export function classifyStatusCaches(
     if (seen) seen.count++;
     else kept.set(key, { dir, verdict, count: 1 });
   }
-  const skipped = [...kept.values()].map(({ dir, verdict, count }) => ({
-    dir,
-    reason: `${count} entr${count === 1 ? 'y' : 'ies'} kept: ${KEPT_REASON[verdict]}`,
-  }));
-  return { stale, skipped };
+  return { stale, kept: [...kept.values()] };
+}
+
+export function keptStatusCachesReason({ verdict, count }: KeptStatusCaches): string {
+  return `${count} entr${count === 1 ? 'y' : 'ies'} kept: ${KEPT_REASON[verdict]}`;
+}
+
+export function classifyStatusCaches(
+  entries: readonly StatusCacheEntry[],
+  mountedVolumes: string[],
+): { stale: StaleStatusCache[]; skipped: GcSkip[] } {
+  const { stale, kept } = judgeStatusCaches(entries, mountedVolumes);
+  return { stale, skipped: kept.map((group) => ({ dir: group.dir, reason: keptStatusCachesReason(group) })) };
 }
 
 export function collectStaleStatusCaches(mountedVolumes: string[]): { stale: StaleStatusCache[]; skipped: GcSkip[] } {
   return classifyStatusCaches(listStatusCacheEntries(), mountedVolumes);
+}
+
+export async function collectStaleStatusCachesAsync(
+  mountedVolumes: string[],
+  signal?: AbortSignal,
+): Promise<ReturnType<typeof judgeStatusCaches>> {
+  return judgeStatusCaches(await listStatusCacheEntriesAsync(signal), mountedVolumes);
 }
 
 export function statusCacheLines(stale: readonly StaleStatusCache[]): string[] {

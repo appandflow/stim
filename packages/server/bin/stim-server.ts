@@ -28,28 +28,32 @@ import {
   validateRelease,
   validateServeEnvironment,
 } from '../src/service-plist.ts';
-import { PROTOCOL_VERSION } from '../src/protocol.ts';
+import { PROTOCOL_VERSION, type Capability } from '../src/protocol.ts';
 import { serviceManagerOrNull } from '../src/service-manager.ts';
 import {
   capabilitiesFor,
   createPairingToken,
   grantDevice,
+  isDesktopClient,
   readBuildClients,
   readDeviceHostClients,
   readDevices,
+  readUnreadable,
+  renameDevice,
   revokeDevice,
   serverIdentity,
   type PairedDevice,
+  type UnreadableRecord,
 } from '../src/registry.ts';
 import { keyFingerprint } from '@stim-cli/core/noise-session';
 import { hostFromExecutable, hostPermissionPanes } from '../src/stim-host.ts';
 import { defaultSetupDeps, runSetup } from '../src/setup.ts';
 import { startServer } from '../src/server.ts';
-import { readDesktopBootstrap } from '../src/desktop-bootstrap.ts';
+import { readDesktopBootstrap, watchLauncherLifetime } from '../src/desktop-bootstrap.ts';
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { loadTransport } from '@stim-cli/transport';
 import { localTransport, resolveLanAddresses } from '@stim-cli/transport-local';
-import { readLanAddresses, watchLanAddresses } from '../src/lan.ts';
+import { readLanAddresses, watchServerSettings } from '../src/lan.ts';
 import {
   findTailscale,
   serveCommand,
@@ -81,7 +85,7 @@ const USAGE = `Usage:
                                     install that stim-server release from npm, or the .tgz
                                     packages in <dir>, beside the current one, switch the
                                     service to it, and switch back if it does not answer
-                                    --no-wait interrupts active builds and hosted sessions at restart
+                                    --no-wait also restarts with builds and hosted installs still running, which interrupts them
   stim-server service rollback [--label <name>]
                                     switch the service back to the server it ran before
   stim-server service uninstall [--label <name>]
@@ -94,6 +98,8 @@ const USAGE = `Usage:
   stim-server devices grant <id> --control|--read
                                     let a paired device run actions, or only read
   stim-server devices revoke <id>   revoke a paired device or approved client and close its connections
+  stim-server devices rename <id> <name>
+                                    rename a paired device or approved client; it sees the name on its next connection
   stim-server log [--json]          list the actions paired devices ran`;
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
@@ -143,7 +149,10 @@ async function serve(
   shareOnly = false,
 ): Promise<void> {
   const bootstrapFd = process.env.STIM_DESKTOP_BOOTSTRAP_FD;
+  const lifetimeFd = process.env.STIM_DESKTOP_LIFETIME_FD;
   delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
+  delete process.env.STIM_DESKTOP_LIFETIME_FD;
+  if (lifetimeFd !== undefined && lifetimeFd !== '0') fail('Desktop lifetime input is invalid or unavailable.');
   if (bootstrapFd !== undefined && bootstrapFd !== '0') fail('Desktop bootstrap input is invalid or unavailable.');
   const desktopInput =
     bootstrapFd === '0'
@@ -176,7 +185,7 @@ async function serve(
     fail('@stim-cli/transport-tailscale did not create a Tailscale transport');
   const transport = loaded.transport;
   const { state: tailscale } = transport.snapshot();
-  const lanSetting = watchLanAddresses();
+  const lanSetting = watchServerSettings();
   await Promise.race([lanSetting.ready, new Promise((done) => setTimeout(done, 1000).unref())]);
   const lan = localTransport({ entries: lanSetting.current });
   const stim = bundledStim();
@@ -217,6 +226,7 @@ async function serve(
       env,
       currentEnv,
       transports: [transport, lan],
+      keepAwake: { setting: lanSetting.keepAwake, onChange: lanSetting.onKeepAwakeChange },
       service: {
         label: serviceManagerOrNull()?.runningLabel(process.env) ?? null,
         node: process.execPath,
@@ -289,7 +299,9 @@ async function serve(
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('SIGHUP', shutdown);
-  void desktopInput?.closed.then(shutdown);
+  const launcherClosed =
+    desktopInput?.closed ?? (lifetimeFd === '0' ? watchLauncherLifetime(process.stdin) : undefined);
+  void launcherClosed?.then(shutdown);
   if (shareOnly) {
     const startup = await server.ready;
     if (startup.state !== 'ready') {
@@ -354,6 +366,67 @@ function describe(device: PairedDevice): string {
         ? 'control'
         : 'read';
   return `${device.id}  ${device.name}  ${scope}  from ${from}  paired ${device.pairedAt}  last seen ${device.lastSeenAt ?? 'never'}`;
+}
+
+function describeUnreadable({ file, index, id, version }: UnreadableRecord): string {
+  if (version !== undefined)
+    return `unreadable  ${file} registry version ${version}, written by a newer Stim  left as it is`;
+  return `unreadable  ${file} entry ${index}${id ? `  ${id}` : ''}  left as it is`;
+}
+
+const KINDS = { device: 'phone', build: 'build-client', 'device-host': 'device-host-client' } as const;
+
+const ACCESS: Record<Capability, string> = {
+  read: 'view',
+  control: 'control',
+  build: 'build',
+  'device-host': 'run-devices',
+};
+
+function listed(device: PairedDevice, registry: keyof typeof KINDS) {
+  const { id, name, from, publicKey, pairedAt, lastSeenAt, capabilities, clientApp, clientVersion } = device;
+  return {
+    id,
+    name,
+    ...(from ? { from } : {}),
+    keyFingerprint: keyFingerprint(Buffer.from(publicKey, 'base64url')),
+    pairedAt,
+    lastSeenAt,
+    capabilities,
+    ...(clientApp ? { clientApp } : {}),
+    ...(clientVersion ? { clientVersion } : {}),
+    kind: registry === 'device' && isDesktopClient(device) ? 'desktop' : KINDS[registry],
+    access: capabilities.map((capability) => ACCESS[capability]),
+    owner: registry === 'device' ? 'this-machine' : 'theirs-running-here',
+  };
+}
+
+function refuseUnreadable(id: string): void {
+  const unreadable = readUnreadable();
+  const entry = unreadable.find((each) => each.id === id);
+  if (entry) {
+    fail(
+      `${id} is an entry of ${entry.file} that this stim-server cannot read, so it is left as it is. Edit that file to change or remove it.`,
+    );
+  }
+  const whole = unreadable.filter((each) => each.version !== undefined);
+  if (whole.length) {
+    fail(
+      `no paired device or approved client ${id} that this stim-server can read. ${whole.map((each) => `${each.file} is registry version ${each.version}, written by a newer Stim`).join('; ')}, and is left as it is.`,
+    );
+  }
+}
+
+function rename(id: string, args: string[]): void {
+  const [name, ...extra] = args;
+  if (name === undefined || extra.length) fail(`unknown command.\n${USAGE}`);
+  const outcome = renameDevice(id, name);
+  if (outcome === 'unknown') {
+    refuseUnreadable(id);
+    fail(`no paired device or approved client ${id}. Run \`stim-server devices\` to list them.`);
+  }
+  if (outcome === 'invalid-name') fail('the name must be 1 to 64 characters of printable text on one line.');
+  console.log(`Renamed ${id}.`);
 }
 
 function scopeFlag(values: {
@@ -540,6 +613,7 @@ async function main(): Promise<void> {
     const capabilities = capabilitiesFor(scope === 'control');
     const outcome = grantDevice(arg, [...capabilities]);
     if (outcome === 'unknown') {
+      refuseUnreadable(arg);
       fail(`no paired device or approved client ${arg}. Run \`stim-server devices\` to list them.`);
     }
     if (outcome === 'build-mismatch' || outcome === 'device-host-mismatch') {
@@ -564,32 +638,35 @@ async function main(): Promise<void> {
   }
   if (command === 'devices' && (sub === undefined || sub === 'list') && arg === undefined) {
     const clients = readDeviceHostClients();
-    const devices = [...readDevices(), ...readBuildClients(), ...clients];
+    const sources = [
+      ...readDevices().map((device) => [device, 'device'] as const),
+      ...readBuildClients().map((device) => [device, 'build'] as const),
+      ...clients.map((device) => [device, 'device-host'] as const),
+    ];
+    const devices = sources.map(([device]) => device);
     let hostedSessions: ReturnType<typeof readHostedSessionRows> = [];
     try {
       hostedSessions = readHostedSessionRows(readHostedSessions(), clients);
     } catch (error) {
       console.error(`Could not read hosted sessions: ${(error as Error).message}`);
     }
+    const unreadable = readUnreadable();
     if (values.json) {
-      const listed = devices.map(({ id, name, from, publicKey, pairedAt, lastSeenAt, capabilities }) => ({
-        id,
-        name,
-        ...(from ? { from } : {}),
-        keyFingerprint: keyFingerprint(Buffer.from(publicKey, 'base64url')),
-        pairedAt,
-        lastSeenAt,
-        capabilities,
-      }));
-      return void console.log(JSON.stringify({ devices: listed, hostedSessions }));
+      const rows = sources.map(([device, registry]) => listed(device, registry));
+      return void console.log(JSON.stringify({ devices: rows, hostedSessions, unreadable }));
     }
     if (!devices.length) console.log('No paired devices.');
     for (const device of devices) console.log(describe(device));
+    for (const entry of unreadable) console.log(describeUnreadable(entry));
     for (const line of formatHostedSessions(hostedSessions)) console.log(line);
     return;
   }
+  if (command === 'devices' && sub === 'rename' && arg !== undefined) return rename(arg, rest);
   if (command === 'devices' && sub === 'revoke' && arg !== undefined && rest.length === 0) {
-    if (!revokeDevice(arg)) fail(`no paired device ${arg}. Run \`stim-server devices\` to list them.`);
+    if (!revokeDevice(arg)) {
+      refuseUnreadable(arg);
+      fail(`no paired device ${arg}. Run \`stim-server devices\` to list them.`);
+    }
     console.log(`Revoked ${arg}.`);
     return;
   }

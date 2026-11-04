@@ -9,6 +9,7 @@ import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressureAsync } from '../host-memory.ts';
 import type { Config } from '../workspace/config.ts';
 import { updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
+import { readParked } from '../devices/sim-pool.ts';
 import { ownedHere } from './idle.ts';
 import { probeFocusedDeviceUse, type FocusedDeviceUse } from './probe.ts';
 
@@ -54,6 +55,14 @@ export function measureDisk(config: Config | null): Promise<DaemonMeasurement['d
 export async function measureMemory(): Promise<DaemonMeasurement['memory']> {
   const [level, availableBytes] = await Promise.all([readHostMemoryPressureAsync(), availableMemory()]);
   return { level, availableBytes, totalBytes: totalmem() };
+}
+
+/** Whether `measureTick` lists simulators: on macOS, when a registered workspace owns one. */
+export function tickListsSims(config: Config | null): boolean {
+  return (
+    process.platform === 'darwin' &&
+    (ownsDevice(config, 'ios') || readParked('ios', { config }).some((record) => record.bootedUntil !== undefined))
+  );
 }
 
 function ownsDevice(config: Config | null, platform: 'ios' | 'android'): boolean {
@@ -108,7 +117,7 @@ export async function measureTick(
   const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
   let sims: IosSimRecord[] | null = [];
   let simsError: string | null = null;
-  if (process.platform === 'darwin' && ownsDevice(config, 'ios')) {
+  if (tickListsSims(config)) {
     try {
       sims = await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS });
     } catch (error) {

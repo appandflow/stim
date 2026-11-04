@@ -32,7 +32,8 @@ export interface DeviceControl {
   state: ControlState;
   begin: (takeOver?: boolean) => void;
   end: () => void;
-  touch: (phase: TouchPhase, x: number, y: number, duoRevision?: string) => void;
+  /** `second` adds a second finger; every phase of one gesture carries it or none does. */
+  touch: (phase: TouchPhase, x: number, y: number, duoRevision?: string, second?: { x: number; y: number }) => void;
   text: (text: string) => void;
   scroll: (x: number, y: number, deltaX: number, deltaY: number) => void;
   key: (key: InputKey, modifiers?: KeyModifier[]) => void;
@@ -42,8 +43,11 @@ export interface DeviceControl {
   /** Rejects with the server's reason; a Duo fold takes a few seconds to settle. */
   posture: (posture: DevicePosture) => Promise<void>;
   simulator: (command: SimulatorCommand) => Promise<void>;
-  /** Sets the device clipboard, and with `paste` pastes it into the focused field. Rejects with the server's reason. */
-  clipboardSet: (text: string, paste: boolean) => Promise<void>;
+  /**
+   * Sets the device clipboard, and with `paste` pastes it into the focused field; `typed` is set when an iOS simulator
+   * typed the text instead. Rejects with the server's reason.
+   */
+  clipboardSet: (text: string, paste: boolean) => Promise<{ typed?: true }>;
   /** Reads the device clipboard. Rejects with the server's reason. */
   clipboardGet: () => Promise<string>;
 }
@@ -160,8 +164,14 @@ export function useDeviceControl(
     [connection, session],
   );
   const touch = useCallback(
-    (phase: TouchPhase, x: number, y: number, duoRevision?: string) =>
-      send('input.touch', { phase, x, y, ...(duoRevision ? { duoRevision } : {}) }),
+    (phase: TouchPhase, x: number, y: number, duoRevision?: string, second?: { x: number; y: number }) =>
+      send('input.touch', {
+        phase,
+        x,
+        y,
+        ...(second ? { x2: second.x, y2: second.y } : {}),
+        ...(duoRevision ? { duoRevision } : {}),
+      }),
     [send],
   );
   const text = useCallback(
@@ -206,7 +216,7 @@ export function useDeviceControl(
   const clipboardSet = useCallback(
     async (value: string, paste: boolean) => {
       if (!connection || !session) throw new Error(t`The control session ended.`);
-      await connection.request('input.clipboard.set', { session, text: value, ...(paste ? { paste } : {}) });
+      return connection.request('input.clipboard.set', { session, text: value, ...(paste ? { paste } : {}) });
     },
     [connection, session],
   );

@@ -243,6 +243,36 @@ import Testing
     #expect(shared.repositories.first?.total == 5 && shared.total(.nodeModules).bytes == 5)
   }
 
+  /// Catches a cloned node_modules showing at full size as the worktree's own use.
+  @Test func sizesNodeModulesByTheStatusPrivateSizeWhenItHasOne() throws {
+    func env(_ path: String, disk: String) throws -> Workspace {
+      try JSONDecoder().decode(
+        Workspace.self,
+        from: Data(
+          #"{"path":"\#(path)","live":false,"warnings":[],"worktree":{"path":"/t/.w/a"},"disk":\#(disk)}"#.utf8))
+    }
+    let measured = DiskMeasurements(sizes: ["/t/.w/a/node_modules": 1_500_000_000])
+    let cloned = try env(
+      "/t/.w/a", disk: #"{"worktreeBytes":1600000000,"nodeModulesBytes":1500000000,"nodeModulesPrivateBytes":12000000}"#)
+    let row = try #require(StorageReport.make(environments: [cloned], gc: nil, disk: measured, paths: paths).workspaces.first)
+    #expect(row.nodeModules == .size(12_000_000) && row.nodeModulesShared == 1_488_000_000)
+
+    let source = try JSONDecoder().decode(
+      Workspace.self,
+      from: Data(
+        #"{"path":"/t","live":false,"warnings":[],"checkout":"/t","disk":{"worktreeBytes":1600000000,"nodeModulesBytes":1500000000,"nodeModulesPrivateBytes":12000000}}"#
+          .utf8))
+    let checkout = try #require(
+      StorageReport.make(
+        environments: [source], gc: nil, disk: DiskMeasurements(sizes: ["/t/node_modules": 1_500_000_000]), paths: paths
+      ).workspaces.first)
+    #expect(checkout.isCheckout && checkout.nodeModules == .size(1_500_000_000) && checkout.nodeModulesShared == nil)
+
+    let older = try env("/t/.w/a", disk: #"{"worktreeBytes":1600000000,"nodeModulesBytes":1500000000}"#)
+    let fallback = try #require(StorageReport.make(environments: [older], gc: nil, disk: measured, paths: paths).workspaces.first)
+    #expect(fallback.nodeModules == .size(1_500_000_000) && fallback.nodeModulesShared == nil)
+  }
+
   /// Catches a slow or timed-out tree blanking every row, and an absent gc entry reading as unknown.
   @Test func givesEveryCategoryASizeOrAReason() throws {
     let modules = "/r/.worktrees/a/node_modules"
@@ -382,35 +412,39 @@ import Testing
 }
 
 @Suite struct WorktreeLifecycleTests {
-  func worktree(idle: Int?, merged: String? = nil) -> GcReport.LinkedWorktree {
-    GcReport.LinkedWorktree(path: "/w", idleDays: idle, mergedInto: merged, willRemove: merged != nil, detail: nil)
+  func worktree(
+    idle: Int?, merged: String? = nil, pullRequest: GcReport.PullRequestState? = nil
+  ) -> GcReport.LinkedWorktree {
+    GcReport.LinkedWorktree(
+      path: "/w", idleDays: idle, mergedInto: merged, pullRequest: pullRequest, willRemove: merged != nil, detail: nil)
   }
 
-  let pulls = ["feat": PullRequest(number: 42, url: "https://github.com/o/r/pull/42", headRefName: "feat")]
+  func pull(_ state: String) -> GcReport.PullRequestState {
+    GcReport.PullRequestState(number: 42, state: state, url: "https://github.com/o/r/pull/42", containsHead: true)
+  }
 
   @Test func mergedWinsOverAnOpenPullRequest() {
     #expect(
-      WorktreeLifecycle(worktree: worktree(idle: 1, merged: "origin/main"), branch: "feat", pulls: pulls)
+      WorktreeLifecycle(worktree: worktree(idle: 1, merged: "origin/main", pullRequest: pull("open")))
         == .merged(into: "origin/main"))
   }
 
   @Test func anOpenPullRequestKeepsAnIdleWorktreeFromReadingAsStale() {
     #expect(
-      WorktreeLifecycle(worktree: worktree(idle: 30), branch: "feat", pulls: pulls)
+      WorktreeLifecycle(worktree: worktree(idle: 30, pullRequest: pull("open")))
         == .pullRequest(number: 42, url: "https://github.com/o/r/pull/42"))
   }
 
-  @Test func withoutTheGitHubCLIIdlenessAloneDecides() {
-    #expect(WorktreeLifecycle(worktree: worktree(idle: 7), branch: "feat", pulls: nil) == .stale(days: 7))
-    #expect(WorktreeLifecycle(worktree: worktree(idle: 6), branch: "feat", pulls: nil) == .active)
-    #expect(WorktreeLifecycle(worktree: worktree(idle: nil), branch: "feat", pulls: nil) == .active)
-    #expect(WorktreeLifecycle(worktree: nil, branch: "main", pulls: nil) == nil)
+  @Test func aFinishedPullRequestIsNotShownAsOpen() {
+    #expect(WorktreeLifecycle(worktree: worktree(idle: 30, pullRequest: pull("merged"))) == .stale(days: 30))
+    #expect(WorktreeLifecycle(worktree: worktree(idle: 1, pullRequest: pull("closed"))) == .active)
   }
 
-  @Test func readsGhPullRequestsByBranchAndRejectsAnythingElse() {
-    let json = #"[{"number":7,"url":"https://github.com/o/r/pull/7","headRefName":"fix"}]"#
-    #expect(PullRequest.byBranch(Data(json.utf8))?["fix"]?.number == 7)
-    #expect(PullRequest.byBranch(Data("no git remotes found".utf8)) == nil)
+  @Test func withoutPullRequestStateIdlenessAloneDecides() {
+    #expect(WorktreeLifecycle(worktree: worktree(idle: 7)) == .stale(days: 7))
+    #expect(WorktreeLifecycle(worktree: worktree(idle: 6)) == .active)
+    #expect(WorktreeLifecycle(worktree: worktree(idle: nil)) == .active)
+    #expect(WorktreeLifecycle(worktree: nil) == nil)
   }
 }
 

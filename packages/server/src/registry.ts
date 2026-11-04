@@ -31,6 +31,7 @@ import {
   type QuietHours,
 } from './protocol.ts';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
+import { arrayElementSpans, otherMembers } from './json-spans.ts';
 
 export const PAIRING_TTL_MS: number = 5 * 60_000;
 
@@ -53,6 +54,9 @@ export interface PairedDevice {
   push?: PushRegistration;
   /** The setup journal of the `stim-server setup` run that approved this client. */
   setupJournal?: string;
+  /** The app and version this client named in its last `hello`, cleaned like a name. For display only. */
+  clientApp?: string;
+  clientVersion?: string;
 }
 
 export interface PushRegistration {
@@ -201,19 +205,29 @@ const MAX_CLIENT_NAME = 64;
  * refusing it. U+200D stays because emoji sequences join with it.
  */
 function pairingName(name: string, fallback: string): string {
-  const clean = name
-    .replace(/(?![\u200d\s])[\p{Cc}\p{Cf}]/gu, '')
+  return cleanClientText(name) || fallback;
+}
+
+function cleanClientText(text: string): string {
+  return text
+    .replace(/(?![\u200d\s])[\p{Cc}\p{Cf}\p{Cs}]/gu, '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, MAX_CLIENT_NAME)
     .replace(/[\ud800-\udbff]$/, '')
     .trim();
-  return clean || fallback;
+}
+
+/** What Stim Desktop names itself in `hello`: `Stim Desktop` for the release app and `Stim Dev` for a development build. */
+const DESKTOP_CLIENT_APPS: readonly string[] = ['Stim Desktop', 'Stim Dev'];
+
+/** Whether a record's recorded client app is Stim Desktop. A client names itself, so this is for display only. */
+export function isDesktopClient(device: PairedDevice): boolean {
+  return device.clientApp !== undefined && DESKTOP_CLIENT_APPS.includes(device.clientApp);
 }
 
 function newDeviceId(): string {
-  const { devices, build, deviceHost } = readRegistries();
-  const taken = new Set([...devices, ...build, ...deviceHost].map((device) => device.id));
+  const taken = new Set(REGISTRIES.flatMap((path) => readSlots(path()).map(slotId)));
   let id = newId();
   while (taken.has(id)) id = newId();
   return id;
@@ -243,7 +257,7 @@ const JOURNAL_PATTERN = /^[a-f0-9]{64}$/;
 
 function parseDevice(value: unknown): PairedDevice | null {
   if (!isJsonObject(value)) return null;
-  const { id, name, publicKey, pairedAt, lastSeenAt, from, setupJournal } = value;
+  const { id, name, publicKey, pairedAt, lastSeenAt, from, setupJournal, clientApp, clientVersion } = value;
   if (typeof id !== 'string' || typeof name !== 'string' || typeof pairedAt !== 'string') return null;
   if (typeof publicKey !== 'string' || !KEY_PATTERN.test(publicKey)) return null;
   const push = parsePush(value.push);
@@ -257,6 +271,8 @@ function parseDevice(value: unknown): PairedDevice | null {
     capabilities: parseCapabilities(value.capabilities),
     ...(push ? { push } : {}),
     ...(typeof setupJournal === 'string' && JOURNAL_PATTERN.test(setupJournal) ? { setupJournal } : {}),
+    ...(typeof clientApp === 'string' && clientApp ? { clientApp } : {}),
+    ...(typeof clientVersion === 'string' && clientVersion ? { clientVersion } : {}),
   };
 }
 
@@ -268,14 +284,13 @@ export class RegistryUnavailable extends Error {
 const why = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
- * The JSON object in `file`, or null when the file does not exist in a server directory that answers, as on a first
- * run. A server directory that cannot be read, such as one whose Stim home is a symlink to an unmounted volume, and a
- * file that cannot be read or parsed throw {@link RegistryUnavailable}.
+ * The text of `file`, or null when the file does not exist in a server directory that answers, as on a first run. A
+ * server directory that cannot be read, such as one whose Stim home is a symlink to an unmounted volume, and a file
+ * that cannot be read throw {@link RegistryUnavailable}.
  */
-function readRegistryFile(file: string): Record<string, unknown> | null {
-  let text: string;
+function readRegistryText(file: string): string | null {
   try {
-    text = readFileSync(file, 'utf8');
+    return readFileSync(file, 'utf8');
   } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
       throw new RegistryUnavailable(`Cannot read ${file}: ${why(error)}`);
@@ -286,6 +301,9 @@ function readRegistryFile(file: string): Record<string, unknown> | null {
     }
     return null;
   }
+}
+
+function parseRegistry(file: string, text: string): Record<string, unknown> {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -296,12 +314,57 @@ function readRegistryFile(file: string): Record<string, unknown> | null {
   return value;
 }
 
-/** Records of protocol 1, which stored device tokens and tailnet nodes, are not read. */
+/** The JSON object in `file`, or null when it does not exist. A file that cannot be read or parsed throws {@link RegistryUnavailable}. */
+function readRegistryFile(file: string): Record<string, unknown> | null {
+  const text = readRegistryText(file);
+  return text === null ? null : parseRegistry(file, text);
+}
+
+/** One entry of a registry's `devices` list: the record it parses to, or null for an entry this version cannot read. */
+interface Slot {
+  /** The entry's own text in the file. */
+  raw: string;
+  value: unknown;
+  device: PairedDevice | null;
+}
+
+const slotId = (slot: Slot): string | undefined => {
+  const id = slot.device ? slot.device.id : isJsonObject(slot.value) ? slot.value.id : undefined;
+  return typeof id === 'string' ? id : undefined;
+};
+
+interface Contents {
+  slots: Slot[];
+  /** The text of each top-level member of a version 2 file other than `version` and `devices`. */
+  others: string[];
+  /** The version of a file that a newer Stim wrote. */
+  newer: number | null;
+}
+
+/** Records of protocol 1, which stored device tokens and tailnet nodes, are not read, and neither are those of a newer version. */
+function readContents(file: string): Contents {
+  const none: Contents = { slots: [], others: [], newer: null };
+  const text = readRegistryText(file);
+  if (text === null) return none;
+  const registry = parseRegistry(file, text);
+  const { version, devices } = registry;
+  if (typeof version === 'number' && version > REGISTRY_VERSION) return { ...none, newer: version };
+  if (version !== REGISTRY_VERSION) return none;
+  if (!Array.isArray(devices)) throw new RegistryUnavailable(`${file} has no devices list.`);
+  const spans = arrayElementSpans(text, 'devices');
+  if (spans?.length !== devices.length) throw new RegistryUnavailable(`Cannot locate the records in ${file}.`);
+  const slots = spans.map(([start, end], index) => ({
+    raw: text.slice(start, end),
+    value: devices[index],
+    device: parseDevice(devices[index]),
+  }));
+  return { slots, others: otherMembers(text, ['version', 'devices']), newer: null };
+}
+
+const readSlots = (file: string): Slot[] => readContents(file).slots;
+
 function readRecords(file: string): PairedDevice[] {
-  const registry = readRegistryFile(file);
-  if (registry?.version !== REGISTRY_VERSION) return [];
-  if (!Array.isArray(registry.devices)) throw new RegistryUnavailable(`${file} has no devices list.`);
-  return registry.devices.flatMap((entry) => parseDevice(entry) ?? []);
+  return readSlots(file).flatMap((slot) => slot.device ?? []);
 }
 
 function recordsOrNone(file: string): PairedDevice[] {
@@ -313,8 +376,74 @@ function recordsOrNone(file: string): PairedDevice[] {
   }
 }
 
+function refuseNewer(file: string, newer: number | null): void {
+  if (newer === null) return;
+  throw new RegistryUnavailable(
+    `${file} is registry version ${newer}, which a newer Stim wrote; this Stim writes version ${REGISTRY_VERSION} and leaves it as it is.`,
+  );
+}
+
+/**
+ * Writes `devices` as the file's records. An entry this version cannot read stays in its place, as the text it has in
+ * the file, and so does any other top-level member. A record left in `devices` takes the place of the entry with its id,
+ * and a new one goes last. A file that a newer Stim wrote is not written.
+ */
 function writeRecords(file: string, devices: PairedDevice[]): void {
-  writeJson(file, { version: REGISTRY_VERSION, devices });
+  const marker = randomBytes(8).toString('hex');
+  const unreadable: string[] = [];
+  const remaining = [...devices];
+  const entries: unknown[] = [];
+  const { slots, others, newer } = readContents(file);
+  refuseNewer(file, newer);
+  for (const { raw, device } of slots) {
+    if (device === null) entries.push(`${marker}${unreadable.push(raw) - 1}`);
+    else {
+      const index = remaining.findIndex((each) => each.id === device.id);
+      if (index >= 0) entries.push(...remaining.splice(index, 1));
+    }
+  }
+  const members = Object.fromEntries(others.map((_, index) => [`${marker}m${index}`, 0]));
+  const value = { version: REGISTRY_VERSION, devices: [...entries, ...remaining], ...members };
+  let text = `${JSON.stringify(value, null, 2)}\n`;
+  for (const [index, raw] of unreadable.entries()) text = text.replace(`"${marker}${index}"`, () => raw);
+  for (const [index, raw] of others.entries()) text = text.replace(`"${marker}m${index}": 0`, () => raw);
+  writeText(file, text);
+}
+
+/**
+ * An entry of a registry's `devices` list that this version cannot read, or, with `version`, a whole registry file that
+ * a newer Stim wrote. It is kept as it is and grants nothing.
+ */
+export interface UnreadableRecord {
+  /** The registry file's name: `devices.json`, `build-clients.json` or `device-host-clients.json`. */
+  file: string;
+  /** The entry's position in that file's `devices` list. Absent for a whole file. */
+  index?: number;
+  /** The entry's own `id`, when it has a string one. */
+  id?: string;
+  /** The version of a whole file that a newer Stim wrote. */
+  version?: number;
+}
+
+const REGISTRIES = [devicesFile, () => clientsFile('build'), () => clientsFile('device-host')];
+
+/** The entries of the three registries that this version cannot read, or none for a registry that cannot be read. */
+export function readUnreadable(): UnreadableRecord[] {
+  return REGISTRIES.flatMap((path): UnreadableRecord[] => {
+    const file = path();
+    try {
+      const { slots, newer } = readContents(file);
+      if (newer !== null) return [{ file: basename(file), version: newer }];
+      return slots.flatMap((slot, index) => {
+        if (slot.device !== null) return [];
+        const id = cleanClientText(slotId(slot) ?? '');
+        return [{ file: basename(file), index, ...(id ? { id } : {}) }];
+      });
+    } catch (error) {
+      if (error instanceof RegistryUnavailable) return [];
+      throw error;
+    }
+  });
 }
 
 export interface Registries {
@@ -403,9 +532,13 @@ function writeSecrets(secrets: SecretRecord[]): void {
 }
 
 export function writeJson(file: string, value: unknown): void {
+  writeText(file, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function writeText(file: string, text: string): void {
   const temporary = join(dirname(file), `.${basename(file)}.${process.pid}.tmp`);
   try {
-    writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    writeFileSync(temporary, text, { mode: 0o600 });
     renameSync(temporary, file);
   } catch (error) {
     rmSync(temporary, { force: true });
@@ -539,6 +672,11 @@ export function spendSecret(
       capabilities,
       ...(secret.journal ? { setupJournal: secret.journal } : {}),
     });
+    const targets =
+      secret.kind === 'pairing'
+        ? [devicesFile()]
+        : (['build', 'device-host'] as const).filter((each) => secret.capabilities.includes(each)).map(clientsFile);
+    for (const target of targets) refuseNewer(target, readContents(target).newer);
     if (secret.kind === 'pairing') {
       const device = record(secret.capabilities, 'Phone');
       writeRecords(devicesFile(), [
@@ -565,15 +703,32 @@ export function spendSecret(
 
 const TOUCH_INTERVAL_MS = 60_000;
 
-/** Notes that a record's key authenticated now, at most once per `TOUCH_INTERVAL_MS`. */
-export function touchDevice(id: string, now: number = Date.now()): void {
+/** The `client` of a `hello`, whose values the client chose. */
+export interface HelloClient {
+  name?: unknown;
+  version?: unknown;
+}
+
+/**
+ * Notes that a record's key authenticated now, at most once per `TOUCH_INTERVAL_MS`, and records the app and version
+ * the client named in `hello`. A record with no app yet takes it at once, so a record fills in on its first
+ * connection after an upgrade, and a new pairing on the hello that follows it.
+ */
+export function touchDevice(id: string, client: HelloClient = {}, now: number = Date.now()): void {
+  const app = typeof client.name === 'string' ? cleanClientText(client.name) : '';
+  const version = typeof client.version === 'string' ? cleanClientText(client.version) : '';
   transaction(() => {
     for (const file of [devicesFile(), clientsFile('build'), clientsFile('device-host')]) {
       const records = readRecords(file);
       const found = records.find((entry) => entry.id === id);
       if (!found) continue;
-      if (found.lastSeenAt !== null && Math.abs(now - Date.parse(found.lastSeenAt)) < TOUCH_INTERVAL_MS) return;
-      found.lastSeenAt = new Date(now).toISOString();
+      const due = found.lastSeenAt === null || Math.abs(now - Date.parse(found.lastSeenAt)) >= TOUCH_INTERVAL_MS;
+      const missing = app !== '' && found.clientApp === undefined;
+      if (!due && !missing) return;
+      if (due) found.lastSeenAt = new Date(now).toISOString();
+      if (app) found.clientApp = app;
+      if (app && version) found.clientVersion = version;
+      else if (app) delete found.clientVersion;
       writeRecords(file, records);
       return;
     }
@@ -628,6 +783,32 @@ export function dropPushToken(token: string): void {
       changed = true;
     }
     if (changed) writeRecords(devicesFile(), devices);
+  });
+}
+
+export type RenameOutcome = 'renamed' | 'unknown' | 'invalid-name';
+
+/** A name a person typed for a record: 1 to 64 characters after trimming, without control, format or separator characters. */
+function personName(name: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > MAX_CLIENT_NAME) return null;
+  return /(?!\u200d)[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(trimmed) ? null : trimmed;
+}
+
+/** Renames the record `id` in whichever registry holds it. Its key and capabilities stay as they are. */
+export function renameDevice(id: string, name: string): RenameOutcome {
+  const clean = personName(name);
+  if (clean === null) return 'invalid-name';
+  return transaction<RenameOutcome>(() => {
+    for (const file of [devicesFile(), clientsFile('build'), clientsFile('device-host')]) {
+      const records = readRecords(file);
+      const found = records.find((entry) => entry.id === id);
+      if (!found) continue;
+      found.name = clean;
+      writeRecords(file, records);
+      return 'renamed';
+    }
+    return 'unknown';
   });
 }
 
