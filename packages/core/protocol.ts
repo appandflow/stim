@@ -200,6 +200,7 @@ export const FEATURES = [
   'share-slug',
   'share-reuse',
   'share-starting',
+  'shared-control',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];

@@ -622,10 +622,11 @@ the device, so a portrait-only app shows sideways in a turned frame; on an emula
 app in front still needs to support the requested orientation. Physical devices rotate
 only in hand.
 
-Tapping Control explicitly takes over from the displayed driver immediately.
-If the server reports a driver conflict after that tap, the Take over action
-also starts control immediately. The server keeps its exclusive control lease
-and records the takeover. Viewing replay remains read-only.
+Tapping Control starts control at once, while an agent drives the device or
+another person controls it too: everyone's input reaches the device, and a
+finger already down keeps the touch pointer until it lifts. Against a
+stim-server older than shared control, a device someone else drives offers
+**Take Over** instead. Viewing replay remains read-only.
 
 ## Replay device screens
 

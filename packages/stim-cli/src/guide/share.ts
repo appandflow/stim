@@ -372,13 +372,16 @@ SECURITY MODEL
   share without a password) connects and stops about 10
   seconds after the last one leaves. A share never records: footage of share
   viewing is not written to disk.
-- Control goes through the same control session and device lease stim-server
-  uses for Desktop and the phone app. A viewer that can control starts the
+- Control goes through stim-server's control hub and device lease, which Desktop
+  and the phone app use too. A viewer that can control starts the share's
   session, and so takes the device lease, when it connects, and the session ends
   after 5 minutes without input or when the last viewer leaves. It carries taps, two-finger gestures, text, the arrow keys, Escape and keyboard shortcuts, rotation and the
   hardware buttons of the shared device, plus the device clipboard on an iOS simulator, an Android emulator or an
-  Android phone only. A device an agent or another client drives answers
-  busy instead of being taken over.
+  Android phone only. Viewers, Stim Desktop, the phone app and agents control
+  the device at the same time; nobody is refused or taken over. The device has
+  one touch pointer: whoever puts a finger down holds it until they lift it,
+  and a touch from anyone else meanwhile is dropped with "Name is using the
+  screen".
 - Clipboard, with --control on an iOS simulator, Android emulator or Android phone: Command-V or Control-V while
   the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field; an iOS simulator types printable ASCII, line breaks and tabs, and pastes other text with Command-V, which lands without a prompt in an app Stim installed on an owned simulator (Stim allows its paste permission) and where iOS can ask first in any other app. The
   top bar's options menu has a Sync clipboard switch, on by default for control viewers and remembered in the

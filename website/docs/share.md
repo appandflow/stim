@@ -152,9 +152,11 @@ Presence shows where
 people tap, a PIN pad included. The screen is already shared, so this adds
 little, but keep it in mind when the device shows secrets.
 
-One viewer at a time holds the touch pointer: from finger down to finger up,
-or until ten seconds pass without input. A touch from another viewer in the
-meantime is dropped, and that viewer sees "Name is using the screen". A share
+Viewers control the device together with each other, Stim Desktop, the phone app
+and agents: nobody is refused or taken over. One person at a time holds the
+touch pointer: from finger down to finger up, or until ten seconds pass without
+input. A touch from anyone else in the meantime is dropped, and that viewer sees
+"Name is using the screen" (Stim Desktop and the phone app show as "Host"). A share
 of a hosted session works the same, and also shows what an agent does on the
 hosted device with `stim agent-device`: its command as "Agent", a ripple where
 it tapped or swiped and an outline of the element it pressed. The outline

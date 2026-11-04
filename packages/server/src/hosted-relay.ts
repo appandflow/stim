@@ -637,7 +637,7 @@ export class HostedRelay {
         device,
         platform: target.platform,
         ...(target.platform !== 'macos' ? { slot: target.slot } : {}),
-        action: takeOver ? 'control.take-over' : 'control.begin',
+        action: 'control.begin',
         ...outcome,
       });
     try {

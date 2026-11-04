@@ -2327,7 +2327,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         auditSafely({
           at: new Date().toISOString(),
           device: { id: session.id, name: session.name },
-          action: raw.takeOver === true ? 'control.take-over' : 'control.begin',
+          action: 'control.begin',
           workspace: clip(raw.workspace),
           ...(typeof raw.platform === 'string' ? { platform: clip(raw.platform)! } : {}),
           ...(raw.platform === 'ios' || raw.platform === 'android'
