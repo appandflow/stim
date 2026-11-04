@@ -1334,9 +1334,9 @@ the systemd user unit on Linux), every running `stim-server` process, each
 server's `/health` on `127.0.0.1` and the Stim home's local socket. A machine
 with no service, server or socket costs it only a process listing. The doctor
 toolchain section also shows, for each service, where it finds each
-tool the way the server does at start, with the service's own node, `--env` entries and `--path-prepend` directories. A build machine pinned in `build-machines.json`
-whose tailnet node changed is reported as `node-changed` under the existing
-build machine finding.
+tool the way the server does at start, with the service's own node, `--env` entries and `--path-prepend` directories. A build machine that no longer proves the stim-server key pinned in `build-machines.json`
+is reported as `key-changed`, and one that left the tailnet as `not-on-tailnet`, under the
+existing build machine finding.
 
 | Finding                    | What it means and the fix                                                                                                                                                                                                        |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
