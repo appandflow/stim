@@ -246,6 +246,21 @@ describe('buildAndroid', () => {
     expect(args.some((arg) => arg.endsWith('android-worker-release.gradle'))).toBe(workerRelease);
   });
 
+  test.each([
+    { built: 'app-release-unsigned.apk', stale: 'app-release.apk' },
+    { built: 'app-release.apk', stale: 'app-release-unsigned.apk' },
+  ])('a worker release build takes $built, not the older $stale beside it', ({ built, stale }) => {
+    const outputsDir = join(root, 'outputs');
+    const dir = join(outputsDir, 'release');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, built), 'new');
+    writeFileSync(join(dir, stale), 'old');
+    writeFileSync(join(dir, 'output-metadata.json'), JSON.stringify({ elements: [{ outputFile: built }] }));
+    expect(locateProjectApk({ directory: root, outputsDir }, '', 'release', { unsigned: true }).apkPath).toBe(
+      join(dir, built),
+    );
+  });
+
   test('the build_start record shows --no-build-cache when the cache is off', async () => {
     makeAndroidProject();
     const writer = recordingWriter();

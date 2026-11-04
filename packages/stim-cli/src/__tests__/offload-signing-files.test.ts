@@ -62,6 +62,14 @@ test.each([
     found: false,
   },
   { name: 'a Gradle interpolation', path: 'android/app/build.gradle', text: 'storePassword "$pw"\n', found: false },
+  {
+    name: 'a commented password',
+    path: 'android/gradle.properties',
+    text: '# MYAPP_KEY_PASSWORD=*****\n',
+    found: false,
+  },
+  { name: 'an env template', path: '.env.example', text: 'STORE_PASSWORD=changeme\n', found: false },
+  { name: 'an API key pass', path: '.env', text: 'GOOGLE_API_KEY_PASS=abc\n', found: false },
   { name: 'the debug password', path: 'android/gradle.properties', text: 'storePassword=android\n', found: false },
   {
     name: 'properties with no password',

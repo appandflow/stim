@@ -132,9 +132,18 @@ function apkInDir(dir: string): string | null {
   return listed ? join(dir, listed) : null;
 }
 
-function unsignedApkInDir(dir: string): string | null {
-  const found = safeList(dir).filter((name) => name.endsWith('-unsigned.apk'));
-  return found.length === 1 ? join(dir, found[0]!) : null;
+/** The one APK this build's `output-metadata.json` names, signed or not: a retained build directory can hold an older one. */
+function builtApkInDir(dir: string): string | null {
+  let names: unknown[];
+  try {
+    names = JSON.parse(readOrNull(join(dir, 'output-metadata.json')) ?? '').elements.map(
+      (element: { outputFile?: unknown }) => element.outputFile,
+    );
+  } catch {
+    return null;
+  }
+  const apk = names.length === 1 && typeof names[0] === 'string' ? join(dir, names[0]) : null;
+  return apk && existsSync(apk) ? apk : null;
 }
 
 function listApkSubdirs(base: string, prefix: string[] = [], depth = 0): string[][] {
@@ -198,7 +207,7 @@ export function locateApk(
 
   if (variant) {
     const dir = findVariantApkDir(project.outputsDir, variant);
-    const apk = dir ? (apkInDir(dir) ?? (unsigned ? unsignedApkInDir(dir) : null)) : null;
+    const apk = dir ? ((unsigned ? builtApkInDir(dir) : null) ?? apkInDir(dir)) : null;
     return { apkPath: apk };
   }
 

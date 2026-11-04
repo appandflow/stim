@@ -2,8 +2,8 @@ import { readFile, realpath } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 const KEYSTORE_FILE = /(?:\.(?:keystore|jks|p12|pfx)|(?:^|\/)keystore\.properties)$/i;
-const VALUE_FILE = /(?:\.properties|(?:^|\/)credentials\.json|(?:^|\/)\.env[^/]*)$/i;
-const VALUE_PASSWORD = /(?:store|key)[._-]?pass(?:word)?["']?\s*[=:]\s*["']?([^\s"',]+)/gi;
+const VALUE_FILE = /(?:\.properties|(?:^|\/)credentials\.json|(?:^|\/)\.env(?!\.(?:example|sample|template))[^/]*)$/i;
+const VALUE_PASSWORD = /^[^#!\n]*?(?<!api[._-])(?:store|key)[._-]?pass(?:word)?["']?\s*[=:]\s*["']?([^\s"',]+)/gim;
 const GRADLE_FILE = /\.gradle(?:\.kts)?$/i;
 const GRADLE_PASSWORD = /(?:store|key)Password\s*[=(]?\s*["']([^"']+)["']/gi;
 const DEBUG_KEYSTORE = 'debug.keystore';
