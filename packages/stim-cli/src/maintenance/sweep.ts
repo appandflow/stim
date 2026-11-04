@@ -262,6 +262,8 @@ export async function planRung6(
 
 export interface WorktreePlan extends MaintenancePlan {
   sweep: WorktreeSweep;
+  /** The merged or ended worktree kept only for its grace period that becomes removable first. */
+  nextRemoval?: { target: string; at: number };
 }
 
 export async function planWorktrees({
@@ -299,15 +301,29 @@ export async function planWorktrees({
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
   const keep: WorktreeSweep['worktrees'] = [];
-  for (const worktree of sweep.worktrees) {
-    if (worktree.skipped) continue;
+  let nextRemoval: WorktreePlan['nextRemoval'];
+  const keptReason = (worktree: WorktreeSweep['worktrees'][number]) => {
     const path = canonicalPath(worktree.path);
-    const reason =
-      protectedRoot === path || protectedRoot.startsWith(`${path}${sep}`)
-        ? 'the command that started this pass runs inside it'
-        : worktree.keys.some(pinned)
-          ? 'pinned by maintenance.keep'
-          : null;
+    return protectedRoot === path || protectedRoot.startsWith(`${path}${sep}`)
+      ? 'the command that started this pass runs inside it'
+      : worktree.keys.some(pinned)
+        ? 'pinned by maintenance.keep'
+        : null;
+  };
+  for (const worktree of sweep.worktrees) {
+    if (worktree.skipped) {
+      const at = worktree.eligibleAt;
+      if (
+        worktree.skipCode === 'recent-activity' &&
+        at !== null &&
+        (!nextRemoval || at < nextRemoval.at) &&
+        (worktree.merge?.merged || endedPullRequest(worktree.pullRequest)) &&
+        !keptReason(worktree)
+      )
+        nextRemoval = { target: worktree.path, at };
+      continue;
+    }
+    const reason = keptReason(worktree);
     if (reason) {
       skips.push({ target: worktree.path, reason });
       continue;
@@ -340,5 +356,11 @@ export async function planWorktrees({
     actions.push(...devices.actions);
     skips.push(...devices.skips);
   }
-  return { actions, blocked: [], skips, sweep: { ...sweep, worktrees: keep } };
+  return {
+    actions,
+    blocked: [],
+    skips,
+    sweep: { ...sweep, worktrees: keep },
+    ...(nextRemoval ? { nextRemoval } : {}),
+  };
 }

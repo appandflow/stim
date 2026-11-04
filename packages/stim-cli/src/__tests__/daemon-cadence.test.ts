@@ -187,6 +187,24 @@ describe.skipIf(process.platform === 'win32')(
       expect(readMaintenanceState()?.plan).toHaveLength(1);
     }
 
+    function awaitRemoval(): void {
+      mkdirSync(join(home, 'maintenance'), { recursive: true });
+      writeFileSync(
+        maintenanceStateFile(),
+        JSON.stringify({
+          version: 1,
+          lastAt: {},
+          pressure: null,
+          sizes: [],
+          lastPass: null,
+          recent: [],
+          plan: [],
+          nextRemoval: { target: '/w/merged', at: Date.now() + 60 * MINUTE_MS },
+        }),
+      );
+      expect(readMaintenanceState()?.nextRemoval?.target).toBe('/w/merged');
+    }
+
     /** Runs a quiet daemon for its first tick and two slow ones; ends one still running and says whether it exited first. */
     async function exitsAfterTwoQuietTicks(mode: DaemonMode = 'on'): Promise<boolean> {
       const before = existsSync(daemonNdjsonFile()) ? ticks().length : 0;
@@ -276,6 +294,25 @@ describe.skipIf(process.platform === 'win32')(
         planRemoval({ kept });
         expect(await exitsAfterTwoQuietTicks(mode)).toBe(true);
       });
+
+      test('a finished worktree the last worktree check kept for its grace period does', async () => {
+        awaitRemoval();
+        expect(await exitsAfterTwoQuietTicks()).toBe(false);
+      });
+
+      test.each([
+        ['in report mode', 'on', 'report', 'true'],
+        ['with STIM_DAEMON report', 'report', 'on', 'true'],
+        ['with maintenance.removeFinishedWorktrees false', 'on', 'on', 'false'],
+      ] as const)(
+        'a finished worktree waiting for its grace period %s does not',
+        async (_, maintenance, mode, removeFinished) => {
+          vi.stubEnv('STIM_DAEMON', maintenance);
+          vi.stubEnv('STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES', removeFinished);
+          awaitRemoval();
+          expect(await exitsAfterTwoQuietTicks(mode)).toBe(true);
+        },
+      );
     });
 
     test("a command's hello brings a quiet daemon back to the 60 s tick", async () => {

@@ -569,7 +569,9 @@ merge of its branch into the default branch or of its pull request, and, for a
 dirty worktree it would archive, a change to one of its uncommitted files. An agent that just merged its
 pull request still has time to run `stim stop` and `stim worktree remove`
 itself. gc reports such a worktree as kept with the reason `recent-activity`
-and the time it becomes removable (`eligibleAt` in `--json`). When gc cannot
+and the time it becomes removable (`eligibleAt` in `--json`). The
+`stim-daemon` stays running until a maintenance worktree check after that time
+removes the worktree, so it goes even when nothing else runs. When gc cannot
 read that activity, it keeps the worktree (`activity-unknown`). Set the period
 in minutes with [`gc.worktreeGraceMinutes`](./settings.md); `0` turns it off.
 
