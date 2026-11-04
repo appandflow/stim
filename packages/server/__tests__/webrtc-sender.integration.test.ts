@@ -1,5 +1,9 @@
 import { PeerConnection, cleanup } from 'node-datachannel';
 import { afterAll, expect, it, vi } from 'vitest';
+
+vi.hoisted(() => {
+  process.env.STIM_WEBRTC_STUN = '';
+});
 import { accessUnitOf, type AccessUnit } from '../src/video.ts';
 import { cleanupRtc, openRtc } from '../src/webrtc-sender.ts';
 

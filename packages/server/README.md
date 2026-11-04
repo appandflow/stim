@@ -1581,6 +1581,16 @@ subscription ID as `params.subscription`. `device-host.frames.congested`
 (feature `hosted-congestion`) reports that a client further downstream is
 behind on that H.264 subscription; it lowers the bitrate the same way a backed-up
 socket does.
+`device-host.webrtc.offer` (feature `hosted-webrtc`, experimental) takes
+`{ "session": "<hosted-session-id>", "sdp": "<offer>" }` and answers with a
+subscription ID and the SDP answer. The host then sends the session's H.264
+access units to the browser that made the offer over a WebRTC data channel,
+loading the optional `node-datachannel` package on first use and gathering ICE
+candidates with a public STUN server (`STIM_WEBRTC_STUN` replaces it). It is
+not gated by a setting on the host: the client's `share.webrtc` decides whether
+a viewer may ask. The host sends `webrtc-closed` when the peer ends on its own;
+`device-host.unsubscribe` ends it. A host that cannot load the package answers
+with `action-failed`.
 `device-host.presence.subscribe` (feature `hosted-presence`, with `presence`)
 takes `{ "session": "<hosted-session-id>" }` and answers with a subscription
 ID, from which the host sends `presence` events for that session: the agent

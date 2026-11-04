@@ -20,6 +20,8 @@ const QUEUE_BYTES = Number(process.env.STIM_WEBRTC_QUEUE_KB ?? 96) * 1024;
 const SEND_BUFFER_BYTES = 128 * 1024;
 const GATHER_MS = 3000;
 const CONNECT_MS = 15_000;
+/** How long a disconnected peer may recover before it ends; a browser waits about as long before it fails. */
+const DISCONNECT_MS = 3000;
 const STATS_MS = 1000;
 const KEYFRAME_MIN_MS = 250;
 const MAX_MESSAGE_BYTES = 256 * 1024;
@@ -99,6 +101,7 @@ export async function openRtc(offer: string, feed: RtcFeed, closed: (reason: str
   let draining: NodeJS.Timeout | null = null;
   let statsTimer: NodeJS.Timeout | null = null;
   let keyframeAt = 0;
+  let disconnecting: NodeJS.Timeout | null = null;
   let ended = false;
 
   const end = (reason: string) => {
@@ -106,6 +109,7 @@ export async function openRtc(offer: string, feed: RtcFeed, closed: (reason: str
     ended = true;
     if (draining) clearTimeout(draining);
     if (statsTimer) clearInterval(statsTimer);
+    if (disconnecting) clearTimeout(disconnecting);
     clearTimeout(connectTimer);
     stop?.();
     stop = null;
@@ -120,7 +124,11 @@ export async function openRtc(offer: string, feed: RtcFeed, closed: (reason: str
   const drain = () => {
     draining = null;
     if (ended || !video) return;
-    if (video.bufferedAmount() <= QUEUE_BYTES) return feed.keyframe();
+    try {
+      if (video.bufferedAmount() <= QUEUE_BYTES) return feed.keyframe();
+    } catch (cause) {
+      return end(`WebRTC channel failed: ${String(cause)}`);
+    }
     feed.congested();
     draining = setTimeout(drain, FRAME_RETRY_MS);
   };
@@ -146,7 +154,11 @@ export async function openRtc(offer: string, feed: RtcFeed, closed: (reason: str
   };
 
   const reply = (message: Record<string, unknown>) => {
-    if (control?.isOpen()) control.sendMessage(JSON.stringify(message));
+    try {
+      if (control?.isOpen()) control.sendMessage(JSON.stringify(message));
+    } catch (cause) {
+      end(`WebRTC channel failed: ${String(cause)}`);
+    }
   };
 
   const onControl = (raw: string) => {
@@ -182,23 +194,30 @@ export async function openRtc(offer: string, feed: RtcFeed, closed: (reason: str
         stop = feed.subscribe(deliver, (message) => end(message));
         feed.keyframe();
         statsTimer = setInterval(() => {
-          reply({
-            t: 'stats',
-            rtt: pc.rtt(),
-            queued: video?.bufferedAmount() ?? 0,
-            sent,
-            sentBytes,
-            dropped,
-            oversize,
-            pair: describe(pc.getSelectedCandidatePair()),
-          });
+          try {
+            reply({
+              t: 'stats',
+              rtt: pc.rtt(),
+              queued: video?.bufferedAmount() ?? 0,
+              sent,
+              sentBytes,
+              dropped,
+              oversize,
+              pair: describe(pc.getSelectedCandidatePair()),
+            });
+          } catch (cause) {
+            end(`WebRTC channel failed: ${String(cause)}`);
+          }
         }, STATS_MS);
         statsTimer.unref();
       });
     }
   });
   pc.onStateChange((state) => {
-    if (state === 'failed' || state === 'closed' || state === 'disconnected') end(`WebRTC ${state}`);
+    if (disconnecting) clearTimeout(disconnecting);
+    disconnecting = null;
+    if (state === 'failed' || state === 'closed') end(`WebRTC ${state}`);
+    else if (state === 'disconnected') disconnecting = setTimeout(() => end('WebRTC disconnected'), DISCONNECT_MS);
   });
 
   const connectTimer = setTimeout(() => end('WebRTC did not connect'), CONNECT_MS);
@@ -210,7 +229,12 @@ export async function openRtc(offer: string, feed: RtcFeed, closed: (reason: str
     });
     setTimeout(resolve, GATHER_MS).unref();
   });
-  pc.setRemoteDescription(offer, 'offer');
+  try {
+    pc.setRemoteDescription(offer, 'offer');
+  } catch (cause) {
+    end('WebRTC refused the offer');
+    throw cause;
+  }
   await gathered;
   const description = pc.localDescription();
   if (!description) {

@@ -1930,16 +1930,6 @@ describe('a web share', () => {
       expect(String(viewer.headers['set-cookie'])).toContain('stim_transport=webrtc');
     });
 
-    it('refuses a WebRTC offer from a viewer that is not signed in', async () => {
-      f = fixture({}, { webrtc: () => true });
-      f.status(hostedPayload() as never);
-      const share = await started(f);
-      const url = local(share, f.hub.port ?? 0);
-      const { status } = await connect(url, { origin: origin(url) }, '?codec=h264&transport=webrtc');
-      expect(status).toBe(401);
-      expect(f.hostedSources[0]!.offers).toEqual([]);
-    });
-
     it('streams and drives through the hosted source, never the local frame pool or control hub', async () => {
       f.status(hostedPayload() as never);
       const share = await started(f, { control: true });

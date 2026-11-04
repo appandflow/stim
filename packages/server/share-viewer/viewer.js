@@ -294,7 +294,6 @@ function configure(sps, pps) {
   decoderKey = key;
 }
 
-/** Decodes one video packet: the header the server's videoPacket writes, then an Annex-B access unit. */
 let lastSequence = -1;
 const REORDER_MS = Number(new URLSearchParams(location.search).get('reorder')) || 40;
 const reordered = new Map();
@@ -358,6 +357,7 @@ function receiveRtc(buffer) {
   reorderTimer ??= setTimeout(giveUpOnMissing, REORDER_MS);
 }
 
+/** Decodes one video packet: the header the server's videoPacket writes, then an Annex-B access unit. */
 function showVideo(buffer) {
   const view = new DataView(buffer);
   if (buffer.byteLength < 21 || view.getUint8(0) !== 1) return;
@@ -649,12 +649,14 @@ function connect(codec) {
   if (!viaRtc) rtc.stop();
   current.binaryType = 'arraybuffer';
   current.addEventListener('open', () => {
-    const clock = () => send({ type: 'clock', c: Date.now() });
-    clock();
-    const clockTimer = setInterval(
-      () => (current === socket && current.readyState === 1 ? clock() : clearInterval(clockTimer)),
-      2000,
-    );
+    if (rtc.visible) {
+      const clock = () => send({ type: 'clock', c: Date.now() });
+      clock();
+      const clockTimer = setInterval(
+        () => (current === socket && current.readyState === 1 ? clock() : clearInterval(clockTimer)),
+        2000,
+      );
+    }
     if (viaRtc) startRtc();
     kickClipboard();
     if (chosenName) sendName(chosenName);

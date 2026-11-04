@@ -115,8 +115,8 @@
       "nonNull": 121
     },
     "test": {
-      "as": 301,
-      "nonNull": 432
+      "as": 300,
+      "nonNull": 431
     }
   },
   "packages/stim-cli": {

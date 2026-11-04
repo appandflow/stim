@@ -209,6 +209,8 @@ const VIDEO_HINT: FrameHint = { fps: FRAME_FPS.video, maxEdge: VIEW_HINT.maxEdge
 const VIDEO_SUBSCRIPTION = 'share';
 /** What a viewer on WebRTC still takes from the share socket: artwork and delay events, so a trickle of JPEG frames. */
 const RTC_META_HINT: FrameHint = { fps: 1, maxEdge: 256 };
+/** The least time between two clock pings from one viewer; the stats panel sends one every 2 s. */
+const CLOCK_MIN_MS = 250;
 const KEYFRAME_REQUEST = '{"type":"keyframe"}';
 export const BUTTONS: Record<SharePlatform, readonly string[]> = {
   ios: ['home', 'lock'],
@@ -297,6 +299,9 @@ interface Viewer {
   rtc: boolean;
   /** The WebRTC peer sending this viewer's video, or null. */
   peer: { close: () => void } | null;
+  /** Whether a WebRTC offer is being answered, so a second one waits for the first to end. */
+  offering: boolean;
+  clockAt: number;
   inputs: { tokens: number; at: number };
   characters: { tokens: number; at: number };
   /** Stops what feeds the viewer from its source, which a waiting share has none of; null while it is fed by none. */
@@ -1275,6 +1280,8 @@ export class ShareHub {
       video,
       rtc,
       peer: null,
+      offering: false,
+      clockAt: 0,
       inputs: { tokens: this.limits.inputPerSecond, at: Date.now() },
       characters: { tokens: this.limits.textCharsPerSecond, at: Date.now() },
       detach: null,
@@ -1470,6 +1477,9 @@ export class ShareHub {
     if (!isJsonObject(message)) return;
     if (message.type === 'name') return this.rename(share, viewer, message.name);
     if (message.type === 'clock') {
+      const now = Date.now();
+      if (now - viewer.clockAt < CLOCK_MIN_MS) return;
+      viewer.clockAt = now;
       if (viewer.socket.readyState === viewer.socket.OPEN) {
         viewer.socket.send(JSON.stringify({ type: 'clock', c: message.c, s: Date.now() }));
       }
@@ -1490,6 +1500,8 @@ export class ShareHub {
     const { source } = share;
     if (!viewer.rtc || typeof sdp !== 'string' || sdp.length > 65536) return failed('WebRTC was not requested.');
     if (!source?.webrtc || !viewer.detach) return failed('This share cannot send WebRTC.');
+    if (viewer.offering) return failed('A WebRTC offer is already being answered.');
+    viewer.offering = true;
     viewer.peer?.close();
     viewer.peer = null;
     try {
@@ -1515,6 +1527,8 @@ export class ShareHub {
     } catch (cause) {
       console.error(`stim-server: web share ${share.id} WebRTC refused: ${String(cause)}`);
       failed(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      viewer.offering = false;
     }
   }
 

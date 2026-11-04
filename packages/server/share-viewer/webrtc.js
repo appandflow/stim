@@ -163,7 +163,8 @@
     hide.type = 'button';
     hide.textContent = 'Hide';
     hide.addEventListener('click', () => box.remove());
-    box.append(lines, toggle, hide);
+    if (offered) box.append(lines, toggle, hide);
+    else box.append(lines, hide);
     document.body.append(box);
     setInterval(render, 500);
   }
@@ -258,6 +259,7 @@
 
   window.stimRtc = {
     wanted,
+    visible,
     start,
     answer,
     stop,
@@ -276,9 +278,11 @@
       sample('ws', message.c, message.s);
     },
     received(bytes) {
+      if (!visible) return;
       state.bytes.push([performance.now(), bytes]);
     },
     drawn(capturedAt) {
+      if (!visible) return;
       const now = performance.now();
       state.drawn.push([now]);
       const offset = state.offsets[state.active === 'webrtc' ? 'rtc' : 'ws'];
