@@ -50,7 +50,7 @@ connected and signed in, see the dimmed last frame and "Waiting for the
 device...", and the link, passwords, sessions and expiry stay. Control is
 released. When the slot's device is back (booted, running, or a ready hosted
 session) the share resumes on the same page with no reload and no new
-password; control starts again on the next tap. If the slot now runs another
+password; control starts again for the viewers that can control. If the slot now runs another
 simulator or emulator, the share resumes on that one. After a failed stream it
 retries every few seconds, up to 30 seconds apart. share list shows
 "waiting for the device" and --json rows have state (live or waiting). A
@@ -303,7 +303,9 @@ SECURITY MODEL
   seconds after the last one leaves. A share never records: footage of share
   viewing is not written to disk.
 - Control goes through the same control session and device lease stim-server
-  uses for Desktop and the phone app: taps, two-finger gestures, text, the arrow keys and Escape, rotation and the
+  uses for Desktop and the phone app. A viewer that can control starts the
+  session, and so takes the device lease, when it connects, and the session ends
+  after 5 minutes without input or when the last viewer leaves: taps, two-finger gestures, text, the arrow keys and Escape, rotation and the
   hardware buttons of the shared device, plus the device clipboard on an iOS simulator, an Android emulator or an
   Android phone only. A device an agent or another client drives answers
   busy instead of being taken over.
@@ -322,7 +324,7 @@ SECURITY MODEL
   tap's permission to write; when the browser still refuses, the text shows in a field to select. Command-V still works
   on a tablet with a keyboard. Sending the browser's new text to the device is an input: it starts the control session like a paste, and on an
   Android phone takes its lease. The polling never starts the control session and never keeps it alive: it reads only while a session runs
-  (after a viewer's first tap, key or paste) and does not count as input for the 5 minute idle end. Text a control
+  (from the moment a viewer that can control connects) and does not count as input for the 5 minute idle end. Text a control
   viewer sends reaches the device clipboard and then every other control viewer's browser with sync on. A share without --control, a web page and a macOS app never read or set the device clipboard, and the text is never
   logged. The stim-server protocol methods are input.clipboard.set and input.clipboard.get, behind the hello
   feature device-clipboard.
