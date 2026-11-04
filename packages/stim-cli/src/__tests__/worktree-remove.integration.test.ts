@@ -531,6 +531,102 @@ describe('on the source checkout, from a subfolder', () => {
   });
 });
 
+describe('in a linked worktree, from a subfolder', () => {
+  const linkedWorktree = () => {
+    const mobile = join(wtDir, 'apps', 'mobile');
+    const web = join(wtDir, 'apps', 'web');
+    mkdirSync(join(mobile, 'src'), { recursive: true });
+    mkdirSync(web, { recursive: true });
+    upsertProject(mobile, { metroPort: 8085 });
+    upsertProject(web, { metroPort: 8086 });
+    const exec = makeExecutor({
+      worktrees: porcelain([
+        { path: mainDir, branch: 'main' },
+        { path: wtDir, branch: 'feat-x' },
+      ]),
+    });
+    setExecutor(exec);
+    return { mobile, web, removedTree: () => exec.calls.run.some((cmd) => /worktree remove/.test(cmd)) };
+  };
+
+  test.each(['project folder', 'folder below the project'])(
+    'reclaims only the project at or above the %s and leaves the tree',
+    async (where) => {
+      const { mobile, web, removedTree } = linkedWorktree();
+      await captureAction(registerRemove)(where === 'project folder' ? mobile : join(mobile, 'src'), {});
+
+      expect(process.exitCode).not.toBe(1);
+      expect(getProject(mobile)).toBe(null);
+      expect(getProject(web)?.metroPort).toBe(8086);
+      expect(removedTree()).toBe(false);
+      expect(existsSync(wtDir)).toBe(true);
+    },
+  );
+
+  test('refuses from a folder with no registered project at or above it, leaving the tree and every project', async () => {
+    const { mobile, web, removedTree } = linkedWorktree();
+    const docs = join(wtDir, 'docs');
+    mkdirSync(docs);
+    await captureAction(registerRemove)(docs, {});
+
+    expect(process.exitCode).toBe(1);
+    expect(getProject(mobile)?.metroPort).toBe(8085);
+    expect(getProject(web)?.metroPort).toBe(8086);
+    expect(removedTree()).toBe(false);
+  });
+
+  test('a root project run from a subfolder keeps the branch ownership the later root removal needs', async () => {
+    upsertProject(wtDir, { worktreeRoot: true, worktreeBranch: 'worktree-feat-x', worktreeBranchOwned: true });
+    const sub = join(wtDir, 'src');
+    mkdirSync(sub);
+    const exec = makeExecutor({
+      worktrees: porcelain([
+        { path: mainDir, branch: 'main' },
+        { path: wtDir, branch: 'worktree-feat-x' },
+      ]),
+    });
+    setExecutor(exec);
+    await captureAction(registerRemove)(sub, {});
+    expect(process.exitCode).not.toBe(1);
+    expect(getProject(wtDir)?.worktreeBranchOwned).toBe(true);
+    expect(exec.calls.run.some((cmd) => /worktree remove/.test(cmd))).toBe(false);
+
+    await captureAction(registerRemove)(wtDir, {});
+    expect(exec.calls.run.some((cmd) => /update-ref -d .*worktree-feat-x/.test(cmd))).toBe(true);
+  });
+
+  test('the worktree root removes the whole worktree and every project under it', async () => {
+    const { mobile, web, removedTree } = linkedWorktree();
+    await captureAction(registerRemove)(wtDir, {});
+
+    expect(process.exitCode).not.toBe(1);
+    expect(removedTree()).toBe(true);
+    expect(getProject(mobile)).toBe(null);
+    expect(getProject(web)).toBe(null);
+  });
+
+  test('resolves a symlinked path to its real location before deciding', async () => {
+    const { mobile, web, removedTree } = linkedWorktree();
+    const links = canon(mkdtempSync(join(tmpdir(), 'stim-test-links-')));
+    try {
+      symlinkSync(join(wtDir, 'apps'), join(links, 'apps-link'));
+      await captureAction(registerRemove)(join(links, 'apps-link', 'mobile'), {});
+      expect(process.exitCode).not.toBe(1);
+      expect(getProject(mobile)).toBe(null);
+      expect(getProject(web)?.metroPort).toBe(8086);
+      expect(removedTree()).toBe(false);
+
+      symlinkSync(wtDir, join(links, 'root-link'));
+      await captureAction(registerRemove)(join(links, 'root-link'), {});
+      expect(process.exitCode).not.toBe(1);
+      expect(removedTree()).toBe(true);
+      expect(getProject(web)).toBe(null);
+    } finally {
+      rmSync(links, { recursive: true, force: true });
+    }
+  });
+});
+
 test('action: a registered project directory that is not a git repo gets the same environment reclaim', async () => {
   process.env.STIM_ARCHIVE_ENABLED = 'true';
   upsertProject(wtDir, {

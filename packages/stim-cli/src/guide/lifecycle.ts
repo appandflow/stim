@@ -126,6 +126,8 @@ a seed belongs to this workflow.
 
   # 7. Remove this linked worktree and its environment. This also works for
   #    unwarmed worktrees with no Stim registry entry. Git-created branches stay.
+  #    Run it from the worktree root: from an app folder such as apps/mobile it
+  #    reclaims only that app and leaves the worktree.
   stim worktree remove
 
 A React Native or Expo Debug \`ios\` or \`android\` run checks the reserved port before the device
@@ -1370,7 +1372,10 @@ result as proof instead of requiring an unrelated screenshot.`,
   environment -- the same \`device\`, \`lease\` and \`workspace\` lines, ending
   with a sentence instead of a \`removed\` line, because the checkout itself
   is never touched: \`Reclaimed the environment; the working tree stays (it
-  is the source checkout).\`
+  is the source checkout).\` In a linked worktree, run from a subfolder such as
+  apps/mobile, it likewise reclaims only the project at or above that folder and
+  leaves the tree; run it from the worktree root, or pass the root, to remove
+  the worktree.
 
   A worktree deleted outside Stim stays registered. Pass its path to
   \`worktree remove\`: when the folder is gone from a mounted volume, the

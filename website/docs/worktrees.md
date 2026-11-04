@@ -368,6 +368,13 @@ It does not remove that checkout. Run from the checkout root, it reclaims every
 registered project under it. Run from a subfolder such as `apps/mobile`, it
 reclaims only the project at or above that folder, with the projects nested under it.
 
+In a linked worktree, `worktree remove` removes the worktree only when it runs
+from the worktree root or you pass the root path. Run from a subfolder, or given
+a subfolder path, it reclaims only the project at or above that folder, with the
+projects nested under it, leaves the tree and the other projects alone, and
+refuses with exit 1 when no project is registered at or above it. Run it from
+the worktree root, or pass the root, to remove the whole worktree.
+
 A worktree deleted outside Stim, with `git worktree remove` or `rm -rf`, stays
 registered and shows as `[folder missing]` in `stim status`. Pass its path to
 `worktree remove` to drop the record of that path and of the projects registered
