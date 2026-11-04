@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonWorkspaceDecision } from '@stim-cli/core/state';
@@ -164,9 +164,13 @@ describe('the project a precompute fingerprints', () => {
 describe('what starts a precompute', () => {
   test('changes with the git HEAD, the lockfile and the finished install of node_modules, and with nothing else', async () => {
     const git = (...args: string[]) =>
-      getExecutor().runFile('git', ['-C', base, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args], {
-        timeoutMs: 20_000,
-      });
+      getExecutor().runFile(
+        'git',
+        ['-C', base, '-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args],
+        {
+          timeoutMs: 20_000,
+        },
+      );
     git('init', '--quiet');
     writeFileSync(join(base, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
     git('add', '.');
@@ -188,6 +192,11 @@ describe('what starts a precompute', () => {
 
     mkdirSync(join(base, 'node_modules'));
     writeFileSync(join(base, 'node_modules', '.modules.yaml'), 'layoutVersion: 5\n');
-    expect(await treeSignature(base, signal)).not.toBe(afterLockfile);
+    const afterInstall = await treeSignature(base, signal);
+    expect(afterInstall).not.toBe(afterLockfile);
+
+    const later = new Date(Date.now() + 60_000);
+    utimesSync(join(base, 'node_modules', '.modules.yaml'), later, later);
+    expect(await treeSignature(base, signal)).not.toBe(afterInstall);
   });
 });

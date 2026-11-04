@@ -158,7 +158,7 @@ export interface MaintenanceLane {
 
 /**
  * The daemon's slow passes, beside its tick instead of in it: the fingerprint precompute of the live workspaces whose
- * HEAD or lockfile changed, the dormant stage's dependency step and an automatic maintenance pass, from the
+ * HEAD, lockfile or install stamp changed, the dormant stage's dependency step and an automatic maintenance pass, from the
  * measurement of the tick that started them, one at a time, so a slow git fetch, `gh` call or size scan never holds
  * the tick that serves waiting runs. Each logs a `daemon_maintenance` record with its phases; one that throws is
  * logged and the next tick starts them again.

@@ -48,7 +48,7 @@ function precomputeHold({
 
 const present = async (path: string) => stat(path).catch(() => null);
 
-const INSTALL_STAMPS = ['.modules.yaml', '.package-lock.json', '.yarn-integrity'];
+const INSTALL_STAMPS = ['.modules.yaml', '.package-lock.json', '.yarn-integrity', '.yarn-state.yml'];
 
 async function installSignature(dir: string): Promise<string> {
   const stamps = await Promise.all(
@@ -109,10 +109,10 @@ async function precomputeRequests(
 
 /**
  * Records the full fingerprint of each live, non-idle workspace's tree ahead of the next `stim ios` or `stim android`
- * when its HEAD or lockfile changed since the last pass, so that run finds it in the fingerprint memo instead of
+ * when its HEAD, lockfile or install stamp changed since the last pass, so that run finds it in the fingerprint memo instead of
  * computing it. Each fingerprint runs in a low-priority child, one at a time, at most `MAX_PRECOMPUTES_PER_PASS` per
  * pass, and none starts while `daemon.mode` is report, the pressure level is above normal or the host load is high.
- * A workspace whose last pass found the same HEAD and lockfile is not looked at again, and a daemon that restarts looks
+ * A workspace whose last pass found the same HEAD, lockfile and install stamp is not looked at again, and a daemon that restarts looks
  * once at each live workspace, which costs a static digest when its record exists.
  */
 export function createFingerprintPrecompute(log: Log, overrides: Partial<PrecomputeDependencies> = {}) {
