@@ -125,7 +125,7 @@ and a color. The names Host, Agent (also "Agent \u00b7 <command>") and Guest N
 are the server's own, so a viewer that picks one of them is shown as its Guest
 N. Viewers of one share see each other's touches live, with the name, and never
 those of another share's viewers, even of the same device; every share also
-sees the agent's actions and the host's touches, shown as Host, when the device
+sees the agent's actions, from stim agent-device or from agent-device run directly, and the host's touches, shown as Host, when the device
 is controlled from Stim Desktop or the phone. The names live in stim-server's
 memory for the share and are never logged or written to disk. Clicking the row of colored initials in
 the top bar opens a People list: each person with a role (controlling, can control or view only), the

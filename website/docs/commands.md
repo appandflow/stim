@@ -1118,7 +1118,11 @@ stays parseable and interactive commands such as `record` and `logs` work.
 After each command, Stim shows the action to stim-server viewers that ask for
 presence: `Agent · press` and where it landed. A `snapshot --json` taken through
 the wrapper lets Stim outline the element a later `press @ref` acts on; text
-snapshots give the point only. macOS apps are not covered; see
+snapshots give the point only. Without a JSON snapshot the point is measured in
+the device's own screen. stim-server shows the actions of agent-device you run
+directly too, from agent-device's session records for the workspace's device, about
+a second after each one, for an owned simulator or emulator. A leased phone and macOS
+apps are not covered that way; see
 [native Mac agent actions](./macos.md#agent-actions).
 
 :::tip[Ask your agent]

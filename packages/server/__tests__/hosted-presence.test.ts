@@ -42,9 +42,9 @@ function fixture() {
       return () => records[session]!.splice(0);
     },
   });
-  const seen = (session: string) => {
+  const seen = (session: string, screen?: () => Promise<{ width: number; height: number } | null>) => {
     const events: PresenceParticipant[][] = [];
-    const stop = presence.subscribe(session, (participants) => events.push(participants));
+    const stop = presence.subscribe(session, (participants) => events.push(participants), screen);
     return { events, stop };
   };
   const answer = async (session: string, body: unknown) => {
@@ -139,4 +139,17 @@ test('stops reading a session when its last subscriber leaves, and forgets its s
   f.records[A]!.push(action('press', { ref: 'e19', positionals: ['@e19'], x: 200, y: 800 }));
   vi.advanceTimersByTime(POLL_MS);
   expect(next.events.flat().at(-1)?.gesture).toBeUndefined();
+});
+
+test("measures an action that came before any snapshot in the session's device screen, and a snapshot's viewport wins", async () => {
+  const f = fixture();
+  const { events } = f.seen(A, async () => ({ width: 200, height: 400 }));
+  await vi.advanceTimersByTimeAsync(0);
+  f.records[A]!.push(action('press', { x: 100, y: 100 }));
+  vi.advanceTimersByTime(POLL_MS);
+  expect(events.at(-1)?.[0]?.gesture).toEqual({ kind: 'tap', from: { x: 0.5, y: 0.25 }, durationMs: 0 });
+  await f.answer(A, snapshot);
+  f.records[A]!.push(action('press', { x: 100, y: 100 }));
+  vi.advanceTimersByTime(POLL_MS);
+  expect(events.at(-1)?.[0]?.gesture).toEqual({ kind: 'tap', from: { x: 0.25, y: 0.125 }, durationMs: 0 });
 });
