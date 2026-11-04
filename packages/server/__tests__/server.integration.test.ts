@@ -11408,6 +11408,24 @@ describe('frames.subscribe', () => {
     await until(() => !existsSync(lease.path));
   });
 
+  test.skipIf(!fakeTailscale)('lets a touch down and up through while moves have drained the input rate', async () => {
+    controlLease(workspace, 'SIM-1');
+    const port = await startControl({}, { inputPerSecond: 3 });
+    const client = await authed(port, true);
+    const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+    assert('result' in begun && begun.result && 'session' in begun.result && typeof begun.result.session === 'string');
+    const { session } = begun.result;
+    const touch = (phase: string) => client.request('input.touch', { session, phase, x: 0, y: 0 });
+    await touch('down');
+    const moves = [];
+    for (let i = 0; i < 8; i++) moves.push(await touch('move'));
+    expect(moves.filter((reply) => 'error' in reply).length).toBeGreaterThan(0);
+
+    expect(await touch('up')).toMatchObject({ result: {} });
+    expect(await touch('down')).toMatchObject({ result: {} });
+    expect(await touch('up')).toMatchObject({ result: {} });
+  });
+
   test.each([false, true])(
     'ends a control session with watch events dropped: %s',
     { skip: !fakeTailscale },

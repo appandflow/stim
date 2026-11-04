@@ -3265,7 +3265,8 @@ sends reaches any other device.
   is handed to the device: when it goes through the helper, that is when the
   helper receives it, so native macOS input failures end Control with the reason while its view stays available; other helper failures are logged. A connection may send 120 inputs a second and type 40
   characters a second, with a burst of 256, and rotate or change posture twice a
-  second; more fail with `limit-exceeded`.
+  second; more fail with `limit-exceeded`. A touch `down` or `up` may use up to one
+  second's worth of inputs beyond the limit, so the end of a drag is not refused while moves have used it up.
 - When hello advertises `macos-window-control`, `control.begin` accepts
   `platform: "macos"` for the verified native app in the default slot. It needs
   `control` and takes one exclusive server session per app, with the same

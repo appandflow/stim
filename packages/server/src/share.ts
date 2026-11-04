@@ -4,7 +4,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { isJsonObject, SHARE_TOKEN, type StatusPayload } from '@stim-cli/core/state';
 import type { ControlHub, Controller, InputCommand } from './control.ts';
-import { CLIPBOARD_INPUT_COST, parseInput } from './control.ts';
+import { CLIPBOARD_INPUT_COST, parseInput, take } from './control.ts';
 import { MAX_CLIENT_MESSAGE_BYTES } from '@stim-cli/core/noise-session';
 import { FRAME_RETRY_MS, LatestFrames } from './frame-delivery.ts';
 import type { FrameHint } from './frame-helper.ts';
@@ -236,21 +236,6 @@ function password(): string {
     }
   }
   return out;
-}
-
-function take(
-  bucket: { tokens: number; at: number },
-  cost: number,
-  perSecond: number,
-  capacity: number,
-  debt = 0,
-): boolean {
-  const now = Date.now();
-  bucket.tokens = Math.min(capacity, bucket.tokens + ((now - bucket.at) / 1000) * perSecond);
-  bucket.at = now;
-  if (bucket.tokens - cost < -debt) return false;
-  bucket.tokens -= cost;
-  return true;
 }
 
 /**

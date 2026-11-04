@@ -86,6 +86,7 @@ import {
   ControlHub,
   parseControlBegin,
   parseInput,
+  take,
   SLOT_NAME,
   type Controller,
 } from './control.ts';
@@ -1218,15 +1219,6 @@ function auditSafely(record: AuditRecord): void {
   } catch (cause) {
     console.error(`stim-server: could not append to the action log: ${(cause as Error).message}`);
   }
-}
-
-function take(bucket: { tokens: number; at: number }, cost: number, perSecond: number, capacity: number): boolean {
-  const now = Date.now();
-  bucket.tokens = Math.min(capacity, bucket.tokens + ((now - bucket.at) / 1000) * perSecond);
-  bucket.at = now;
-  if (bucket.tokens < cost) return false;
-  bucket.tokens -= cost;
-  return true;
 }
 
 const trackers = new WeakMap<ServerSocket, RequestTracker>();
@@ -2379,7 +2371,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if ('code' in parsed) return error(id, parsed.code, parsed.message);
       const { command: sent } = parsed.value;
       const cost = sent.input === 'clipboard' || sent.input === 'clipboard-get' ? CLIPBOARD_INPUT_COST : 1;
-      if (!take(inputs, cost, controlLimits.inputPerSecond, controlLimits.inputPerSecond)) {
+      const boundary = sent.input === 'touch' && (sent.phase === 'down' || sent.phase === 'up');
+      const debt = boundary ? controlLimits.inputPerSecond : 0;
+      if (!take(inputs, cost, controlLimits.inputPerSecond, controlLimits.inputPerSecond, debt)) {
         return error(id, 'limit-exceeded', `A connection can send ${controlLimits.inputPerSecond} inputs a second.`);
       }
       if (
