@@ -45,6 +45,16 @@ stim settings set server.devicesPaused false`} />
 Both settings default to `false`. Pausing does not make the machine idle: let
 existing work finish or stop the relevant sessions before timing benchmarks.
 
+## Keep the worker awake
+
+A worker that sleeps stops answering the machines that build or host simulators on it, paired phones and share links. On the worker machine, turn on:
+
+<StimTabs code={`stim settings set server.keepAwake true`} />
+
+The setting defaults to `false`. While it is true on a Mac, stim-server prevents idle system sleep (the same as `caffeinate -s`), so the Mac stays reachable while plugged in; on battery it can still sleep, and the display may still sleep. stim-server holds this only while it accepts connections from other machines: its Tailscale or `server.lanAddresses` listener is up and it is not a `--loopback-only` server. It lets go when the setting turns off, when those listeners go away, and when the server stops, and it reads the setting without a restart.
+
+`stim-server service status` prints a `keep awake:` line, and the local `/health` answer carries `keepAwake`, saying whether the assertion is held. On Linux and Windows workers the setting has no effect and the status line says so.
+
 ## Choose where to build and run
 
 `remote.machines` names your remote machines; a build needs the machine's build approval.

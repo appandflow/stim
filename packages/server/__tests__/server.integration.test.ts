@@ -100,6 +100,7 @@ import {
 } from './noise-client.ts';
 import { watchTailscale, type TailscaleState } from '@stim-cli/transport-tailscale';
 import { localTransport } from '@stim-cli/transport-local';
+import { FakeHolder } from './keep-awake-holder.ts';
 import type { Transport } from '@stim-cli/transport';
 import { createRequestLog } from '../src/request-log.ts';
 import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
@@ -452,6 +453,7 @@ async function start(
   overrides: {
     host?: ServerOptions['host'];
     loopbackOnly?: boolean;
+    keepAwake?: ServerOptions['keepAwake'];
     hostsDevices?: boolean;
     exit?: boolean;
     whoisDelayMs?: number;
@@ -541,6 +543,7 @@ async function start(
     foldHelper: overrides.foldHelper,
     record: overrides.record ?? false,
     loopbackOnly: overrides.loopbackOnly,
+    keepAwake: overrides.keepAwake,
     recordLimits: overrides.recordLimits,
     controlLimits: overrides.controlLimits,
     history: overrides.history ?? false,
@@ -4149,6 +4152,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       busy: { builds: 0, hostedSessions: 0 },
       tailscale: { state: 'not-running', backendState: 'Stopped' },
       nativeViewerOpened: false,
+      keepAwake: { setting: false, held: false, reason: 'off' },
     });
     const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
     expect(forwarded.status).toBe(200);
@@ -4228,6 +4232,96 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       { host: '127.0.0.1', port },
       { host: '::1', port },
     ]);
+  });
+
+  describe('keep awake', () => {
+    function holders() {
+      const spawned: FakeHolder[] = [];
+      const spawnHolder = () => {
+        const holder = new FakeHolder(7000 + spawned.length);
+        spawned.push(holder);
+        return holder;
+      };
+      return { spawned, spawnHolder };
+    }
+    function remoteTransport(initial: string[]) {
+      const state = { addresses: initial, listeners: new Set<() => void>() };
+      const transport: Transport = {
+        id: 'static',
+        traits: { privateNetwork: true, tls: 'none', peerIdentity: false },
+        bindAddresses: () => state.addresses,
+        watch: (listener) => {
+          state.listeners.add(listener);
+          return () => state.listeners.delete(listener);
+        },
+      };
+      const change = (addresses: string[]) => {
+        state.addresses = addresses;
+        for (const listener of state.listeners) listener();
+      };
+      return { transport, change };
+    }
+    const eventually = async (done: () => boolean) => {
+      for (let attempt = 0; attempt < 200 && !done(); attempt++) await new Promise((r) => setTimeout(r, 10));
+      expect(done()).toBe(true);
+    };
+    const keepAwakeHealth = async (port: number) => {
+      const body = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
+      return isJsonObject(body) ? body.keepAwake : undefined;
+    };
+
+    it('holds the assertion while the setting is on and a listener for other machines is up, and releases it with either', async () => {
+      const { spawned, spawnHolder } = holders();
+      const remote = remoteTransport(['::1']);
+      const setting = { on: true, listeners: new Set<() => void>() };
+      const port = await start({
+        transports: [remote.transport],
+        keepAwake: {
+          setting: () => setting.on,
+          onChange: (listener) => {
+            setting.listeners.add(listener);
+            return () => setting.listeners.delete(listener);
+          },
+          platform: 'darwin',
+          spawnHolder,
+        },
+      });
+      expect(spawned).toHaveLength(1);
+      expect(await keepAwakeHealth(port)).toEqual({ setting: true, held: true, pid: 7000 });
+
+      remote.change([]);
+      await eventually(() => spawned[0]?.stopped === true);
+      expect(await keepAwakeHealth(port)).toEqual({ setting: true, held: false, reason: 'not-listening' });
+
+      remote.change(['::1']);
+      await eventually(() => spawned.length === 2);
+      setting.on = false;
+      for (const listener of setting.listeners) listener();
+      expect(spawned[1]?.stopped).toBe(true);
+      expect(await keepAwakeHealth(port)).toEqual({ setting: false, held: false, reason: 'off' });
+    });
+
+    it('releases the assertion when the server closes', async () => {
+      const { spawned, spawnHolder } = holders();
+      await start({
+        transports: [remoteTransport(['::1']).transport],
+        keepAwake: { setting: () => true, platform: 'darwin', spawnHolder },
+      });
+      expect(spawned).toHaveLength(1);
+      await server?.close();
+      expect(spawned[0]?.stopped).toBe(true);
+    });
+
+    it('never holds it for a loopback-only server, whatever the transports and setting say', async () => {
+      const { spawned, spawnHolder } = holders();
+      const port = await start({
+        loopbackOnly: true,
+        transports: [remoteTransport(['::1']).transport],
+        keepAwake: { setting: () => true, platform: 'darwin', spawnHolder },
+      });
+      expect(spawned).toEqual([]);
+      expect(await keepAwakeHealth(port)).toEqual({ setting: true, held: false, reason: 'loopback-only' });
+    });
   });
 
   it('reports Tailscale but never listens on its addresses when loopback only', async () => {
