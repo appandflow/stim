@@ -1052,6 +1052,15 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(await local.request('share.stop', { workspace: root, id: '' })).toMatchObject({
       error: { code: 'bad-request' },
     });
+    expect(await local.request('share.stop', { workspace: root, slot: 'beta' })).toEqual(
+      expect.objectContaining({ result: { stopped: [] } }),
+    );
+    for (const params of [
+      { workspace: root, slot: 'not a slot' },
+      { workspace: root, id: 'w1', slot: 'beta' },
+    ]) {
+      expect(await local.request('share.stop', params)).toMatchObject({ error: { code: 'bad-request' } });
+    }
     for (const [params, message] of [
       [{ slug: 'Pokedex' }, 'params.slug must be'],
       [{ slug: 'assets' }, 'params.slug cannot be assets'],
@@ -1384,6 +1393,7 @@ describe('pairing', () => {
           'presence',
           'device-clipboard',
           'share-view-password',
+          'share-waiting',
           'hosted-presence',
           'share-slug',
         ],

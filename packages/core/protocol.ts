@@ -101,6 +101,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
  * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
+ * `share-waiting` is the rows' `state` (a share waits for its device instead of ending) and `share.stop`'s `slot`.
  * `share-slug` is `share.start`'s `slug` parameter and the rows' `slug`.
  * `hosted-presence` is `device-host.presence.subscribe`: the `presence` events of a hosted session, which carry what the
  * agent drives on it. A host lists it only with `presence`.
@@ -176,6 +177,7 @@ export const FEATURES = [
   'presence',
   'device-clipboard',
   'share-view-password',
+  'share-waiting',
   'hosted-presence',
   'share-slug',
 ] as const;
@@ -1721,7 +1723,10 @@ export interface HostedSessionRow {
   workspace: string;
 }
 
-/** A live web share, as `share.list` lists it; never its URL token or password. */
+/**
+ * A web share, as `share.list` lists it; never its URL token or password. It is `live` while its device streams and
+ * `waiting` while the device is away; a server before `share-waiting` sends no `state`, which means `live`.
+ */
 export interface WebShareRow {
   id: string;
   workspace: string;
@@ -1731,6 +1736,7 @@ export interface WebShareRow {
   control: boolean;
   expiresAt: string;
   viewers: number;
+  state?: 'live' | 'waiting';
   /** How viewers get in: a generated password, one the person set, or the URL alone. */
   auth: 'generated' | 'set' | 'none';
   /** How a separate view-only password was made; null when the share has none. */
@@ -1760,7 +1766,10 @@ export interface Methods {
     params: WebShareStartParams;
     result: WebShareRow & { url: string; password?: string; viewPassword?: string; warning?: string };
   };
-  'share.stop': { params: { workspace: string; id?: string }; result: { stopped: WebShareRow[] } };
+  'share.stop': {
+    params: { workspace: string; id?: string; slot?: string };
+    result: { stopped: WebShareRow[] };
+  };
   'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
   'presence.publish': { params: PresencePublishParams; result: Record<string, never> };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };

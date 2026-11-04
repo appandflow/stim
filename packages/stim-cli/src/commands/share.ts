@@ -151,8 +151,9 @@ function parseMinutes(value: string | undefined): number | ShareFailure {
 function describeRow(row: ShareRow): string {
   const target = `${row.platform}${row.physical ? ' device' : ''}${row.slot === 'default' ? '' : ` (slot ${row.slot})`}`;
   const mode = `${row.control ? 'view and control' : 'view only'}${row.auth === 'none' ? ', no password' : ''}${row.viewAuth ? ', view password' : ''}`;
+  const waiting = row.state === 'waiting' ? ', waiting for the device' : '';
   const link = row.slug !== undefined ? `, link /s/${row.slug}/` : '';
-  return `${target} of ${row.workspace}: ${mode}${link}, ${row.viewers} viewer${row.viewers === 1 ? '' : 's'}, expires ${row.expiresAt}`;
+  return `${target} of ${row.workspace}: ${mode}${link}${waiting}, ${row.viewers} viewer${row.viewers === 1 ? '' : 's'}, expires ${row.expiresAt}`;
 }
 
 export async function runShare(
@@ -389,7 +390,7 @@ export function registerShare(program: Command, version: string, deps: Partial<S
   program
     .command('share <action>')
     .description(
-      "Share this workspace's running app through a public web link, with a generated password unless you set or drop it: share ios|android starts one (and a stim-server, when none runs), share stop ends this workspace's shares, share list lists live shares.",
+      "Share this workspace's running app through a public web link, with a generated password unless you set or drop it: share ios|android starts one (and a stim-server, when none runs), share stop ends this workspace's shares, share list lists shares and whether one waits for its device.",
     )
     .option('--slot <name>', 'Share the device of this slot')
     .option('--device', 'Share the physical device this workspace leases instead of its simulator or emulator')

@@ -25,6 +25,8 @@ let expiresAt = null;
 let live = false;
 let finished = false;
 let hasFrame = false;
+let away = false;
+let resuming = false;
 let noteTimer = null;
 
 function setStatus(state, text) {
@@ -49,7 +51,8 @@ function timeLeft() {
 
 function refreshStatus() {
   if (finished) return;
-  setStatus(live ? 'live' : 'waiting', live ? 'Live' : 'Waiting');
+  if (away) setStatus('waiting', 'Waiting for the device');
+  else setStatus(live ? 'live' : 'waiting', live ? 'Live' : 'Waiting');
   leftText.textContent = timeLeft();
 }
 setInterval(() => {
@@ -59,6 +62,9 @@ setInterval(() => {
 function finish(text) {
   finished = true;
   live = false;
+  away = false;
+  resuming = false;
+  delete body.dataset.away;
   setStatus('ended', text);
   leftText.textContent = '';
 }
@@ -101,6 +107,11 @@ function renderFrame(source, width, height) {
   }
   context.drawImage(source, 0, 0, width, height);
   hasFrame = true;
+  if (resuming) {
+    resuming = false;
+    away = false;
+    delete body.dataset.away;
+  }
 }
 
 async function showJpeg(blob) {
@@ -553,8 +564,21 @@ function connect(codec) {
       else if (waiting) waiting.reject(new Error(message.error || 'The device did not return its clipboard.'));
     } else if (message.type === 'artwork') void setArtwork(message.artwork);
     else if (message.type === 'delayed') {
+      if (away) return;
       live = !message.delayed && hasFrame;
       refreshStatus();
+    } else if (message.type === 'waiting') {
+      away = true;
+      resuming = false;
+      live = false;
+      body.dataset.away = 'true';
+      refreshStatus();
+    } else if (message.type === 'resumed') {
+      resuming = true;
+      live = false;
+      waitingForKeyframe = true;
+      refreshStatus();
+      if (codec === 'h264') askForKeyframe();
     } else if (message.type === 'you') {
       me = { id: message.id, name: message.name, color: message.color };
       roster.set(me.id, { ...me, self: true, viewOnly });
