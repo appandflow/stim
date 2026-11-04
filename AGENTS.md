@@ -270,13 +270,18 @@ new checks.
 
 The fresh reviewer records the outcome with labels. When the review is clear, it
 adds `review: ai-approved` and marks the pull request ready with `gh pr ready`.
-When the diff contains a product decision that no maintainer has made, it adds
+When the diff contains a product decision the maintainer has not stated, it adds
 `review: needs-human` and removes any `review: human-approved`. A product
 decision is a new, removed or renamed command, flag or setting; a changed
 default; or a change to user-visible behavior beyond what the linked issue
 asked for. This is the "explicit product decision" that new commands and flags
-require. A decision recorded in the issue or in a maintainer comment counts as
-approved.
+require. Only a decision the maintainer stated counts as approved: an issue or
+comment that quotes the maintainer's words as a decision, in a line such as
+`Maintainer decision: "<words>", <date>`, or one the maintainer wrote directly.
+Every agent posts as the maintainer's account, so an agent's own proposal,
+design section or "Fix idea" never counts, whoever posted it. The reviewer looks
+for the quoted decision before treating a new command, flag, setting or default
+as approved.
 
 Other concerns do not add the label. The reviewer still names them in its
 review: a new or wider way for another machine to reach or act on this one (a
