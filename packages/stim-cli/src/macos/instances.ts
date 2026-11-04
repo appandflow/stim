@@ -1,7 +1,6 @@
 import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostedAppAttempt, type MacosProcess } from '@stim-cli/core/state';
-import { ambientWrite } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
 import { inspectProcessIdentity, processStartMicros, captureProcessToken } from '../process-identity.ts';
 import { macosDir } from './state.ts';
@@ -138,7 +137,7 @@ export async function startedBy(owners: readonly MacosProcess[], operation?: Sti
     if (processToken && start.status === 'running')
       recorded.push({ row, record: { pid: row.pid, processToken, startedAtMicros: start.startedAtMicros } });
     else if (start.status !== 'gone')
-      ambientWrite('stderr', `Not ending pid ${row.pid}: its identity cannot be captured.\n`);
+      operation?.output('stderr', `Not ending pid ${row.pid}: its identity cannot be captured.\n`);
   }
   const current = new Map((await listProcesses(operation)).map((row) => [row.pid, row]));
   return recorded

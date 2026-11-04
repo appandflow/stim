@@ -375,18 +375,16 @@ test.skipIf(process.platform === 'win32')(
     const supervised = owned(leader.pid);
     const [started, helper, daemon] = [owned(serverPid), owned(clientPid), owned(daemonPid)];
     const bystander = await ownedProcess();
-    const warnings = vi.spyOn(process.stderr, 'write');
+    const warnings: string[] = [];
     try {
       writeWorkspaceState(root, { macos: record({ supervisor: supervised, app: owned(appPid) }) });
-      expect(await stopMacosApp(root)).toBe(true);
+      expect(await stopMacosApp(root, testContext({ output: (_stream, text) => warnings.push(text) }))).toBe(true);
       expect(inspectProcessIdentity(started)).toBe('gone');
       expect(inspectProcessIdentity(helper)).toBe('gone');
       expect(inspectProcessIdentity(daemon)).toBe('same');
       expect(inspectProcessIdentity(bystander)).toBe('same');
-      if (process.platform === 'darwin')
-        expect(warnings.mock.calls.map(([text]) => String(text)).join('')).toContain(`pid ${setuidPid}`);
+      if (process.platform === 'darwin') expect(warnings.join('')).toContain(`pid ${setuidPid}`);
     } finally {
-      warnings.mockRestore();
       for (const pid of [supervised.pid, ...pids]) {
         try {
           process.kill(pid ?? 0, 'SIGKILL');
