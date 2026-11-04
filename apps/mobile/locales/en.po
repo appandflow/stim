@@ -2060,6 +2060,10 @@ msgstr "Idle for {spoken}"
 msgid "if {machine} or its Stim home was replaced, run stim remote remove {machine}, then stim remote add {machine} on the computer this phone is paired with"
 msgstr "if {machine} or its Stim home was replaced, run stim remote remove {machine}, then stim remote add {machine} on the computer this phone is paired with"
 
+#: src/lib/machine-record.ts
+msgid "If the machine still lists this phone, revoke it there: run stim-server devices to find this phone's id, then stim-server devices revoke <id>."
+msgstr "If the machine still lists this phone, revoke it there: run stim-server devices to find this phone's id, then stim-server devices revoke <id>."
+
 #: src/screens/home.tsx
 msgid "In Stim Desktop, open Pair a Phone and scan its QR code. This phone and the machine both need Tailscale."
 msgstr "In Stim Desktop, open Pair a Phone and scan its QR code. This phone and the machine both need Tailscale."
@@ -4080,6 +4084,10 @@ msgstr "The machine keeps the last 15 minutes of device screens. Turning this of
 msgid "The machine no longer knows this phone."
 msgstr "The machine no longer knows this phone."
 
+#: src/lib/machine-record.ts
+msgid "The machine no longer lists this phone, so there is nothing to revoke there."
+msgstr "The machine no longer lists this phone, so there is nothing to revoke there."
+
 #: src/screens/open-workspace.tsx
 msgid "The machine no longer lists this workspace. Ask for a new link."
 msgstr "The machine no longer lists this workspace. Ask for a new link."
@@ -4100,6 +4108,14 @@ msgstr "The machine sent an invalid RPC response."
 #: src/lib/connection.ts
 msgid "The machine speaks a newer protocol. Update the app."
 msgstr "The machine speaks a newer protocol. Update the app."
+
+#: src/lib/machine-record.ts
+msgid "The machine still lists this phone until you revoke it: on {machine}, find this phone's id with stim-server devices, then run {command}."
+msgstr "The machine still lists this phone until you revoke it: on {machine}, find this phone's id with stim-server devices, then run {command}."
+
+#: src/lib/machine-record.ts
+msgid "The machine still lists this phone until you revoke it: on {machine}, run {command}."
+msgstr "The machine still lists this phone until you revoke it: on {machine}, run {command}."
 
 #: src/lib/connection.ts
 msgid "The machine's key does not match the pairing code or the key this phone paired with."
@@ -4196,8 +4212,8 @@ msgid "This phone is read-only: it cannot reload or stop workspaces, or control 
 msgstr "This phone is read-only: it cannot reload or stop workspaces, or control devices."
 
 #: src/screens/mac-list.tsx
-msgid "This phone stops connecting to it. It still lists this phone until you revoke it there: on {name}, run {revoke}."
-msgstr "This phone stops connecting to it. It still lists this phone until you revoke it there: on {name}, run {revoke}."
+msgid "This phone stops connecting to it. {notice}"
+msgstr "This phone stops connecting to it. {notice}"
 
 #: src/lib/pairing.ts
 #: src/lib/pairing.ts

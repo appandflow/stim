@@ -9,14 +9,14 @@ import { Card } from '@/components/card';
 import { FlatList } from '@/components/lists';
 import { connectionColor, describeState } from '@/components/mac-chip';
 import { StatusDot } from '@/components/pill';
-import { revokeCommand, ScopeChip } from '@/components/read-only';
+import { ScopeChip } from '@/components/read-only';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useMacs } from '@/hooks/machines';
 import { useLargeText } from '@/hooks/large-text';
 import { forgetInbox } from '@/hooks/inbox';
 import { unregisterPush } from '@/hooks/notifications';
-import { machineRecord } from '@/lib/machine-record';
+import { machineRecord, removeNotice } from '@/lib/machine-record';
 import { forgetMac, type PairedMac } from '@/lib/macs';
 
 export function MacList() {
@@ -28,24 +28,19 @@ export function MacList() {
   const remove = (mac: PairedMac) => {
     const { name } = mac;
     const link = connections.find((c) => c.mac.id === mac.id);
-    const deviceId = link?.state.kind === 'open' ? link.state.deviceId : null;
-    const revoke = revokeCommand(deviceId);
-    Alert.alert(
-      t`Remove ${name}?`,
-      t`This phone stops connecting to it. It still lists this phone until you revoke it there: on ${name}, run ${revoke}.`,
-      [
-        { text: t`Cancel`, style: 'cancel' },
-        {
-          text: t`Remove`,
-          style: 'destructive',
-          onPress: () => {
-            unregisterPush(link?.connection ?? null, mac.id);
-            forgetInbox(mac.id);
-            void forgetMac(mac.id).then(reload);
-          },
+    const notice = removeNotice(link?.state ?? { kind: 'closed' });
+    Alert.alert(t`Remove ${name}?`, t`This phone stops connecting to it. ${notice}`, [
+      { text: t`Cancel`, style: 'cancel' },
+      {
+        text: t`Remove`,
+        style: 'destructive',
+        onPress: () => {
+          unregisterPush(link?.connection ?? null, mac.id);
+          forgetInbox(mac.id);
+          void forgetMac(mac.id).then(reload);
         },
-      ],
-    );
+      },
+    ]);
   };
 
   return (

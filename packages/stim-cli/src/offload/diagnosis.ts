@@ -21,9 +21,19 @@ export type TailscaleReading = { running: true } | { running: false; code: Tails
 
 export type TailscaleCode = 'tailscale-unavailable' | 'tailscale-stopped' | 'tailscale-logged-out';
 
-/** This machine's name, so a diagnosis read on another machine, such as a phone, names where it was made. */
-export function localMachineName(): string {
-  return (hostname().split('.')[0] ?? '').replace(/[\p{Cc}\p{Cf}]/gu, '');
+/**
+ * This machine's name as its peers see it: the Tailscale `Self.HostName` of `status` when it has one, else the OS host
+ * name. A diagnosis read on another machine, such as a phone, names where it was made with it.
+ */
+export function localMachineName(status?: unknown): string {
+  const self = isJsonObject(status) && isJsonObject(status.Self) ? status.Self : {};
+  const raw = typeof self.HostName === 'string' && self.HostName ? self.HostName : hostname();
+  return (
+    raw
+      .replace(/[\p{Cc}\p{Cf}]/gu, '')
+      .trim()
+      .slice(0, 64) || 'this machine'
+  );
 }
 
 const SILENT_ERRORS = new Set(['ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'EHOSTDOWN']);

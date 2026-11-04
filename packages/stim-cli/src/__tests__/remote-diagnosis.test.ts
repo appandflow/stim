@@ -1,6 +1,7 @@
 import {
   classifyTransport,
   diagnoseUnreachable,
+  localMachineName,
   parsePeerStartup,
   tailscaleDiagnosis,
   readTailscale,
@@ -85,6 +86,14 @@ describe('naming the machine that made the diagnosis', () => {
     ].join('\n');
     expect(texts).toContain('studio');
     expect(texts).not.toMatch(/\bMac\b|this machine|\bhere\b/);
+  });
+});
+
+describe('localMachineName', () => {
+  it('prefers the Tailscale host name, as peers see it, and never returns nothing', () => {
+    expect(localMachineName({ Self: { HostName: ' studio\u200d ' } })).toBe('studio');
+    expect(localMachineName({ Self: { HostName: '' } })).toBe(localMachineName());
+    expect(localMachineName()).not.toBe('');
   });
 });
 

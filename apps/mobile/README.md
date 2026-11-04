@@ -134,8 +134,8 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   `stim-server devices` lists, from `hello`'s `device`). **Rename** changes only
   the name this phone shows; renaming this phone's record on the machine needs
   `stim-server devices rename <id> <name>` there. **Remove** forgets the pairing
-  on this phone and prints the `stim-server devices revoke <id>` command that
-  revokes it on the machine. A
+  on this phone; its confirmation first shows the `stim-server devices revoke <id>`
+  command that revokes this phone on the machine, which keeps listing it until then. A
   connected machine's row shows the pairing's scope, **Can control** or
   **Read-only** (see [Read-only pairings](#read-only-pairings)).
   Tapping a machine opens that machine's status. Whichever of the three

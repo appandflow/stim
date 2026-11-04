@@ -14,10 +14,6 @@ export function grantCommand(deviceId: string | null): string {
   return `stim-server devices grant ${deviceId ?? '<id>'} --control`;
 }
 
-export function revokeCommand(deviceId: string | null): string {
-  return `stim-server devices revoke ${deviceId ?? '<id>'}`;
-}
-
 /** How to let this phone control devices, for a pairing the machine made read-only. */
 export function allowControlSteps(macName: string | undefined, deviceId: string | null): string {
   const where = macName ?? t`the machine`;

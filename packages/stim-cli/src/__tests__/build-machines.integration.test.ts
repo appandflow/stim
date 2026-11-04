@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { keyFingerprint } from '@stim-cli/core/noise-session';
 import { buildMachinesFile, readBuildMachines } from '@stim-cli/core/state';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { localMachineName } from '../offload/diagnosis.ts';
 import { inspectBuildMachines, resolveEndpoint, type Endpoint } from '../offload/build-machines.ts';
 import { keyConfirmer, realIo, type HelloReply, type MachineAuth, type TailnetMachineIo } from '../offload/tailnet.ts';
 import { startProtocol1Server } from './_noise-server.ts';
@@ -124,9 +123,10 @@ describe('the tailnet a machine was approved on', () => {
       tailnet: home1,
       diagnosis: { code: 'peer-wrong-tailnet' },
     });
+    expect(diagnosis?.message).toContain('laptop asked mini');
     expect(diagnosis?.message).toContain('janic@example.com (tail1.ts.net)');
     expect(diagnosis?.message).toContain('work.example.com (tail9.ts.net)');
-    expect(diagnosis?.remedy).toContain(`Switch Tailscale on ${localMachineName()} to janic@example.com`);
+    expect(diagnosis?.remedy).toContain('Switch Tailscale on laptop to janic@example.com');
     expect(findings[0]?.fix).toBe(diagnosis?.remedy);
 
     const old = fakeIo([]).io;
@@ -305,7 +305,7 @@ describe('inspectBuildMachines', () => {
       expect(findings).toEqual([
         expect.objectContaining({
           fix: expect.stringMatching(
-            /^On mini, run `stim-server service update --release 9\.9\.9` \(add `--label <name>` for a custom service label; .*\), then run `stim remote add mini` on [^ ]+\.$/,
+            /^On mini, run `stim-server service update --release 9\.9\.9` \(add `--label <name>` for a custom service label; .*\), then run `stim remote add mini` on laptop\.$/,
           ),
         }),
       ]);

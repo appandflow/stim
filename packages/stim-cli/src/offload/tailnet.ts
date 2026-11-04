@@ -451,6 +451,7 @@ export async function diagnoseOutcome(
     reason: string;
     transport?: Transport;
     code?: string;
+    host?: string;
   },
 ): Promise<RemoteDiagnosis> {
   const { target, ...rest } = input;
@@ -487,7 +488,8 @@ export async function diagnoseConnectFailure(
       ...(failure.code ? { code: failure.code } : {}),
     });
   }
-  const peer = findPeer(await tailscaleStatusAsync(signal), parsed.name);
+  const status = await tailscaleStatusAsync(signal);
+  const peer = findPeer(status, parsed.name);
   if (typeof peer === 'string') return null;
   return diagnoseOutcome(
     { startup: peerStartup },
@@ -496,6 +498,7 @@ export async function diagnoseConnectFailure(
       peer,
       port: parsed.port,
       target: endpoint(peer, parsed.port),
+      host: localMachineName(status),
       reason: failure.failure,
       ...(failure.transport ? { transport: failure.transport } : {}),
       ...(failure.code ? { code: failure.code } : {}),
@@ -505,8 +508,9 @@ export async function diagnoseConnectFailure(
 
 /** Why `status` is null, as a diagnosis of the Tailscale layer; falls back to the daemon being unavailable. */
 export async function diagnoseTailscale(io: TailnetMachineIo): Promise<RemoteDiagnosis> {
-  const reading = readTailscale(io.rawStatus ? await io.rawStatus() : null);
-  return tailscaleDiagnosis(reading.running ? 'tailscale-unavailable' : reading.code);
+  const raw = io.rawStatus ? await io.rawStatus() : null;
+  const reading = readTailscale(raw);
+  return tailscaleDiagnosis(reading.running ? 'tailscale-unavailable' : reading.code, localMachineName(raw));
 }
 
 /**
@@ -525,7 +529,7 @@ export async function resolveEndpoint(
     return found;
   const wrong = wrongTailnet(credential, current);
   if (!wrong) return found;
-  const { message, remedy } = wrongTailnetDiagnosis(credential.machine, wrong);
+  const { message, remedy } = wrongTailnetDiagnosis(credential.machine, wrong, localMachineName(current));
   return `${message} ${remedy}`.replace(/\.$/, '');
 }
 
