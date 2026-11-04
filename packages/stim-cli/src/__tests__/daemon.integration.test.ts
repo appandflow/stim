@@ -583,7 +583,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       let service: Promise<void> | undefined;
       const spawned = mockExecutor((file, args) => {
         runs.push({ file, args });
-        service = runDaemon({ tickMs: 60_000, mode: 'on' });
+        setTimeout(() => (service = runDaemon({ tickMs: 60_000, mode: 'on' })), 300);
         return '';
       });
 
@@ -596,7 +596,13 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       const { file, args } = run;
       expect(file).toBe('/usr/bin/systemd-run');
       expect(args).toEqual(
-        expect.arrayContaining(['--user', '--collect', `--working-directory=${join(home, 'daemon')}`]),
+        expect.arrayContaining([
+          '--user',
+          '--quiet',
+          '--collect',
+          '--property=KillMode=process',
+          `--working-directory=${join(home, 'daemon')}`,
+        ]),
       );
       expect(args.filter((arg) => arg.startsWith('--setenv='))).toEqual(
         expect.arrayContaining(['--setenv=PATH=/usr/bin', '--setenv=HOME=/home/agent', `--setenv=STIM_HOME=${home}`]),

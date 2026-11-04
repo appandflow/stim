@@ -1062,7 +1062,8 @@ On Linux the daemon starts as a transient user service,
 `XDG_RUNTIME_DIR` is set and a user systemd manager answers. A command runner
 that adopts and kills everything a call started, such as an agent harness that
 sets `PR_SET_CHILD_SUBREAPER`, cannot reach a service, so the daemon keeps
-ticking between commands. Without one the daemon is a detached child, which
+ticking between commands. The service ends with the user manager at the last
+logout unless lingering is on; the next command starts the daemon again. Without one the daemon is a detached child, which
 such a runner stops when the call ends; set `STIM_DAEMON=off` for that runner,
 and the passes then run in each command's own process. The dev server's
 supervisor is not a service; `stim guide metro` has the recipe for it.

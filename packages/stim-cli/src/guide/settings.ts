@@ -700,7 +700,9 @@ On Linux the daemon starts as a transient user service, stim-daemon-<home
 hash>-<id>.service, when systemd-run is on PATH, XDG_RUNTIME_DIR is set and a
 user systemd manager answers. A command runner that adopts and kills everything
 a call started (a subreaper) cannot reach a service, so the daemon keeps ticking
-between commands. Without a manager the daemon is a detached child and such a
+between commands. The
+service ends with the user manager at the last logout unless lingering is on; the
+next command starts the daemon again. Without a manager the daemon is a detached child and such a
 runner stops it when the call ends: its log then ends with daemon_exited
 "exiting: SIGTERM" shortly after daemon_started. Set STIM_DAEMON=off for that
 runner; the passes then run in each command's own process. The dev server
