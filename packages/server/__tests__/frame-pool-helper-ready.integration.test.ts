@@ -82,14 +82,14 @@ describe.skipIf(process.platform === 'win32')('a subscriber attached while the f
 
     await vi.waitFor(() => expect(frames.length).toBeGreaterThan(0));
     expect(artwork).toEqual([]);
-    expect(Buffer.from(frames[0]!.data, 'base64')).toEqual(jpeg(390, 844));
+    expect(Buffer.from(frames[0]?.data ?? '', 'base64')).toEqual(jpeg(390, 844));
 
     built = helper;
     pool.helperReady();
     await vi.waitFor(() => expect(artwork).toHaveLength(1));
     expect(artwork[0]).toMatchObject({ width: 450, height: 900 });
     await vi.waitFor(() =>
-      expect(Buffer.from(frames.at(-1)!.data, 'base64').toString('latin1')).toMatch(/helper \d+$/),
+      expect(Buffer.from(frames.at(-1)?.data ?? '', 'base64').toString('latin1')).toMatch(/helper \d+$/),
     );
 
     const screenshots = readFileSync(calls, 'utf8').length;
