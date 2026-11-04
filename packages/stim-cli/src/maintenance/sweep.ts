@@ -10,7 +10,12 @@ import {
   isInsideWorkspaces,
   keptByLock,
 } from '../commands/gc/workspaces.ts';
-import { collectWorktreeSweep, worktreeRemovalReason, type WorktreeSweep } from '../commands/gc/worktrees.ts';
+import {
+  collectWorktreeSweep,
+  worktreeRemovalReason,
+  type WorktreeSkipCode,
+  type WorktreeSweep,
+} from '../commands/gc/worktrees.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
@@ -260,6 +265,12 @@ export async function planRung6(
   return { actions, blocked: [], skips };
 }
 
+const UNREPORTED_KEEPS: ReadonlySet<WorktreeSkipCode> = new Set([
+  'not-a-worktree',
+  'bare-repository',
+  'source-checkout',
+]);
+
 export interface WorktreePlan extends MaintenancePlan {
   sweep: WorktreeSweep;
   /** The merged or ended worktree kept only for its grace period that becomes removable first. */
@@ -321,6 +332,17 @@ export async function planWorktrees({
         !keptReason(worktree)
       )
         nextRemoval = { target: worktree.path, at };
+      if (
+        worktree.skipCode &&
+        !UNREPORTED_KEEPS.has(worktree.skipCode) &&
+        (idleDays !== null || worktree.merge?.merged || endedPullRequest(worktree.pullRequest))
+      )
+        skips.push({
+          target: worktree.path,
+          reason: worktree.skipped,
+          code: worktree.skipCode,
+          workspace: canonicalPath(worktree.path),
+        });
       continue;
     }
     const reason = keptReason(worktree);

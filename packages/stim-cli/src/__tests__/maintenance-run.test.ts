@@ -247,6 +247,38 @@ test.each([
   });
 });
 
+test('a kept worktree is logged once per reason code, with the code', async () => {
+  let now = Date.now();
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const target = join(home, 'kept-worktree');
+  const keep = (code: string, reason: string) => ({ target, reason, code });
+  const planned = vi.spyOn(preview, 'plannedMaintenance');
+  const pass = async (skip: ReturnType<typeof keep>) => {
+    planned.mockResolvedValue({
+      actions: [],
+      skips: [skip],
+      blocked: [],
+      byCheck: { worktree: { skips: [skip], blocked: [] } },
+    });
+    await runMaintenance('status');
+    now += 15 * 60_000;
+  };
+
+  await pass(keep('dirty', 'dirty: 1 uncommitted or untracked file (a.ts)'));
+  await pass(keep('dirty', 'dirty: 2 uncommitted or untracked files (a.ts, b.ts)'));
+  await pass(keep('unpushed', 'unpushed: 1 commit on no remote or other branch'));
+
+  const logged = readFileSync(maintenanceNdjsonFile(), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .filter((record) => record.event === 'maintenance_skip');
+  expect(logged.map(({ target: path, code }) => ({ path, code }))).toEqual([
+    { path: target, code: 'dirty' },
+    { path: target, code: 'unpushed' },
+  ]);
+});
+
 test('a pass where only the minute pressure reading is due keeps the last plan and pass', async () => {
   let now = Date.now();
   vi.spyOn(Date, 'now').mockImplementation(() => now);
