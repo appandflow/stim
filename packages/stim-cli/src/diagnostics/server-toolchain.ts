@@ -3,16 +3,11 @@ import type { InstalledService } from '@stim-cli/core/state';
 import type { Finding } from './doctor.ts';
 import { labelFlag, type ServerSetup } from './server-setup.ts';
 
-/** The variables whose value is a directory or file a build needs, when a service pins one with `--env`. */
 const PATH_VARIABLES = new Set(['JAVA_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'GEM_HOME']);
 
 /** The default `PATH` launchd gives a user agent, and so the job's before the server reads the login shell. */
 const LAUNCHD_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
 
-/**
- * Every path a service file records that a start depends on: its launcher, node, server script, the `--path-prepend`
- * directories, and the value of each pinned path variable.
- */
 export function servicePaths(service: InstalledService): string[] {
   const pinned = service.env.flatMap((entry) => {
     const equals = entry.indexOf('=');
@@ -27,11 +22,6 @@ export function servicePaths(service: InstalledService): string[] {
   ];
 }
 
-/**
- * The environment a service's recorded settings give its server before the login shell's: `--path-prepend` in front of
- * launchd's default `PATH`, plus each `--env` entry. The server applies the login shell's environment first, so this
- * is what discovery falls back on, not the whole environment.
- */
 export function serviceToolchainEnv(service: InstalledService, home: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { HOME: home, PATH: [...service.pathPrepend, ...LAUNCHD_PATH].join(delimiter) };
   for (const entry of service.env) {
@@ -41,7 +31,6 @@ export function serviceToolchainEnv(service: InstalledService, home: string): No
   return env;
 }
 
-/** A service file that names a launcher, node, script or directory that is gone: the service cannot start or find its tools. */
 export function serviceToolchainFindings(setup: ServerSetup): Finding[] {
   const missing = new Set(setup.missingPaths);
   return setup.services.flatMap((service): Finding[] => {

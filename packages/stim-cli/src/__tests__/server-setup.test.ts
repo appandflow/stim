@@ -23,6 +23,19 @@ const PS = `
 `;
 
 describe('parseServerProcesses', () => {
+  it('does not count an npx wrapper or a shell wrapper, and reads --port=<n>', () => {
+    const ps = [
+      '700 1 /usr/local/bin/node /usr/local/lib/node_modules/npm/bin/npm-cli.js exec stim-server --port 7791',
+      '701 700 node /Users/me/.npm/_npx/abc/node_modules/.bin/stim-server --port 7791',
+      '710 1 sh -c node /Users/me/bin/stim-server --port 7792',
+      '720 1 node /Users/me/bin/stim-server --port=7793',
+    ].join('\n');
+    expect(parseServerProcesses(ps).map(({ pid, port }) => ({ pid, port }))).toEqual([
+      { pid: 701, port: 7791 },
+      { pid: 720, port: 7793 },
+    ]);
+  });
+
   it('reads only node processes that run the server without a subcommand', () => {
     expect(parseServerProcesses(PS).map(({ pid, port, share }) => ({ pid, port, share }))).toEqual([
       { pid: 29421, port: 7787, share: false },
@@ -161,6 +174,17 @@ describe('serverSetupFindings', () => {
       expect(finding?.fix).toContain('stim-server service rollback');
     });
 
+    it('does not call a service that has never exited a crash while its health is slow to answer', () => {
+      expect(
+        serverSetupFindings(
+          setup({
+            services: [service({ job: { state: 'running', pid: 100, runs: 1, lastExitCode: '(never exited)' } })],
+            servers: [reading({ health: null })],
+          }),
+        ),
+      ).toEqual([]);
+    });
+
     it('reports an installed service with no job', () => {
       const [finding] = down(null);
       expect(finding?.title).toContain('installed but not running');
@@ -198,6 +222,39 @@ describe('serverSetupFindings', () => {
     expect(leftover?.detail).toContain('pid 300');
     expect(leftover?.detail).toContain('Stim home /tmp/scratch');
     expect(leftover?.detail).toContain('port 7790');
+  });
+
+  it('lists a server of another Stim home as a leftover even while another home has two servers', () => {
+    const findings = serverSetupFindings(
+      setup({
+        servers: [
+          reading({}),
+          reading({ pid: 200, port: 7787, kind: 'desktop', label: undefined }),
+          reading({
+            pid: 300,
+            port: 7790,
+            kind: 'manual',
+            label: undefined,
+            health: health({ stimHome: '/tmp/scratch' }),
+          }),
+        ],
+      }),
+    );
+    expect(findings.map((each) => each.code)).toContain('server-multiple');
+    expect(findings.find((each) => each.code === 'server-leftover')?.detail).toContain('pid 300');
+  });
+
+  it('notes two builds that report one version', () => {
+    const [finding] = serverSetupFindings(
+      setup({ build: 'aaaa1111', servers: [reading({ health: health({ stimBuild: 'bbbb2222' }) })] }),
+    );
+    expect(finding).toMatchObject({ code: 'server-version', level: 'note' });
+    expect(finding?.detail).toContain('bbbb2222 and aaaa1111');
+    expect(
+      serverSetupFindings(
+        setup({ build: 'aaaa1111', servers: [reading({ health: health({ stimBuild: 'aaaa1111' }) })] }),
+      ),
+    ).toEqual([]);
   });
 
   describe('keep awake', () => {

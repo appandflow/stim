@@ -52,6 +52,7 @@ export const setup = (over: Partial<ServerSetup> = {}): ServerSetup => ({
   platform: 'darwin',
   stimHome: '/Users/me/.stim',
   version: '1.41.0',
+  build: null,
   services: [service()],
   servers: [reading({})],
   local: null,
