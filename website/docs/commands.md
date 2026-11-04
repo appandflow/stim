@@ -1070,6 +1070,14 @@ Stim adds what agent-device needs to reach the device:
 - `--remote-config` for a [hosted iOS](./owned-devices.md#run-ios-on-another-mac)
   or [hosted Android](./remote-machines.md) session.
 - `--session stim-<slot>-<platform>` unless you pass `--session`.
+- For a hosted session whose host no longer holds the agent-device session (its
+  stim-server restarted, so agent-device answers `SESSION_NOT_FOUND`), a
+  single-action command (`snapshot`, `press`, `tap`, `scroll`, `type` and the like)
+  opens the app the workspace last launched on the same session and runs once more.
+  The output of that command is held until it ends, and only the last run's output
+  is printed. The command acts on that app's screen as it is after the reopen, so take a
+  fresh snapshot when a coordinate gesture matters. Multi-step commands such as `batch`
+  are not retried.
 - `AGENT_DEVICE_STATE_DIR`, the workspace's
   [agent-device state directory](./dev-server-and-logs.md#agent-device-actions),
   except for a hosted session, which keeps agent-device's own.
@@ -1107,7 +1115,7 @@ check stim logs --source agent.
 ## `share`
 
 ```text
-stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--view-password [value]] [--device] [--slot <name>] [--json]
+stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--view-password [value]] [--slug <name>] [--device] [--slot <name>] [--json]
 stim share stop [--json]
 stim share list [--json]
 ```
@@ -1118,7 +1126,8 @@ runs inside this Stim home's stim-server, which `stim share` starts in the
 background when none runs, and is served through Tailscale Funnel. The
 password is generated unless you set one with `--password` or drop it with
 `--no-password`. With `--control`, `--view-password` adds a second password that
-only watches. Viewers see each other's touches live. Every share expires (60 minutes by default, at most 480) and ends with
+only watches. `--slug <name>` makes the link `/s/<name>/` instead of a random
+token and needs a password. Viewers see each other's touches live. Every share expires (60 minutes by default, at most 480) and ends with
 `stim share stop`, `stim stop` (without `--slot`), `stim worktree remove`, its
 device, or stim-server. It refuses with `STIM_SERVER_NOT_RUNNING` when it cannot start a
 stim-server and `STIM_SHARE_REFUSED` with the reason otherwise, including at once on Windows. See
@@ -1529,6 +1538,17 @@ behind its upstream, and whether its branch is merged, as a
 only for live environments; `stim status --watch` shows it for every worktree. See
 [Parallel environments](./worktrees.md#parallel-environments) for the JSON
 fields.
+
+One-shot `stim status` takes simulator state and device slot usage from the
+device listing that a boot admission took in the last 10 seconds, when there
+is one, and runs `simctl list` itself otherwise. It also lists itself when that
+listing lacks a simulator or, for the emulator listing, an owned emulator that a
+workspace records. Under a burst of starting workspaces the admissions keep that
+listing fresh, so status does not wait on a slow `simctl`. The listing can be up
+to 10 seconds old plus the time it took, and a boot admission lists before it
+boots a device, so a device that boots or stops after that listing can show its
+earlier state for that long. `stim status --watch` always lists the devices
+itself.
 
 Each workspace is marked with its lifecycle phase: `[warming: <step>]` while
 `stim worktree warm` runs in it, or `[ready]` after a warm until its first run.

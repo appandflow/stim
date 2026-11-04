@@ -88,6 +88,7 @@ async function fakeMachine(
     pause = null,
     cachedFetch = 'hit',
     failure = FAILED,
+    lostJob = null,
   }: {
     drop?: boolean;
     closeAfterStart?: number | null;
@@ -104,6 +105,7 @@ async function fakeMachine(
     pause?: string | null;
     cachedFetch?: 'hit' | 'miss' | 'corrupt';
     failure?: typeof FAILED;
+    lostJob?: 'once' | 'always' | null;
   } = {},
 ): Promise<FakeMachine> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
@@ -117,6 +119,7 @@ async function fakeMachine(
     if (method === pause) pending.push(send);
     else send();
   };
+  let starts = 0;
   let closed!: () => void;
   const done = new Promise<void>((resolve) => (closed = resolve));
   acceptNoiseConnections(server, (socket) => {
@@ -172,11 +175,17 @@ async function fakeMachine(
         return reply({ result: { size: artifact.archive.length, sha256: artifact.digest } });
       }
       if (method === 'build.start') {
+        starts += 1;
         reply(start);
         if ('result' in start && closeAfterStart !== null) return socket.close(closeAfterStart, 'device revoked');
-        if ('result' in start) return drop ? socket.terminate() : fail(start.result.job);
+        const restarting = lostJob === 'always' || (lostJob === 'once' && starts === 1);
+        if ('result' in start) return drop || restarting ? socket.terminate() : fail(start.result.job);
       }
       if (method === 'build.attach') {
+        if (lostJob === 'always' || (lostJob === 'once' && starts === 1))
+          return reply({
+            error: { code: 'bad-request', message: 'No such build job for this device; it ended or was cancelled.' },
+          });
         reply(attach);
         if ('result' in attach && 'result' in start) fail(start.result.job);
         return;
@@ -441,6 +450,85 @@ describe('offloadBuild', () => {
       reason:
         'closed: the connection closed (1006); the machine did not hand the build back (unknown-method: Unknown method build.attach.)',
     });
+  });
+
+  it('starts the build again on its machine after that machine restarted and lost the job', async () => {
+    const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'j1' } }, { lostJob: 'once' });
+    machines.push(machine);
+    const lines: string[] = [];
+    expect(await run(['mini'], (line) => lines.push(line))).toEqual({
+      ok: false,
+      machine: 'mini',
+      reason: 'worker-failed: xcodebuild failed',
+    });
+    expect(machine.methods.filter((method) => method === 'build.start')).toHaveLength(2);
+    expect(lines).toContainEqual(
+      expect.stringMatching(
+        /^offload: mini restarted and lost the build \(.*No such build job.*\); starting the build again there$/,
+      ),
+    );
+  });
+
+  it('waits for the machine to answer again before it starts the build there', async () => {
+    let hellos = 0;
+    const machine = await fakeMachine(
+      'mini',
+      offer(0.1),
+      { result: { job: 'j1' } },
+      {
+        lostJob: 'once',
+        hello: () =>
+          ++hellos === 3
+            ? { error: { code: 'identity-unavailable', message: 'tailscale whois failed' } }
+            : { result: { capabilities: ['build'] } },
+      },
+    );
+    machines.push(machine);
+    expect(await run(['mini'], () => {})).toEqual({
+      ok: false,
+      machine: 'mini',
+      reason: 'worker-failed: xcodebuild failed',
+    });
+    expect(hellos).toBe(4);
+    expect(machine.methods.filter((method) => method === 'build.start')).toHaveLength(2);
+  });
+
+  it('returns the app the second attempt built after the machine lost the first job', async () => {
+    mkdirSync(join(repo, 'archive-source', 'Sample.app'), { recursive: true });
+    writeFileSync(join(repo, 'archive-source', 'Sample.app', 'Info.plist'), 'plist');
+    const archivePath = join(repo, 'artifact.tgz');
+    execFileSync('tar', ['-czf', archivePath, '-C', join(repo, 'archive-source'), 'Sample.app']);
+    const archive = readFileSync(archivePath);
+    const digest = createHash('sha256').update(archive).digest('hex');
+    const machine = await fakeMachine(
+      'mini',
+      offer(0.1),
+      { result: { job: 'j1' } },
+      { lostJob: 'once', artifact: { archive, digest, fingerprint: 'f00d' } },
+    );
+    machines.push(machine);
+    const outcome = await run(['mini'], () => {});
+    expect(outcome).toMatchObject({ ok: true, machine: 'mini' });
+    expect(machine.methods.filter((method) => method === 'build.start')).toHaveLength(2);
+    expect(existsSync(join(repo, 'staging', 'Sample.app', 'Info.plist'))).toBe(true);
+  });
+
+  it('starts again on the same machine when its connection drops during sync, at most twice', async () => {
+    const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'j1' } }, { dropOnSync: true });
+    machines.push(machine);
+    const lines: string[] = [];
+    const outcome = await run(['mini'], (line) => lines.push(line));
+    expect(outcome).toMatchObject({ ok: false, machine: 'mini', reason: expect.stringContaining('sync:') });
+    expect(machine.methods.filter((method) => method === 'build.sync')).toHaveLength(3);
+    expect(lines.filter((line) => line.includes('dropped the connection'))).toHaveLength(2);
+  });
+
+  it('gives up after two restarts of the same build and reports the lost job', async () => {
+    const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'j1' } }, { lostJob: 'always' });
+    machines.push(machine);
+    const outcome = await run(['mini'], () => {});
+    expect(outcome).toMatchObject({ ok: false, machine: 'mini', reason: expect.stringContaining('No such build job') });
+    expect(machine.methods.filter((method) => method === 'build.start')).toHaveLength(3);
   });
 
   it('keeps reconnecting while the machine cannot identify this machine for a moment', async () => {

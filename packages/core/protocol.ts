@@ -101,6 +101,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
  * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
+ * `share-slug` is `share.start`'s `slug` parameter and the rows' `slug`.
  * `hosted-presence` is `device-host.presence.subscribe`: the `presence` events of a hosted session, which carry what the
  * agent drives on it. A host lists it only with `presence`.
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
@@ -176,6 +177,7 @@ export const FEATURES = [
   'device-clipboard',
   'share-view-password',
   'hosted-presence',
+  'share-slug',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -357,6 +359,14 @@ export const DEVICE_HOST_METHODS = [
 ] as const;
 
 export type Method = (typeof METHODS)[number];
+
+/**
+ * A web share's chosen link path, `/s/<slug>/`: 3 to 32 lowercase letters, digits and hyphens, starting and ending with
+ * a letter or digit. Always shorter than the 43-character URL token, so a slug never reads as one.
+ */
+export const SHARE_SLUG_PATTERN = '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$';
+/** Slugs a share cannot take: `/s/assets/` serves the viewer's bundled files. */
+export const RESERVED_SHARE_SLUGS: readonly string[] = ['assets'];
 
 export const PUSH_TOKEN_PATTERN = '^(Expo|Exponent)PushToken\\[[^\\]\\s]{1,256}\\]$';
 
@@ -1714,6 +1724,8 @@ export interface WebShareRow {
   auth: 'generated' | 'set' | 'none';
   /** How a separate view-only password was made; null when the share has none. */
   viewAuth: 'generated' | 'set' | null;
+  /** The link path the person chose; absent when the link carries a random token. */
+  slug?: string;
 }
 
 export interface WebShareStartParams {
@@ -1728,6 +1740,8 @@ export interface WebShareStartParams {
   passwordless?: boolean;
   /** A second, view-only password next to the control one; only with `control` and a password. Never sent back. */
   view?: { password?: string };
+  /** The link path, `/s/<slug>/`, in place of the random token; {@link SHARE_SLUG_PATTERN}, never with `passwordless`. */
+  slug?: string;
 }
 
 export interface Methods {
