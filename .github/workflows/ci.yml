@@ -65,6 +65,25 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: changes
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      macos_unit: ${{ steps.gates.outputs.macos_unit }}
+      native_process_inspection: ${{ steps.gates.outputs.native_process_inspection }}
+      native_process_inspection_os: ${{ steps.gates.outputs.native_process_inspection_os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Select the macOS jobs the change can affect
+        id: gates
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: node scripts/ci-macos-gates.mjs >> "$GITHUB_OUTPUT"
+
   test:
     name: test (node ${{ matrix.node }})
     if: github.event_name != 'schedule'
@@ -224,7 +243,8 @@ jobs:
 
   test-macos:
     name: test (macos)
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: github.event_name != 'schedule' && needs.changes.outputs.macos_unit != 'false'
     runs-on: macos-15
     timeout-minutes: 30
     steps:
@@ -256,13 +276,14 @@ jobs:
 
   native-process-inspection:
     name: native process inspection (${{ matrix.os }})
+    needs: changes
     if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.native_process_inspection_os || '["macos-15","windows-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

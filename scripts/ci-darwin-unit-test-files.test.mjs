@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { selectGates } from './ci-macos-gates.mjs';
 
 const script = fileURLToPath(new URL('./ci-darwin-unit-test-files.mjs', import.meta.url));
 let root;
@@ -49,4 +50,16 @@ test('only unit test files the suite includes are selected', () => {
   write('packages/stim-cli/src/__tests__/_helper.ts', gate);
   write('apps/mobile/src/gated.test.ts', gate);
   expect(selected().toSorted()).toEqual([spaced, benchmark].toSorted());
+});
+
+test('the test (macos) gate covers every file the selection returns', () => {
+  const repo = fileURLToPath(new URL('..', import.meta.url));
+  const files = execFileSync(process.execPath, [script], {
+    cwd: repo,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+    .split('\0')
+    .filter(Boolean);
+  expect(files.filter((file) => !selectGates([file]).macosUnit)).toEqual([]);
 });

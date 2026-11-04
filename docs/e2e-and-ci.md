@@ -278,6 +278,14 @@ PATH).
   test timeout, and uploads `unit-test-timings-macos`. Like every `ci.yml` job
   it is part of the `merge gate` poll on a pull request and does not run in the
   merge queue.
+  A `changes` job (`scripts/ci-macos-gates.mjs`) skips both `macos-15` jobs,
+  `test (macos)` and `native process inspection (macos-15)`, for a change that
+  touches none of the paths they consume: `packages/**`, `test/**` and the root
+  package and lockfile files for `test (macos)`, and `packages/core/**`, the
+  two `native-*` e2e files and their harness for the process job. A pull
+  request diffs against its base, a push to `main` against the previous
+  commit, and a dispatch runs everything. A diff that cannot be computed runs
+  everything. A skipped job counts as passed in the `merge gate`.
 
 - **`stim-ci.yml`** -- "Stim CI dogfood": builds, launches, probes and stops
   the mobile app on iOS (`xcode-27`) and Android (`ubuntu-latest`) and the
