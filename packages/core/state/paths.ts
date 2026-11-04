@@ -53,6 +53,11 @@ export function workspaceEndedAgentsLock(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'ended-agents.lock');
 }
 
+/** The claim a native run, a stop, an automatic shutdown or a web share start holds on one workspace's devices. */
+export function workspaceNativeRunClaim(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'native-run.lock');
+}
+
 export function supervisorPidFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'supervisor.pid');
 }
@@ -64,6 +69,11 @@ export function workspaceStateFile(projectRoot: string): string {
 /** The dependency directories `gc --delete` deleted from the workspace's worktree, apart from state.json so writing it is not workspace activity. */
 export function workspaceLightenedFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'lightened.json');
+}
+
+/** The links `stim share` started in the workspace that `stim share --reuse` can start again; holds secrets, mode 0600. */
+export function workspaceShareLinksFile(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'share-links.json');
 }
 
 export function workspaceStateLock(projectRoot: string): string {

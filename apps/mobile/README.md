@@ -711,8 +711,16 @@ and recordings keep their existing capture. Turn the frame off to use replay.
 With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as
 driven. Touches on the frame go to the device as a touch that follows your
-finger: a tap, a drag or swipe, or a long press. The toolbar under the screen
-is a compact icon bar that scrolls sideways when needed in either orientation.
+finger: a tap, a drag or swipe, or a long press. On an iOS simulator, an Android
+emulator or an Android phone, two fingers pinch or pan together: the phone sends
+both as one `input.touch` gesture with a second point (`x2`, `y2`) on every
+phase. The first finger waits 40 ms for a second one, so a tap on these devices
+reaches the device that much later, and a second finger that lands later lifts
+the first and presses both. Once either finger lifts, the gesture ends and the
+other finger is ignored until every finger is up. A macOS app, a web page and an
+iPhone Duo take one finger. A server older than this field turns a two-finger
+gesture into one finger, and an older hosted worker refuses it. The toolbar under the
+screen is a compact icon bar that scrolls sideways when needed in either orientation.
 Each button has a spoken label and a 44-point touch target. It has **Keyboard**,
 which opens the phone's keyboard and types what you type (printable ASCII;
 Return and Delete included), **Home**, **Lock**, and on Android **Back** and
@@ -735,7 +743,8 @@ into the focused field; text over 8 KiB is not sent, and a note says so. An iOS
 simulator types printable ASCII, line breaks and tabs into the field (the server answers
 `typed`), so no paste prompt is involved. Only when the text has other characters does the
 note after a paste on iOS add that the device may show a paste suggestion to tap, which
-simulators slimmed by `simslimProfile` cannot show. Copy reads the device clipboard
+simulators slimmed by `simslimProfile` cannot show. An app Stim installed on an owned simulator
+has its paste permission allowed and takes that text without a prompt. Copy reads the device clipboard
 into the phone's and a note confirms it. Text only; nothing syncs by itself, and the
 app never logs the text. A web page, a Mac app and a physical iPhone have neither action.
 

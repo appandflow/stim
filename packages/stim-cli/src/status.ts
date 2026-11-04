@@ -100,13 +100,16 @@ export interface VolumeInfo {
 export interface PoolFacts {
   platform: 'ios' | 'android';
   parked: number;
+  /** Parked devices kept booted until their grace period passes. */
+  booted?: number;
   max: number;
 }
 
-export function poolLine({ platform, parked, max }: PoolFacts): string | null {
+export function poolLine({ platform, parked, booted = 0, max }: PoolFacts): string | null {
   if (parked <= 0) return null;
   const what = plural(parked, `parked ${platform === 'ios' ? 'iOS simulator' : 'Android emulator'}`);
-  return max > 0 ? `pool: ${what} (max ${max})` : `pool: ${what} (parking off; gc --delete removes them)`;
+  const kept = booted > 0 ? `, ${booted} kept booted` : '';
+  return max > 0 ? `pool: ${what} (max ${max}${kept})` : `pool: ${what} (parking off${kept}; gc --delete removes them)`;
 }
 
 export const RECENT_LAUNCH_MS: number = 30 * 60 * 1000;
@@ -438,6 +441,33 @@ export function metroReverseTargets(
     if (!launch || launch.release || launch.metroPort !== metroPort || launch.deviceId !== android.serial) return [];
     return [{ slot, serial: android.serial, metroPort }];
   });
+}
+
+export function reversePortTargets(
+  state: EnvironmentState,
+  launches: Readonly<Record<string, { deviceId: string }>>,
+): { slot: string; serial: string }[] {
+  return [{ slot: 'default', android: state.android }, ...(state.slots ?? [])].flatMap(({ slot, android }) => {
+    const launch = launches[deviceSlotKey('android', slot)];
+    if (!android?.owned || android.physical || !android.serial || android.app?.state !== 'running') return [];
+    return launch?.deviceId === android.serial ? [{ slot, serial: android.serial }] : [];
+  });
+}
+
+export function addReversePortMissingIssue(
+  state: EnvironmentState,
+  { slot, serial, port }: { slot: string; serial: string; port: number },
+): void {
+  const issue: StatusIssue = {
+    code: 'android-reverse-missing',
+    severity: 'warning',
+    message: `the adb reverse for port ${port} is missing on ${serial}, so the app cannot reach the server on localhost:${port}`,
+    remedy: `stim ports reverse ${port}`,
+    workspace: state.path,
+    ...(slot === 'default' ? {} : { slot }),
+  };
+  state.issues.push(issue);
+  state.warnings.push(issueText(issue));
 }
 
 export function addReverseMissingIssue(

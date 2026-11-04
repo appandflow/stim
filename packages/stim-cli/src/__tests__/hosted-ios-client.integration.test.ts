@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { BuildConnection } from '../offload/client.ts';
 import { deviceHostMachinesFile, type HostedIosPlacement, type HostedAppOffer } from '@stim-cli/core/state';
 import { prepareHostedIos, placeHostedIos, stopHostedIos } from '../device-host/hosted-ios.ts';
+import { hostedAgentSessionName } from '../device-host/agent-connection.ts';
 import { hostedMetroPortProbe, iosAgentRemoteConfig } from '../device-host/hosted-native.ts';
 import { readHostedIos, writeHostedNative } from '../device-host/ios-state.ts';
 import { applyHostedIosProbe } from '../device-host/hosted-ios-status.ts';
@@ -621,23 +622,22 @@ test('iOS grants keep credentials in separate slot files and close only the sele
   expect(iosAgentRemoteConfig(root, 'default')).not.toBe(iosAgentRemoteConfig(root, 'tablet'));
   expect(iosAgentRemoteConfig(root, 'default')).not.toBe(agentRemoteConfig(root));
   const config = iosAgentRemoteConfig(root, 'tablet');
+  const session = hostedAgentSessionName(root, 'ios', 'tablet');
+  expect(session).toMatch(/^stim-tablet-ios-[0-9a-f]{8}$/);
   const calls: string[][] = [];
   setExecutor({
     ...getExecutor(),
     findExecutable: () => '/fake/agent-device',
     runFile: (_file, args = []) => {
       calls.push(args);
-      return JSON.stringify({
-        success: true,
-        data: { connected: true, remoteConfig: config, session: 'agent-tablet' },
-      });
+      return JSON.stringify({ success: true, data: { connected: true, remoteConfig: config, session } });
     },
   });
   await stopHostedIos(root, 'tablet');
   expect(calls).toEqual([
-    ['connection', 'status', '--json'],
-    ['close', '--remote-config', config, '--session', 'agent-tablet', '--json'],
-    ['disconnect', '--session', 'agent-tablet', '--json'],
+    ['connection', 'status', '--session', session, '--json'],
+    ['close', '--remote-config', config, '--session', session, '--json'],
+    ['disconnect', '--session', session, '--json'],
   ]);
   expect(existsSync(config)).toBe(false);
   expect(existsSync(iosAgentRemoteConfig(root, 'default'))).toBe(true);
@@ -1049,4 +1049,32 @@ test('hosted launch process checks stay pinned to the attempt and report unsuppo
   } finally {
     logs.stop();
   }
+});
+
+test('stop leaves a connection of the derived session name that another workspace config owns', async () => {
+  const config = iosAgentRemoteConfig(root, 'default');
+  mkdirSync(join(config, '..'), { recursive: true });
+  writeFileSync(config, '{}', { mode: 0o600 });
+  writeHostedIos(root, 'default', {
+    ...placement(),
+    agent: {
+      driver: 'agent-device',
+      remoteConfig: config,
+      command: `agent-device <command> --remote-config ${config}`,
+    },
+  });
+  const calls: string[][] = [];
+  setExecutor({
+    ...getExecutor(),
+    findExecutable: () => '/fake/agent-device',
+    runFile: (_file, args = []) => {
+      calls.push(args);
+      return JSON.stringify({
+        success: true,
+        data: { connected: true, remoteConfig: iosAgentRemoteConfig(join(root, 'other'), 'default'), session: 'x' },
+      });
+    },
+  });
+  await stopHostedIos(root);
+  expect(calls.map((args) => args[0])).toEqual(['connection']);
 });

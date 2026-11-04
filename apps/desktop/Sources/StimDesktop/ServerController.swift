@@ -110,6 +110,8 @@ final class ServerController: ObservableObject {
   @Published private(set) var pendingGrants: [String: Bool] = [:]
   @Published private(set) var settingUpConnection = false
   @Published private(set) var connectionError: String?
+  @Published private(set) var connectionRefusal: String?
+  var reconnect: (() -> Void)?
 
   private var environment: Task<[String: String], Never>?
   private var resolvedEnvironment: [String: String]?
@@ -174,6 +176,10 @@ final class ServerController: ObservableObject {
     return serverHome.map { !StimHome.adopts(serverHome: $0, resolved: resolvedHome) } ?? false
   }
 
+  static func portHeldReason(port: Int) -> String {
+    "Port \(port) is held by a program that does not answer as a stim-server, such as a stim-server too busy to reply. Stop it, or start Stim Desktop with -stimServerPort <port> to use another port."
+  }
+
   static func announcedLoopbackPort(_ line: OutputLine) -> Int? {
     let prefix = "listening on ws://127.0.0.1:"
     guard line.channel == .stdout, line.text.hasPrefix(prefix),
@@ -196,12 +202,15 @@ final class ServerController: ObservableObject {
     }
   }
 
-  /// Why the server is unusable, or nil while it starts, runs or waits for its Stim home.
-  var problem: String? {
+  /// Why the server is unusable, or nil while it starts, runs with an open connection or waits for its Stim home.
+  var problem: String? { Self.problem(state: state, connectionRefusal: connectionRefusal) }
+
+  static func problem(state: State, connectionRefusal: String?) -> String? {
     switch state {
     case .failed(let message): return message
     case .notReady(.degraded(let reason), _): return "Degraded: \(reason)"
-    case .off, .starting, .running, .notReady(.pending, _): return nil
+    case .running: return connectionRefusal
+    case .off, .starting, .notReady(.pending, _): return nil
     }
   }
 
@@ -215,14 +224,20 @@ final class ServerController: ObservableObject {
   }
 
   func retry() {
-    if case .failed = state { start() } else { refresh() }
+    if case .failed = state {
+      start()
+    } else if connectionRefusal != nil {
+      reconnect?()
+    } else {
+      refresh()
+    }
   }
 
-  private var wantsLoopbackOnly: Bool {
-    !PhoneApp.listensOnTailnet(
-      phoneApp: FeatureFlags.isEnabled(.phoneApp),
-      servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones))
+  func connectionRefused(_ message: String?) {
+    if connectionRefusal != message { connectionRefusal = message }
   }
+
+  private var wantsLoopbackOnly: Bool { !UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) }
 
   func configure(environment: Task<[String: String], Never>, settingsEnvironment: [String: String]) {
     self.environment = environment
@@ -282,7 +297,13 @@ final class ServerController: ObservableObject {
       await waitForExiting()
       guard current == generation else { return }
       var automaticPortRefusal: State?
-      if let probe = await StimServerCLI.health(port: port) {
+      let probe = await StimServerCLI.health(port: port)
+      if probe == nil, await StimServerCLI.portIsHeld(port) {
+        guard current == generation else { return }
+        state = .notReady(.degraded(Self.portHeldReason(port: port)), owned: false)
+        return
+      }
+      if let probe {
         guard current == generation else { return }
         if resolvedEnvironment == nil, let health = ServerAdoption.provisional(probe, provisionalHome: provisionalHome) {
           provisional = true
@@ -409,7 +430,7 @@ final class ServerController: ObservableObject {
     }
   }
 
-  /// Restarts the server Desktop started when the phone setting changes which addresses it should listen on. A
+  /// Restarts the server Desktop started when Allow connections changes which addresses it should listen on. A
   /// server Desktop did not start is never touched. A failed start is tried again, since the other mode may work.
   private func applyServingMode() {
     guard startedLoopbackOnly != wantsLoopbackOnly else { return }
@@ -450,7 +471,7 @@ final class ServerController: ObservableObject {
 
   func pairPhone(control: Bool) async throws -> PairingCode {
     guard UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) else {
-      throw ServerError(code: "not-connected", message: "Turn on Serve to phones to pair a phone.")
+      throw ServerError(code: "not-connected", message: "Turn on Allow connections to pair a phone.")
     }
     let cli = await cli()
     guard isRunning, case .ready(let before) = await StimServerCLI.health(port: port) else {
@@ -512,6 +533,12 @@ final class ServerController: ObservableObject {
         if !owned {
           missedProbes += 1
           guard missedProbes >= 2 else { return }
+          let held = probe == nil ? await StimServerCLI.portIsHeld(port) : false
+          guard current == generation, isResponding, !provisional else { return }
+          if held {
+            state = .notReady(.degraded(Self.portHeldReason(port: port)), owned: false)
+            return
+          }
           missedProbes = 0
           state = .off
           start()
@@ -572,16 +599,32 @@ final class ServerController: ObservableObject {
     control ? ["read", "control"] : ["read"]
   }
 
-  func revoke(_ device: PairedDevice) {
+  func revoke(_ devices: [PairedDevice]) {
     Task {
       let cli = await cli()
-      switch await Result.awaiting({ try await cli.revoke(device.id) }) {
-      case .success:
-        changeError = nil
-        devicesEpoch += 1
-        reloadDevices()
-      case .failure(let error): changeError = error.localizedDescription
+      changeError = nil
+      for device in devices {
+        if case .failure(let error) = await Result.awaiting({ try await cli.revoke(device.id) }), changeError == nil {
+          changeError = error.localizedDescription
+        }
       }
+      devicesEpoch += 1
+      reloadDevices()
+    }
+  }
+
+  func rename(_ devices: [PairedDevice], to name: String) {
+    Task {
+      let cli = await cli()
+      changeError = nil
+      for device in devices {
+        if case .failure(let error) = await Result.awaiting({ try await cli.rename(device.id, to: name) }) {
+          changeError = error.localizedDescription
+          break
+        }
+      }
+      devicesEpoch += 1
+      reloadDevices()
     }
   }
 

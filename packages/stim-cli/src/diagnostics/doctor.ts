@@ -172,7 +172,7 @@ export function checkOffloadCandidate(
       'note',
       'Builds could run on another machine',
       `Cold builds averaged ~${Math.round(average / 60_000)} min over ${cold.length} builds this week.`,
-      'In Stim Desktop, open Settings > Remote Machines > Add.',
+      'In Stim Desktop, open Settings > Connections > This machine uses > Add.',
     ),
   };
 }
@@ -1586,7 +1586,7 @@ export function checkFingerprintParity({
     'note',
     'This checkout does not fingerprint like a fresh worktree of HEAD',
     `A clean detached worktree of HEAD computes a different @expo/fingerprint hash than this checkout, so worktrees will MISS the cache entries this checkout fills (and vice versa) until the two agree.${differing} ${cause} (To measure this, doctor ran a real fingerprint twice and briefly created a temporary git worktree -- .git/worktrees metadata was touched and cleaned up.)`,
-    'Commit the dirty fingerprint inputs, or list the build-irrelevant ones in .fingerprintignore (same syntax as .gitignore, at the project root; Stim already ignores android/local.properties, android/.idea, *.xcodeproj/xcuserdata, and ios/main.jsbundle and ios/assets while a .gitignore pattern matches them). Only the ones that genuinely cannot change the native build belong there -- generated reports, local env files, a lockfile whose checksums embed absolute machine paths. Never ignore a real native input (a Podfile, a gradle file, the app config) to force a hit: that trades a slow build for a wrong one.',
+    'Commit the dirty fingerprint inputs, or list the build-irrelevant ones in .fingerprintignore (same syntax as .gitignore, at the project root; Stim already ignores android/local.properties, android/.idea, *.xcodeproj/xcuserdata, and ios/main.jsbundle and ios/assets while a .gitignore pattern matches them). Only the ones that genuinely cannot change the native build belong there -- generated reports, local env files, a lockfile that embeds absolute machine paths (the fingerprint already counts the ios/Podfile.lock checksum of a podspec that names the checkout path without that path). Never ignore a real native input (a Podfile, a gradle file, the app config) to force a hit: that trades a slow build for a wrong one.',
   );
 }
 

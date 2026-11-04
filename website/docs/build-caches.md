@@ -177,6 +177,19 @@ runs in the background at low priority. If it disagrees, Stim drops the record
 and prints a warning at the end of the run; run the command again to use the
 current tree.
 
+While `daemon.mode` is `on`, the daemon also records the fingerprint ahead of
+the run. When the git HEAD, the lockfile or the install stamp in `node_modules` of a workspace that is running, not
+idle and has an iOS or Android device recorded changes, the daemon computes the
+digest and, if no record has it, the full fingerprint in a low-priority child
+process, so the next `stim ios` or `stim android` finds the record. It starts
+at most two per minute tick, none while pressure is above normal or the host
+load exceeds 4 per core, and does not look at a tree again after a child ended, whatever its outcome,
+until one of those changes. A run still computes its own digest of the tree and
+reads the record only when the two match, so an edit made after the precompute,
+or an environment variable the config reads that has another value in your shell
+than in the daemon's, leaves the record unread and the run fingerprints in full.
+A `pod install` alone triggers nothing.
+
 A config that the digest cannot follow always gets a full fingerprint. That
 includes dynamic imports, `process.env` used other than by literal name, file,
 process or network access while the config is evaluated, and `dotenv`. Local
@@ -622,7 +635,8 @@ measures, plans and logs; with `off` no pass runs. It is `off` in CI unless
 home runs passes like any other.
 Disk and memory are read every minute for `stim status`, Stim-owned directory
 sizes every hour, finished worktrees every 15 minutes and the age sweep once a
-day. Pressure itself is the `stim-daemon`'s level and ladder (see
+day. Trims of the caches over their caps are planned with the size, worktree and
+sweep checks; the minute reading plans nothing. Pressure itself is the `stim-daemon`'s level and ladder (see
 [disk pressure](#disk-pressure)), which `daemon.mode` governs too.
 On macOS the memory signal is the sysctl pressure level, with no signal when
 sysctl fails. Only other platforms use `os.freemem()`. Manual
@@ -680,6 +694,13 @@ In `on` mode a pass works through these steps, cheapest to rebuild first:
 8. In the daily sweep, pressure ladder rung 6: idle Gradle and Kotlin daemons,
    unpinned Gradle versions unmodified for `maintenance.gradleVersionIdleDays`,
    Stim TMPDIR leftovers unmodified for 24 hours, and the worktree trash.
+9. In the daily sweep, what outlived the thing it describes, by the rules
+   `stim gc --delete` applies: status cache files of folders and worktrees that
+   are gone, process lock directories that hold no claim, expired device lease
+   files, and [archives](./settings.md#archive-retention) past their `archive.*`
+   limits. A lease whose workspace is pinned with `maintenance.keep` or in use
+   stays, and so does anything Stim cannot show stale; each keep is logged with
+   its reason. These run whatever `maintenance.olderThanDays` is.
 
 The daily sweep runs every `maintenance.sweepHours` (24) on a [stim-daemon](./settings.md#stim-daemon) tick, or, while no daemon holds the home, in `stim doctor`, `stim start`, `stim ios` or `stim android` (on Windows also in the background process other top-level commands start); never at a
 set hour. It waits while the one-minute load is above 4 per core.
@@ -775,6 +796,13 @@ In report mode actions and explaining skips are logged only when newly planned.
 In on mode every action taken, failure and explaining skip is logged with its
 size, and pass records carry the bytes freed. Removed worktrees and orphaned
 directories appear in the machine log only.
+A merged or ended worktree the worktree check keeps, and with
+`maintenance.removeIdleWorktrees` any other linked worktree it keeps, gets a
+`maintenance_skip` record with its path, the reason and a `code` (`locked`,
+`dirty`, `unpushed`, `in-use`, `submodules`, `last-use-unknown`,
+`recent-activity` for the grace window, and the other worktree skip codes),
+logged again when the code changes. `stim gc` lists every worktree's reason in
+its worktrees section.
 Every run that deletes or changes something also appends one record per item
 to the machine gc log, `$STIM_HOME/gc/gc.ndjson`: `stim gc --delete` with any
 flags, including the pressure ladder actions it runs, and each maintenance

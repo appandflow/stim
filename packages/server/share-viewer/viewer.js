@@ -29,6 +29,13 @@ let hasFrame = false;
 let away = false;
 let resuming = false;
 let noteTimer = null;
+let retryTimer = null;
+let probing = false;
+let reconnecting = false;
+let attempt = 0;
+let missingSince = null;
+let releaseInput = () => {};
+const PROBE_TIMEOUT_MS = 10000;
 
 function setStatus(state, text) {
   statusBox.dataset.state = state;
@@ -52,20 +59,26 @@ function timeLeft() {
 
 function refreshStatus() {
   if (finished) return;
-  if (away) setStatus('waiting', 'Waiting for the device');
+  if (reconnecting)
+    setStatus('waiting', missingSince === null ? 'Reconnecting...' : 'Share not found. Trying again...');
+  else if (away) setStatus('waiting', 'Waiting for the device');
   else setStatus(live ? 'live' : 'waiting', live ? 'Live' : 'Waiting');
-  leftText.textContent = timeLeft();
+  leftText.textContent = reconnecting ? '' : timeLeft();
 }
 setInterval(() => {
-  if (!finished) leftText.textContent = timeLeft();
+  if (!finished && !reconnecting) leftText.textContent = timeLeft();
 }, 1000);
 
 function finish(text) {
   finished = true;
+  reconnecting = false;
+  clearTimeout(retryTimer);
+  delete body.dataset.reconnecting;
   live = false;
   away = false;
   resuming = false;
   delete body.dataset.away;
+  document.getElementById('upgrade').hidden = true;
   setStatus('ended', text);
   leftText.textContent = '';
 }
@@ -176,10 +189,33 @@ function askForKeyframe() {
   send({ type: 'keyframe' });
 }
 
+let undrawn = null;
+let drawScheduled = 0;
+
 function closeDecoder() {
   if (decoder && decoder.state !== 'closed') decoder.close();
   decoder = null;
   decoderKey = '';
+  dropUndrawn();
+}
+
+function dropUndrawn() {
+  undrawn?.close();
+  undrawn = null;
+}
+
+function drawUndrawn() {
+  drawScheduled = 0;
+  const frame = undrawn;
+  undrawn = null;
+  if (!frame) return;
+  renderFrame(frame, frame.displayWidth, frame.displayHeight);
+  rtc.drawn(frame.timestamp / 1000);
+  frame.close();
+  if (!live && !finished) {
+    live = true;
+    refreshStatus();
+  }
 }
 
 /** A decoder that never produced a frame means this browser cannot play the stream; a later failure gets a keyframe. */
@@ -244,13 +280,9 @@ function configure(sps, pps) {
   decoder = new VideoDecoder({
     output: (frame) => {
       decoded = true;
-      renderFrame(frame, frame.displayWidth, frame.displayHeight);
-      rtc.drawn(frame.timestamp / 1000);
-      frame.close();
-      if (!live && !finished) {
-        live = true;
-        refreshStatus();
-      }
+      undrawn?.close();
+      undrawn = frame;
+      drawScheduled ||= requestAnimationFrame(drawUndrawn);
     },
     error: decoderFailed,
   });
@@ -582,9 +614,12 @@ nameEdit.addEventListener('submit', (event) => {
 });
 
 const socketUrl = location.href
-  .replace(/#.*$/, '')
+  .replace(/[?#].*$/, '')
   .replace(/^http/, 'ws')
   .replace(/\/[^/]*$/, '/ws');
+const pageId = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+  byte.toString(16).padStart(2, '0'),
+).join('');
 let socket = null;
 let kickClipboard = () => {};
 let pending = Promise.resolve();
@@ -603,9 +638,11 @@ function connect(codec) {
   renderRoster();
   const viaRtc = codec === 'h264' && rtc.wanted && !rtcFailed;
   const current = new WebSocket(
-    socketUrl + (codec === 'h264' ? '?codec=h264' + (viaRtc ? '&transport=webrtc' : '') : ''),
+    `${socketUrl}?id=${pageId}${codec === 'h264' ? '&codec=h264' : ''}${viaRtc ? '&transport=webrtc' : ''}`,
   );
+  const previous = socket;
   socket = current;
+  if (previous && previous.readyState <= WebSocket.OPEN) previous.close();
   body.dataset.codec = codec;
   body.dataset.transport = viaRtc ? 'webrtc' : 'ws';
   resetSequence();
@@ -633,6 +670,11 @@ function connect(codec) {
     }
     const message = JSON.parse(event.data);
     if (message.type === 'hello') {
+      reconnecting = false;
+      attempt = 0;
+      missingSince = null;
+      clearTimeout(retryTimer);
+      delete body.dataset.reconnecting;
       if (typeof message.title === 'string') document.title = message.title;
       expiresAt = Date.parse(message.expiresAt);
       refreshStatus();
@@ -653,12 +695,14 @@ function connect(codec) {
       refreshStatus();
     } else if (message.type === 'waiting') {
       rtc.stop();
+      dropUndrawn();
       away = true;
       resuming = false;
       live = false;
       body.dataset.away = 'true';
       refreshStatus();
     } else if (message.type === 'resumed') {
+      dropUndrawn();
       resuming = true;
       live = false;
       waitingForKeyframe = true;
@@ -680,8 +724,7 @@ function connect(codec) {
   });
   current.addEventListener('close', () => {
     if (finished || current !== socket) return;
-    finish('Disconnected');
-    showNote('Disconnected. Reload to reconnect.');
+    lostConnection();
   });
 }
 
@@ -708,6 +751,79 @@ function startRtc() {
     .catch((error) => rtc.failed(String(error)));
 }
 
+function retryIn(delay) {
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(probe, delay);
+}
+
+function lostConnection() {
+  live = false;
+  away = false;
+  resuming = false;
+  waitingForKeyframe = true;
+  delete body.dataset.away;
+  reconnecting = true;
+  body.dataset.reconnecting = 'true';
+  for (const waiting of copies.values()) waiting.reject(new Error('The connection was lost.'));
+  copies.clear();
+  releaseInput();
+  overlay.clear();
+  refreshStatus();
+  retryIn(globalThis.stimReconnect.reconnectDelay(attempt++));
+}
+
+async function probe() {
+  clearTimeout(retryTimer);
+  if (probing || finished) return;
+  probing = true;
+  let verdict = 'retry';
+  const abort = new AbortController();
+  const giveUp = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(location.href.replace(/[?#].*$/, ''), {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      signal: abort.signal,
+    });
+    verdict = globalThis.stimReconnect.probeVerdict(response.status, await response.text());
+  } catch {
+    verdict = 'retry';
+  }
+  clearTimeout(giveUp);
+  probing = false;
+  if (finished) return;
+  if (verdict === 'viewer') {
+    missingSince = null;
+    return connect(body.dataset.codec);
+  }
+  if (verdict === 'login') return location.reload();
+  if (verdict === 'missing') {
+    missingSince ??= Date.now();
+    if (Date.now() - missingSince > globalThis.stimReconnect.MISSING_GIVE_UP_MS) {
+      return finish('This share has ended.');
+    }
+    refreshStatus();
+    return retryIn(globalThis.stimReconnect.MISSING_RETRY_MS);
+  }
+  missingSince = null;
+  refreshStatus();
+  retryIn(globalThis.stimReconnect.reconnectDelay(attempt++));
+}
+
+function retryNow() {
+  if (finished || probing) return;
+  if (!reconnecting) {
+    if (socket && socket.readyState === WebSocket.CLOSED) lostConnection();
+    return;
+  }
+  attempt = 0;
+  retryIn(0);
+}
+window.addEventListener('online', retryNow);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') retryNow();
+});
+
 /** Moves this viewer to JPEG once its own socket has closed, so the replacement never counts twice against the cap. */
 function useJpeg() {
   closeDecoder();
@@ -724,6 +840,10 @@ const send = (message) => {
   socket.send(JSON.stringify(message));
   return true;
 };
+
+for (const surface of [device, document.getElementById('toolbar')]) {
+  surface.addEventListener('contextmenu', (event) => event.preventDefault());
+}
 
 void canDecodeVideo().then((supported) => connect(supported ? 'h264' : 'jpeg'));
 
@@ -1074,8 +1194,8 @@ if (control) {
       y: Math.min(1, Math.max(0, (event.clientY - box.top) / box.height)),
     };
   };
-  const mirror = createMirroredGesture();
-  const touches = createTouchTracker();
+  let mirror = createMirroredGesture();
+  let touches = createTouchTracker();
   const markers = [0, 1].map(() => {
     const marker = document.createElement('div');
     const style = marker.style;
@@ -1100,16 +1220,25 @@ if (control) {
       marker.style.top = 100 * pair[index].y + '%';
     });
   };
+  let queuedMove = null;
+  let touching = false;
   const sendTouch = (message) => {
+    if (message.phase !== 'move') queuedMove = null;
+    if (message.phase === 'down') {
+      if (!live) return;
+      touching = true;
+    } else if (!touching || (message.phase === 'move' && !live)) return;
     if (message.phase === 'down') busy = false;
     if (!busy || message.phase === 'down') send(message);
     if (me) {
       const second = message.x2 === undefined ? null : { x: message.x2, y: message.y2 };
       overlay.own(me, message.phase, message.x, message.y, busy, second);
     }
-    if (message.phase === 'up') busy = false;
+    if (message.phase === 'up') {
+      busy = false;
+      touching = false;
+    }
   };
-  let queuedMove = null;
   let frame = 0;
   const flushMove = () => {
     frame = 0;
@@ -1118,11 +1247,10 @@ if (control) {
   };
   const emit = (messages) => {
     for (const message of messages) {
-      if (message.phase === 'move' && message.x2 !== undefined) {
+      if (message.phase === 'move') {
         queuedMove = message;
         frame ||= requestAnimationFrame(flushMove);
       } else {
-        queuedMove = null;
         sendTouch(message);
       }
     }
@@ -1132,11 +1260,22 @@ if (control) {
     clearTimeout(settle);
     if (touches.pending) settle = setTimeout(() => emit(touches.settle()), TOUCH_SETTLE_MS);
   };
+  releaseInput = () => {
+    down = false;
+    touching = false;
+    busy = false;
+    queuedMove = null;
+    clearTimeout(settle);
+    mirror = createMirroredGesture();
+    touches = createTouchTracker();
+    drawMarkers();
+  };
   screen.tabIndex = 0;
   screen.addEventListener('pointerdown', (event) => {
     screen.focus();
     screen.setPointerCapture(event.pointerId);
     event.preventDefault();
+    if (!live) return;
     if (event.pointerType === 'touch') {
       emit(touches.down(event.pointerId, at(event)));
       touched();
@@ -1149,6 +1288,7 @@ if (control) {
     }
   });
   screen.addEventListener('pointermove', (event) => {
+    if (!live) return;
     if (event.pointerType === 'touch') {
       emit(touches.move(event.pointerId, at(event)));
       touched();
@@ -1157,7 +1297,7 @@ if (control) {
     if (mirror.active) {
       emit(mirror.move(at(event), event.shiftKey, event.altKey));
       if (!event.altKey) emit(mirror.release());
-    } else if (down) sendTouch({ type: 'touch', phase: 'move', ...at(event) });
+    } else if (down) emit([{ type: 'touch', phase: 'move', ...at(event) }]);
     else if (event.altKey) mirror.hover(at(event), event.shiftKey);
     else emit(mirror.release());
     drawMarkers();
@@ -1198,20 +1338,12 @@ if (control) {
     if (request && request.message) send(request.message);
     else if (request) showNote(request.note);
   });
-  const keys = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Escape: 'escape' };
-  const typed = { Enter: '\n', Tab: '\t', Backspace: '\b' };
+  const apple = /Mac|iPhone|iPad/.test(navigator.userAgent);
   screen.addEventListener('keydown', (event) => {
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-    const key = keys[event.key];
-    if (key && !event.shiftKey) {
-      send({ type: 'key', key });
-      event.preventDefault();
-      return;
-    }
-    const text =
-      typed[event.key] ?? (event.key.length === 1 && event.key >= ' ' && event.key <= '~' ? event.key : null);
-    if (text === null) return;
-    send({ type: 'text', text });
+    if (!live) return;
+    const message = globalThis.stimKeys.keyMessage(event, apple);
+    if (!message) return;
+    send(message);
     event.preventDefault();
   });
 }

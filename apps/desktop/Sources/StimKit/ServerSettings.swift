@@ -13,10 +13,7 @@ public struct ServerSettingWrite: Sendable {
   stimHome: String, diagnostics: Diagnostics = .shared, connection: (client: ServerClient, home: String)?
 ) async throws -> ServerSettingWrite {
   try Task.checkCancellation()
-  guard let client = readCapableServer(connection, stimHome: stimHome), client.hasDesktopAuthority else {
-    throw ServerError(
-      code: "not-connected", message: "The bundled local stim-server is not ready to change settings for this Stim home.")
-  }
+  let client = try desktopActionServer(connection, stimHome: stimHome, action: "change settings for this Stim home")
   guard case .open(let hello) = client.state, hello.features?.contains("desktop-settings-write") == true else {
     throw ServerError(code: "unsupported", message: "Update the bundled stim-server to change settings from Desktop.")
   }

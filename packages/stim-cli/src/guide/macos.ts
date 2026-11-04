@@ -219,8 +219,14 @@ actions are no longer returned, and a failed open is not shown.
 OWNERSHIP AND LOCAL VIEWING
 
 The supervisor owns a process-identity claim with the app as its child. Stop
-signals only verified recorded identities. An unverifiable or malformed owner
-refuses with STIM_MACOS_OWNER_UNVERIFIED; other apps remain untouched.
+signals only verified recorded identities. That includes the commands the app
+started that are still running, even mid-operation: they get SIGTERM, then
+SIGKILL, as the app does. They are its direct children and the helpers in their
+process groups, such as a Desktop test copy's stim-server and its adb client; a
+daemon in a group of its own, such as the shared adb server, is left alone. A
+process whose identity cannot be read is skipped with a warning. An unverifiable
+or malformed owner refuses with STIM_MACOS_OWNER_UNVERIFIED; other apps remain
+untouched.
 
 Stim Desktop shows this app in its workspace, with Build and run, Open app (local
 apps only) and Stop, and a live preview that updates itself while the app runs. Capture and Open app verify the recorded executable, bundle
@@ -483,7 +489,7 @@ script such as mini-desktop.sh use these instead:
   rclick                     unavailable: secondary click is not supported
   quit                       stim stop (verified stop; the host frees the slot
                              and removes the app's defaults)
-  clean                      stim worktree remove
+  clean                      stim worktree remove, run from the worktree root
   3 concurrent slots         concurrency.maxMacosApps and concurrency.maxDevices
                              on the host, counted apart from simulators and
                              emulators; one bundle id slot per session

@@ -50,8 +50,8 @@ test('pruning removes empty lock directories left by earlier versions and spares
   mkdirSync(join(locks, 'worktrees', 'b'.repeat(64)), { recursive: true });
   const root = join(home, 'project');
   await withManagedTunnelLock(root, async () => {
-    expect(pruneEmptyProcessLockDirs()).toBe(2);
+    expect(await pruneEmptyProcessLockDirs()).toBe(2);
     expect(lockEntries()).toHaveLength(2);
   });
-  expect(pruneEmptyProcessLockDirs()).toBe(0);
+  expect(await pruneEmptyProcessLockDirs()).toBe(0);
 });

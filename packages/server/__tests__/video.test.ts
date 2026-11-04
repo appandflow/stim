@@ -18,6 +18,18 @@ describe('Bitrate', () => {
     expect(value).toBe(1_500_000);
     expect(bitrate.tick(now + limits.recoverMs)).toBeNull();
   });
+
+  it('stops rising at a ceiling, drops to it at once, and rises again when it is lifted', () => {
+    const bitrate = new Bitrate(limits, 0);
+    bitrate.limit(1_100_000);
+    expect(bitrate.current).toBe(1_000_000);
+    expect(bitrate.tick(limits.recoverMs)).toBe(1_100_000);
+    expect(bitrate.tick(2 * limits.recoverMs)).toBeNull();
+    bitrate.limit(600_000);
+    expect(bitrate.current).toBe(600_000);
+    bitrate.limit(Infinity);
+    expect(bitrate.tick(3 * limits.recoverMs)).toBe(750_000);
+  });
 });
 
 const key = { keyframe: true };

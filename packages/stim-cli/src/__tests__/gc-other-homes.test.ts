@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -48,6 +49,11 @@ describe('the other Stim homes of gc', () => {
     return home;
   }
 
+  function addWorkspace(home: string, name: string, projectRoot: string) {
+    mkdirSync(join(home, 'workspaces', name), { recursive: true });
+    writeFileSync(join(home, 'workspaces', name, 'workspace.json'), JSON.stringify({ projectRoot }));
+  }
+
   const collect = (listing: { sims: IosSimRecord[] | null; avds: string[] | null }) =>
     collectOtherHomes(own, listing, mounted, { homesRoot });
 
@@ -84,6 +90,43 @@ describe('the other Stim homes of gc', () => {
     expect(text).toContain('3.0G private');
     expect(text).toContain('1 workspace');
     expect(text).toContain('last seen 3h ago');
+  });
+
+  test('a project inside a linked worktree is torn down from the worktree root, and a source checkout keeps the project folder', async () => {
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync(
+        'git',
+        ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args],
+        {
+          stdio: 'ignore',
+        },
+      );
+    const repo = join(dir, 'repo');
+    mkdirSync(join(repo, 'apps', 'mobile'), { recursive: true });
+    mkdirSync(join(repo, 'apps', 'web'), { recursive: true });
+    writeFileSync(join(repo, 'apps', 'mobile', 'a.txt'), 'a');
+    writeFileSync(join(repo, 'apps', 'web', 'b.txt'), 'b');
+    git(repo, 'init', '-q');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'init');
+    const tree = join(dir, 'tree');
+    git(repo, 'worktree', 'add', '-q', '-b', 'feature', tree);
+
+    const linked = scratchHome('linked', { workspaceRoot: join(tree, 'apps', 'mobile') });
+    addWorkspace(linked, 'ws2', join(tree, 'apps', 'web'));
+    const source = scratchHome('source', { workspaceRoot: join(repo, 'apps', 'mobile') });
+
+    const { homes } = await collect({ sims: [], avds: [] });
+    const teardown = (path: string) => homes.find((home) => home.path === path)?.teardown;
+
+    expect(teardown(linked)).toEqual([
+      `cd '${tree}' && STIM_HOME='${linked}' stim worktree remove`,
+      `STIM_HOME='${linked}' stim gc --delete`,
+      `rm -rf '${linked}'`,
+    ]);
+    expect(teardown(source)?.[0]).toBe(
+      `cd '${join(repo, 'apps', 'mobile')}' && STIM_HOME='${source}' stim worktree remove`,
+    );
   });
 
   test('never lists this home or a home that is not in the list', async () => {

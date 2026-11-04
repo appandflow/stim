@@ -29,21 +29,25 @@ stim share ios --no-password    # no login: the link alone opens it
 stim share ios --slug pokedex   # a readable link, /s/pokedex/
 stim share android --control --view-password  # a second, watch-only password
 stim share list                 # shares, live or waiting
-stim share stop                 # end this workspace's shares now`}
+stim share stop                 # end this workspace's shares now
+stim share ios --reuse          # start the stopped share again, same link and password
+stim share stop --forget        # stop, and forget the saved links`}
 />
 
-It prints the link and a generated password once:
+It prints the link and a generated password:
 
 ```text
 Shared ios of /Users/me/app: view only, 0 viewers, expires 2026-11-02T19:12:00.000Z.
 URL:      https://my-mac.tail1234.ts.net:10000/s/q3V...Yw/
 Password: k7mfx2rbq9tnh4ze
-Anyone with both can open it from the internet until it expires. The password is shown only now.
-Stop it with: stim share stop
+Anyone with both can open it from the internet until it expires. The password is shown now and saved for --reuse.
+Stop it with: stim share stop (add --forget to make the link unusable)
 ```
 
-Send the link and the password over different channels. Neither is stored, so
-a lost password means a new share. A password you set with `--password` is
+Send the link and the password over different channels. Stim saves the link and
+the passwords on this machine so that [`--reuse`](#start-a-stopped-share-again)
+can start the same share again, so a lost generated password is printed again
+by `--reuse`, not lost. A password you set with `--password` is
 never printed back; note that a value on the command line can land in your
 shell history and in `ps` output while the command runs, so the generated one
 is safer. With `--no-password` there is no login: anyone with the link can
@@ -92,8 +96,8 @@ Shared android of /Users/me/app: view and control, view password, 0 viewers, exp
 URL:              https://my-mac.tail1234.ts.net:10000/s/q3V...Yw/
 Control password: k7mfx2rbq9tnh4ze
 View password:    p2xqd8hs5nw3cvje
-Anyone with the link and a password can open it from the internet until it expires. Generated passwords are shown only now.
-Stop it with: stim share stop
+Anyone with the link and a password can open it from the internet until it expires. Generated passwords are shown now and saved for --reuse.
+Stop it with: stim share stop (add --forget to make the link unusable)
 ```
 
 Give `--view-password` a value (8 to 128 characters) to choose it, or leave the
@@ -138,7 +142,8 @@ Without a name a viewer is "Guest 1", "Guest 2" and so on. Host, Agent and
 Guest N belong to the server, so a viewer that chooses one of them is shown as
 its own Guest N. A viewer sees only the people of its own share, even when two
 share links point at the same device; every share also shows the agent's
-actions and the host's touches. Names are kept only
+actions, whether it drives the device with `stim agent-device` or, on an owned
+simulator or emulator, with agent-device directly, and the host's touches. Names are kept only
 in stim-server's memory while the share lives. A row of colored initials in the
 top bar lists who is here; an eye marks the view-only ones. Click it to open a
 People list with each person's role (controlling, can control or view only), the
@@ -158,14 +163,23 @@ needs a `snapshot` of that session first.
 A watch-only share has no button groups. The page fits the window without
 scrolling. With `--control`, click the screen to tap and type with the keyboard. While the screen has focus,
 the arrow keys and Escape go to the device as well (the D-pad keys and Escape
-on Android, the hardware arrow and Escape keys on iOS).
+on Android, the hardware arrow and Escape keys on iOS). On an iOS simulator or an
+Android emulator whose stim-server advertises `device-keyboard`, Shift with an arrow
+and shortcuts go to the device too: Command on a Mac (Control on Windows and Linux)
+is the shortcut key, and Option and, on a Mac, Control go with it, as in Command-A,
+Command-Z and Option-Left. On Android, Command acts as Control. Command-V keeps
+pasting your clipboard. While the screen has focus the page keeps these shortcuts
+from the browser, such as Command-R and Command-L; click outside the screen to use
+them. Keys do not reach the device while the focus is in a field of the page, such as the password or rename boxes.
 
 With `--control` on an iOS simulator, an Android emulator or an Android phone,
 Command-V (Control-V on Windows and Linux) while the screen has focus pastes the
 text on your browser's clipboard into the focused field on the device. On an iOS
 simulator, printable ASCII, line breaks and tabs are typed into the field (about 35
 characters a second, with the field's own smart quotes and dashes), so no paste prompt
-appears; other text is pasted with Command-V, and the page says to tap the paste
+appears; other text is pasted with Command-V, which lands without a prompt in an
+app Stim installed on an owned simulator (Stim allows its paste permission) and
+can show an iOS prompt in any other app, where the page says to tap the paste
 suggestion on the device. The options menu in the top bar has a "Sync clipboard" switch, on by default and
 remembered by your browser. While the page is focused it copies new text from
 the device to your browser's clipboard (a "Copy from device" chip appears when
@@ -181,8 +195,8 @@ goes to the device the same way as Command-V. "Copy from device" fetches the dev
 clipboard and writes it to your clipboard inside the same tap; when the browser still
 refuses, the text appears in a field to select and copy by hand. On desktop the menu's
 "Copy from device" button copies once. Sending your copied text to the device counts as input and starts the share's
-control session like a paste. Syncing from the device starts after
-someone has tapped, typed or pasted, and does not keep an idle share's control
+control session like a paste. Syncing from the device starts once
+a viewer that can control has connected, and does not keep an idle share's control
 session alive. Everyone who controls the share with sync on shares the device
 clipboard, so text one of them copies reaches the others. Text only, up to 8 KiB
 sent to the device. A web page and a native macOS app have no clipboard action, and a share
@@ -203,10 +217,11 @@ A browser that can decode H.264 with WebCodecs (Chrome and Edge, Safari 16.4
 and later on macOS and iOS, Firefox 130 and later on desktop) gets the screen
 as H.264 video at up to 60 frames per second, 1280 pixels on the long edge, at
 3 to 8 Mbit/s: the bitrate drops while a viewer falls behind and climbs back
-once it catches up. Other browsers, and a browser whose decoder fails on the
-stream, get JPEG at 10 frames per second. A viewer that falls behind skips to
-the next keyframe instead of building up delay, and a viewer that joins gets a
-keyframe right away. Add `#jpeg` to the link to force JPEG.
+once it catches up. A hosted session's video climbs to 4.5 Mbit/s at most.
+Other browsers, and a browser whose decoder fails on the stream, get JPEG at 10
+frames per second. A viewer that falls behind skips to the next keyframe
+instead of building up delay, and a viewer that joins gets a keyframe right
+away. Add `#jpeg` to the link to force JPEG.
 
 Measured on a local iOS simulator share of a full-screen animation, in Chrome
 through Funnel on the same Mac:
@@ -218,6 +233,58 @@ through Funnel on the same Mac:
 
 A video viewer that joins while capture already runs sees its first frame in
 about 50 ms; when it starts capture, the first frame takes several seconds.
+
+## Start a stopped share again
+
+`stim share stop` ends a share: its link stops working at once. Stim saves the
+link and the passwords of every share that `stim share ios|android` starts, so
+a share you stopped can come back with the same link and the same passwords
+until it expires (a share that stim-server's restart ended comes back by itself,
+see below):
+
+<StimTabs
+code={`stim share android --control --expires 120   # first start
+stim share stop                              # the link stops working
+stim share android --reuse                   # the same link and passwords, same expiry
+stim share android --reuse --expires 60      # the same link, ending 60 minutes from now
+stim share stop --forget                     # stop, and make the saved links unusable`}
+/>
+
+- `--reuse` takes the target from `ios|android`, `--device` and `--slot` as
+  usual and starts that target's saved link. Whether it has control, whether it
+  has a view-only password and which passwords it uses all come from the saved
+  share, so `--control`, `--password`, `--no-password` and `--view-password`
+  with `--reuse` fail with `STIM_BAD_ARG`. A generated password is printed again; a password you
+  set is not.
+- The expiry stays what it was: a share restarted with 10 minutes left still ends
+  in 10 minutes. `--expires <minutes>` replaces it with that many minutes from now
+  (1 to 480), so it can extend or shorten it, and the saved expiry follows.
+  A share that expired cannot be reused.
+- With no saved link for the target (no share was started for it, it expired, or
+  it was forgotten) `--reuse` fails with `STIM_SHARE_NOTHING_TO_REUSE` and starts
+  nothing. It never falls back to a new share, so it never prints a link nobody
+  has. A link that is live or waiting now is refused.
+- `--json` prints the usual payload plus `reused: true`, with `password` and
+  `viewPassword` when they were generated. The link keeps its token; its address
+  is the one the listener has now, and Stim says so when that differs from the
+  saved one.
+- `stim share stop` keeps the saved links and says so, with the platform and
+  expiry (`reusable` in `--json`, never a secret). `stim share stop --forget`
+  also deletes them, also when no stim-server runs.
+
+The saved links live in `share-links.json` in the workspace's directory under
+`$STIM_HOME/workspaces/`, readable only by you (mode 0600), written when a share
+starts and removed with the workspace (`stim worktree remove`), by `--forget`, and
+when `stim share` starts a share, reuses one or stops and finds them expired. They hold the link's 256-bit token
+and the passwords in clear, so anyone who can read your Stim home can start the
+share again until it expires. Each saved link also records whether its share is
+running or was stopped on purpose. A stim-server restart or crash does not change
+that: when a stim-server starts (the full server, not the one `stim share` starts for
+a single share), it starts every saved share that is still running and has not
+expired again, retrying for about two minutes while Tailscale is not up yet, with the same link, passwords and expiry, without `--reuse`; one
+whose device is not there yet waits for it like any waiting share. Stopping a share,
+including with Stim Desktop's Stop, marks it stopped so it does not come back.
+A share started from Stim Desktop is not saved, so it does not come back.
 
 ## When the device goes away
 
@@ -235,11 +302,22 @@ not end. It **waits**:
   viewer can sign in and open the page while it waits.
 - When the slot's device is back (a booted simulator or running emulator, or a
   ready hosted session) the share **resumes** on the same page: frames return
-  with no reload and no new password, and control starts again on the next
-  tap. If the slot now runs another simulator or emulator, for example after
+  with no reload and no new password, and control starts again for the viewers
+  that can control. If the slot now runs another simulator or emulator, for example after
   `--device` picked another model, the share resumes on that one. After a
   failed stream the share tries again every few seconds, waiting longer after
   each failure, up to 30 seconds.
+
+A viewer whose own connection drops, because stim-server restarted or updated,
+the network changed or a phone slept, rejoins without a reload. The page keeps
+the dimmed last frame and says "Reconnecting...", retries after a second and
+then every few seconds (up to 15), and tries at once when the browser is back
+online or the page is shown again. If the server no longer knows the sign-in,
+for example after a restart, the page shows the login for the same link. If the
+link is not found, it keeps checking every 30 seconds for 10 minutes, so a
+share that comes back under the same link is joined again. When stim-server
+itself stops, viewers are not told the share ended; their pages reconnect the
+same way. "This share has ended." from a stop or an expiry is final.
 
 `stim share list` shows `waiting for the device` on such a share, and `--json`
 gives each share a `state` of `live` or `waiting`. A waiting share still counts
@@ -264,7 +342,9 @@ Only an explicit stop ends a share before its expiry: `stim share stop`,
   (`$STIM_HOME/server/share-server.log`) on stderr. That server stops on its
   own when its last share ends, or after 2 minutes without one, and removes its
   Funnel route first, and stays up retrying while that removal fails;
-  `stim share stop` also stops it. If the Stim home does not answer when it
+  `stim share stop` also stops it, unless a share start is still in flight
+  (another workspace's may wait for its devices), which it leaves running and
+  says so. If the Stim home does not answer when it
   starts, it exits at once and `stim share` reports its log. A server Stim Desktop or
   the background service runs is never stopped. Without a matching
   `@stim-cli/server`, `stim share` refuses with `STIM_SERVER_NOT_RUNNING` and
@@ -308,13 +388,25 @@ Run `stim share stop`, or let the share expire, and a workspace with no
 activity for `idle.minutes` goes idle on the daemon's next tick. When
 stim-server cannot list its shares, Stim keeps the workspace running.
 
+Starting a share, and starting a saved share again when `stim-server` restarts,
+holds the workspace's `native-run.lock` while Stim reads the device and registers
+the share. An automatic shutdown or device deletion therefore runs before or
+after the start, never in between. The start waits up to 30 seconds for a
+`stim ios`, `stim android` or `stim stop` run or an automatic shutdown that holds
+the claim, then fails with `STIM_SHARE_REFUSED` naming it; run `stim share` again
+once it ends. A saved share retries on its own for as long as its saved entry is live.
+`stim stop` and `stim ios` wait for a start to finish, including opening the
+share's route.
+
 ## Options
 
 | Option                | Meaning                                                                                                                                  |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `ios` / `android`     | Which of the workspace's devices to share.                                                                                               |
 | `--control`           | Let viewers tap, type, rotate and press Home, Lock, Back or Apps.                                                                        |
-| `--expires <minutes>` | Minutes until the share ends, 1 to 480 (default 60). No "never".                                                                         |
+| `--expires <minutes>` | Minutes until the share ends, 1 to 480 (default 60; with `--reuse`, the saved expiry). No "never".                                       |
+| `--reuse`             | Start this target's saved link and passwords again, until it expires.                                                                    |
+| `--forget`            | With `stop`, delete the workspace's saved links.                                                                                         |
 | `--password <value>`  | Use this password, 8 to 128 characters, instead of a generated one.                                                                      |
 | `--no-password`       | No login: anyone with the link can open the share.                                                                                       |
 | `--view-password [v]` | With `--control`, a second password that only watches (generated without a value).                                                       |
@@ -327,7 +419,7 @@ stim-server cannot list its shares, Stim keeps the workspace running.
 control, whether one waits for its device, viewer count and expiry, never their
 link or password.
 `stim share stop` ends every share of the current workspace. To end one share,
-use **Stop** on its row in Stim Desktop's Settings > Web Shares.
+use **Stop** on its row in Stim Desktop's Settings > Connections > Using this machine > Share links.
 
 Stim Desktop makes, lists and stops shares too: see [Stim Desktop](./desktop.md).
 
@@ -496,14 +588,22 @@ reload.
   connects and stops about 10 seconds after the last one leaves. An idle share
   costs only its listener and route. A share never records anything to disk.
 - **Control is the existing control path.** Input goes through the same
-  control session and device lease Stim Desktop and the phone app use, limited
-  to taps, two-finger gestures, text, the arrow keys and Escape, pasting and syncing the clipboard with your browser, rotation and the hardware buttons of the shared device. A device an
+  control session and device lease Stim Desktop and the phone app use. A viewer
+  that can control starts the session, and so takes the device lease, when it
+  connects; it ends after 5 minutes without input or when the last viewer leaves. Input is limited
+  to taps, two-finger gestures, text, the arrow keys, Escape and keyboard shortcuts, pasting and syncing the clipboard with your browser, rotation and the hardware buttons of the shared device. A device an
   agent or another client is driving answers busy; a share never takes it over.
+- **Saved link.** A share lives in stim-server's memory, but `stim share` also
+  writes its URL token and passwords to `share-links.json` in the workspace's
+  Stim state, mode 0600, for `--reuse`: see [Start a stopped share
+  again](#start-a-stopped-share-again). `stim share stop` therefore pauses a link
+  until it expires; `stim share stop --forget` makes it unusable. Nothing about a
+  waiting share is saved beyond that.
 - **Ephemeral.** Shares live only in stim-server's memory. A share ends at its
   expiry, on `stim share stop`, `stim stop` (the workspace, or one slot with
-  `--slot`), `stim worktree remove`, Stop in Stim Desktop, and when stim-server
-  stops or restarts. A device that goes away does not end it: the share waits
-  and keeps its link, passwords and signed-in browsers, and nothing about it is
+  `--slot`), `stim worktree remove`, Stop in Stim Desktop, and while stim-server
+  is stopped; the next stim-server starts the saved, unexpired ones again. A device that goes away does not end it: the share waits
+  and keeps its link, passwords and signed-in browsers; waiting itself is not
   written to disk.
   Ending closes its viewers' connections. The last share removes the Funnel
   route first and only then closes the listener; the listener a background

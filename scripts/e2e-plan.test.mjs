@@ -2,12 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { planSuites } from './e2e-plan.mjs';
 
 describe('native e2e plan', () => {
-  it('runs the smoke on iOS and Linux Android, not Windows, for a push to main', () => {
-    expect(planSuites({ eventName: 'push', labels: [] })).toEqual({
+  it('plans the smoke suite on every platform for a dispatch, which the Full suite uses before a release', () => {
+    expect(planSuites({ eventName: 'workflow_dispatch', labels: [], suite: 'smoke' })).toEqual({
       ios: ['smoke'],
       android: ['smoke'],
-      windows: [],
+      windows: ['smoke'],
     });
+  });
+
+  it('refuses a push, which no longer starts native suites', () => {
+    expect(() => planSuites({ eventName: 'push', labels: [] })).toThrow(/unsupported event/);
   });
 
   it('runs the nightly loop on every platform', () => {

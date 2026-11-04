@@ -208,20 +208,7 @@ export async function memoizedFingerprint(
   const full = (): Promise<ProjectFingerprint | null> => fingerprint(projectRoot, target);
   const skip = (reason: string): void => debugLog.log('fingerprint_memo_skip', { platform: target.platform, reason });
   if (!operation || !(consult || record)) return { fingerprint: await full(), memoHit: false, check: null };
-  const digestNow = async (): Promise<{ digest: string; nativePackages: string[] } | null> => {
-    try {
-      const result = await staticDigest(projectRoot, target, { env: operation.env, signal: operation.signal });
-      if (result.uncertain !== null) {
-        skip(result.uncertain);
-        return null;
-      }
-      return result;
-    } catch (error) {
-      operation.signal.throwIfAborted();
-      skip(errorMessage(error));
-      return null;
-    }
-  };
+  const digestNow = () => currentDigest(projectRoot, target, operation, staticDigest, skip);
   const before = await digestNow();
   if (!before) return { fingerprint: await full(), memoHit: false, check: null };
 
@@ -244,10 +231,66 @@ export async function memoizedFingerprint(
       skip(errorMessage(error));
     }
   }
+  const computed = await computeAndRecord({
+    projectRoot,
+    target,
+    before,
+    record,
+    fingerprint,
+    staticDigest,
+    operation,
+    now,
+    skip,
+  });
+  return { fingerprint: computed, memoHit: false, check: null };
+}
+
+async function currentDigest(
+  projectRoot: string,
+  target: FingerprintTarget & { platform: MemoPlatform },
+  operation: StimContext,
+  staticDigest: typeof staticFingerprint,
+  skip: (reason: string) => void,
+): Promise<{ digest: string; nativePackages: string[] } | null> {
+  try {
+    const result = await staticDigest(projectRoot, target, { env: operation.env, signal: operation.signal });
+    if (result.uncertain !== null) {
+      skip(result.uncertain);
+      return null;
+    }
+    return result;
+  } catch (error) {
+    operation.signal.throwIfAborted();
+    skip(errorMessage(error));
+    return null;
+  }
+}
+
+async function computeAndRecord({
+  projectRoot,
+  target,
+  before,
+  record,
+  fingerprint,
+  staticDigest,
+  operation,
+  now,
+  skip,
+}: {
+  projectRoot: string;
+  target: FingerprintTarget & { platform: MemoPlatform };
+  before: { digest: string; nativePackages: string[] };
+  record: boolean;
+  fingerprint: typeof fingerprintProject;
+  staticDigest: typeof staticFingerprint;
+  operation: StimContext;
+  now: () => number;
+  skip: (reason: string) => void;
+}): Promise<ProjectFingerprint | null> {
   const startedAt = now();
-  const computed = await full();
-  if (!record || !computed?.hash) return { fingerprint: computed, memoHit: false, check: null };
-  const after = await digestNow();
+  const computed = await fingerprint(projectRoot, target);
+  if (!record || !computed?.hash) return computed;
+  const after = await currentDigest(projectRoot, target, operation, staticDigest, skip);
   if (after?.digest !== before.digest) skip('an input changed while it was fingerprinted');
   else {
     try {
@@ -264,7 +307,53 @@ export async function memoizedFingerprint(
       skip(errorMessage(error));
     }
   }
-  return { fingerprint: computed, memoHit: false, check: null };
+  return computed;
+}
+
+export type FingerprintPrecompute = { outcome: 'present' | 'recorded' } | { outcome: 'skipped'; reason: string };
+
+/**
+ * Records the full fingerprint of the tree under its static digest ahead of a run, unless a record of that digest
+ * exists. The key is the digest, so a run reads it only when its own digest of the tree matches, and a change to any
+ * input the digest covers makes the record unreachable. Nothing is consulted or dropped here: a run's lookup still
+ * confirms what it reads with a background check.
+ */
+export async function precomputeFingerprint(
+  projectRoot: string,
+  target: FingerprintTarget & { platform: MemoPlatform },
+  {
+    operation,
+    fingerprint = fingerprintProject,
+    staticDigest = staticFingerprint,
+    now = Date.now,
+  }: {
+    operation: StimContext;
+    fingerprint?: typeof fingerprintProject;
+    staticDigest?: typeof staticFingerprint;
+    now?: () => number;
+  },
+): Promise<FingerprintPrecompute> {
+  let reason = 'unknown';
+  const skip = (why: string): void => {
+    reason = why;
+    debugLog.log('fingerprint_memo_skip', { platform: target.platform, reason: why });
+  };
+  const before = await currentDigest(projectRoot, target, operation, staticDigest, skip);
+  if (!before) return { outcome: 'skipped', reason };
+  if (readFingerprintMemo(target.platform, before.digest)) return { outcome: 'present' };
+  const computed = await computeAndRecord({
+    projectRoot,
+    target,
+    before,
+    record: true,
+    fingerprint,
+    staticDigest,
+    operation,
+    now,
+    skip,
+  });
+  if (!computed?.hash) return { outcome: 'skipped', reason: 'no hash' };
+  return readFingerprintMemo(target.platform, before.digest) ? { outcome: 'recorded' } : { outcome: 'skipped', reason };
 }
 
 /** Waits briefly for a memo hit's background check and reports a disagreement, which has already dropped the record. */

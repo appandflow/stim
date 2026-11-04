@@ -230,7 +230,10 @@ public func setupStepLine(_ step: SetupJournal.Step, clientName: String, os: Tai
     if step.waitsForConnection {
       text = "waiting for \(clientName) to connect"
     } else {
-      text = running ? "waiting for approval in \(os == .windows ? "PowerShell" : "Terminal")" : "approval missing"
+      text =
+        running
+        ? "waiting for approval\(os == .windows ? " in PowerShell" : os == .linux ? " in Terminal" : "")"
+        : "approval missing"
     }
   case "approve.build", "approve.device-host":
     let what = step.id == "approve.build" ? "builds" : "hosted simulators"

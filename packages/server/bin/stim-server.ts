@@ -38,16 +38,18 @@ import {
   readBuildClients,
   readDeviceHostClients,
   readDevices,
+  readUnreadable,
   renameDevice,
   revokeDevice,
   serverIdentity,
   type PairedDevice,
+  type UnreadableRecord,
 } from '../src/registry.ts';
 import { keyFingerprint } from '@stim-cli/core/noise-session';
 import { hostFromExecutable, hostPermissionPanes } from '../src/stim-host.ts';
 import { defaultSetupDeps, runSetup } from '../src/setup.ts';
 import { startServer } from '../src/server.ts';
-import { readDesktopBootstrap } from '../src/desktop-bootstrap.ts';
+import { readDesktopBootstrap, watchLauncherLifetime } from '../src/desktop-bootstrap.ts';
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { loadTransport } from '@stim-cli/transport';
 import { localTransport, resolveLanAddresses } from '@stim-cli/transport-local';
@@ -147,7 +149,10 @@ async function serve(
   shareOnly = false,
 ): Promise<void> {
   const bootstrapFd = process.env.STIM_DESKTOP_BOOTSTRAP_FD;
+  const lifetimeFd = process.env.STIM_DESKTOP_LIFETIME_FD;
   delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
+  delete process.env.STIM_DESKTOP_LIFETIME_FD;
+  if (lifetimeFd !== undefined && lifetimeFd !== '0') fail('Desktop lifetime input is invalid or unavailable.');
   if (bootstrapFd !== undefined && bootstrapFd !== '0') fail('Desktop bootstrap input is invalid or unavailable.');
   const desktopInput =
     bootstrapFd === '0'
@@ -294,7 +299,9 @@ async function serve(
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('SIGHUP', shutdown);
-  void desktopInput?.closed.then(shutdown);
+  const launcherClosed =
+    desktopInput?.closed ?? (lifetimeFd === '0' ? watchLauncherLifetime(process.stdin) : undefined);
+  void launcherClosed?.then(shutdown);
   if (shareOnly) {
     const startup = await server.ready;
     if (startup.state !== 'ready') {
@@ -361,6 +368,12 @@ function describe(device: PairedDevice): string {
   return `${device.id}  ${device.name}  ${scope}  from ${from}  paired ${device.pairedAt}  last seen ${device.lastSeenAt ?? 'never'}`;
 }
 
+function describeUnreadable({ file, index, id, version }: UnreadableRecord): string {
+  if (version !== undefined)
+    return `unreadable  ${file} registry version ${version}, written by a newer Stim  left as it is`;
+  return `unreadable  ${file} entry ${index}${id ? `  ${id}` : ''}  left as it is`;
+}
+
 const KINDS = { device: 'phone', build: 'build-client', 'device-host': 'device-host-client' } as const;
 
 const ACCESS: Record<Capability, string> = {
@@ -388,12 +401,30 @@ function listed(device: PairedDevice, registry: keyof typeof KINDS) {
   };
 }
 
+function refuseUnreadable(id: string): void {
+  const unreadable = readUnreadable();
+  const entry = unreadable.find((each) => each.id === id);
+  if (entry) {
+    fail(
+      `${id} is an entry of ${entry.file} that this stim-server cannot read, so it is left as it is. Edit that file to change or remove it.`,
+    );
+  }
+  const whole = unreadable.filter((each) => each.version !== undefined);
+  if (whole.length) {
+    fail(
+      `no paired device or approved client ${id} that this stim-server can read. ${whole.map((each) => `${each.file} is registry version ${each.version}, written by a newer Stim`).join('; ')}, and is left as it is.`,
+    );
+  }
+}
+
 function rename(id: string, args: string[]): void {
   const [name, ...extra] = args;
   if (name === undefined || extra.length) fail(`unknown command.\n${USAGE}`);
   const outcome = renameDevice(id, name);
-  if (outcome === 'unknown')
+  if (outcome === 'unknown') {
+    refuseUnreadable(id);
     fail(`no paired device or approved client ${id}. Run \`stim-server devices\` to list them.`);
+  }
   if (outcome === 'invalid-name') fail('the name must be 1 to 64 characters of printable text on one line.');
   console.log(`Renamed ${id}.`);
 }
@@ -582,6 +613,7 @@ async function main(): Promise<void> {
     const capabilities = capabilitiesFor(scope === 'control');
     const outcome = grantDevice(arg, [...capabilities]);
     if (outcome === 'unknown') {
+      refuseUnreadable(arg);
       fail(`no paired device or approved client ${arg}. Run \`stim-server devices\` to list them.`);
     }
     if (outcome === 'build-mismatch' || outcome === 'device-host-mismatch') {
@@ -618,18 +650,23 @@ async function main(): Promise<void> {
     } catch (error) {
       console.error(`Could not read hosted sessions: ${(error as Error).message}`);
     }
+    const unreadable = readUnreadable();
     if (values.json) {
       const rows = sources.map(([device, registry]) => listed(device, registry));
-      return void console.log(JSON.stringify({ devices: rows, hostedSessions }));
+      return void console.log(JSON.stringify({ devices: rows, hostedSessions, unreadable }));
     }
     if (!devices.length) console.log('No paired devices.');
     for (const device of devices) console.log(describe(device));
+    for (const entry of unreadable) console.log(describeUnreadable(entry));
     for (const line of formatHostedSessions(hostedSessions)) console.log(line);
     return;
   }
   if (command === 'devices' && sub === 'rename' && arg !== undefined) return rename(arg, rest);
   if (command === 'devices' && sub === 'revoke' && arg !== undefined && rest.length === 0) {
-    if (!revokeDevice(arg)) fail(`no paired device ${arg}. Run \`stim-server devices\` to list them.`);
+    if (!revokeDevice(arg)) {
+      refuseUnreadable(arg);
+      fail(`no paired device ${arg}. Run \`stim-server devices\` to list them.`);
+    }
     console.log(`Revoked ${arg}.`);
     return;
   }

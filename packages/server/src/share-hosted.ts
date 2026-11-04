@@ -1,6 +1,6 @@
 import { isJsonObject, type StatusPayload } from '@stim-cli/core/state';
 import type { AuditRecord } from './actions.ts';
-import type { Controller, InputCommand, SessionTarget } from './control.ts';
+import { isExtendedDeviceKey, type Controller, type InputCommand, type SessionTarget } from './control.ts';
 import type { FrameHint } from './frame-helper.ts';
 import type { Frame, FrameListener } from './frames.ts';
 import { GRAB_IDLE_MS, PointerGrab } from './pointer-grab.ts';
@@ -74,6 +74,8 @@ export interface ShareSource {
     leave: (id: string) => void;
   };
   endFor: (owner: Controller, message: string) => void;
+  /** Ends only `session`, which may already be gone or replaced by a newer one. */
+  end: (owner: Controller, session: string, message: string) => void;
   close: () => void;
 }
 
@@ -424,6 +426,16 @@ export class HostedShareSource implements ShareSource {
         message: `${this.host.machine} cannot set or read a clipboard: update its Stim.`,
       };
     }
+    if (
+      command.input === 'key' &&
+      isExtendedDeviceKey(command.key, command.modifiers) &&
+      !control.lease.connection.supports('device-keyboard')
+    ) {
+      return {
+        code: 'action-failed',
+        message: `${this.host.machine} takes only the arrows and Escape as keys: update its Stim.`,
+      };
+    }
     try {
       const reply = await control.lease.connection.request(`device-host.${method}`, { ...params, session });
       if ('error' in reply) return reply.error;
@@ -470,6 +482,10 @@ export class HostedShareSource implements ShareSource {
 
   endFor(_owner: Controller, message: string): void {
     this.endControl(null, message, 'end');
+  }
+
+  end(_owner: Controller, session: string, message: string): void {
+    if (this.control?.session === session) this.endControl(null, message, 'end');
   }
 
   private endControl(reason: string | null, message: string, host: 'ended' | 'end'): void {

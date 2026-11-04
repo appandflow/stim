@@ -10,7 +10,12 @@ import {
   isInsideWorkspaces,
   keptByLock,
 } from '../commands/gc/workspaces.ts';
-import { collectWorktreeSweep, worktreeRemovalReason, type WorktreeSweep } from '../commands/gc/worktrees.ts';
+import {
+  collectWorktreeSweep,
+  worktreeRemovalReason,
+  type WorktreeSkipCode,
+  type WorktreeSweep,
+} from '../commands/gc/worktrees.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
@@ -25,6 +30,7 @@ import { listBuildSlots } from '../engine/build-slots.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { finishedWorkspaces, planDeviceDeletion, planDeviceDeletionAsync } from './devices.ts';
 import type { MaintenancePlan } from './plan.ts';
+import { planPrune } from './prune.ts';
 import type { MaintenanceSettings } from './settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
@@ -81,7 +87,7 @@ export async function planSweep({
     });
   }
   for (const cache of days > 0
-    ? trimmableCaches(operation?.env, operation?.cwd).filter((candidate) => !isInsideWorkspaces(candidate.dir))
+    ? (await trimmableCaches(operation?.env, operation?.cwd)).filter((candidate) => !isInsideWorkspaces(candidate.dir))
     : [])
     actions.push({
       kind: 'would-trim-cache',
@@ -146,6 +152,10 @@ export async function planSweep({
       check: 'sweep',
     });
   }
+  const prune = await planPrune({ now, mounted, operation });
+  actions.push(...prune.actions.map((action) => ({ ...action, check: 'sweep' as const })));
+  skips.push(...prune.skips);
+  blocked.push(...prune.blocked);
   const sweep = await planRung6(settings, { operation });
   actions.push(...sweep.actions.map((action) => ({ ...action, check: 'sweep' as const })));
   skips.push(...sweep.skips);
@@ -260,8 +270,16 @@ export async function planRung6(
   return { actions, blocked: [], skips };
 }
 
+const UNREPORTED_KEEPS: ReadonlySet<WorktreeSkipCode> = new Set([
+  'not-a-worktree',
+  'bare-repository',
+  'source-checkout',
+]);
+
 export interface WorktreePlan extends MaintenancePlan {
   sweep: WorktreeSweep;
+  /** The merged or ended worktree kept only for its grace period that becomes removable first. */
+  nextRemoval?: { target: string; at: number };
 }
 
 export async function planWorktrees({
@@ -299,15 +317,40 @@ export async function planWorktrees({
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
   const keep: WorktreeSweep['worktrees'] = [];
-  for (const worktree of sweep.worktrees) {
-    if (worktree.skipped) continue;
+  let nextRemoval: WorktreePlan['nextRemoval'];
+  const keptReason = (worktree: WorktreeSweep['worktrees'][number]) => {
     const path = canonicalPath(worktree.path);
-    const reason =
-      protectedRoot === path || protectedRoot.startsWith(`${path}${sep}`)
-        ? 'the command that started this pass runs inside it'
-        : worktree.keys.some(pinned)
-          ? 'pinned by maintenance.keep'
-          : null;
+    return protectedRoot === path || protectedRoot.startsWith(`${path}${sep}`)
+      ? 'the command that started this pass runs inside it'
+      : worktree.keys.some(pinned)
+        ? 'pinned by maintenance.keep'
+        : null;
+  };
+  for (const worktree of sweep.worktrees) {
+    if (worktree.skipped) {
+      const at = worktree.eligibleAt;
+      if (
+        worktree.skipCode === 'recent-activity' &&
+        at !== null &&
+        (!nextRemoval || at < nextRemoval.at) &&
+        (worktree.merge?.merged || endedPullRequest(worktree.pullRequest)) &&
+        !keptReason(worktree)
+      )
+        nextRemoval = { target: worktree.path, at };
+      if (
+        worktree.skipCode &&
+        !UNREPORTED_KEEPS.has(worktree.skipCode) &&
+        (idleDays !== null || worktree.merge?.merged || endedPullRequest(worktree.pullRequest))
+      )
+        skips.push({
+          target: worktree.path,
+          reason: worktree.skipped,
+          code: worktree.skipCode,
+          workspace: canonicalPath(worktree.path),
+        });
+      continue;
+    }
+    const reason = keptReason(worktree);
     if (reason) {
       skips.push({ target: worktree.path, reason });
       continue;
@@ -340,5 +383,11 @@ export async function planWorktrees({
     actions.push(...devices.actions);
     skips.push(...devices.skips);
   }
-  return { actions, blocked: [], skips, sweep: { ...sweep, worktrees: keep } };
+  return {
+    actions,
+    blocked: [],
+    skips,
+    sweep: { ...sweep, worktrees: keep },
+    ...(nextRemoval ? { nextRemoval } : {}),
+  };
 }

@@ -20,7 +20,9 @@ export const SHARE_ASSETS: Record<string, { body: string; type: string }> = {
   'clipboard.js': { body: read('clipboard.js'), type: 'text/javascript; charset=utf-8' },
   'overlay.js': { body: read('overlay.js'), type: 'text/javascript; charset=utf-8' },
   'gestures.js': { body: read('gestures.js'), type: 'text/javascript; charset=utf-8' },
+  'keys.js': { body: read('keys.js'), type: 'text/javascript; charset=utf-8' },
   'people.js': { body: read('people.js'), type: 'text/javascript; charset=utf-8' },
+  'reconnect.js': { body: read('reconnect.js'), type: 'text/javascript; charset=utf-8' },
   'viewer.js': { body: read('viewer.js'), type: 'text/javascript; charset=utf-8' },
   'webrtc.js': { body: read('webrtc.js'), type: 'text/javascript; charset=utf-8' },
 };

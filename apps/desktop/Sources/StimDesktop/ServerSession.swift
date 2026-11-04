@@ -55,6 +55,11 @@ import StimKit
     adoptionWatch = controller.$provisional.sink { [weak self] _ in
       DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow(controller.state) } }
     }
+    controller.reconnect = { [weak self] in
+      guard let self else { return }
+      key = nil
+      follow(controller.state)
+    }
   }
 
   init(pairing: PairedServer, client: ServerClient, offlineSince: Date? = nil) {
@@ -103,9 +108,8 @@ import StimKit
   }
 
   var localActionConnection: (client: ServerClient, home: String)? {
-    guard let feed = statsConnection, feed.client.hasDesktopAuthority, controller?.desktopBootstrap != nil else {
-      return nil
-    }
+    guard let feed = statsConnection else { return nil }
+    if feed.client.hasDesktopAuthority, controller?.desktopBootstrap == nil { return nil }
     return feed
   }
 
@@ -167,8 +171,10 @@ import StimKit
     connection?.stop()
     connection = nil
     client = nil
+    let replacesServer = self.key != nil
     self.key = key
     self.state = .idle
+    if health == nil || replacesServer { controller.connectionRefused(nil) }
     guard let health, health.protocolVersion >= Self.protocolVersion else { return }
     let home = health.stimHome
     let socket = StimHome.localSocket(home: home)
@@ -179,6 +185,11 @@ import StimKit
     client.onState = { [weak self, weak client] state in
       guard let self, let client, client === self.connection else { return }
       self.state = state
+      switch state {
+      case .refused(let refusal): controller.connectionRefused(refusal.message)
+      case .open: controller.connectionRefused(nil)
+      case .idle, .connecting, .waiting: break
+      }
     }
     connection = client
     if controller.adoption.allowsWrites(home: home) { self.client = client }
@@ -195,22 +206,15 @@ import StimKit
   private var offlineSince: [String: Date] = [:]
   private var knownLocalServerID: String?
 
-  func setEnabled(_ enabled: Bool) {
-    if enabled, servers == nil {
-      let servers = PairedServers.shared
-      self.servers = servers
-      servers.onChange = { [weak self, weak servers] in
-        guard let self, let servers, self.servers === servers else { return }
-        self.sync(servers, localServerID: self.lastLocalServerID())
-      }
-      servers.start()
-    } else if !enabled, let servers {
-      self.servers = nil
-      servers.onChange = nil
-      servers.stop()
-      sessions = [:]
-      entries = []
+  func start() {
+    guard servers == nil else { return }
+    let servers = PairedServers.shared
+    self.servers = servers
+    servers.onChange = { [weak self, weak servers] in
+      guard let self, let servers, self.servers === servers else { return }
+      self.sync(servers, localServerID: self.lastLocalServerID())
     }
+    servers.start()
   }
 
   func localServerChanged() {

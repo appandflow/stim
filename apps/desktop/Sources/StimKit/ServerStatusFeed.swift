@@ -12,6 +12,25 @@ import Foundation
   return connection.client
 }
 
+/// The server `connection` names when Desktop may also run its private actions on it. A server Desktop did not start,
+/// one it adopted or one set as the stim-server executable, holds no private key and so gives no authority; the refusal
+/// says that instead of calling the server not ready. `action` completes "to ...", such as `clean up this Stim home`.
+@MainActor public func desktopActionServer(
+  _ connection: (client: ServerClient, home: String)?, stimHome: String, action: String
+) throws -> ServerClient {
+  guard let client = readCapableServer(connection, stimHome: stimHome) else {
+    throw ServerError(code: "not-connected", message: "The local stim-server is not ready to \(action).")
+  }
+  guard client.hasDesktopAuthority else {
+    throw ServerError(
+      code: "not-connected",
+      message:
+        "Stim Desktop cannot \(action) because it did not start this stim-server: it was started outside Desktop or is set as the stim-server executable in Settings > Advanced. Stop it (a LaunchAgent restarts it until `stim-server service uninstall`), or clear the executable, so Desktop runs its own."
+    )
+  }
+  return client
+}
+
 /// Follows stim-server's status views: `workspaces.subscribe` for the workspace list, `machine.subscribe` for the
 /// machine, `archived.list` when `readsArchives` is true and their summary changes, and `workspace.subscribe` for each
 /// followed workspace, whose full environment replaces its summary. Each change yields one payload shaped like

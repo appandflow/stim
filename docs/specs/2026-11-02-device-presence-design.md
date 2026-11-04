@@ -260,13 +260,18 @@ record because the daemon resolved them.
 
 Points must be normalized by the box agent-device measures in. A JSON snapshot reports it as `viewport`, in the same
 space and orientation as its rects (callstack/agent-device#3182; that tap points share it is to verify); without one, use the device's logical size: on
-iOS the frame's pixel size divided by the device type's screen scale, on Android the display size in the unit
-agent-device records (to verify: pixels or dp). The same
+iOS the integrated display's pixel size in the device type's `capabilities.plist` divided by its scale (1206 x 2622 at
+3 is 402 x 874 for an iPhone 18 Pro, and `scroll` records `x1 = 201`), on Android the `wm size` in pixels (recorded
+scrolls on 1080 x 2400 emulators run from `x = 540`, `y = 2160` to `240`, and press points on a foldable exceed any dp
+width). The same
 normalized start point (`x`/`y`, from `x1`/`y1` for scrolls and swipes) and end point (`x2`/`y2`) go onto `ReplayMarker` as optional fields, added in phase 1 for the wrapper's markers, so Desktop's replay can show where each
 action landed.
 
-The honest gap: these show 0.6 to 1 s after an action completes, with no live phases, and only for agents that use
-the workspace's agent-device state directory.
+stim-server follows the records of a workspace's owned simulator or emulator while a consumer follows its presence,
+and pairs each recorded action with the wrapper's own publish of it, so a gesture draws once. A leased phone is shown
+only by the wrapper. Rotation and folding are not accounted for: the fallback is the device's natural portrait size.
+
+The honest gap: these show 0.6 to 1 s after an action completes, with no live phases.
 
 ### 6.2 `stim agent-device`: the wrapper command (decided)
 

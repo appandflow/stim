@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
+import type { StimContext } from '@stim-cli/core';
 import { keyFingerprint } from '@stim-cli/core/noise-session';
 import { readBuildMachines, readDeviceHostMachines, type MachineCredential } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
@@ -16,8 +17,8 @@ import {
 import { updateRemoteMachinesAsync } from '../workspace/config.ts';
 import { confirmInTerminal } from './device-provision.ts';
 
-type BuildReport = Awaited<ReturnType<typeof inspectBuildMachines>>['machines'][number];
-type HostReport = Awaited<ReturnType<typeof inspectDeviceHostMachines>>['machines'][number];
+export type BuildReport = Awaited<ReturnType<typeof inspectBuildMachines>>['machines'][number];
+export type HostReport = Awaited<ReturnType<typeof inspectDeviceHostMachines>>['machines'][number];
 
 interface Refusal {
   code: string;
@@ -85,7 +86,22 @@ function confirmer(json: boolean) {
 const ANSWERED = new Set(['approved', 'pending', 'revoked', 'outdated', 'key-unconfirmed']);
 const UNREACHABLE = new Set(['unreachable', 'tailscale-off', 'not-on-tailnet']);
 
-function reachability(states: string[]): 'key-changed' | 'reachable' | 'unreachable' | 'unknown' {
+type Reachability = 'key-changed' | 'reachable' | 'unreachable' | 'unknown';
+
+export interface RemoteListing {
+  machines: {
+    machine: string;
+    priority: number;
+    build: BuildReport | null;
+    deviceHost: HostReport | null;
+    serverKeyFingerprint: string | null;
+    reachability: Reachability;
+    revoke: string[];
+  }[];
+  findings: Finding[];
+}
+
+function reachability(states: string[]): Reachability {
   if (states.includes('key-changed')) return 'key-changed';
   if (states.some((state) => ANSWERED.has(state))) return 'reachable';
   if (states.some((state) => UNREACHABLE.has(state))) return 'unreachable';
@@ -108,6 +124,42 @@ function revokeCommands(credentials: MachineCredential[]): string[] {
 
 function stateLine(build: BuildReport | null, host: HostReport | null): string {
   return `build ${build?.state ?? 'unknown'}, device-host ${host?.state ?? 'unknown'}`;
+}
+
+/**
+ * Contacts each machine in remote.machines, as `stim remote list --json` prints it: each machine's build and
+ * device-host report in placement order, the fingerprint of the server key this machine pinned for it, how it
+ * answered, and the commands that revoke this machine's records there.
+ */
+export async function readRemoteList(
+  version: string,
+  io: TailnetMachineIo,
+  confirmKey: ReturnType<typeof keyConfirmer> = keyConfirmer(null),
+  operation?: StimContext,
+): Promise<RemoteListing> {
+  const entries = configuredMachines();
+  if (entries === null) throw invalidSetting();
+  const options = { fix: false, version, confirmKey, operation };
+  const build = await inspectBuildMachines(options, io, entries);
+  const host = await inspectDeviceHostMachines(options, io, entries);
+  const credentials = readableCredentials();
+  const machines = entries.map((machine, at) => {
+    const buildReport = build.machines.find((each) => each.machine === machine) ?? null;
+    const hostReport = host.machines.find((each) => each.machine === machine) ?? null;
+    const held = credentials.filter((each) => each.machine === machine);
+    const pinned =
+      held.find((each) => each.state === 'approved' && each.serverKey) ?? held.find((each) => each.serverKey);
+    return {
+      machine,
+      priority: at + 1,
+      build: buildReport,
+      deviceHost: hostReport,
+      serverKeyFingerprint: pinned?.serverKey ? keyFingerprint(Buffer.from(pinned.serverKey, 'base64url')) : null,
+      reachability: reachability([buildReport?.state, hostReport?.state].flatMap((state) => state ?? [])),
+      revoke: revokeCommands(held),
+    };
+  });
+  return { machines, findings: [...build.findings, ...host.findings] };
 }
 
 export default function remoteCommand(program: Command, version: string, io: TailnetMachineIo = doctorIo()): void {
@@ -163,34 +215,12 @@ export default function remoteCommand(program: Command, version: string, io: Tai
     .option('--json', 'print the machines as JSON')
     .action((opts: { json?: boolean }) =>
       run(Boolean(opts.json), async () => {
-        const entries = configuredMachines();
-        if (entries === null) throw invalidSetting();
-        const options = { fix: false, version, confirmKey: confirmer(Boolean(opts.json)) };
-        const build = await inspectBuildMachines(options, io, entries);
-        const host = await inspectDeviceHostMachines(options, io, entries);
-        const credentials = readableCredentials();
-        const machines = entries.map((machine, at) => {
-          const buildReport = build.machines.find((each) => each.machine === machine) ?? null;
-          const hostReport = host.machines.find((each) => each.machine === machine) ?? null;
-          const held = credentials.filter((each) => each.machine === machine);
-          const pinned =
-            held.find((each) => each.state === 'approved' && each.serverKey) ?? held.find((each) => each.serverKey);
-          return {
-            machine,
-            priority: at + 1,
-            build: buildReport,
-            deviceHost: hostReport,
-            serverKeyFingerprint: pinned?.serverKey ? keyFingerprint(Buffer.from(pinned.serverKey, 'base64url')) : null,
-            reachability: reachability([buildReport?.state, hostReport?.state].flatMap((state) => state ?? [])),
-            revoke: revokeCommands(held),
-          };
-        });
-        const findings = [...build.findings, ...host.findings];
+        const { machines, findings } = await readRemoteList(version, io, confirmer(Boolean(opts.json)));
         if (opts.json) {
           console.log(JSON.stringify({ machines, findings }));
           return;
         }
-        if (!entries.length) {
+        if (!machines.length) {
           console.log('No remote machines. Add one with `stim remote add <machine>`.');
           return;
         }

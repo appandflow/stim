@@ -330,6 +330,26 @@ describe('the adb reverse for the workspace Metro port', () => {
     expect(result).toMatchObject({ ok: true, facts: { reverseRestored: [] } });
   });
 
+  test('an Android reload also checks the ports reversed with ports reverse', async () => {
+    writeWorkspaceState('/project', { reversePorts: [8901] });
+    const checked: unknown[] = [];
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: async (serial, port) => {
+          checked.push([serial, port]);
+          return { restored: port === 8901 };
+        },
+      }),
+    });
+    expect(checked).toEqual([
+      ['emulator-5554', 8082],
+      ['emulator-5554', 8901],
+    ]);
+    expect(result).toMatchObject({ ok: true, facts: { reverseRestored: ['emulator-5554'] } });
+  });
+
   test('a restored reverse waits, sending nothing, until the app reconnects, then reloads once', async () => {
     const calls: unknown[] = [];
     let probes = 0;

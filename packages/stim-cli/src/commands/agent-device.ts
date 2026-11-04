@@ -29,6 +29,7 @@ import {
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { runProcessOperation } from '../cli-operation.ts';
+import { hostedAgentSessionName } from '../device-host/agent-connection.ts';
 import { resolveOwnedAvdSerialAsync } from '../devices/android.ts';
 import { deviceSlotKey, parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } from '../engine/device-lease.ts';
@@ -302,15 +303,28 @@ export function planAgentDevice(
 }
 
 /**
+ * The session name when the agent names none. A hosted session's name carries the workspace id because agent-device
+ * keeps one saved remote connection per name for the whole machine; a local device's sessions live in the workspace's
+ * own state directory.
+ */
+function defaultSessionName(root: string, device: WorkspaceDevice): string {
+  return device.kind === 'hosted'
+    ? hostedAgentSessionName(root, device.platform, device.slot)
+    : `stim-${device.slot}-${device.platform}`;
+}
+
+/**
  * The full agent-device arguments for a plan: the selection for a local device or the hosted session's remote config,
- * with `stim-<slot>-<platform>` as the session when the agent names none. Refuses a device that is not running.
+ * with `stim-<slot>-<platform>` (`-<workspace id>` for a hosted session) as the session when the agent names none.
+ * Refuses a device that is not running.
  */
 export function agentDeviceArgs(
   plan: AgentDevicePlan,
+  root: string,
 ): { args: string[]; session: string | null } | { refusal: AgentDeviceRefusal } {
   const { device } = plan;
   const sessionless = plan.command !== null && SESSIONLESS_COMMANDS.has(plan.command);
-  const name = plan.session ?? `stim-${device.slot}-${device.platform}`;
+  const name = plan.session ?? defaultSessionName(root, device);
   if (device.kind === 'hosted') {
     if (!device.remoteConfig) {
       return refusal(
@@ -585,7 +599,7 @@ async function runAgentDevice(argv: string[], version: string): Promise<void> {
     plan = planAgentDevice(await resolveDevices(root, project, state), argv);
     if ('refusal' in plan) return refuse(plan.refusal, json);
   }
-  const built = agentDeviceArgs(plan);
+  const built = agentDeviceArgs(plan, root);
   if ('refusal' in built) return refuse(built.refusal, json);
   await execute(invocation, argv, { plan, ...built }, root, version);
 }
@@ -625,7 +639,7 @@ interface Run {
 }
 
 const SESSION_LOST =
-  /Error \(SESSION_NOT_FOUND\)|"code":\s*"SESSION_NOT_FOUND"|requires an active app session on the target device/;
+  /Error \(SESSION_NOT_FOUND\)|"code":\s*"SESSION_NOT_FOUND"|requires an active app session on the target device|No active proxy device lease for this session/;
 
 function lostSession(exit: AgentDeviceExit): boolean {
   const text = `${exit.stdout}${exit.stderr}`;
@@ -648,7 +662,7 @@ function hostedReopen(root: string, plan: AgentDevicePlan, args: readonly string
   if (args.includes('--text-stdin')) return null;
   const appId = readWorkspaceLaunches(root)[deviceSlotKey(device.platform, device.slot)]?.appId;
   if (!appId) return null;
-  const session = plan.session ?? `stim-${device.slot}-${device.platform}`;
+  const session = plan.session ?? defaultSessionName(root, device);
   return ['open', appId, '--session', session, '--remote-config', device.remoteConfig];
 }
 

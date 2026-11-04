@@ -168,7 +168,7 @@ final class SetupWizardTests: XCTestCase {
       [
         .init(text: "$ stim-server setup", kind: .command), .init(text: "tailnet node verified", kind: .ok),
         .init(text: "stim-server failed", kind: .failed),
-        .init(text: "waiting for approval in Terminal", kind: .pending),
+        .init(text: "waiting for approval", kind: .pending),
         .init(text: "Screen recording permission skipped", kind: .skipped),
         .init(text: "Future check", kind: .pending), .init(text: "setup journal not written", kind: .pending),
       ])
@@ -308,7 +308,7 @@ final class SetupWizardTests: XCTestCase {
   func testMirrorSaysWhichMachineSetupWaitsForAfterTheApprovalPrompts() {
     XCTAssertEqual(setupStepLine(waitingStep, clientName: "Laptop")?.text, "waiting for Laptop to connect")
     let asking = SetupJournal.Step(id: "approve", state: .running, title: "Access approval", detail: "Waiting until later.")
-    XCTAssertEqual(setupStepLine(asking, clientName: "Laptop")?.text, "waiting for approval in Terminal")
+    XCTAssertEqual(setupStepLine(asking, clientName: "Laptop")?.text, "waiting for approval")
   }
 
   func testWizardMovesToToolsOnlyWhenApprovedAndSetupFinishedCleanly() {

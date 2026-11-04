@@ -5,7 +5,8 @@ import StimKit
 import SwiftUI
 
 /// A physical device or hosted iOS screen through Stim Desktop's local stim-server connection. Hosted iOS and
-/// physical Android targets take clicks, trackpad scrolls and keys; physical iOS stays view only.
+/// physical Android targets take clicks, trackpad scrolls and keys; physical iOS stays view only. An iOS or Android
+/// device other than an iPhone Duo also takes two-finger gestures; the server refuses a second finger on the rest.
 struct PhysicalDeviceScreen: View {
   var device: DeviceRef
   var owner: ServerOwner
@@ -53,6 +54,7 @@ struct PhysicalDeviceScreen: View {
       content(screen)
         .onChange(of: screen, initial: true) { _, screen in follow(screen) }
         .onChange(of: clipboardAccess, initial: true) { _, access in clipboard?.access = access }
+        .onChange(of: keyboardChords, initial: true) { _, chords in stream.keyboardChords = chords }
     }
     .onChange(of: interactive, initial: true) { _, interactive in
       if interactive, ServerSession.screen(for: owned, now: Date()).canControl {
@@ -106,7 +108,7 @@ struct PhysicalDeviceScreen: View {
       VStack(spacing: Space.md) {
         PhysicalDisplay(
           stream: stream, activityKey: owned.activityKey,
-          interactive: interactive && isControlling,
+          interactive: interactive && isControlling, twoFinger: takesTwoFingers,
           onPixelSizeChange: onPixelSizeChange
         )
         .overlay {
@@ -130,6 +132,17 @@ struct PhysicalDeviceScreen: View {
     return ServerClipboard.Access(
       platform: device.platform, physical: device.isPhysical, link: session?.link ?? .connecting, control: stream.control,
       server: owner.isLocal ? nil : session?.name ?? "the paired machine")
+  }
+
+  private var keyboardChords: Bool {
+    guard !device.isPhysical, device.platform == "ios" || device.platform == "android",
+      case .open(let features, _) = ServerSession.session(for: owner)?.link ?? .connecting
+    else { return false }
+    return features?.contains("device-keyboard") == true
+  }
+
+  private var takesTwoFingers: Bool {
+    (device.platform == "ios" || device.platform == "android") && device.formFactor != .dual
   }
 
   private var isControlling: Bool {
@@ -201,6 +214,7 @@ struct PhysicalDisplay: NSViewRepresentable {
   @ObservedObject var stream: PhysicalStream
   var activityKey: String?
   var interactive: Bool
+  var twoFinger: Bool
   var onPixelSizeChange: (CGSize) -> Void
 
   func makeNSView(context: Context) -> PhysicalDisplayView {
@@ -217,6 +231,7 @@ struct PhysicalDisplay: NSViewRepresentable {
     view.stream = stream
     view.activityKey = activityKey
     view.onPixelSizeChange = onPixelSizeChange
+    view.allowsTwoFinger = twoFinger
     view.setInteractive(interactive)
     stream.onVideo = { [weak view] packet in view?.show(packet) }
     stream.onImage = { [weak view] data in view?.show(jpeg: data) }
@@ -236,6 +251,24 @@ final class PhysicalDisplayView: NSView {
   private var askedKeyframe = false
   private var interactive = false
   private var touching = false
+  var allowsTwoFinger = false
+  private lazy var twoFinger = TwoFingerGesture(
+    view: self, enabled: { [weak self] in self?.interactive == true && self?.allowsTwoFinger == true },
+    map: { [weak self] point, clamped in
+      guard let self, let size = self.size else { return nil }
+      return normalizedScreenPoint(point, viewSize: self.bounds.size, screenSize: size, clamped: clamped)
+    },
+    project: { [weak self] point in
+      guard let self, let size = self.size else { return nil }
+      let fitted = fittedScreenSize(viewSize: self.bounds.size, screenSize: size)
+      return CGPoint(
+        x: (self.bounds.width - fitted.width) / 2 + point.x * fitted.width,
+        y: (self.bounds.height - fitted.height) / 2 + (1 - point.y) * fitted.height)
+    },
+    send: { [weak self] phase, first, second in
+      self?.stream?.touch(
+        phase.wire, x: Double(first.x), y: Double(first.y), second: (x: Double(second.x), y: Double(second.y))) ?? false
+    })
   lazy var decoder = H264Decoder { [weak self] image in
     guard let surface = CVPixelBufferGetIOSurface(image)?.takeUnretainedValue() else { return }
     DispatchQueue.main.async { self?.layer?.contents = surface }
@@ -250,6 +283,21 @@ final class PhysicalDisplayView: NSView {
   }
 
   required init?(coder: NSCoder) { nil }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
+    guard let window else { return twoFinger.cancel() }
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(windowResignedKey), name: NSWindow.didResignKeyNotification, object: window)
+  }
+
+  @objc private func windowResignedKey() { twoFinger.cancel() }
+
+  override func layout() {
+    super.layout()
+    twoFinger.redraw()
+  }
 
   @MainActor func show(_ packet: VideoPacket) {
     if packet.keyframe {
@@ -276,6 +324,7 @@ final class PhysicalDisplayView: NSView {
   private func shown(_ size: CGSize) {
     if let activityKey { ScreenActivity.shared.record(activityKey) }
     guard size != self.size else { return }
+    twoFinger.cancel()
     self.size = size
     onPixelSizeChange(size)
   }
@@ -286,6 +335,7 @@ final class PhysicalDisplayView: NSView {
     if interactive {
       window?.makeFirstResponder(self)
     } else {
+      twoFinger.cancel()
       touching = false
     }
   }
@@ -311,21 +361,34 @@ final class PhysicalDisplayView: NSView {
   override func mouseDown(with event: NSEvent) {
     guard interactive else { return super.mouseDown(with: event) }
     window?.makeFirstResponder(self)
-    guard !touching, let point = point(event, clamped: false) else { return }
+    guard !touching, !twoFinger.isActive else { return }
+    if twoFinger.mouseDown(event) { return }
+    guard !(allowsTwoFinger && event.modifierFlags.contains(.option)), let point = point(event, clamped: false)
+    else { return }
     touch("down", point)
   }
 
   override func mouseDragged(with event: NSEvent) {
+    if twoFinger.mouseDragged(event) { return }
     guard touching, let point = point(event, clamped: true) else { return }
     touch("move", point)
   }
 
   override func mouseUp(with event: NSEvent) {
+    if twoFinger.mouseUp(event) { return }
     guard touching, let last = lastTouch else { return }
     touch("up", point(event, clamped: true) ?? last)
   }
 
+  override func magnify(with event: NSEvent) {
+    guard !touching else { return }
+    twoFinger.magnify(event)
+  }
+
+  override func flagsChanged(with event: NSEvent) { twoFinger.flagsChanged(event) }
+
   override func scrollWheel(with event: NSEvent) {
+    if twoFinger.isActive { return }
     guard interactive, event.hasPreciseScrollingDeltas, event.momentumPhase.isEmpty else {
       return super.scrollWheel(with: event)
     }
@@ -344,9 +407,26 @@ final class PhysicalDisplayView: NSView {
   }
 
   override func keyDown(with event: NSEvent) {
-    guard interactive, !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control),
-      let text = physicalInputText(characters: event.characters, keyCode: event.keyCode)
+    let flags = event.modifierFlags
+    guard interactive,
+      let input = physicalKeyInput(
+        characters: event.characters, charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+        keyCode: event.keyCode, command: flags.contains(.command), control: flags.contains(.control),
+        option: flags.contains(.option), shift: flags.contains(.shift), chords: stream?.keyboardChords == true)
     else { return super.keyDown(with: event) }
-    stream?.text(text)
+    switch input {
+    case .text(let text): stream?.text(text)
+    case .key(let name, let modifiers): stream?.key(name, modifiers: modifiers)
+    }
+  }
+}
+
+extension TwoFingerPhase {
+  fileprivate var wire: String {
+    switch self {
+    case .down: return "down"
+    case .move: return "move"
+    case .up: return "up"
+    }
   }
 }

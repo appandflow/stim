@@ -5,7 +5,9 @@ import { WebSocketServer } from 'ws';
 import type { WebShareRow } from '@stim-cli/core/protocol';
 import { serverLocalSocket } from '@stim-cli/core/state';
 
-export type ShareListAnswer = { shares: WebShareRow[] } | { error: { code: string; message: string } };
+export type ShareListAnswer =
+  | { shares: WebShareRow[]; starting?: number }
+  | { error: { code: string; message: string } };
 
 export function shareRow(workspace: string, expiresAt: string, overrides: Partial<WebShareRow> = {}): WebShareRow {
   return {

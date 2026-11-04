@@ -465,7 +465,6 @@ export async function acquireIosArtifact(
       const buildSlot = await run.takeBuildSlot({
         signal,
         automatic: automaticBuild(buildMachine),
-        max: maxBuilds,
         out: note,
         waitingFor: (info) => waitingFor?.(info, 'build-slot'),
       });

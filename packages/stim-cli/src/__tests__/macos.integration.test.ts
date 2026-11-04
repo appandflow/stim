@@ -46,6 +46,7 @@ import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
 import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { startedBy } from '../macos/instances.ts';
 import { macosDir, macosProcess, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
 import * as registration from '../macos/registration.ts';
 import { spawnEntry } from '../spawn-entry.ts';
@@ -343,6 +344,89 @@ describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned b
     expect(existsSync(macosDir(root))).toBe(true);
   });
 });
+
+test.skipIf(process.platform === 'win32')(
+  'stopping an app ends its server and the helpers in the server group, and spares a setsid daemon and a bystander',
+  async () => {
+    const idle = 'setInterval(() => {}, 1000)';
+    const server = `const { spawn } = require('node:child_process');
+      const client = spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { stdio: 'ignore' });
+      const daemon = spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { stdio: 'ignore', detached: true });
+      process.stdout.write(client.pid + ' ' + daemon.pid + '\\n'); ${idle}`;
+    const app = `const { spawn } = require('node:child_process');
+      const s = spawn(process.execPath, ['-e', ${JSON.stringify(server)}], { stdio: ['ignore', 'pipe', 'ignore'], detached: true });
+      const setuid = process.platform === 'darwin' ? spawn('/usr/bin/top', ['-l', '0', '-s', '5'], { stdio: 'ignore' }).pid : 0;
+      s.stdout.on('data', (d) => process.stdout.write(s.pid + ' ' + d.toString().trim() + ' ' + setuid + '\\n')); ${idle}`;
+    const supervisor = `const a = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(app)}], { stdio: ['ignore', 'pipe', 'ignore'] });
+      a.stdout.on('data', (d) => process.stdout.write(a.pid + ' ' + d)); ${idle}`;
+    const leader = getExecutor().spawn(process.execPath, ['-e', supervisor], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    children.push(leader);
+    const pids = await new Promise<number[]>((resolve) =>
+      leader.stdout?.once('data', (data: Buffer) => resolve(String(data).trim().split(' ').map(Number))),
+    );
+    const owned = (pid: number | undefined): MacosProcess => {
+      const processToken = pid === undefined ? null : captureProcessToken(pid);
+      if (pid === undefined || !processToken) throw new Error('The fixture process has no identity.');
+      return { pid, processToken, startedAtMicros: 1 };
+    };
+    const [appPid, serverPid, clientPid, daemonPid, setuidPid] = pids;
+    const supervised = owned(leader.pid);
+    const [started, helper, daemon] = [owned(serverPid), owned(clientPid), owned(daemonPid)];
+    const bystander = await ownedProcess();
+    const warnings: string[] = [];
+    try {
+      writeWorkspaceState(root, { macos: record({ supervisor: supervised, app: owned(appPid) }) });
+      expect(await stopMacosApp(root, testContext({ output: (_stream, text) => warnings.push(text) }))).toBe(true);
+      expect(inspectProcessIdentity(started)).toBe('gone');
+      expect(inspectProcessIdentity(helper)).toBe('gone');
+      expect(inspectProcessIdentity(daemon)).toBe('same');
+      expect(inspectProcessIdentity(bystander)).toBe('same');
+      if (process.platform === 'darwin') expect(warnings.join('')).toContain(`pid ${setuidPid}`);
+    } finally {
+      for (const pid of [supervised.pid, ...pids].filter((each) => each > 1)) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {}
+      }
+    }
+  },
+  30_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'the stop walk lists nothing under this process, pid 1 or an ancestor, though it has children',
+  async () => {
+    const idle = 'setInterval(() => {}, 1000)';
+    const owner = getExecutor().spawn(
+      process.execPath,
+      [
+        '-e',
+        `const c = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { stdio: 'ignore' }); process.stdout.write(c.pid + '\\n'); ${idle}`,
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    children.push(owner);
+    const started = Number(
+      await new Promise<string>((resolve) => owner.stdout?.once('data', (d) => resolve(String(d)))),
+    );
+    const identity = (pid: number | undefined): MacosProcess => {
+      const processToken = pid === undefined ? null : captureProcessToken(pid);
+      if (pid === undefined || !processToken) throw new Error('The fixture process has no identity.');
+      return { pid, processToken, startedAtMicros: 1 };
+    };
+    try {
+      await ownedProcess();
+      expect((await startedBy([identity(owner.pid)])).map((each) => each.pid)).toEqual([started]);
+      expect(await startedBy([identity(process.pid)])).toEqual([]);
+      expect(await startedBy([identity(process.ppid)])).toEqual([]);
+    } finally {
+      process.kill(started, 'SIGKILL');
+    }
+  },
+);
 
 describe('macOS build placement and promotion', () => {
   let bundle: string;

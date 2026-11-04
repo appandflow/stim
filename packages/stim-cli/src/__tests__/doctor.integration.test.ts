@@ -124,7 +124,7 @@ describe('offload-candidate', () => {
         level: 'note',
         title: 'Builds could run on another machine',
         detail: 'Cold builds averaged ~4 min over 3 builds this week.',
-        fix: 'In Stim Desktop, open Settings > Remote Machines > Add.',
+        fix: 'In Stim Desktop, open Settings > Connections > This machine uses > Add.',
       });
       expect(
         (

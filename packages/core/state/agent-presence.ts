@@ -108,36 +108,56 @@ export function agentActionPoints(
 }
 
 /**
+ * The element an agent action acted on, from the details agent-device records. A ref is kept as `@ref`; a selector
+ * is redacted to `<arg>` in the record, so a single positional that is not a coordinate pair stands for one, and
+ * the recorded point picks the element.
+ */
+export function agentActionTarget(recorded: unknown): string | undefined {
+  if (!isJsonObject(recorded)) return undefined;
+  const { ref, positionals, targetLabel } = recorded;
+  if (typeof ref === 'string') return `@${ref}`;
+  return Array.isArray(positionals) &&
+    positionals.length === 1 &&
+    typeof targetLabel === 'string' &&
+    !targetLabel.startsWith('(')
+    ? '<selector>'
+    : undefined;
+}
+
+/**
  * The presence gesture of one recorded agent-device action. `target` is the action's first positional: for an
  * `@ref`, the ref's rect from `tree` outlines it only when it contains the point the action reports, since a ref
  * from an older screen is stale; for a selector, the smallest node containing the point does. Coordinates outline
- * nothing.
+ * nothing. The point is measured in the tree's viewport, or in `fallback`, the device's logical size, without one.
  */
 export function agentActionGesture(
   recorded: unknown,
   tree: AgentSnapshotTree | null,
   target: string | undefined,
+  fallback: AgentSnapshotTree['viewport'] = null,
 ): PresenceGesture | null {
-  const points = agentActionPoints(recorded, tree?.viewport ?? null);
-  if (!points || !tree?.viewport) return null;
+  const viewport = tree?.viewport ?? fallback;
+  const points = agentActionPoints(recorded, viewport);
+  if (!points || !viewport) return null;
   const d = details(recorded);
   const durationMs = Math.max(0, d.durationMs ?? 0);
   if (points.to) return { kind: 'swipe', from: points.from, to: points.to, durationMs };
   const { x = 0, y = 0 } = d;
   let rect: Rect | undefined;
+  const nodes = tree?.nodes ?? [];
   if (target?.startsWith('@')) {
     const ref = target.slice(1).split('~')[0];
-    const node = tree.nodes.find((each) => each.ref === ref);
+    const node = nodes.find((each) => each.ref === ref);
     if (node && contains(node.rect, x, y)) rect = node.rect;
   } else if (target !== undefined && !/^-?\d+(\.\d+)?$/.test(target)) {
-    rect = tree.nodes
+    rect = nodes
       .filter((node) => contains(node.rect, x, y))
       .reduce<Rect | undefined>(
         (best, node) => (!best || node.rect.width * node.rect.height < best.width * best.height ? node.rect : best),
         undefined,
       );
   }
-  const { width, height } = tree.viewport;
+  const { width, height } = viewport;
   const outline: PresenceRect | undefined = rect && {
     x: rect.x / width,
     y: rect.y / height,

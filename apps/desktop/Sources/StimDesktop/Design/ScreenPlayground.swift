@@ -41,7 +41,10 @@
     case hostedIos = "Hosted iOS"
     case hostedAndroid = "Hosted Android"
     case settings = "Settings"
+    case connectionsIncoming = "Connections: using this machine"
+    case connectionsOutgoing = "Connections: this machine uses"
     case addMachine = "Add remote machine"
+    case approveMachine = "Approve a machine here"
     case pairPhone = "Pair a phone"
     case pairedMachines = "Paired machines"
     case sidebar = "Sidebar"
@@ -68,7 +71,8 @@
       case .machineActions: return [.ready, .loading, .empty, .error]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
-      case .tokens, .addMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards, .deviceTools:
+      case .connectionsIncoming, .connectionsOutgoing: return [.ready]
+      case .tokens, .addMachine, .approveMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards, .deviceTools:
         return [.ready]
       }
     }
@@ -304,10 +308,16 @@
           }
         }
         .padding(Space.md)
+      case .connectionsIncoming:
+        ConnectionsPlayground(segment: .incoming, now: fixtureDate)
+      case .connectionsOutgoing:
+        ConnectionsPlayground(segment: .outgoing, now: fixtureDate)
       case .discovery:
         DiscoveryPlayground()
       case .addMachine:
         AddMachinePlayground()
+      case .approveMachine:
+        ApproveMachinePlayground()
       case .pairPhone:
         PairPhonePlayground()
       case .pairedMachines:

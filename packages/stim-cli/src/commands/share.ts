@@ -2,16 +2,19 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { RESERVED_SHARE_SLUGS, SHARE_SLUG_PATTERN, type Methods, type WebShareRow } from '@stim-cli/core/protocol';
+import { shareLinkKey } from '@stim-cli/core/state';
 import {
   LocalServerUnavailable,
   requestLocalServer,
   resolveShareServer,
   startShareServer,
   stopIdleShareServer,
+  type ShareServerStop,
   type LocalServerAnswer,
   type ShareMethod,
   type ShareServerStart,
 } from '../local-server.ts';
+import { forgetShareLinks, pauseShareLinks, reusableShareLinks, saveShareLink } from '../workspace/share-links.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
 
@@ -40,6 +43,10 @@ interface ShareOptions {
   /** Both `--password` and `--no-password` were passed. */
   bothPasswords?: boolean;
   slug?: string;
+  /** Start the saved link of this target again. */
+  reuse?: boolean;
+  /** With `stop`, delete the workspace's saved links. */
+  forget?: boolean;
   json?: boolean;
 }
 
@@ -49,7 +56,7 @@ export interface ShareDeps {
   /** Starts a stim-server for this Stim home when none runs; null when no version-matched server is installed. */
   startServer: () => Promise<ShareServerStart | null>;
   /** Stops the stim-server `stim share` started, once it holds no share; returns its pid when it stopped one. */
-  stopServer: () => Promise<number | null>;
+  stopServer: () => Promise<ShareServerStop | null>;
   /** Writes a line to stderr. */
   note: (line: string) => void;
   /** The host platform: stim-server serves its local socket everywhere but win32. */
@@ -128,6 +135,13 @@ async function ask<M extends ShareMethod>(
       'Update stim-server to the version of this stim (`stim-server service update`), then run stim share again.',
     );
   }
+  if (method === 'share.start' && /does not take (token|expiresAt)/.test(answer.error.message)) {
+    return failure(
+      'STIM_SHARE_REFUSED',
+      'The running stim-server cannot start a saved share again.',
+      'Update stim-server to the version of this stim (`stim-server service update`), then run stim share --reuse again.',
+    );
+  }
   return failure(
     'STIM_SHARE_REFUSED',
     answer.error.message,
@@ -156,12 +170,218 @@ function describeRow(row: ShareRow): string {
   return `${target} of ${row.workspace}: ${mode}${link}${waiting}, ${row.viewers} viewer${row.viewers === 1 ? '' : 's'}, expires ${row.expiresAt}`;
 }
 
+type ShareResult = { ok: true; output: object; text: string } | { ok: false; error: ShareFailure };
+
+const plural = (count: number) => `${count} ${count === 1 ? 'share' : 'shares'}`;
+
+const badArg = (message: string, remedy: string): ShareResult => ({
+  ok: false,
+  error: failure('STIM_BAD_ARG', message, remedy),
+});
+
+/** What the link and passwords of a started share say about who can open it. */
+function secretLines(
+  started: WebShareRow,
+  passwords: { password?: string; viewPassword?: string },
+  kept: 'saved' | 'unsaved' | 'reused',
+) {
+  const open = 'can open it from the internet until it expires';
+  const shown = kept === 'saved' ? 'shown now and saved for --reuse' : 'shown only now';
+  if (started.viewAuth) {
+    return [
+      `Control password: ${passwords.password ?? 'the one you set'}`,
+      `View password:    ${passwords.viewPassword ?? 'the one you set'}`,
+      kept !== 'reused' && (passwords.password !== undefined || passwords.viewPassword !== undefined)
+        ? `Anyone with the link and a password ${open}. Generated passwords are ${shown}.`
+        : `Anyone with the link and a password ${open}.`,
+    ];
+  }
+  if (started.auth === 'none') return [`Password: none; anyone with the link ${open}.`];
+  if (started.auth === 'set') return [`Password: the one you set; anyone with the link and it ${open}.`];
+  return [
+    `Password: ${passwords.password}`,
+    kept === 'reused' ? `Anyone with both ${open}.` : `Anyone with both ${open}. The password is ${shown}.`,
+  ];
+}
+
+/** The URL's token or slug and the address it is served under, up to `/s/`. */
+function splitUrl(url: string, slug: string | undefined): { token?: string; origin: string } | null {
+  const [, origin, path] = /^(.*\/s\/)([^/?#]+)\/?$/.exec(url) ?? [];
+  if (origin === undefined || path === undefined) return null;
+  if (slug !== undefined) return path === slug ? { origin } : null;
+  return /^[A-Za-z0-9_-]{43}$/.test(path) ? { token: path, origin } : null;
+}
+
+/** Starts the workspace's saved link of this target again, with the passwords and setup it was first started with. */
+async function reuseShare(
+  root: string,
+  platform: 'ios' | 'android',
+  opts: ShareOptions,
+  deps: ShareDeps,
+  version: string,
+): Promise<ShareResult> {
+  const given = [
+    opts.control && '--control',
+    (typeof opts.password === 'string' || opts.password === false || opts.bothPasswords) && '--password',
+    opts.viewPassword !== undefined && '--view-password',
+  ].filter((flag): flag is string => typeof flag === 'string');
+  if (given.length) {
+    return badArg(
+      `--reuse takes the control, view-only and password setup from the saved share, so it cannot be combined with ${given.join(' or ')}.`,
+      'Leave those flags out, or start a new share without --reuse.',
+    );
+  }
+  const minutes = opts.expires === undefined ? null : parseMinutes(opts.expires);
+  if (typeof minutes === 'object' && minutes !== null) return { ok: false, error: minutes };
+  const target = { platform, ...(opts.slot ? { slot: opts.slot } : {}), ...(opts.device ? { physical: true } : {}) };
+  const key = shareLinkKey(target);
+  const saved = reusableShareLinks(root)[key];
+  const flags = `${opts.device ? ' --device' : ''}${opts.slot && opts.slot !== 'default' ? ` --slot ${opts.slot}` : ''}`;
+  if (!saved) {
+    return {
+      ok: false,
+      error: failure(
+        'STIM_SHARE_NOTHING_TO_REUSE',
+        `No saved link to reuse for ${platform}${opts.device ? ' device' : ''}${opts.slot && opts.slot !== 'default' ? ` (slot ${opts.slot})` : ''} of ${root}: no share was started for it, its link expired, or it was forgotten.`,
+        `Run stim share ${platform}${flags} without --reuse to start a new share.`,
+      ),
+    };
+  }
+  if (saved.auth === 'none') {
+    deps.note(
+      `Warning: this share has no password. Anyone with the link can ${saved.control ? 'watch and control' : 'watch'} the device until it expires.`,
+    );
+  }
+  const answer = await ask(
+    deps,
+    'share.start',
+    {
+      workspace: root,
+      platform,
+      ...(opts.slot && opts.slot !== 'default' ? { slot: opts.slot } : {}),
+      ...(opts.device ? { physical: true } : {}),
+      control: saved.control,
+      ...(saved.slug === undefined ? { token: saved.token } : { slug: saved.slug }),
+      ...(minutes === null ? { expiresAt: saved.expiresAt } : { expiresMinutes: minutes }),
+      ...(saved.password === undefined ? { passwordless: true } : { password: saved.password }),
+      ...(saved.viewPassword === undefined ? {} : { view: { password: saved.viewPassword } }),
+    },
+    version,
+    true,
+  );
+  if ('code' in answer) return { ok: false, error: answer };
+  const started = answer.result;
+  if (started.warning) deps.note(`Warning: ${started.warning}`);
+  const link = splitUrl(started.url, saved.slug);
+  if (link && saved.origin && link.origin !== saved.origin) {
+    deps.note(`The link is served under a different address than before; the link path is the same: ${link.origin}`);
+  }
+  try {
+    saveShareLink(root, key, {
+      ...saved,
+      ...(link ? { origin: link.origin } : {}),
+      state: 'live',
+      expiresAt: started.expiresAt,
+    });
+  } catch (cause) {
+    deps.note(`Warning: could not update the saved link: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
+  const shared = { ...started, auth: saved.auth, viewAuth: saved.viewAuth };
+  const passwords = {
+    ...(saved.auth === 'generated' && saved.password !== undefined ? { password: saved.password } : {}),
+    ...(saved.viewAuth === 'generated' && saved.viewPassword !== undefined ? { viewPassword: saved.viewPassword } : {}),
+  };
+  return {
+    ok: true,
+    output: { ...shared, ...passwords, reused: true },
+    text: [
+      `Shared ${describeRow(shared)}.`,
+      'Started again with its saved link and password.',
+      `URL:${shared.viewAuth ? '              ' : '      '}${shared.url}`,
+      ...secretLines(shared, passwords, 'reused'),
+      `Expires ${started.expiresAt}${minutes === null ? ' (the saved expiry)' : ''}.`,
+      'Stop it with: stim share stop (add --forget to make the link unusable)',
+    ].join('\n'),
+  };
+}
+
+/** Ends this workspace's shares, keeps its saved links reusable, or with `--forget` deletes them. */
+async function stopShares(root: string, opts: ShareOptions, deps: ShareDeps, version: string): Promise<ShareResult> {
+  const saving = (action: () => void, what: string) => {
+    try {
+      action();
+    } catch (cause) {
+      deps.note(`Warning: could not ${what}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  };
+  if (!opts.forget) saving(() => pauseShareLinks(root), 'mark the saved links stopped');
+  let answer = await ask(deps, 'share.stop', { workspace: root }, version);
+  if ('code' in answer && opts.forget && answer.code === 'STIM_SERVER_NOT_RUNNING') {
+    answer = { result: { stopped: [] } };
+  }
+  if ('code' in answer) return { ok: false, error: answer };
+  const { stopped } = answer.result;
+  let forgot = 0;
+  if (opts.forget) saving(() => (forgot = forgetShareLinks(root)), 'delete the saved links');
+  const server = await deps.stopServer();
+  let saved: ReturnType<typeof reusableShareLinks> = {};
+  saving(() => (saved = reusableShareLinks(root)), 'read the saved links');
+  const reusable = Object.values(saved).map((link) => ({
+    platform: link.platform,
+    slot: link.slot,
+    physical: link.physical,
+    expiresAt: link.expiresAt,
+  }));
+  const pausedLinks = stopped.some((row) =>
+    reusable.some((link) => link.platform === row.platform && link.slot === row.slot && link.physical === row.physical),
+  );
+  return {
+    ok: true,
+    output: {
+      stopped,
+      ...(opts.forget ? { forgot } : { reusable }),
+      ...(server === null
+        ? {}
+        : 'starting' in server
+          ? { keptServer: server.pid, startingShares: server.starting }
+          : { stoppedServer: server.pid, ...(server.exited ? {} : { stillStopping: true }) }),
+    },
+    text: [
+      stopped.length
+        ? `Stopped ${plural(stopped.length)}; ${stopped.length === 1 ? 'its link stops' : 'their links stop'} working${pausedLinks && !opts.forget ? ' until reused' : ''}.`
+        : 'This workspace has no live web share.',
+      ...(opts.forget
+        ? [
+            `Forgot ${forgot} saved ${forgot === 1 ? 'link' : 'links'}; ${forgot === 1 ? 'it' : 'they'} cannot be reused.`,
+          ]
+        : reusable.map((link) => {
+            const flags = `${link.physical ? ' --device' : ''}${link.slot === 'default' ? '' : ` --slot ${link.slot}`}`;
+            return `Reusable until ${link.expiresAt}: stim share ${link.platform}${flags} --reuse starts it again with the same link and password.`;
+          })),
+      ...(!opts.forget && reusable.length
+        ? ['To make the saved links unusable now, run: stim share stop --forget']
+        : []),
+      ...(server === null
+        ? []
+        : 'starting' in server
+          ? [
+              `Left the stim-server stim share started (pid ${server.pid}) running: ${server.starting === 1 ? 'a share start is' : `${server.starting} share starts are`} still in progress. It exits by itself if ${server.starting === 1 ? 'that start leaves' : 'those starts leave'} no share.`,
+            ]
+          : [
+              server.exited
+                ? `Stopped the stim-server stim share started (pid ${server.pid}).`
+                : `Asked the stim-server stim share started (pid ${server.pid}) to stop; it has not exited yet, so wait a moment before sharing again.`,
+            ]),
+    ].join('\n'),
+  };
+}
+
 export async function runShare(
   action: string,
   opts: ShareOptions,
   deps: ShareDeps,
   version: string,
-): Promise<{ ok: true; output: object; text: string } | { ok: false; error: ShareFailure }> {
+): Promise<ShareResult> {
   if (deps.platform === 'win32') {
     return {
       ok: false,
@@ -184,22 +404,13 @@ export async function runShare(
   }
   const root = await deps.findWorkspace(process.cwd());
   if (!root) return { ok: false, error: failure('STIM_NO_PROJECT', '', null) };
-  if (action === 'stop') {
-    const answer = await ask(deps, 'share.stop', { workspace: root }, version);
-    if ('code' in answer) return { ok: false, error: answer };
-    const { stopped } = answer.result;
-    const server = await deps.stopServer();
-    return {
-      ok: true,
-      output: { stopped, ...(server !== null ? { stoppedServer: server } : {}) },
-      text: [
-        stopped.length
-          ? `Stopped ${stopped.length} web share${stopped.length === 1 ? '' : 's'}; their links no longer work.`
-          : 'This workspace has no live web share.',
-        ...(server !== null ? [`Stopped the stim-server stim share started (pid ${server}).`] : []),
-      ].join('\n'),
-    };
+  if (opts.forget && action !== 'stop') {
+    return badArg('--forget works only with stim share stop.', 'Run stim share stop --forget.');
   }
+  if (opts.reuse && action !== 'ios' && action !== 'android') {
+    return badArg('--reuse works only with stim share ios or android.', 'Run stim share ios|android --reuse.');
+  }
+  if (action === 'stop') return stopShares(root, opts, deps, version);
   if (action !== 'ios' && action !== 'android') {
     return {
       ok: false,
@@ -220,6 +431,7 @@ export async function runShare(
       ),
     };
   }
+  if (opts.reuse) return reuseShare(root, action, opts, deps, version);
   if (action === 'ios' && opts.device && opts.control) {
     return {
       ok: false,
@@ -343,22 +555,39 @@ export async function runShare(
   if ('code' in answer) return { ok: false, error: answer };
   const started = answer.result;
   if (started.warning) deps.note(`Warning: ${started.warning}`);
-  const secret = started.viewAuth
-    ? [
-        `Control password: ${started.password ?? 'the one you set'}`,
-        `View password:    ${started.viewPassword ?? 'the one you set'}`,
-        started.password !== undefined || started.viewPassword !== undefined
-          ? 'Anyone with the link and a password can open it from the internet until it expires. Generated passwords are shown only now.'
-          : 'Anyone with the link and a password can open it from the internet until it expires.',
-      ]
-    : started.auth === 'none'
-      ? ['Password: none; anyone with the link can open it from the internet until it expires.']
-      : started.auth === 'set'
-        ? ['Password: the one you set; anyone with the link and it can open it from the internet until it expires.']
-        : [
-            `Password: ${started.password}`,
-            'Anyone with both can open it from the internet until it expires. The password is shown only now.',
-          ];
+  const link = splitUrl(started.url, started.slug);
+  const password = chosen ?? started.password;
+  const viewPassword = typeof view === 'string' ? view : started.viewPassword;
+  let saved = false;
+  if (
+    link &&
+    (started.auth === 'none' || password !== undefined) &&
+    (!started.viewAuth || viewPassword !== undefined)
+  ) {
+    try {
+      saveShareLink(root, shareLinkKey({ platform: action, slot: opts.slot, physical: opts.device }), {
+        platform: action,
+        slot: opts.slot ?? 'default',
+        physical: opts.device === true,
+        ...(link.token === undefined ? { slug: started.slug } : { token: link.token }),
+        origin: link.origin,
+        control: started.control,
+        ...(started.auth === 'none' || password === undefined ? {} : { password }),
+        ...(started.viewAuth && viewPassword !== undefined ? { viewPassword } : {}),
+        auth: started.auth,
+        viewAuth: started.viewAuth ?? null,
+        state: 'live',
+        createdAt: new Date().toISOString(),
+        expiresAt: started.expiresAt,
+      });
+      saved = true;
+    } catch (cause) {
+      deps.note(
+        `Warning: could not save the link for --reuse: ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+  }
+  const secret = secretLines(started, started, saved ? 'saved' : 'unsaved');
   return {
     ok: true,
     output: started,
@@ -369,7 +598,9 @@ export async function runShare(
       ...(started.slug !== undefined
         ? ['The link uses a chosen slug, so anyone can guess it: only the password keeps the share private.']
         : []),
-      'Stop it with: stim share stop',
+      saved
+        ? 'Stop it with: stim share stop (add --forget to make the link unusable)'
+        : 'Stop it with: stim share stop',
     ].join('\n'),
   };
 }
@@ -390,7 +621,7 @@ export function registerShare(program: Command, version: string, deps: Partial<S
   program
     .command('share <action>')
     .description(
-      "Share this workspace's running app through a public web link, with a generated password unless you set or drop it: share ios|android starts one (and a stim-server, when none runs), share stop ends this workspace's shares, share list lists shares and whether one waits for its device.",
+      "Share this workspace's running app through a public web link, with a generated password unless you set or drop it: share ios|android starts one (and a stim-server, when none runs), share stop ends this workspace's shares, share list lists shares and whether one waits for its device. Every share's link and password are saved for share ios|android --reuse, which starts a stopped share again until it expires; share stop --forget deletes them.",
     )
     .option('--slot <name>', 'Share the device of this slot')
     .option('--device', 'Share the physical device this workspace leases instead of its simulator or emulator')
@@ -405,7 +636,15 @@ export function registerShare(program: Command, version: string, deps: Partial<S
       '--slug <name>',
       'Use /s/<name>/ as the link instead of a random token (3 to 32 lowercase letters, digits and hyphens; needs a password)',
     )
-    .option('--expires <minutes>', `Minutes until the share ends, 1 to ${MAX_MINUTES}`, String(DEFAULT_MINUTES))
+    .option(
+      '--reuse',
+      "Start the saved link and passwords of this workspace's last share of this target again, until it expires (not with --control, --password, --no-password or --view-password; --expires replaces the expiry)",
+    )
+    .option('--forget', "With stop, also delete this workspace's saved links so --reuse has nothing to start")
+    .option(
+      '--expires <minutes>',
+      `Minutes until the share ends, 1 to ${MAX_MINUTES} (default ${DEFAULT_MINUTES}; with --reuse, the saved expiry)`,
+    )
     .option('--json', 'Emit one JSON payload')
     .action(async (action: string, opts: ShareOptions) => {
       const args = process.argv.slice(2);

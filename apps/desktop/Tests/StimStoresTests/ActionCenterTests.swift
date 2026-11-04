@@ -77,7 +77,7 @@ struct ActionCenterTests {
     #expect(await until { run.exitStatus != nil })
     #expect(run.exitStatus == 1 && finishes == 1)
     #expect(run.launchError == nil && center.active(for: "/selected") == nil)
-    #expect(run.logLines.contains { $0.text.contains("bundled local stim-server is not ready") })
+    #expect(run.logLines.contains { $0.text.contains("stim-server is not ready") })
     #expect(run.logLines.contains { $0.text == "$ true" })
     #expect(center.operations.attentionCount == 1 && center.latest(for: "/selected")?.id == run.id)
   }

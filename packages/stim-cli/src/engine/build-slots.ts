@@ -9,6 +9,7 @@ import { ambientContext } from '@stim-cli/core';
 import { daemonWaiter, notifyReleased } from '../daemon/client.ts';
 import { liveWaiters, queuePosition, takeWaitTicket, waitCeiling } from './wait-queue.ts';
 import { throwIfCancelled } from '../cancellation.ts';
+import { admissionLimits } from '../workspace/config.ts';
 
 const SLOT_PREFIX = 'slot-';
 
@@ -27,7 +28,9 @@ interface TryAcquireBuildSlotOptions {
   logFile?: string | null;
 }
 
-interface AcquireBuildSlotOptions extends TryAcquireBuildSlotOptions {
+interface AcquireBuildSlotOptions extends Omit<TryAcquireBuildSlotOptions, 'max'> {
+  /** Pins the cap for the whole wait; absent, every round reads `concurrency.maxBuilds` again. */
+  max?: number;
   automatic?: boolean;
   signal?: AbortSignal;
   out?: (line: string) => void;
@@ -153,13 +156,14 @@ function queueState(max: number, waiters: readonly ClaimHolder[]): string {
 }
 
 /**
- * Takes one of `max` build slots in arrival order. A run that finds no free slot, or older runs waiting, joins the
+ * Takes one of the `max` build slots in arrival order, `max` being the option when given and else the current
+ * `concurrency.maxBuilds`, read again every round so a raised cap admits a waiting build. A run that finds no free slot, or older runs waiting, joins the
  * build queue under `$STIM_HOME/build-waits`, retries each second and when the daemon wakes it, and prints a progress
  * line every 10 seconds. It refuses with `STIM_AT_CAPACITY` after `ceilingMs`; without it, once a slot's holder has
  * stayed unverifiable for the position-based ceiling, or after 90 minutes in all.
  */
 export async function acquireBuildSlot({
-  max,
+  max: maxOption,
   root = null,
   logFile = null,
   now = Date.now,
@@ -174,7 +178,9 @@ export async function acquireBuildSlot({
 }: AcquireBuildSlotOptions): Promise<BuildSlotHandle> {
   throwIfCancelled(signal, 'build slot');
   if (automatic) requireAutomaticMachine('build', 'local');
-  if (!max || max <= 0) return { acquired: true, unlimited: true };
+  const readMax = () => maxOption ?? admissionLimits().maxBuilds;
+  const firstMax = readMax();
+  if (!firstMax || firstMax <= 0) return { acquired: true, unlimited: true };
   const waiter = daemonWaiter('build');
   const sleep = sleepOverride ?? ((ms: number) => waiter.wait(ms, signal));
   const started = now();
@@ -185,6 +191,7 @@ export async function acquireBuildSlot({
     for (;;) {
       throwIfCancelled(signal, 'build slot');
       if (automatic) requireAutomaticMachine('build', 'local');
+      const max = readMax();
       const waiters = liveWaiters('build');
       const position = queuePosition(waiters, ticket);
       const busy = busySlots(max);

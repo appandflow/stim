@@ -215,6 +215,9 @@ describe('a share of a hosted device', () => {
       code: 'action-failed',
     });
 
+    f.source.end(owner, 'older', 'The share ended.');
+    expect(f.source.targetOf(owner, 'hc1')).not.toBeNull();
+
     f.source.endFor(owner, 'The last viewer left.');
     expect(f.requests.at(-1)).toEqual({ method: 'device-host.control.end', params: { session: 'hc1' } });
     expect(f.audit.map((record) => [record.action, record.ok])).toEqual([

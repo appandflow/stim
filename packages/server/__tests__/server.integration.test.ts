@@ -51,9 +51,13 @@ import {
   loadConfig,
   settingsJsonSchema,
   serverLocalSocket,
+  workspaceMetadataFile,
+  workspaceShareLinksFile,
   workspaceStateFile,
+  readSetupJournal,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
+import { ShareHub } from '../src/share.ts';
 import * as stim from 'stim';
 import { BuildHost } from '../src/build.ts';
 import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
@@ -82,11 +86,19 @@ import {
   readBuildClients,
   readDeviceHostClients,
   readDevices,
+  dropSetupSecret,
   revokeDevice,
+  secretPsk,
+  serverDir,
   serverIdentity,
   spendSecret,
   storeSetupSecret,
+  watchClientRegistries,
 } from '../src/registry.ts';
+import { pruneSetupJournals, writeSetupJournal } from '../src/setup-journal.ts';
+import { setupClaim, type SetupDeps } from '../src/setup.ts';
+import { fetchHealth } from '../src/service.ts';
+import type { InstalledService } from '../src/service-plist.ts';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
 import { acceptNoise, newSecret, secretValues } from '@stim-cli/core/noise-session';
 import {
@@ -493,6 +505,7 @@ async function start(
     requestLog?: ServerOptions['requestLog'];
     /** The bundled Desktop's private key; the test key by default, null for a server Desktop did not start. */
     desktopBootstrap?: ServerOptions['desktopBootstrap'] | null;
+    setupDeps?: ServerOptions['setupDeps'];
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -561,6 +574,7 @@ async function start(
         : (overrides.desktopBootstrap ?? new DesktopBootstrap(DESKTOP_KEY)),
     startupProbeMs: overrides.startupProbeMs,
     startupRetryMs: overrides.startupRetryMs,
+    setupDeps: overrides.setupDeps,
   });
   if (overrides.settle !== false) await server!.ready;
   return server.addresses[0]!.port;
@@ -903,6 +917,8 @@ for (;;) { fs.closeSync(fs.openSync(${JSON.stringify(config)}, 'w')); fs.writeFi
 });
 
 describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   async function routeServer(config: unknown = {}, env: Record<string, string> = {}) {
     const status = join(root, 'serve.json');
     const commandLog = join(root, 'serve-calls.ndjson');
@@ -1045,7 +1061,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       result: { remote: null, unreachable: expect.stringContaining('has not approved this machine'), upload: null },
     });
     expect(await local.request('route.setup')).toMatchObject({ result: { state: 'routed' } });
-    expect(await local.request('share.list')).toEqual(expect.objectContaining({ result: { shares: [] } }));
+    expect(await local.request('share.list')).toEqual(expect.objectContaining({ result: { shares: [], starting: 0 } }));
     expect(await local.request('share.stop', { workspace: root })).toEqual(
       expect.objectContaining({ result: { stopped: [] } }),
     );
@@ -1055,6 +1071,17 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(await local.request('share.stop', { workspace: root, id: '' })).toMatchObject({
       error: { code: 'bad-request' },
     });
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+    for (const params of [
+      { token: 'short' },
+      { token: TOKEN, expiresAt: '2000-01-01T00:00:00.000Z' },
+      { token: TOKEN, expiresAt: new Date(Date.now() + 3600_000).toISOString(), expiresMinutes: 30 },
+      { token: TOKEN, expiresAt: new Date(Date.now() + 10 * 3600_000).toISOString() },
+    ]) {
+      expect(await local.request('share.start', { workspace: root, platform: 'ios', ...params })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+    }
     expect(await local.request('share.stop', { workspace: root, slot: 'beta' })).toEqual(
       expect.objectContaining({ result: { stopped: [] } }),
     );
@@ -1068,11 +1095,71 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       [{ slug: 'Pokedex' }, 'params.slug must be'],
       [{ slug: 'assets' }, 'params.slug cannot be assets'],
       [{ slug: 'pokedex', passwordless: true }, 'needs a password'],
+      [{ slug: 'pokedex', token: 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ' }, 'a slug or a token'],
     ] as const) {
       expect(await local.request('share.start', { workspace: root, platform: 'ios', ...params })).toMatchObject({
         error: { code: 'bad-request', message: expect.stringContaining(message) },
       });
     }
+  });
+
+  it('starts the saved live shares again when it starts, never a stopped one, and marks a share stopped before share.stop ends it', async () => {
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+    const saved = {
+      slot: 'default',
+      physical: false,
+      control: false,
+      password: 'saved-password',
+      auth: 'generated',
+      viewAuth: null,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    };
+    mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
+    writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
+    const entries = {
+      ios: { ...saved, platform: 'ios', token: TOKEN, state: 'live' },
+      'ios@tablet': { ...saved, platform: 'ios', slot: 'tablet', token: 'T'.repeat(43), state: 'live' },
+      android: { ...saved, platform: 'android', token: 'Z'.repeat(43), state: 'stopped' },
+    };
+    writeFileSync(workspaceShareLinksFile(workspace), JSON.stringify({ version: 1, links: entries }));
+    const started = vi
+      .spyOn(ShareHub.prototype, 'start')
+      .mockImplementation(async () => ({ id: 'w1', url: 'https://x.test/s/x/', expiresAt: saved.expiresAt }) as never);
+    const order: string[] = [];
+    vi.spyOn(ShareHub.prototype, 'stop').mockImplementation(async () => {
+      order.push(`stop saw ${JSON.stringify(savedStates())}`);
+      return [];
+    });
+    const savedStates = () =>
+      Object.fromEntries(
+        Object.entries(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links).map(
+          ([key, link]) => [key, (link as { state: string }).state],
+        ),
+      );
+    await routeServer();
+    const client = await desktop();
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(2));
+    expect(started).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspace,
+        platform: 'ios',
+        token: TOKEN,
+        password: 'saved-password',
+        control: false,
+        expiresAt: Date.parse(saved.expiresAt),
+      }),
+      { restore: true },
+    );
+    expect(started).toHaveBeenCalledWith(expect.objectContaining({ slot: 'tablet', token: 'T'.repeat(43) }), {
+      restore: true,
+    });
+
+    await client.request('share.stop', { workspace, slot: 'tablet' });
+    expect(savedStates()).toEqual({ ios: 'live', 'ios@tablet': 'stopped', android: 'stopped' });
+    await client.request('share.stop', { workspace });
+    expect(savedStates()).toEqual({ ios: 'stopped', 'ios@tablet': 'stopped', android: 'stopped' });
+    expect(order[0]).toBe('stop saw {"ios":"live","ios@tablet":"stopped","android":"stopped"}');
   });
 
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {
@@ -1388,6 +1475,7 @@ describe('pairing', () => {
           'hosted-android-process',
           'hosted-metro-ports',
           'hosted-metro-link',
+          'hosted-reverse-ports',
           'hosted-agent-link',
           'server-update',
           'build-compat',
@@ -1396,10 +1484,13 @@ describe('pairing', () => {
           'share-stop-id',
           'presence',
           'device-clipboard',
+          'device-keyboard',
           'share-view-password',
           'share-waiting',
           'hosted-presence',
           'share-slug',
+          'share-reuse',
+          'share-starting',
         ],
         actions: [],
         device: { name: 'Test phone' },
@@ -1409,6 +1500,16 @@ describe('pairing', () => {
     const second = await connect(port, undefined, { secret: token });
     expect(await second.closedWith).toEqual({ code: 4401, reason: 'unknown-secret' });
     expect(readDevices()).toHaveLength(1);
+  });
+
+  it('logs why it could not record a new client when a newer Stim wrote the registry', async () => {
+    const port = await start();
+    const { token } = createPairingToken();
+    writeFileSync(join(serverDir(), 'devices.json'), JSON.stringify({ version: 3, devices: [] }));
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const client = await connect(port, undefined, { secret: token });
+    expect(await client.closedWith).toEqual({ code: 4401, reason: 'home-unavailable' });
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('registry version 3, which a newer Stim wrote'));
   });
 
   it('refuses an expired pairing token', async () => {
@@ -1602,6 +1703,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-machine-history']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-remote']) } });
     expect(hello).toMatchObject({
       result: { features: expect.not.arrayContaining(['desktop-report-invalidate-target']) },
     });
@@ -1622,6 +1724,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
           'desktop-reports',
           'desktop-machine-history',
           'desktop-report-platform',
+          'desktop-report-remote',
           'desktop-report-invalidate-target',
         ]),
       },
@@ -1662,6 +1765,9 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       expect(await client.request('desktop.reports.get', { report })).toMatchObject({
         result: { pending: false, value: { records: [record] } },
       });
+    expect(await client.request('desktop.reports.get', { report: 'remote' })).toMatchObject({
+      result: { pending: false, value: { machines: [], findings: [] } },
+    });
     const subscribed = await client.request('desktop.reports.subscribe', { report: 'gc' });
     expect(subscribed).toHaveProperty('result.subscription');
     expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: first.result });
@@ -2401,6 +2507,363 @@ describe('setup approval', () => {
       expect(revokeDevice(made[capability]!.id)).toBe(true);
       expect(await approved.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
     });
+  });
+});
+
+describe('setup approval in Stim Desktop on this machine', () => {
+  const never = async (): Promise<never> => {
+    throw new Error('Desktop-approved setup must not install or change a service');
+  };
+  /** The machine-facing parts of setup are fakes; the ticket, claim, secret, records and journal are the real ones. */
+  const setupDeps = (): SetupDeps => ({
+    platform: 'darwin',
+    now: Date.now,
+    sleep: (ms, signal) =>
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, ms);
+        signal?.addEventListener('abort', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      }),
+    tty: false,
+    stdout: () => {},
+    stderr: () => {},
+    confirm: never,
+    permissionWait: never,
+    preflight: async () => ({ dnsName: 'worker.ts.net' }),
+    fingerprint: () => 'worker-fingerprint',
+    firewall: async () => null,
+    claim: setupClaim,
+    write: writeSetupJournal,
+    prune: pruneSetupJournals,
+    withInstallClaim: (_label, work) => work(),
+    installed: async () => null,
+    health: async (port) => {
+      const health = await fetchHealth(port);
+      return (
+        health && {
+          ...health,
+          host: {
+            name: 'Stim Desktop',
+            screenRecording: false,
+            accessibility: false,
+          },
+        }
+      );
+    },
+    build: () => ({ version: '1.2.3', stimBuild: 'digest' }),
+    install: never,
+    update: never,
+    installHost: async () => ({
+      app: '/Stim Host.app',
+      executable: '/Stim Host.app/Contents/MacOS/stim-host',
+      name: 'Stim Host',
+      bundleId: 'dev.stim.host',
+      replaced: false,
+      adHoc: false,
+    }),
+    installJob: never,
+    route: async () => ({ state: 'routed', port: 7443 }),
+    prepareRoute: async () => ({
+      record: { port: 7443, created: false },
+      create: null,
+    }),
+    recordRoute: async () => {},
+    createRoute: never,
+    records: () => [...readBuildClients(), ...readDeviceHostClients()],
+    watchRecords: watchClientRegistries,
+    storeSecret: storeSetupSecret,
+    dropSecret: dropSetupSecret,
+    panes: async () => ({
+      screen: 'Screen & System Audio Recording',
+      control: 'Accessibility',
+    }),
+    requestPermissions: never,
+    openPane: async () => {},
+    toolchain: async () => ({
+      stimBuild: 'digest',
+      arch: 'arm64',
+      xcode: '27',
+      simulatorSdk: '27',
+      macosSdk: '27',
+      cocoapods: '1.16',
+      runtimes: ['iOS-27'],
+      jdk: '17',
+      androidSdk: { ndk: ['27'], buildTools: ['36'], platforms: ['36'] },
+    }),
+    node: process.execPath,
+    versions: () => root,
+    stimBuild: 'digest',
+  });
+
+  type SetupEvent = Extract<ServerMessage, { event: 'desktop-setup-progress' | 'desktop-setup-ended' }>;
+
+  async function nextSetup(client: Client, check: (event: SetupEvent) => boolean): Promise<SetupEvent> {
+    for (;;) {
+      const message = await client.next();
+      if (
+        'event' in message &&
+        (message.event === 'desktop-setup-progress' || message.event === 'desktop-setup-ended') &&
+        check(message)
+      )
+        return message;
+    }
+  }
+
+  const asking = (capability: string) => (event: SetupEvent) =>
+    event.event === 'desktop-setup-progress' && event.asking === capability;
+  const step = (prefix: string) => (event: SetupEvent) =>
+    event.event === 'desktop-setup-progress' &&
+    event.journal.steps.some((each) => each.state === 'running' && each.id.startsWith(prefix));
+  const waitsForMachine = (event: SetupEvent) =>
+    event.event === 'desktop-setup-progress' &&
+    event.journal.steps.some(
+      (each) =>
+        each.id === 'approve' && each.state === 'running' && each.detail?.startsWith('Waiting for the requesting'),
+    );
+  const ended = (event: SetupEvent) => event.event === 'desktop-setup-ended';
+
+  function request(capabilities: string[] = ['build'], minutes = 30) {
+    const ticket = newSecret();
+    const values = secretValues(Buffer.from(ticket, 'base64url'));
+    return {
+      ticket,
+      journal: values.journal,
+      stored: () => secretPsk(values.lookup.toString('hex')) !== null,
+      params: {
+        ticket,
+        expires: new Date(Date.now() + minutes * 60_000).toISOString(),
+        capabilities,
+      },
+    };
+  }
+
+  it('refuses every connection but the proved local Desktop and stores nothing', async () => {
+    const port = await start({ setupDeps });
+    const asked = request();
+    const peer = await pair(port, '100.64.0.2', true);
+    const remote = await returning(port, peer.keyPair, '100.64.0.2');
+    const loopbackPairing = await authed(port, true);
+    const build = await returning(port, setupClient(['build']).keyPair, '100.64.0.3', 'build');
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    await plain.request('hello', { client: CLIENT });
+    for (const client of [remote, loopbackPairing, build, plain]) {
+      expect(await client.request('desktop.setup.subscribe', asked.params)).toHaveProperty('error.code', 'forbidden');
+      expect(
+        await client.request('desktop.setup.answer', {
+          journal: asked.journal,
+          answer: 'approve',
+          capability: 'build',
+        }),
+      ).toHaveProperty('error.code', 'forbidden');
+    }
+    expect(asked.stored()).toBe(false);
+    expect(readSetupJournal(asked.journal)).toBeNull();
+  });
+
+  it('is not offered on a server Desktop did not start', async () => {
+    await start({ setupDeps, desktopBootstrap: null });
+    assert(server?.localSocket);
+    const client = await localConnect(server.localSocket);
+    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-setup']) },
+    });
+    const asked = request();
+    expect(await client.request('desktop.setup.subscribe', asked.params)).toHaveProperty('error.code', 'forbidden');
+    expect(asked.stored()).toBe(false);
+  });
+
+  it('stores the ticket only for the grants the person approves, which the requesting machine then spends', async () => {
+    const port = await start({ setupDeps });
+    const desktopClient = await desktop();
+    const asked = request(['build', 'device-host']);
+    expect(await desktopClient.request('desktop.setup.subscribe', asked.params)).toHaveProperty('result.subscription');
+    expect(await desktopClient.request('desktop.setup.subscribe', asked.params)).toHaveProperty(
+      'error.code',
+      'bad-request',
+    );
+    await nextSetup(desktopClient, asking('build'));
+    expect(
+      await desktopClient.request('desktop.setup.answer', {
+        journal: asked.journal,
+        answer: 'approve',
+        capability: 'device-host',
+      }),
+    ).toHaveProperty('error.code', 'bad-request');
+    expect(asked.stored()).toBe(false);
+    expect(
+      await desktopClient.request('desktop.setup.answer', {
+        journal: asked.journal,
+        answer: 'approve',
+        capability: 'build',
+      }),
+    ).toEqual(expect.objectContaining({ result: {} }));
+    await nextSetup(desktopClient, asking('device-host'));
+    expect(asked.stored()).toBe(false);
+    await desktopClient.request('desktop.setup.answer', {
+      journal: asked.journal,
+      answer: 'refuse',
+      capability: 'device-host',
+    });
+    await nextSetup(desktopClient, waitsForMachine);
+    expect(asked.stored()).toBe(true);
+
+    const keyPair = generateNoiseKeyPair();
+    const requester = await connect(port, '100.64.0.2', {
+      secret: asked.ticket,
+      keyPair,
+      name: 'Laptop',
+    });
+    expect(await requester.request('hello', { client: CLIENT, access: 'build' })).toHaveProperty(
+      'result.capabilities',
+      ['build'],
+    );
+    await nextSetup(desktopClient, step('permissions.screenRecording'));
+    expect(
+      await desktopClient.request('desktop.setup.answer', {
+        journal: asked.journal,
+        answer: 'skip',
+        permission: 'deviceControl',
+      }),
+    ).toHaveProperty('error.code', 'bad-request');
+    expect(
+      await desktopClient.request('desktop.setup.answer', {
+        journal: asked.journal,
+        answer: 'skip',
+        permission: 'screenRecording',
+      }),
+    ).toEqual(expect.objectContaining({ result: {} }));
+    await nextSetup(desktopClient, step('permissions.deviceControl'));
+    await desktopClient.request('desktop.setup.answer', {
+      journal: asked.journal,
+      answer: 'skip',
+      permission: 'deviceControl',
+    });
+    const end = await nextSetup(desktopClient, ended);
+    expect(end).toMatchObject({ exitCode: 1, output: { granted: [{ capability: 'build' }] } });
+    expect(readBuildClients()).toEqual([
+      expect.objectContaining({
+        name: 'Laptop',
+        publicKey: keyPair.publicKey.toString('base64url'),
+      }),
+    ]);
+    expect(readDeviceHostClients()).toEqual([]);
+    expect(readFileSync(join(root, 'home', 'server', 'secrets.json'), 'utf8')).not.toContain(asked.ticket);
+  });
+
+  it('stores nothing when the person refuses every grant', async () => {
+    const port = await start({ setupDeps });
+    const desktopClient = await desktop();
+    const asked = request();
+    await desktopClient.request('desktop.setup.subscribe', asked.params);
+    await nextSetup(desktopClient, asking('build'));
+    await desktopClient.request('desktop.setup.answer', {
+      journal: asked.journal,
+      answer: 'refuse',
+      capability: 'build',
+    });
+    const end = await nextSetup(desktopClient, ended);
+    expect(end).toMatchObject({ exitCode: 1, output: { granted: [] } });
+    expect(asked.stored()).toBe(false);
+    await expect(connect(port, '100.64.0.2', { secret: asked.ticket })).rejects.toMatchObject({
+      code: 'unknown-secret',
+    });
+  });
+
+  it("applies setup's own ticket rules and takes one request at a time", async () => {
+    await start({ setupDeps });
+    const desktopClient = await desktop();
+    for (const params of [request(['build'], 3 * 60).params, request(['build'], -1).params]) {
+      expect(await desktopClient.request('desktop.setup.subscribe', params)).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+    }
+    const first = request();
+    await desktopClient.request('desktop.setup.subscribe', first.params);
+    await nextSetup(desktopClient, asking('build'));
+    const second = request();
+    await desktopClient.request('desktop.setup.subscribe', second.params);
+    const refused = await nextSetup(desktopClient, ended);
+    expect(refused).toMatchObject({
+      exitCode: 1,
+      output: { warnings: expect.arrayContaining([expect.stringContaining('Another setup holds')]) },
+    });
+    expect(
+      await desktopClient.request('desktop.setup.answer', {
+        journal: second.journal,
+        answer: 'approve',
+        capability: 'build',
+      }),
+    ).toHaveProperty('error.code', 'bad-request');
+    expect(
+      await desktopClient.request('desktop.setup.answer', {
+        journal: first.journal,
+        answer: 'skip',
+        permission: 'screenRecording',
+      }),
+    ).toHaveProperty('error.code', 'bad-request');
+    await desktopClient.request('desktop.setup.answer', {
+      journal: first.journal,
+      answer: 'refuse',
+      capability: 'build',
+    });
+    await nextSetup(desktopClient, ended);
+    expect(second.stored()).toBe(false);
+  });
+
+  it('withdraws an approved ticket when Desktop closes the request before the machine connects', async () => {
+    const port = await start({ setupDeps });
+    const desktopClient = await desktop();
+    const asked = request();
+    expect(await desktopClient.request('desktop.setup.subscribe', asked.params)).toHaveProperty(
+      'result.subscription',
+      's1',
+    );
+    await nextSetup(desktopClient, asking('build'));
+    await desktopClient.request('desktop.setup.answer', {
+      journal: asked.journal,
+      answer: 'approve',
+      capability: 'build',
+    });
+    await nextSetup(desktopClient, waitsForMachine);
+    expect(asked.stored()).toBe(true);
+    expect(await desktopClient.request('unsubscribe', { subscription: 's1' })).toMatchObject({ result: {} });
+    await vi.waitFor(() => expect(asked.stored()).toBe(false));
+    await expect(connect(port, '100.64.0.2', { secret: asked.ticket })).rejects.toMatchObject({
+      code: 'unknown-secret',
+    });
+  });
+  it('refuses on a machine with a stim-server service installed instead of installing or changing it', async () => {
+    const service: InstalledService = {
+      label: 'dev.stim.server',
+      host: null,
+      node: '/node',
+      script: '/server.mjs',
+      port: 0,
+      env: [],
+      pathPrepend: [],
+      stimHome: root,
+      logPath: '/log',
+      managed: true,
+      serve: null,
+      previousScript: null,
+      programArguments: [],
+    };
+    let port = 0;
+    port = await start({ setupDeps: () => ({ ...setupDeps(), installed: async () => ({ ...service, port }) }) });
+    const desktopClient = await desktop();
+    const asked = request();
+    await desktopClient.request('desktop.setup.subscribe', asked.params);
+    const end = await nextSetup(desktopClient, (event) => ended(event) || asking('build')(event));
+    expect(end).toMatchObject({
+      event: 'desktop-setup-ended',
+      exitCode: 1,
+      output: { warnings: expect.arrayContaining([expect.stringContaining('is installed on this machine')]) },
+    });
+    expect(asked.stored()).toBe(false);
   });
 });
 
@@ -4501,6 +4964,46 @@ describe('unauthenticated connections', () => {
       await expect(openPlain(port, undefined, { origin: 'https://attacker.example' })).rejects.toThrow('HTTP 403');
     }
     await expect(pair(port)).resolves.toHaveProperty('id');
+  });
+
+  it('survives a peer that resets the connection after a refused upgrade', async () => {
+    const port = await start({ loopbackOnly: true });
+    const localSocket = server?.localSocket;
+    assert(localSocket);
+    const upgradeRequest = (headers: string) =>
+      `GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n${headers}\r\n`;
+    const resetAfterRefusal = (headers: string) =>
+      new Promise<void>((resolve) => {
+        const refused = connectNet({ port, host: '127.0.0.1' });
+        refused.once('connect', () => refused.write(upgradeRequest(headers)));
+        refused.once('data', () => {
+          refused.resetAndDestroy();
+          resolve();
+        });
+      });
+    const closeBeforeRefusal = (headers: string) =>
+      new Promise<void>((resolve) => {
+        const refused = connectNet({ path: localSocket });
+        refused.once('connect', () =>
+          refused.write(upgradeRequest(headers), () => {
+            refused.destroy();
+            resolve();
+          }),
+        );
+      });
+    const uncaught: Error[] = [];
+    const record = (error: Error) => uncaught.push(error);
+    process.on('uncaughtException', record);
+    try {
+      await resetAfterRefusal('X-Forwarded-For: 100.64.0.2\r\n');
+      await resetAfterRefusal('Origin: https://attacker.example\r\n');
+      await closeBeforeRefusal('Origin: https://attacker.example\r\n');
+      for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setImmediate(resolve));
+      expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBe(200);
+    } finally {
+      process.off('uncaughtException', record);
+    }
+    expect(uncaught).toEqual([]);
   });
 });
 
@@ -10905,6 +11408,24 @@ describe('frames.subscribe', () => {
     });
     expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'idle' });
     await until(() => !existsSync(lease.path));
+  });
+
+  test.skipIf(!fakeTailscale)('lets a touch down and up through while moves have drained the input rate', async () => {
+    controlLease(workspace, 'SIM-1');
+    const port = await startControl({}, { inputPerSecond: 3 });
+    const client = await authed(port, true);
+    const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+    assert('result' in begun && begun.result && 'session' in begun.result && typeof begun.result.session === 'string');
+    const { session } = begun.result;
+    const touch = (phase: string) => client.request('input.touch', { session, phase, x: 0, y: 0 });
+    await touch('down');
+    const moves = [];
+    for (let i = 0; i < 8; i++) moves.push(await touch('move'));
+    expect(moves.filter((reply) => 'error' in reply).length).toBeGreaterThan(0);
+
+    expect(await touch('up')).toMatchObject({ result: {} });
+    expect(await touch('down')).toMatchObject({ result: {} });
+    expect(await touch('up')).toMatchObject({ result: {} });
   });
 
   test.each([false, true])(

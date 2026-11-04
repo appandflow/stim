@@ -2,9 +2,9 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { isJsonObject, type StatusPayload } from '@stim-cli/core/state';
+import { isJsonObject, SHARE_TOKEN, type StatusPayload } from '@stim-cli/core/state';
 import type { ControlHub, Controller, InputCommand } from './control.ts';
-import { CLIPBOARD_INPUT_COST, parseInput } from './control.ts';
+import { CLIPBOARD_INPUT_COST, parseInput, take } from './control.ts';
 import { MAX_CLIENT_MESSAGE_BYTES } from '@stim-cli/core/noise-session';
 import { FRAME_RETRY_MS, LatestFrames } from './frame-delivery.ts';
 import type { FrameHint } from './frame-helper.ts';
@@ -41,6 +41,10 @@ export interface ShareRequest {
   physical?: boolean;
   control: boolean;
   expiresMinutes: number;
+  /** Starts the share under this URL token, which a share the same person stopped had; without it one is generated. */
+  token?: string;
+  /** The exact expiry, in epoch milliseconds, of a share that starts again; without it, `expiresMinutes` from now. */
+  expiresAt?: number;
   /** A password the person chose, kept only as its digest; without it and without `passwordless`, one is generated. */
   password?: string;
   /** No login: the URL token alone admits a viewer. */
@@ -108,7 +112,7 @@ export const SHARE_EXPIRY = { default: 60, max: 480 } as const;
 /** What the share hub needs of the rest of stim-server. */
 export interface ShareDeps {
   frames: Pick<FramePool, 'subscribe' | 'keyframe' | 'congested'>;
-  control: Pick<ControlHub, 'begin' | 'input' | 'release' | 'targetOf' | 'endFor'>;
+  control: Pick<ControlHub, 'begin' | 'input' | 'release' | 'targetOf' | 'endFor' | 'endById'>;
   /** Who else touches a local device; without it viewers see only their own touches. */
   presence?: Pick<PresenceHub, 'subscribe' | 'join' | 'leave'>;
   subscribeStatus: (listener: StatusListener) => () => void;
@@ -134,6 +138,16 @@ export interface ShareDeps {
   recordingChanged?: () => void;
   /** Called when the last share has ended and its route is gone. */
   idle?: () => void;
+  /**
+   * Holds the workspace's native-run claim while a share reads its device and registers, so an automatic shutdown or
+   * deletion of the workspace's devices, which reads the share list under that claim, runs wholly before or wholly
+   * after it. Waits a bounded time for a holder; `stop` ends the wait.
+   */
+  holdWorkspace?: (workspace: string, stop: () => boolean) => Promise<WorkspaceHold | Refusal>;
+}
+
+export interface WorkspaceHold {
+  release: () => void;
 }
 
 export interface StatusListener {
@@ -141,9 +155,9 @@ export interface StatusListener {
   failed: (message: string) => void;
 }
 
-type Refusal = { code: 'bad-request' | 'action-failed'; message: string };
+/** `busy`: the workspace's native-run claim is held, which a restore waits out instead of giving up. */
+export type Refusal = { code: 'bad-request' | 'action-failed'; message: string; busy?: true };
 
-const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const SLUG = new RegExp(SHARE_SLUG_PATTERN);
 const COOKIE = 'stim_share';
 const PASSWORD_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -155,6 +169,7 @@ const RENAME_MS = 5000;
 /** Presence a viewer's socket is sent while it is backed up: no moves, only the touches that change who is down. */
 const PRESENCE_BACKLOG_BYTES = 64 * 1024;
 const PING_MS = 30_000;
+const PAGE_ID = /^[0-9a-f]{32}$/;
 const HEADERS_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const IDLE_SOCKET_MS = 2 * PING_MS + 10_000;
@@ -237,15 +252,6 @@ function password(): string {
   return out;
 }
 
-function take(bucket: { tokens: number; at: number }, cost: number, perSecond: number, capacity: number): boolean {
-  const now = Date.now();
-  bucket.tokens = Math.min(capacity, bucket.tokens + ((now - bucket.at) / 1000) * perSecond);
-  bucket.at = now;
-  if (bucket.tokens < cost) return false;
-  bucket.tokens -= cost;
-  return true;
-}
-
 /**
  * Makes room for a new session of `access` under {@link MAX_SESSIONS}: drops the oldest session of that access, and
  * for a control login, with none left, the oldest view one. A view login never drops a control session; false when it
@@ -281,6 +287,7 @@ interface Viewer {
   chosen: string | null;
   renamedAt: number;
   login: Login | null;
+  pageId: string | null;
   socket: WebSocket;
   /** Whether the page asked for H.264 access units over this socket. */
   video: boolean;
@@ -337,6 +344,7 @@ interface Share {
   controlSession: string | null;
   controlStarting: Promise<string | null> | null;
   controlRetryAt: number;
+  controlUsed: boolean;
   recordKey: string | null;
   latest: StatusPayload | null;
   /** What the shared device's status says for the page titles, and the app's display name once read. */
@@ -379,6 +387,10 @@ export class ShareHub {
     this.limits = { ...SHARE_LIMITS, ...deps.limits };
   }
 
+  get startsInFlight(): number {
+    return this.starting;
+  }
+
   /** The loopback port the listener serves, or null while it is closed: no share is live and none is kept. */
   get port(): number | null {
     const address = this.listener?.address();
@@ -400,10 +412,14 @@ export class ShareHub {
     }
   }
 
-  async start(request: ShareRequest): Promise<StartedShare | Refusal> {
+  /**
+   * Starts a share. With `restore`, a share whose device cannot be found yet starts waiting for it instead of being
+   * refused, as a share saved before a stim-server restart does while its device comes back.
+   */
+  async start(request: ShareRequest, options: { restore?: boolean } = {}): Promise<StartedShare | Refusal> {
     this.starting++;
     try {
-      return await this.begin(request);
+      return await this.begin(request, options.restore === true);
     } finally {
       this.starting--;
       void this.closingRoute.then(() => this.checkIdle());
@@ -445,7 +461,11 @@ export class ShareHub {
     this.retrying.unref?.();
   }
 
-  private async begin(request: ShareRequest): Promise<StartedShare | Refusal> {
+  private reusedLive(request: ShareRequest): boolean {
+    return request.token !== undefined && this.shares.has(digest(request.token).toString('hex'));
+  }
+
+  private async begin(request: ShareRequest, restore: boolean): Promise<StartedShare | Refusal> {
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
     if (request.control && request.physical && request.platform === 'ios') {
       return { code: 'bad-request', message: 'A physical iPhone is view only: share it without --control.' };
@@ -466,12 +486,27 @@ export class ShareHub {
     }
     const taken = this.slugTaken(request.slug);
     if (taken) return taken;
+    if (request.expiresAt !== undefined && request.expiresAt <= Date.now()) {
+      return { code: 'bad-request', message: 'That link has expired.' };
+    }
+    if (this.reusedLive(request)) return { code: 'bad-request', message: 'That link is live now.' };
+    const held = this.deps.holdWorkspace ? await this.deps.holdWorkspace(request.workspace, () => this.closed) : null;
+    if (held && 'code' in held) return held;
+    try {
+      return await this.register(request, restore);
+    } finally {
+      held?.release();
+    }
+  }
+
+  private async register(request: ShareRequest, restore: boolean): Promise<StartedShare | Refusal> {
     const status = await this.status();
     if ('code' in status) return status;
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
-    const bound = this.resolve(status, request, null);
-    if (typeof bound === 'string') return { code: 'action-failed', message: bound };
-    const source = bound.open(request);
+    const resolved = this.resolve(status, request, null);
+    if (typeof resolved === 'string' && !restore) return { code: 'action-failed', message: resolved };
+    const bound = typeof resolved === 'string' ? null : resolved;
+    const source = bound ? bound.open(request) : null;
     let base: string;
     try {
       base = await this.open();
@@ -479,6 +514,7 @@ export class ShareHub {
       return { code: 'action-failed', message: cause instanceof Error ? cause.message : String(cause) };
     }
     if (this.closed || this.base !== base) {
+      source?.close();
       void this.teardown();
       return {
         code: 'action-failed',
@@ -487,18 +523,23 @@ export class ShareHub {
     }
     const late = this.slugTaken(request.slug);
     if (late) {
-      source.close();
+      source?.close();
       void this.teardown();
       return late;
     }
-    const { password: chosen, view, ...kept } = request;
+    const { password: chosen, view, token: given, expiresAt: until, ...kept } = request;
+    if (this.reusedLive(request)) {
+      source?.close();
+      void this.teardown();
+      return { code: 'bad-request', message: 'That link is live now.' };
+    }
     const auth: ShareAuth = request.passwordless ? 'none' : chosen !== undefined ? 'set' : 'generated';
     const shown = auth === 'generated' ? password() : null;
     const viewAuth: ViewAuth = view ? (view.password !== undefined ? 'set' : 'generated') : null;
     const viewShown = viewAuth === 'generated' ? password() : null;
-    const secret = request.slug ?? token();
+    const secret = request.slug ?? given ?? token();
     const id = `w${this.next++}`;
-    const expiresAt = Date.now() + request.expiresMinutes * 60_000;
+    const expiresAt = until ?? Date.now() + request.expiresMinutes * 60_000;
     const share: Share = {
       id,
       key: digest(secret).toString('hex'),
@@ -508,10 +549,10 @@ export class ShareHub {
       viewDigest: view ? digest(view.password ?? viewShown ?? '') : null,
       viewAuth,
       expiresAt,
-      state: 'live',
-      bound: bound.key,
-      hosted: bound.hosted,
-      device: bound.device,
+      state: bound ? 'live' : 'waiting',
+      bound: bound?.key ?? null,
+      hosted: bound?.hosted ?? false,
+      device: bound?.device ?? null,
       source,
       resumeAt: 0,
       backoff: RESUME_MIN_MS,
@@ -527,11 +568,12 @@ export class ShareHub {
       controlSession: null,
       controlStarting: null,
       controlRetryAt: 0,
+      controlUsed: false,
       recordKey: null,
       latest: status,
       facts: titleFacts(status, request),
       app: null,
-      timer: setTimeout(() => void this.end(share, 'This share expired.'), request.expiresMinutes * 60_000),
+      timer: setTimeout(() => void this.end(share, 'This share expired.'), expiresAt - Date.now()),
       unwatch: () => {},
       ended: false,
     };
@@ -542,6 +584,7 @@ export class ShareHub {
       item: (payload) => this.reconcile(share, payload),
       failed: () => {},
     });
+    if (!bound) this.arm(share);
     return {
       ...this.row(share),
       url: `${base}/s/${secret}/`,
@@ -652,6 +695,7 @@ export class ShareHub {
           }
         : {}),
       endFor: (owner, message) => control.endFor(owner, null, message),
+      end: (owner, session, message) => void control.endById(owner, session, message),
       close: () => {},
     };
   }
@@ -840,8 +884,11 @@ export class ShareHub {
         socket.terminate();
         continue;
       }
-      socket.send(JSON.stringify({ type: 'ended', message: VIEWER_TEXT.ended }));
-      socket.close(1000, 'share ended');
+      if (this.closed) socket.close(1001, 'stim-server stopped');
+      else {
+        socket.send(JSON.stringify({ type: 'ended', message: VIEWER_TEXT.ended }));
+        socket.close(1000, 'share ended');
+      }
       setTimeout(() => socket.terminate(), CLOSE_GRACE_MS).unref?.();
     }
     share.viewers.clear();
@@ -913,6 +960,7 @@ export class ShareHub {
       if (viewer.socket.readyState === viewer.socket.OPEN) viewer.socket.send('{"type":"resumed"}');
       this.attach(share, viewer);
       this.present(share, viewer);
+      this.warmControl(share, viewer);
     }
   }
 
@@ -1014,7 +1062,7 @@ export class ShareHub {
       url = url.slice(prefix.length);
     }
     const [, secret, rest] = /^\/s\/([^/?#]+)\/([^?#]*)(?:\?.*)?$/.exec(url) ?? [];
-    if (secret === undefined || rest === undefined || !(TOKEN.test(secret) || SLUG.test(secret))) return null;
+    if (secret === undefined || rest === undefined || !(SHARE_TOKEN.test(secret) || SLUG.test(secret))) return null;
     const share = this.shares.get(digest(secret).toString('hex'));
     return share && !share.ended ? { share, rest } : null;
   }
@@ -1023,7 +1071,8 @@ export class ShareHub {
   private admit(share: Share, request: IncomingMessage): { login: Login | null } | null {
     if (share.passwordDigest === null) return { login: null };
     const session = cookieOf(request);
-    const login = session !== null && TOKEN.test(session) ? share.sessions.get(digest(session).toString('hex')) : null;
+    const login =
+      session !== null && SHARE_TOKEN.test(session) ? share.sessions.get(digest(session).toString('hex')) : null;
     return login ? { login } : null;
   }
 
@@ -1186,14 +1235,28 @@ export class ShareHub {
     if (!sameOrigin) return refuse(403, 'Forbidden');
     const admitted = this.admit(share, request);
     if (!admitted) return refuse(401, 'Unauthorized');
-    if (share.viewers.size >= this.limits.maxViewers) return refuse(503, 'Service Unavailable');
     const query = new URL(request.url ?? '', 'http://share.invalid').searchParams;
     const rtc = query.get('codec') === 'h264' && query.get('transport') === 'webrtc';
     const video = query.get('codec') === 'h264' && !rtc;
-    this.wss.handleUpgrade(request, socket, head, (ws) => this.watch(share, ws, video, rtc, admitted.login));
+    const id = query.get('id');
+    const pageId = id !== null && PAGE_ID.test(id) ? id : null;
+    const replaced = pageId === null ? 0 : this.pageViewers(share, pageId, admitted.login).length;
+    if (share.viewers.size - replaced >= this.limits.maxViewers) return refuse(503, 'Service Unavailable');
+    this.wss.handleUpgrade(request, socket, head, (ws) => this.watch(share, ws, video, rtc, admitted.login, pageId));
   }
 
-  private watch(share: Share, socket: WebSocket, video: boolean, rtc: boolean, login: Login | null): void {
+  private pageViewers(share: Share, pageId: string, login: Login | null): Viewer[] {
+    return [...share.viewers].filter((viewer) => viewer.pageId === pageId && viewer.login === login);
+  }
+
+  private watch(
+    share: Share,
+    socket: WebSocket,
+    video: boolean,
+    rtc: boolean,
+    login: Login | null,
+    pageId: string | null,
+  ): void {
     if (share.ended) {
       socket.close(1000, 'share ended');
       return;
@@ -1203,6 +1266,7 @@ export class ShareHub {
       chosen: login?.name ?? null,
       renamedAt: -Infinity,
       login,
+      pageId,
       socket,
       video,
       rtc,
@@ -1213,6 +1277,12 @@ export class ShareHub {
       gate: null,
       stopPresence: null,
     };
+    if (pageId !== null) {
+      for (const stale of this.pageViewers(share, pageId, login)) {
+        share.viewers.delete(stale);
+        stale.socket.terminate();
+      }
+    }
     this.attach(share, viewer);
     const json = (message: Record<string, unknown>) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
@@ -1223,6 +1293,7 @@ export class ShareHub {
     share.viewers.add(viewer);
     this.introduce(share, viewer);
     this.present(share, viewer);
+    this.warmControl(share, viewer);
     let alive = true;
     socket.on('pong', () => {
       alive = true;
@@ -1357,6 +1428,12 @@ export class ShareHub {
     });
   }
 
+  private warmControl(share: Share, viewer: Viewer): void {
+    if (this.accessOf(share, viewer.login) === 'control') {
+      void this.controlSession(share, viewer);
+    }
+  }
+
   /** Gives the viewer its name, color and place on the roster among the viewers now connected. */
   private identify(share: Share, viewer: Viewer): void {
     const others = [...share.viewers].filter((other) => other !== viewer).map((other) => other.who);
@@ -1455,7 +1532,9 @@ export class ShareHub {
     if (!method) return;
     const clipboard = method === 'input.clipboard.set' || method === 'input.clipboard.get';
     const cost = method === 'input.rotate' ? ROTATE_COST : clipboard ? CLIPBOARD_INPUT_COST : 1;
-    if (!take(viewer.inputs, cost, this.limits.inputPerSecond, this.limits.inputPerSecond)) return;
+    const boundary = method === 'input.touch' && (fields.phase === 'down' || fields.phase === 'up');
+    const debt = boundary ? this.limits.inputPerSecond : 0;
+    if (!take(viewer.inputs, cost, this.limits.inputPerSecond, this.limits.inputPerSecond, debt)) return;
     const params =
       method === 'input.touch'
         ? {
@@ -1467,7 +1546,7 @@ export class ShareHub {
         : method === 'input.text'
           ? { text: fields.text }
           : method === 'input.key'
-            ? { key: fields.key }
+            ? { key: fields.key, ...(fields.modifiers === undefined ? {} : { modifiers: fields.modifiers }) }
             : method === 'input.rotate'
               ? { direction: fields.direction }
               : method === 'input.clipboard.set'
@@ -1494,6 +1573,7 @@ export class ShareHub {
     ) {
       return;
     }
+    if (!polling) share.controlUsed = true;
     const refused = await source.input(share.owner, session, method, { ...params }, command, viewer.who);
     const open = viewer.socket.readyState === viewer.socket.OPEN;
     if (refused && 'code' in refused) {
@@ -1546,11 +1626,11 @@ export class ShareHub {
       )
       .then((outcome) => {
         if (share.ended || share.source !== source) {
-          if (!('code' in outcome)) source.endFor(share.owner, 'The share ended.');
+          if (!('code' in outcome)) source.end(share.owner, outcome.session, 'The share ended.');
           return null;
         }
         if ('code' in outcome) {
-          share.controlRetryAt = Date.now() + 5000;
+          if (share.viewers.size > 0) share.controlRetryAt = Date.now() + 5000;
           this.releaseRecording(share, outcome.code !== 'device-busy');
           console.error(`stim-server: web share ${share.id} control refused: ${outcome.message}`);
           if (viewer.socket.readyState === viewer.socket.OPEN) {
@@ -1559,11 +1639,12 @@ export class ShareHub {
           return null;
         }
         if (share.ended || share.source !== source || share.viewers.size === 0) {
-          source.endFor(share.owner, 'The share ended.');
+          source.end(share.owner, outcome.session, 'The share ended.');
           this.releaseRecording(share);
           return null;
         }
         share.controlSession = outcome.session;
+        share.controlUsed = false;
         return outcome.session;
       })
       .finally(() => {
@@ -1579,6 +1660,7 @@ export class ShareHub {
     share.controlSession = null;
     this.releaseRecording(share);
     console.error(`stim-server: web share ${share.id} control ended: ${message.message}`);
+    if (message.reason === 'idle' && !share.controlUsed) return;
     for (const viewer of share.viewers) {
       if (viewer.socket.readyState === viewer.socket.OPEN) {
         viewer.socket.send(JSON.stringify({ type: 'control', message: VIEWER_TEXT.controlEnded }));

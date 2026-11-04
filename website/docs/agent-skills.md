@@ -48,6 +48,31 @@ Stim handles local build, install, launch, and readiness checks itself. The skil
 does not require a device automation package. An agent can use one separately
 when a task needs taps, text input, snapshots, screenshots, or recordings.
 
+## Report a problem
+
+When Stim misbehaves, refuses for a reason its guide does not explain, documents
+something that proves wrong, or forces an awkward workaround, the agent offers to
+report it as an issue on [appandflow/stim](https://github.com/appandflow/stim/issues).
+It searches existing issues first and comments on a match instead of filing a
+duplicate (with your approval). The draft follows the issue template: the problem and the
+expected behavior, the exact command, the `STIM_*` code and output,
+`stim --version`, the OS, Xcode or Android tool versions, the `stim doctor`
+findings and the workaround it used. It removes secrets, tokens, private paths,
+project names and project code unless you agree to include them.
+
+The agent shows you the draft and files it only after you approve, since the issue is public, with
+`gh issue create --repo appandflow/stim`. Without `gh`, it gives you the draft
+and the [new issue page](https://github.com/appandflow/stim/issues/new?template=report.md).
+
+To ask for a report yourself:
+
+```text
+Stim got in my way just now. Search the appandflow/stim issues for it, then draft
+an issue (or a comment on the matching one) with the command, error code, output,
+versions and workaround, without secrets or private paths. Show me the draft
+before filing anything.
+```
+
 ## Clean up when a session ends
 
 An agent that skips `stim stop` leaves a Metro server and a device running.

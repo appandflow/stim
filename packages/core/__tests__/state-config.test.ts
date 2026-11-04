@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getConcurrencyLimits, getParkedMax, loadConfig } from '../state/config.ts';
+import { getBootedGraceMinutes, getConcurrencyLimits, getParkedMax, loadConfig } from '../state/config.ts';
 
 let tmpHome: string;
 
@@ -43,6 +43,16 @@ test.each(['ios', 'android'] as const)(
     expect(getParkedMax(platform, { env: {} })).toEqual({ max: 3, error: null });
   },
 );
+
+test('getBootedGraceMinutes defaults to 15, reads the config, and stays 0 in a scoped home unless the environment sets it', () => {
+  const envKey = 'STIM_POOL_BOOTED_GRACE_MINUTES';
+  expect(getBootedGraceMinutes({ env: {} })).toEqual({ max: 15, error: null });
+  writeConfig({ version: 2, projects: {}, repos: {}, pool: { bootedGraceMinutes: 5 } });
+  expect(getBootedGraceMinutes({ env: {} })).toEqual({ max: 5, error: null });
+  expect(getBootedGraceMinutes({ env: { STIM_HOME: tmpHome } })).toEqual({ max: 0, error: null });
+  expect(getBootedGraceMinutes({ env: { STIM_HOME: tmpHome, [envKey]: '2' } })).toEqual({ max: 2, error: null });
+  expect(getBootedGraceMinutes({ env: { [envKey]: '1.5' } })).toMatchObject({ max: 0, error: expect.any(String) });
+});
 
 test.each([
   ['a projects container that is an array', '{ "version": 2, "projects": [] }', /projects that is not an object/],

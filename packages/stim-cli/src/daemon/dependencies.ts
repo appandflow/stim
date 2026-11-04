@@ -1,6 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
-import { diskUsageCacheFile, readDiskUsage, type DaemonLadderAction } from '@stim-cli/core/state';
-import { clearClaimChild, markClaimChildPending, releaseClaim } from '@stim-cli/core/ownership-claim';
+import type { DaemonLadderAction } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { formatBytes } from '../fs-util.ts';
 import {
@@ -12,8 +11,7 @@ import {
   type ArtifactWorktree,
 } from '../maintenance/artifacts.ts';
 import { maintenancePinnedReader } from '../maintenance/protect.ts';
-import { knownPrivateBytes, measureTree, treeSignature } from '../private-size.ts';
-import { holdOn, takeWalkClaim, writeCacheFile } from '../status-measures.ts';
+import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { ARTIFACT_DIRS, existingDirsOf } from '../workspace/regenerable-dirs.ts';
 import { writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
@@ -27,7 +25,6 @@ import { dormantAfterMs, idleStageCandidates, stillIdle, type DeviceReading, typ
 export const REAL_BYTES_THRESHOLD: number = 256 * 1024 ** 2;
 const HOUR_MS = 60 * 60_000;
 const SCAN_EVERY_MS = 10 * 60_000;
-const MEASURE_MAX_AGE_MS = 6 * HOUR_MS;
 const WALK_TIMEOUT_MS = 10 * 60_000;
 const RESTORE = 'stim worktree warm';
 const UNKNOWN_KEPT = 'its real size is not measured yet, or the volume cannot tell, so it stays';
@@ -111,7 +108,7 @@ export async function rankDependencies(
       const dependency: RankedDependency = {
         candidate,
         workspace,
-        bytes: readDiskUsage(candidate.path)?.bytes ?? null,
+        bytes: trustedMeasure(candidate.path)?.bytes ?? null,
         privateBytes: knownPrivateBytes(candidate.path),
       };
       return [{ dependency, order: rank.get(canonicalOrNull(workspace) ?? '') ?? 0 }];
@@ -214,40 +211,10 @@ async function dependencyTrees(): Promise<string[]> {
   return [...trees];
 }
 
-function measureDue(path: string, now: number): boolean {
-  const measure = readDiskUsage(path);
-  return (
-    !measure ||
-    measure.signature === undefined ||
-    measure.signature !== treeSignature(path) ||
-    now - Date.parse(measure.measuredAt) >= MEASURE_MAX_AGE_MS
-  );
-}
-
 async function measureDependencyTrees(): Promise<void> {
   for (const path of await dependencyTrees()) {
-    if (!measureDue(path, Date.now())) continue;
-    const claim = takeWalkClaim();
-    if (!claim) return;
-    try {
-      if (!measureDue(path, Date.now())) continue;
-      const signature = treeSignature(path);
-      const measuredAt = new Date().toISOString();
-      markClaimChildPending(claim);
-      const size = await measureTree(path, { timeoutMs: WALK_TIMEOUT_MS, onSpawn: holdOn(claim) }).finally(() =>
-        clearClaimChild(claim),
-      );
-      if (!size || !signature) continue;
-      writeCacheFile(diskUsageCacheFile(path), {
-        path,
-        measuredAt,
-        bytes: size.bytes,
-        ...(size.privateBytes !== null ? { privateBytes: size.privateBytes } : {}),
-        signature,
-      });
-    } finally {
-      releaseClaim(claim);
-    }
+    const { outcome } = await refreshMeasure(path, { timeoutMs: WALK_TIMEOUT_MS, claim: true });
+    if (outcome === 'busy') return;
   }
 }
 

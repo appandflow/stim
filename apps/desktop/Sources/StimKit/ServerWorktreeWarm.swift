@@ -14,10 +14,7 @@ public struct ServerWorktreeWarmResult: Sendable {
   onLine: @escaping @MainActor (OutputLine) -> Void = { _ in }
 ) async throws -> ServerWorktreeWarmResult {
   try Task.checkCancellation()
-  guard let client = readCapableServer(connection, stimHome: stimHome), client.hasDesktopAuthority else {
-    throw ServerError(
-      code: "not-connected", message: "The bundled local stim-server is not ready to warm worktrees from this Stim home.")
-  }
+  let client = try desktopActionServer(connection, stimHome: stimHome, action: "warm worktrees from this Stim home")
   guard case .open(let hello) = client.state, hello.features?.contains("desktop-worktree-warm") == true else {
     throw ServerError(code: "unsupported", message: "Update the bundled stim-server to warm worktrees from Desktop.")
   }

@@ -44,6 +44,9 @@ body {
   height: 100%;
 }
 html:has(body.viewer) {
+  background: var(--card);
+}
+html:has(body.viewer) {
   overflow: hidden;
   overscroll-behavior: none;
 }
@@ -52,6 +55,14 @@ body.viewer {
   height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+body.viewer input,
+body.viewer textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 body {
   margin: 0;
@@ -105,6 +116,8 @@ footer .credit a:hover {
   text-decoration: underline;
 }
 .viewer footer {
+  position: sticky;
+  bottom: 0;
   flex: none;
   display: flex;
   flex-wrap: wrap;
@@ -117,7 +130,9 @@ footer .credit a:hover {
 }
 
 .topbar {
-  position: relative;
+  position: sticky;
+  top: 0;
+  z-index: 5;
   flex: none;
   display: flex;
   align-items: center;
@@ -284,11 +299,15 @@ body[data-control='true'] .aperture {
   height: 100%;
   background: var(--screen);
   touch-action: none;
+  -webkit-user-select: none;
   user-select: none;
   outline: none;
 }
 body[data-control='true'] #screen {
   cursor: pointer;
+}
+body[data-reconnecting='true'] #screen {
+  opacity: 0.5;
 }
 #screen:focus-visible {
   outline: none;
@@ -386,6 +405,39 @@ body[data-away='true'] #screen {
 .toolbar svg {
   width: 17px;
   height: 17px;
+}
+@media (min-width: 340px) and (max-width: 600px) and (min-aspect-ratio: 19/40) and (max-aspect-ratio: 1/1) {
+  body.viewer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+  .viewer .topbar,
+  .viewer footer {
+    grid-column: 1 / -1;
+  }
+  .viewer .stage {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .viewer .stage:has(+ .toolbar .group:not([hidden])) {
+    padding-right: 8px;
+  }
+  .viewer .toolbar {
+    grid-column: 2;
+    grid-row: 2;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-self: center;
+    padding: 0 max(8px, env(safe-area-inset-right)) 0 0;
+  }
+  .toolbar .group {
+    flex-direction: column;
+  }
+  .toolbar button {
+    width: 44px;
+    height: 44px;
+  }
 }
 svg.symbol {
   fill: none;

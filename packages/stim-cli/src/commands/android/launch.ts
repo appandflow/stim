@@ -43,6 +43,7 @@ import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, step
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
 import { workspaceDevServerMode, writeWorkspaceLaunchAsync, type LaunchedArtifact } from '../../supervisor/state.ts';
 import { recordPhoneReverse } from '../../devices/phone-reverses.ts';
+import { applyRecordedReverses } from '../../reverse-ports.ts';
 import type {
   VerifyLaunchResultLike,
   RemoteUploadLike,
@@ -949,6 +950,11 @@ export async function finishAndroidRun({
     msg: `launching ${androidPackage} on ${serial}`,
   });
   await notePhoneReverse({ root, slot, serial, metroPort, physical, remoteDevice, runtimeKind: runtime.kind }, out);
+  await applyRecordedReverses(
+    root,
+    { slot: slot ?? 'default', serial, physical, remote: Boolean(remoteDevice) },
+    (line) => out(phaseLine('reverse', chalk.yellow(line))),
+  );
   const launched = await runtime.launch(runtimePreparation, {
     serial,
     androidPackage,

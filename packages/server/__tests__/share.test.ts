@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { connect as tcpConnect, Socket } from 'node:net';
 import { WebSocket } from 'ws';
+import type { Controller } from '../src/control.ts';
 import type { FrameHint } from '../src/frame-helper.ts';
 import type { Device, Frame, FrameListener } from '../src/frames.ts';
 import { PresenceHub, presenceKey } from '../src/presence.ts';
@@ -10,6 +11,7 @@ import { viewerPage } from '../src/share-page.ts';
 import {
   BUTTONS,
   ShareHub,
+  type ShareDeps,
   type ShareLimits,
   type ShareRequest,
   type StartedShare,
@@ -47,12 +49,19 @@ interface Fixture {
   releases: string[];
   /** The messages the control hub was told to end the share's control session with. */
   endFors: string[];
+  /** Ids of the control sessions the fake control hub started. */
+  startedSessions: string[];
+  /** Ids of the control sessions the fake control hub ended; `endFor` ends every session started so far. */
+  endedSessions: string[];
+  /** Holds the fake control hub's `begin` after it started its session, before it returns, as the real one does while it opens. */
+  startGate: Promise<void> | null;
   /** A holder name the fake control hub turns every touch away for. */
   busy: string | null;
   /** Holds the fake control hub's `begin` until it resolves. */
   beginGate: Promise<void> | null;
   /** How many times the fake control hub's `begin` was called, including calls still held by `beginGate`. */
   beginCalls: number;
+  owner: Pick<Controller, 'send'> | null;
   /** A frame the fake frame pool hands every new subscriber at once, as the real one replays its latest frame. */
   replay: Frame | null;
   presence: PresenceHub;
@@ -78,7 +87,7 @@ interface Fixture {
   }[];
 }
 
-function fixture(limits: Partial<ShareLimits> = {}): Fixture {
+function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {}): Fixture {
   const listeners = new Set<StatusListener>();
   let latest = payload();
   const f: Fixture = {
@@ -91,9 +100,13 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
     inputBy: [],
     releases: [],
     endFors: [],
+    startedSessions: [],
+    endedSessions: [],
+    startGate: null,
     busy: null,
     beginGate: null,
     beginCalls: 0,
+    owner: null,
     replay: null,
     presence: new PresenceHub(),
     appNames: {},
@@ -128,16 +141,20 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
       },
     },
     control: {
-      begin: async (_owner, target, _workspace, allowed) => {
+      begin: async (owner, target, _workspace, allowed) => {
         f.beginCalls++;
+        f.owner = owner;
         await f.beginGate;
         if (!allowed()) return { code: 'forbidden', message: 'This device can no longer control devices.' };
         f.begins.push(target);
         f.exemptAtBegin.push([...f.hub.unrecordedTargets()]);
         if (f.refuseControl) return { code: 'device-busy', message: 'This device is driven by Stim Desktop.' };
-        return { session: 'c1', platform: 'ios', lease: { grantedAt: 'lease-1', expiresAt: '' }, postures: [] };
+        const session = `c${f.beginCalls}`;
+        await f.startGate;
+        f.startedSessions.push(session);
+        return { session, platform: 'ios', lease: { grantedAt: 'lease-1', expiresAt: '' }, postures: [] };
       },
-      targetOf: (_owner, session) => (session === 'c1' ? { platform: 'ios', postures: [] } : null),
+      targetOf: (_owner, session) => (session.startsWith('c') ? { platform: 'ios', postures: [] } : null),
       input: async (_owner, session, command, participant) => {
         f.inputs.push({ session, command });
         f.inputBy.push(participant?.name ?? '');
@@ -147,8 +164,14 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
       release: (_owner, _session, participant) => {
         f.releases.push(participant.name);
       },
-      endFor: (_owner, _session, message) => {
+      endFor: (_owner, _reason, message) => {
         f.endFors.push(message);
+        f.endedSessions.push(...f.startedSessions.filter((session) => !f.endedSessions.includes(session)));
+      },
+      endById: (_owner, session) => {
+        if (!f.startedSessions.includes(session) || f.endedSessions.includes(session)) return false;
+        f.endedSessions.push(session);
+        return true;
       },
     },
     subscribeStatus: (listener) => {
@@ -217,6 +240,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
           return null;
         },
         endFor: () => {},
+        end: () => {},
         close: () => {
           record.closed++;
         },
@@ -225,6 +249,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
     },
     limits: { maxFailures: 3, ...limits },
     idle: () => f.idle++,
+    ...deps,
   });
   return f;
 }
@@ -453,6 +478,42 @@ describe('a web share', () => {
     expect(f.hub.list()[0]!.viewers).toBe(0);
   });
 
+  it('replaces the stale socket of a page that reconnects, even at the viewer cap, but never another page or session', async () => {
+    f = fixture({ maxViewers: 3 });
+    const share = await started(f);
+    const url = local(share, f.hub.port ?? 0);
+    const cookie = await login(url, share.password ?? '');
+    const ask = (key: string, id: string) => connect(url, { origin: origin(url), cookie: key }, `?id=${id}`);
+    const page = 'a'.repeat(32);
+
+    const first = await ask(cookie, page);
+    const dropped = new Promise((resolve) => first.socket.once('close', resolve));
+    const second = await ask(cookie, page);
+    await dropped;
+    await vi.waitFor(() => expect(f.hub.list()[0]?.viewers).toBe(1));
+    expect(second.socket.readyState).toBe(WebSocket.OPEN);
+
+    const other = await ask(cookie, 'b'.repeat(32));
+    const stranger = await ask(await login(url, share.password ?? ''), page);
+    await vi.waitFor(() => expect(f.hub.list()[0]?.viewers).toBe(3));
+    expect([second, other, stranger].map((viewer) => viewer.socket.readyState)).toEqual([1, 1, 1]);
+
+    const third = await ask(cookie, page);
+    expect(third.status).toBeNull();
+    expect((await ask(cookie, 'c'.repeat(32))).status).toBe(503);
+    for (const viewer of [second, other, stranger, third]) viewer.socket.close();
+  });
+
+  it('closes viewers without an ended message when stim-server itself stops, so their pages reconnect', async () => {
+    const share = await started(f, { passwordless: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket, messages } = await connect(url, { origin: origin(url) });
+    const closed = new Promise<number>((resolve) => socket.once('close', (code) => resolve(code)));
+    await f.hub.close();
+    expect(await closed).toBe(1001);
+    expect(messages.map((message) => message.type)).not.toContain('ended');
+  });
+
   it('streams H.264 at 60 fps to a viewer that asks for it, from a keyframe it requests on join, and JPEG at 10 fps otherwise', async () => {
     const share = await started(f);
     const url = local(share, f.hub.port!);
@@ -550,6 +611,59 @@ describe('a web share', () => {
     socket.close();
   });
 
+  it('with --control, starts control when a viewer connects, so its first touch finds the session open', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+    expect(f.inputs).toEqual([]);
+    socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
+    expect(f.beginCalls).toBe(1);
+    socket.close();
+  });
+
+  it('with --control, does not tell viewers that control which nobody used ended when it idles', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket, messages } = await connect(url, {
+      origin: origin(url),
+      cookie: await login(url, share.password ?? ''),
+    });
+    await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+    const idle = { event: 'control-ended', session: 'c1', reason: 'idle', message: 'No input for 5 minutes.' } as const;
+    f.inputResult = { text: 'from the device' };
+    socket.send(JSON.stringify({ type: 'clipboard-get', id: 1, poll: true }));
+    await vi.waitFor(() => expect(messages).toContainEqual({ type: 'clipboard', id: 1, text: 'from the device' }));
+    f.owner?.send(idle);
+    socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+    await vi.waitFor(() => expect(f.begins).toHaveLength(2));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(2));
+    f.owner?.send({ ...idle, session: 'c2' });
+    await vi.waitFor(() => expect(messages).toContainEqual({ type: 'control', message: 'Control ended.' }));
+    expect(messages.filter((message) => message.type === 'control')).toHaveLength(1);
+    socket.close();
+  });
+
+  it('with --control, starts control again for a viewer that reconnects after the last one left during the start', async () => {
+    let release = () => {};
+    f.beginGate = new Promise<void>((resolve) => (release = resolve));
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const cookie = await login(url, share.password ?? '');
+    const first = await connect(url, { origin: origin(url), cookie });
+    await vi.waitFor(() => expect(f.beginCalls).toBe(1));
+    first.socket.close();
+    await vi.waitFor(() => expect(f.hub.list()[0]?.viewers).toBe(0));
+    release();
+    await vi.advanceTimersByTimeAsync(20);
+    f.beginGate = null;
+    const second = await connect(url, { origin: origin(url), cookie });
+    await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+    expect(second.messages.map((message) => message.type)).not.toContain('control');
+    second.socket.close();
+  });
+
   it('with --control, passes the second finger of a touch on and drops a half pair', async () => {
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port ?? 0);
@@ -560,6 +674,22 @@ describe('a web share', () => {
     expect(f.inputs).toEqual([
       { session: 'c1', command: { input: 'touch', phase: 'down', x: 0.25, y: 0.5, x2: 0.75, y2: 0.5 } },
     ]);
+    socket.close();
+  });
+
+  it('with --control, keeps a touch down and up while the input rate limit drops moves', async () => {
+    await f.hub.stop(WORKSPACE);
+    f = fixture({ inputPerSecond: 4 });
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    const touch = (phase: string) => JSON.stringify({ type: 'touch', phase, x: 0.5, y: 0.5 });
+    socket.send(touch('down'));
+    for (let move = 0; move < 20; move++) socket.send(touch('move'));
+    socket.send(touch('up'));
+    await vi.waitFor(() => expect(f.inputs.at(-1)).toMatchObject({ command: { phase: 'up' } }));
+    expect(f.inputs[0]).toMatchObject({ command: { phase: 'down' } });
+    expect(f.inputs.length).toBeLessThan(10);
     socket.close();
   });
 
@@ -582,17 +712,16 @@ describe('a web share', () => {
     expect(f.hub.unrecordedTargets()).toEqual(new Set());
   });
 
-  it('with --control, passes the arrow keys and Escape and drops every other key', async () => {
+  it('with --control, passes the keys input.key names and drops every other key', async () => {
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port ?? 0);
     const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
-    for (const key of ['tab', 'a', 'return', 'unknown', 7, null]) socket.send(JSON.stringify({ type: 'key', key }));
-    for (const key of ['left', 'escape']) socket.send(JSON.stringify({ type: 'key', key }));
-    await vi.waitFor(() => expect(f.inputs).toHaveLength(2));
-    expect(f.inputs).toEqual([
-      { session: 'c1', command: { input: 'key', key: 'left', modifiers: [] } },
-      { session: 'c1', command: { input: 'key', key: 'escape', modifiers: [] } },
-    ]);
+    for (const key of ['f1', 'unknown', 7, null]) socket.send(JSON.stringify({ type: 'key', key }));
+    for (const key of ['left', 'escape', 'tab', 'a']) socket.send(JSON.stringify({ type: 'key', key }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(4));
+    expect(f.inputs).toEqual(
+      ['left', 'escape', 'tab', 'a'].map((key) => ({ session: 'c1', command: { input: 'key', key, modifiers: [] } })),
+    );
     socket.close();
   });
 
@@ -667,20 +796,22 @@ describe('a web share', () => {
     other.socket.close();
   });
 
-  it('answers a polling clipboard read without starting control, and serves it once control runs', async () => {
+  it('answers a polling clipboard read while control is still starting, and serves it once control runs', async () => {
+    let release = () => {};
+    f.beginGate = new Promise<void>((resolve) => (release = resolve));
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port ?? 0);
-    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
-    const messages: unknown[] = [];
-    socket.on('message', (data, binary) => {
-      if (!binary) messages.push(JSON.parse(data.toString()));
+    const { socket, messages } = await connect(url, {
+      origin: origin(url),
+      cookie: await login(url, share.password ?? ''),
     });
+    await vi.waitFor(() => expect(f.beginCalls).toBe(1));
     f.inputResult = { text: 'from the device' };
     socket.send(JSON.stringify({ type: 'clipboard-get', id: 1, poll: true }));
     await vi.waitFor(() => expect(messages).toContainEqual({ type: 'clipboard', id: 1, error: expect.any(String) }));
-    expect(f.begins).toEqual([]);
+    expect(f.beginCalls).toBe(1);
     expect(f.inputs).toEqual([]);
-    socket.send(JSON.stringify({ type: 'key', key: 'left' }));
+    release();
     await vi.waitFor(() => expect(f.begins).toHaveLength(1));
     socket.send(JSON.stringify({ type: 'clipboard-get', id: 2, poll: true }));
     await vi.waitFor(() => expect(messages).toContainEqual({ type: 'clipboard', id: 2, text: 'from the device' }));
@@ -805,6 +936,8 @@ describe('a web share', () => {
     it('lets the control password tap and drops every input from a viewer that logged in with the view password', async () => {
       const { url, headers } = await signed();
       const watcher = await connect(url, { ...headers, cookie: await login(url, 'view%20password') });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(f.beginCalls).toBe(0);
       const driver = await connect(url, { ...headers, cookie: await login(url, 'control%20pass') });
       for (const type of ['touch', 'text', 'key', 'button', 'rotate']) {
         watcher.socket.send(
@@ -1231,16 +1364,13 @@ describe('a web share', () => {
     f.refuseControl = true;
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port ?? 0);
-    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
-    const refused = new Promise<string>((resolve) =>
-      socket.on('message', (data, binary) => {
-        if (!binary && String(data).includes('"control"')) resolve(String(data));
-      }),
-    );
-    socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
-    const told = JSON.parse(await refused);
-    expect(told).toMatchObject({ type: 'control' });
-    expect(told.message).not.toContain('Desktop');
+    const { socket, messages } = await connect(url, {
+      origin: origin(url),
+      cookie: await login(url, share.password ?? ''),
+    });
+    await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({ type: 'control' })));
+    const told = messages.find((message) => message.type === 'control');
+    expect(told?.message).not.toContain('Desktop');
     expect(f.inputs).toEqual([]);
     expect(f.hub.unrecordedTargets()).toEqual(new Set());
     socket.close();
@@ -1457,10 +1587,9 @@ describe('a web share', () => {
     });
 
     it('does not lock control or tell the viewer it is refused when the device changed while control was starting', async () => {
-      const { socket, messages } = await signedIn({ control: true });
       let release = () => {};
       f.beginGate = new Promise<void>((resolve) => (release = resolve));
-      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      const { socket, messages } = await signedIn({ control: true });
       await vi.waitFor(() => expect(f.beginCalls).toBe(1));
       const other = payload('Booted');
       other.environments[0]!.ios.udid = 'SIM-2';
@@ -1470,9 +1599,31 @@ describe('a web share', () => {
       release();
       await vi.advanceTimersByTimeAsync(20);
 
-      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
       await vi.waitFor(() => expect(f.begins).toHaveLength(1));
       expect(messages.map((message) => message.type)).not.toContain('control');
+      socket.close();
+    });
+
+    it('ends only the control session a stale begin started, not the one the share started on the new source', async () => {
+      let release = () => {};
+      f.startGate = new Promise<void>((resolve) => (release = resolve));
+      const { socket } = await signedIn({ control: true });
+      await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+      f.startGate = null;
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      f.status(payload('Booted'));
+      await vi.waitFor(() => expect(f.startedSessions).toEqual(['c2']));
+      await vi.advanceTimersByTimeAsync(20);
+      expect(f.endedSessions).toEqual([]);
+
+      release();
+      await vi.advanceTimersByTimeAsync(20);
+
+      expect(f.startedSessions).toEqual(['c2', 'c1']);
+      expect(f.endedSessions).toEqual(['c1']);
+      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      await vi.waitFor(() => expect(f.inputs).toEqual([expect.objectContaining({ session: 'c2' })]));
       socket.close();
     });
 
@@ -1489,32 +1640,32 @@ describe('a web share', () => {
       socket.close();
     });
 
-    it('starts control on the first tap after a resume even while the control that was starting before is still pending', async () => {
-      const { socket } = await signedIn({ control: true });
+    it('starts control again after a resume even while the control that was starting before is still pending', async () => {
       let release = () => {};
       f.beginGate = new Promise<void>((resolve) => (release = resolve));
-      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+      const { socket } = await signedIn({ control: true });
       await vi.waitFor(() => expect(f.beginCalls).toBe(1));
       f.status(payload('Shutdown'));
       await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
       f.status(payload('Booted'));
       await vi.waitFor(() => expect(f.subscribed).toHaveLength(2));
+      await vi.waitFor(() => expect(f.beginCalls).toBe(2));
       f.beginGate = null;
-      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
-      await vi.waitFor(() => expect(f.begins).toHaveLength(1));
       release();
       await vi.advanceTimersByTimeAsync(20);
       expect(f.begins).toHaveLength(1);
       socket.close();
     });
 
-    it('refuses input while it waits and does not begin a control session', async () => {
+    it('refuses input while it waits and does not begin another control session', async () => {
       const { socket } = await signedIn({ control: true });
+      await vi.waitFor(() => expect(f.begins).toHaveLength(1));
       f.status(payload('Shutdown'));
       await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
       socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
       await vi.advanceTimersByTimeAsync(50);
-      expect(f.begins).toEqual([]);
+      expect(f.beginCalls).toBe(1);
+      expect(f.inputs).toEqual([]);
       socket.close();
     });
 
@@ -1611,6 +1762,65 @@ describe('a web share', () => {
       vi.advanceTimersByTime(2 * 60_000);
       expect(f.hub.unrecordedTargets().size).toBe(0);
       socket.close();
+    });
+  });
+
+  describe('started again under the link of a share that was stopped', () => {
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+
+    it('serves the same link and password to a viewer, until the exact expiry it was given', async () => {
+      const expiresAt = Date.now() + 25 * 60_000;
+      const again = shareRequest({ token: TOKEN, expiresAt, password: 'saved-password', expiresMinutes: 25 });
+      const first = await started(f, again);
+      expect(first.url.endsWith(`/s/${TOKEN}/`)).toBe(true);
+      expect(first.expiresAt).toBe(new Date(expiresAt).toISOString());
+      const url = local(first, f.hub.port ?? 0);
+      expect((await http(url)).body).toContain('name="password"');
+      expect(await login(url, 'saved-password')).toContain('stim_share=');
+
+      await f.hub.stop(WORKSPACE);
+      const second = await started(f, again);
+      expect(second.url).toBe(first.url);
+      const restarted = local(second, f.hub.port ?? 0);
+      expect((await http(`${restarted}login`, { method: 'POST', body: 'password=wrong-password' })).status).toBe(401);
+      expect(await login(restarted, 'saved-password')).toContain('stim_share=');
+      expect(f.hub.list()[0]?.expiresAt).toBe(new Date(expiresAt).toISOString());
+
+      vi.advanceTimersByTime(25 * 60_000);
+      await vi.waitFor(() => expect(f.hub.list()).toEqual([]));
+    });
+
+    it('refuses a link that is live or waiting now, and one whose expiry has passed, without opening a listener', async () => {
+      const again = shareRequest({ token: TOKEN, expiresAt: Date.now() + 60_000, expiresMinutes: 1 });
+      await started(f, again);
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      expect(await f.hub.start(again)).toMatchObject({ code: 'bad-request', message: 'That link is live now.' });
+      await f.hub.stop(WORKSPACE);
+      expect(f.routeCloses).toBe(1);
+      const opens = f.routeOpens.length;
+      expect(await f.hub.start({ ...again, expiresAt: Date.now() - 1 })).toMatchObject({
+        code: 'bad-request',
+        message: 'That link has expired.',
+      });
+      expect(f.routeOpens).toHaveLength(opens);
+    });
+
+    it('starts a restored share waiting when its device is not there, and feeds the same link once it is', async () => {
+      f.status(payload('Shutdown'));
+      expect(await f.hub.start(shareRequest({ token: TOKEN }))).toMatchObject({ code: 'action-failed' });
+      const restored = await f.hub.start(shareRequest({ token: TOKEN }), { restore: true });
+      if ('code' in restored) throw new Error(restored.message);
+      expect(restored.url).toContain(TOKEN);
+      expect(stateOf(f)).toBe('waiting');
+      f.status(payload('Booted'));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('live'));
+      expect(f.hub.list()).toHaveLength(1);
+    });
+
+    it('does not keep the token it was given: it appears in no row', async () => {
+      await started(f, shareRequest({ token: TOKEN }));
+      expect(JSON.stringify(f.hub.list())).not.toContain(TOKEN);
     });
   });
 
@@ -1790,5 +2000,93 @@ describe('a web share', () => {
       expect((await http(url, { cookie })).status).toBe(200);
       socket.close();
     });
+  });
+});
+
+describe("a web share starting while the workspace's devices may be shut down", () => {
+  function claim() {
+    const events: string[] = [];
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let refusal: { code: 'action-failed'; message: string } | null = null;
+    const holdWorkspace: ShareDeps['holdWorkspace'] = async (workspace) => {
+      events.push(`hold ${workspace}`);
+      await gate;
+      if (refusal) return refusal;
+      return { release: () => events.push('release') };
+    };
+    return {
+      events,
+      open,
+      holdWorkspace,
+      refuse: (message: string) => {
+        refusal = { code: 'action-failed', message };
+      },
+    };
+  }
+
+  it('reads the device only after a shutdown that held the claim has finished', async () => {
+    const held = claim();
+    const f = fixture({}, { holdWorkspace: held.holdWorkspace });
+    const starting = f.hub.start(shareRequest());
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.hub.list()).toEqual([]);
+    f.status(payload('Shutdown'));
+    held.open();
+    expect(await starting).toMatchObject({ code: 'action-failed' });
+    expect(f.hub.list()).toEqual([]);
+    expect(f.routeOpens).toEqual([]);
+    expect(held.events).toEqual([`hold ${WORKSPACE}`, 'release']);
+  });
+
+  it('counts every start as in flight until it answers', async () => {
+    const held = claim();
+    const f = fixture({}, { holdWorkspace: held.holdWorkspace });
+    expect(f.hub.startsInFlight).toBe(0);
+    const starting = f.hub.start(shareRequest());
+    expect(f.hub.startsInFlight).toBe(1);
+    const second = f.hub.start(shareRequest({ platform: 'android' }));
+    expect(f.hub.startsInFlight).toBe(2);
+    held.refuse('`stim ios` holds the native-run claim');
+    held.open();
+    await Promise.all([starting, second]);
+    expect(f.hub.startsInFlight).toBe(0);
+  });
+
+  it('is refused with the claim holder named, and registers nothing, when the claim cannot be taken', async () => {
+    const held = claim();
+    held.refuse('`stim ios` holds the native-run claim');
+    const f = fixture({}, { holdWorkspace: held.holdWorkspace });
+    const starting = f.hub.start(shareRequest());
+    held.open();
+    expect(await starting).toEqual({ code: 'action-failed', message: '`stim ios` holds the native-run claim' });
+    expect(f.hub.list()).toEqual([]);
+    expect(f.routeOpens).toEqual([]);
+    expect(held.events).toEqual([`hold ${WORKSPACE}`]);
+  });
+
+  it('keeps the claim until the share is registered', async () => {
+    const held = claim();
+    held.open();
+    const registeredAtRelease: number[] = [];
+    const f: Fixture = fixture(
+      {},
+      {
+        holdWorkspace: async (workspace, stop) => {
+          const hold = await held.holdWorkspace!(workspace, stop);
+          if ('code' in hold) return hold;
+          return {
+            release: () => {
+              registeredAtRelease.push(f.hub.list().length);
+              hold.release();
+            },
+          };
+        },
+      },
+    );
+    await f.hub.start(shareRequest());
+    expect(registeredAtRelease).toEqual([1]);
   });
 });

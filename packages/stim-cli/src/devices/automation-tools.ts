@@ -64,7 +64,11 @@ export const AUTOMATION_TOOLS: readonly AutomationTool[] = [
   { tool: 'puppeteer', platforms: ['web'], cdp: /puppeteer/i },
 ];
 
-const HOST_EXCLUSIONS = [/\bsimctl\s+spawn\b.*\blog\s+stream\b/, /\blogcat\b/];
+const HOST_EXCLUSIONS = [
+  /\bsimctl\s+spawn\b.*\blog\s+stream\b/,
+  /\blogcat\b/,
+  /\bsimctl\s+io\s+\S+\s+screenshot\b.*\/server\/frames-[A-Za-z0-9]+\/frame\.jpg\s*$/,
+];
 
 /** Stim's own DevTools clients: the browser supervisor, `stim-frames` in stim-server, Stim Desktop, the stim CLI. */
 const CDP_EXCLUSIONS = [

@@ -63,6 +63,13 @@ worktree's path and makes `Manifest.lock` match `Podfile.lock`, so the first
 carried `node_modules` that do not match the worktree's lockfile leaves Pods as
 copied and `pod install` runs. Warm does not edit `Podfile.lock`.
 
+When `pod install` does run, the new `Podfile.lock` holds the checksum of a podspec
+that embeds the checkout path, so it differs per worktree. The build fingerprint
+counts that checksum as the checksum of the podspec with the path left out, as long
+as it equals the sha1 of the pod's file in `ios/Pods/Local Podspecs`. Worktrees of
+one commit that each ran `pod install` therefore share one cache key, and a change
+to the podspec itself, or to anything else in `Podfile.lock`, still changes it.
+
 Clones of `ios/Pods` share disk only while the worktree builds the configuration
 the source checkout last built. React Native swaps its prebuilt core, Hermes and
 dependency frameworks when `.last_build_configuration` differs from the
@@ -361,6 +368,13 @@ It does not remove that checkout. Run from the checkout root, it reclaims every
 registered project under it. Run from a subfolder such as `apps/mobile`, it
 reclaims only the project at or above that folder, with the projects nested under it.
 
+In a linked worktree, `worktree remove` removes the worktree only when it runs
+from the worktree root or you pass the root path. Run from a subfolder, or given
+a subfolder path, it reclaims only the project at or above that folder, with the
+projects nested under it, leaves the tree and the other projects alone, and
+refuses with exit 1 when no project is registered at or above it. Run it from
+the worktree root, or pass the root, to remove the whole worktree.
+
 A worktree deleted outside Stim, with `git worktree remove` or `rm -rf`, stays
 registered and shows as `[folder missing]` in `stim status`. Pass its path to
 `worktree remove` to drop the record of that path and of the projects registered
@@ -514,8 +528,8 @@ tar -xf <archive>/untracked.tar -C <path>
 ```
 
 Worktree archives follow `archive.maxAgeDays` and `archive.maxTotalGb`. Archive
-retention, which runs around each new archive and after each worktree removal
-that archives its workspace, deletes the expired ones. A new archive that would
+retention, which runs around each new archive, after each worktree removal
+that archives its workspace and in the daily age sweep, deletes the expired ones. A new archive that would
 not fit beside the others under the cap keeps its worktree instead, so the
 oldest go for size only after you lower the cap, and an archive whose removal is
 still running is never deleted. With `archive.enabled false`, for the worktree or
@@ -569,7 +583,12 @@ merge of its branch into the default branch or of its pull request, and, for a
 dirty worktree it would archive, a change to one of its uncommitted files. An agent that just merged its
 pull request still has time to run `stim stop` and `stim worktree remove`
 itself. gc reports such a worktree as kept with the reason `recent-activity`
-and the time it becomes removable (`eligibleAt` in `--json`). When gc cannot
+and the time it becomes removable (`eligibleAt` in `--json`). With
+`daemon.mode` `on` and `maintenance.removeFinishedWorktrees` true, a merged or
+closed worktree that a maintenance worktree check kept for its grace period
+keeps the `stim-daemon` running until a check after that time removes it, so it
+goes even when nothing else runs. A pull request merged after the daemon exited
+waits for the next command that starts one. When gc cannot
 read that activity, it keeps the worktree (`activity-unknown`). Set the period
 in minutes with [`gc.worktreeGraceMinutes`](./settings.md); `0` turns it off.
 

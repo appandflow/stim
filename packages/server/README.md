@@ -63,6 +63,23 @@ authorization or capabilities.
 device-host records share it; the server never learns a client's server key.
 The plain listing shows `from` and the first 12 characters of the key fingerprint.
 
+An entry of one of the three registry files that this version cannot read, such
+as a malformed one or one written in a shape only a newer Stim understands, is
+never dropped. Every registry write puts it back as the text it had, in its
+place, and it grants no access; the file's other top-level members are kept as
+their text too. `devices --json` lists each one in `unreadable`, which is `[]`
+when there are none: `{ "file": "devices.json", "index": 2, "id": "..." }` with
+the file's name, the entry's position in that file's `devices` list and, when
+the entry has a string `id`, that id cleaned like a name. Nothing else of the
+entry is shown. A file whose `version` is newer than 2 is listed as a whole,
+`{ "file": "devices.json", "version": 3 }`, its records are not read, and every
+write to it is refused so a downgrade never replaces it. A file of protocol 1
+(`version` 1) is still not read and is replaced by the next write. The plain
+listing prints a line for each. `devices rename`, `grant` and `revoke` with the
+id of an unreadable entry exit 1 and say it is left as it is; edit the file to
+change or remove it. A registry file that does not parse as a whole is still
+refused, and no write replaces it.
+
 `devices rename <id> <name>` renames the record with that id in whichever
 registry holds it, under the same lock and atomic write as every other registry
 change, and keeps its key and capabilities. The name is 1 to 64 characters of
@@ -92,7 +109,7 @@ it does not, `reason` is `off`, `unsupported`, `loopback-only`, `not-listening` 
 (see [Keep this machine awake](#keep-this-machine-awake)). A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
 carries, gets only `{ "version" }`, which Stim
-Desktop's Remote Machines list uses to find stim-server on the other machines of the
+Desktop's Connections settings use to find stim-server on the other machines of the
 tailnet. A request from this machine with a `Host` other than `127.0.0.1` or
 `localhost` gets HTTP 426, like any other plain HTTP request.
 
@@ -135,6 +152,10 @@ marks that private startup input and is removed before the server starts other
 processes. Invalid or missing marked input refuses startup.
 Desktop keeps the pipe open until its child exits. The server shuts down when
 that pipe closes, including when Desktop crashes or is forcibly killed.
+When Desktop starts a server without the key (an `npm` or override server),
+it still passes the pipe and sets `STIM_DESKTOP_LIFETIME_FD=0`; the server then
+shuts down when the pipe closes. Without that marker the server keeps serving
+after its launcher exits.
 
 A connection on the local Unix socket can send `desktopBootstrap: true` in
 `hello`. The server returns a fresh per-connection nonce and an HMAC-SHA256
@@ -312,6 +333,11 @@ or `"platform": "android"` to doctor targets. Omitting it checks all selected pl
 Reports for each cwd and selector have separate cache entries and subscriptions.
 Clients requiring a filtered report check this feature before requesting one.
 
+The local-only `desktop-report-remote` feature adds `{ "report": "remote" }`,
+whose value is the `{ "machines": [...], "findings": [...] }` that
+`stim remote list --json` prints. It contacts each machine in `remote.machines`
+and asks nothing new.
+
 `desktop.reports.subscribe` takes the same target and returns a subscription id.
 It pushes `desktop-report` events with that `subscription`, `target`, and a
 `snapshot` containing `pending`, `value`, optional `error`, and `measuredAt` after
@@ -405,6 +431,43 @@ device-host approvals are separate records. A build grant carries no `read` or
 [Build access](#build-access)).
 A rerun before expiry reports capabilities the ticket already recorded as
 already approved. After expiry it refuses with exit 2 before any change.
+
+### Approve in Stim Desktop on the worker
+
+On a worker Mac where Stim Desktop runs its own server, the person can paste
+the generated command into Desktop instead of a terminal: Settings >
+Connections > Using this machine > Add > Machine to Build or Run Simulators
+Here. Desktop reads the ticket, `--expires`, `--build` and `--device-host` from
+the command and refuses any other option (`--yes`, `--port`, `--label`,
+`--env`, `--path-prepend`), which still needs a terminal. It sends them to its
+server with `desktop.setup.subscribe { ticket, expires, capabilities }`. The
+server runs the same setup in process, on its own port, with the same ticket
+and expiry checks, the same exclusive setup claim (one setup at a time on this
+Stim home, terminal runs included), the same journal and the same wait for the
+requesting machine. It never installs or changes a service, Stim Host or a
+route: when `stim-server service` has installed a service for its label, or its
+own port does not answer as this server, it refuses and the person runs the
+command in a terminal instead. The 5-minute limit on each macOS permission wait
+stays. Where a terminal asks Y/n, the server sends
+`desktop-setup-progress { journal, asking }` with the capability it asks about,
+and nothing is stored until the person answers
+`desktop.setup.answer { journal, answer: "approve", capability }`. `"refuse"`
+declines that grant, and `{ answer: "skip", permission }` skips the missing
+macOS permission (`screenRecording` or `deviceControl`) setup is waiting for.
+An answer naming another grant or permission than the one asked is refused, so
+a late or repeated answer cannot land on the next question. A second subscribe
+with the same ticket on one connection is refused. `desktop-setup-ended`
+carries setup's exit code and its `--json` payload. Unsubscribing or closing
+the connection interrupts setup, which deletes the ticket's secret unless the
+requesting machine already spent it.
+
+Both methods require the connection that proved Desktop's private bootstrap
+key, even on an adopted or standalone server, and only a server Desktop started
+advertises the local-only `desktop-setup` feature. A tailnet peer, a paired
+phone or machine, a build or device-host client, another client of this user on
+the Unix socket and an SSH session get `forbidden` on both methods. Running the
+setup command in a terminal on this machine, `--yes` included, approves as
+before.
 
 Setup installs its exact server release into the service's `versions/`
 directory (`~/Library/Application Support/Stim/services/<label>/versions/` on
@@ -987,12 +1050,22 @@ is refused. Another attempt cannot replace an occupied workspace/slot. The
 client never supplies a worker filesystem path or another client's session.
 `device-host.stop` with `{"session":"<id>"}` deletes only its recorded,
 ledger-owned simulator. Poll attach for completion. A new attempt may reserve
-after the previous one is confirmed stopped. Stopped session homes and device records remain for reconciliation. At start,
+after the previous one is confirmed stopped. Stopped session records remain for reconciliation; the home is removed after the grace period described below. At start,
 stim-server retires leftover stopped iOS and Android devices through their exact
 private ledger ownership.
 
 The worker persists the journal under `$STIM_HOME/server/device-host-sessions/`
 and chooses an isolated worker home under `$STIM_HOME/device-host/sessions/`.
+An hour after a session stopped (`stoppedAt` in its journal record), and for any
+home whose id the journal does not list when the server starts, stim-server
+removes the whole session folder. The hour is the client's time to copy the
+final logs with `device-host.logs.query`. It removes the folder only when the
+home's created-device ledger is readable and lists nothing; a macOS home, and a
+home that has neither a ledger nor a device record because its session stopped
+before creating a device, count as listing nothing. The session must not be
+parked, and neither the session claim nor any claim set of the agent driver
+under the folder may be live. Otherwise the folder stays, and a reason that is
+an error is written once to stderr. The journal keeps the stopped record.
 An uncertain create, child exit, journal or deletion outcome retains the slot
 as `unknown`. Closing the server leaves a ready iOS or Android session ready, its
 device booted, and releases its claims; the next server resumes it at start. For each
@@ -1058,7 +1131,7 @@ A ready Android `device` has `avdName`, `serial`, `consolePort`, `systemImage`,
 its exact AVD name and running ABI before reporting ready. Creation remains
 inside the worker's claimed process group. The worker opens no emulator viewer.
 Stop and revocation use centralized teardown only for its private ledger's exact
-AVD. They delete that AVD and retain the session home and record. At start,
+AVD. They delete that AVD; the session home is removed after the grace period described above, and the record stays. At start,
 stim-server retires leftover stopped sessions; unknown native outcomes retain
 the reservation and require explicit reconciliation. Android Metro
 and screen/input routing remain follow-ups in #2266. Android sessions
@@ -1207,8 +1280,14 @@ Hosted iOS and Android sessions allow `record start` and `record stop`, outside
 `clientArtifactPaths.outPath`. It replaces the path with
 `<tmpdir>/stim-server-recordings-<hash>/<random>/recording.<ext>` (directory mode
 0700), where `<tmpdir>` is the server's `os.tmpdir()` and `<hash>` derives from
-the session's agent-device state directory, so the daemon writes the video, its
-chunks and gesture telemetry only there. The recording stays off the Stim home
+the session's agent-device state directory. agent-device 0.21.35 and later ignore
+that path for a remote request and write `recording-<uuid>.<ext>` in the session's
+directory under `<state dir>/sessions/`, so when the driver starts the daemon it
+replaces `<state dir>/sessions` with a link to
+`<tmpdir>/stim-server-recordings-<hash>/sessions` (mode 0700). A `record start`
+answers 500 when that link is missing or points elsewhere. The daemon writes the video, its
+chunks and gesture telemetry only under `<tmpdir>`, and the hosted session's
+agent-device session logs live there until the driver stops. The recording stays off the Stim home
 because the simulator's `SimRenderServer` writes the file, and macOS denies it
 removable volumes such as an external disk holding `~/.stim`. `record stop` returns them as daemon artifacts, which the
 client downloads over `GET /artifacts/<id>` on the same agent route, and the
@@ -1376,6 +1455,30 @@ Metro port, never to a client supplied URL, and opens a replacement link for
 each one the server opens. Client frames stay within the 64 KiB client message
 limit.
 
+### Reverse ports
+
+`device-host.reverse.set` with `{session, ports}` (at most 16 integers from 1
+through 65535) replaces the set of client loopback ports reachable from the
+session's device at the same `localhost` ports, and answers
+`{ports: [{port, workerPort}]}` for the bridge that carries each one. The
+approved client's ready, attached iOS or Android session only. Each port has its
+own bridge on the worker's loopback, fed by idle links the client registers
+with `device-host.metro.link` and `{session, port}`; a link for a port the
+session does not reverse is refused, and a link without `port` is Metro's. The
+worker never connects to the client, and the client forwards a link only to its
+own loopback on the port it registered it for.
+
+A simulator shares the worker's loopback, so its bridge listens on `port`
+itself and a port another process holds answers `device-busy`. An emulator has
+its own loopback: the bridge listens on a loopback port the worker chooses, and a
+fixed worker, under the session's child-aware claim, points the exact
+ledger-owned emulator's `adb reverse tcp:<port> tcp:<workerPort>` at it. Android
+refuses the session's own Metro port. If any port cannot be bound or reversed,
+the ones opened by that call are closed again. The session record keeps the
+bound ports in `reverses`, so a resumed session listens on them again; stop,
+revocation and server close close their listeners, and adopting a parked device clears them. The feature
+`hosted-reverse-ports` advertises it.
+
 `clientMetroPort` is required for Android and validated as an integer
 from 1 through 65535. The session records it alongside the bridge port. Android
 development installation reverses `tcp:<clientMetroPort>` to `tcp:<port>` on
@@ -1439,6 +1542,14 @@ Ending a subscription or session sends `device-host.unsubscribe` or
 `device-host.control.end`, and the connection closes when the last one ends.
 The host's per-connection limits, such as its 32 subscriptions and input
 budgets, therefore apply to all of the client's relayed use of that host.
+When the host connection drops (the host's stim-server restarted, or the network broke), each
+relayed frame subscription keeps its local subscription id. It waits 1 second, doubling to 15,
+and subscribes again on a new connection with the same parameters once `device-host.attach`
+reports the session `ready`; `preparing`, `stopping` and `unknown` keep waiting. A `stopped`
+session, a `forbidden`, `unauthorized`, `unknown-session` or `protocol-unsupported` refusal
+(including an ended approval), a host that streams another video format, or three minutes
+without success end it with `frames-failed`. A relayed control session still ends with
+`control-ended` (`failed`), and the viewer begins it again.
 While a local client is behind on a relayed H.264 subscription, the relay drops
 its packets until the next keyframe and, when the host advertises the
 `hosted-congestion` feature, sends `device-host.frames.congested` at most every
@@ -1515,7 +1626,7 @@ control session ID and `lease: null`: the hosted lifetime claim protects this
 private device. Only one controller can drive the device; `takeOver: true`
 replaces the previous controller. Use the returned control ID with
 `device-host.input.touch|text|key`, using the same parameters as ordinary input
-(`key` takes the arrows and Escape on iOS and Android; `touch` takes the second
+(`key` takes the arrows and Escape on iOS and Android, and with a worker that advertises `device-keyboard` the keys and modifiers of ordinary `input.key`; `touch` takes the second
 finger `x2` and `y2`, which a worker older than this field refuses).
 iOS also supports `device-host.input.button|rotate|posture`. Android supports
 `device-host.input.button` through scrcpy; rotation and posture are unavailable
@@ -2179,6 +2290,25 @@ workspace device with three methods that only the local Unix socket may call
   `auth` (`generated`, `set` or `none`), `viewAuth` (`generated`, `set` or
   `null`), and `password` and `viewPassword` only when it generated them, in
   `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, state, auth, viewAuth, slug, url, password, viewPassword }`.
+  `token` and `expiresAt` (the `share-reuse` feature) start the share under
+  that 43-character URL token and expire it at that time (an ISO time within the
+  next 480 minutes, instead of `expiresMinutes`), as `stim share --reuse`
+  restarts a stopped share with the link it saved (`token` and `slug` are
+  exclusive; a slug share is restarted with `slug`, which needs no `token`);
+  the server registers the
+  token's digest like a generated one and keeps no more than before. It refuses
+  a malformed token, a token a live or waiting share already uses (`That link is
+live now.`) and a time already past.
+  When a stim-server that is not the CLI's `--share` server becomes ready, it
+  reads the saved links of its Stim home (`readLiveShareLinks`) and starts each
+  live, unexpired one through this same method with the saved token or slug,
+  passwords and `expiresAt`, so a share outlives a restart. Its device may not be
+  there yet (a hosted session resumes, Tailscale is not up): such a share starts
+  `waiting`, and a start the server cannot finish is tried again after 5, 10, 20,
+  40 and 60 seconds. `share.stop` marks the saved links it stops as stopped (all
+  of the workspace's, those of one `slot`, or the one of a stopped `id`) so they
+  do not come back. A share started by a client that saved nothing, such as
+  Stim Desktop's, does not come back.
   `state` (the `share-waiting` feature) is `live` while the device streams and
   `waiting` while it is away; a server without the feature sends none, which
   means `live`.
@@ -2196,7 +2326,11 @@ workspace device with three methods that only the local Unix socket may call
   `stim stop` and `stim worktree remove` end shares this way, because a device
   that goes away only makes a share wait.
 - `share.list` returns `shares`, the same rows without `url`, `password` or
-  `viewPassword`.
+  `viewPassword`, and `starting` (the `share-starting` feature): how many
+  `share.start` requests the server has not answered yet, which have no row.
+  A start waits up to 30 seconds for its workspace's native-run claim, so
+  `stim share stop` leaves a server with one running. A server without the
+  feature sends no `starting`, which means none.
 
 `stim-server --share [--port <n>]` is the server `stim share` starts when none
 answers on the local socket: loopback only, without a Desktop bootstrap. It
@@ -2224,7 +2358,13 @@ and once a local device resolves or a hosted session of the slot is ready it
 builds a new source, feeds every connected viewer again and sends
 `{ "type": "resumed" }`. A slot that now runs another device is followed to it.
 A waiting share still counts as a share for the listener, the Funnel route and
-idleness. The server serves
+idleness. When the hub itself closes (stim-server stopping) it closes viewer sockets with code 1001 and sends no `ended`. A viewer page that loses its socket without an `ended` message keeps its last frame dimmed
+and reconnects on its own: it asks the link with a GET (the viewer page: join again; the login page, because the
+server no longer knows the session: reload to it; 404: try every 30 seconds for 10 minutes, so a link that comes
+back under `--reuse` is joined again; any other status: back off) and connects again with the same random
+`?id=<32 hex>` it sent the first time. A socket that arrives with an `id` and the browser session of a viewer
+already connected replaces that viewer's stale socket, so it is never listed twice, and the stale socket's
+control and presence are released; it does not count twice against the viewer cap. The server serves
 them on one listener on a loopback port of its own, not on this protocol, and
 publishes it with `tailscale funnel --bg --yes --https=<port>
 http://127.0.0.1:<listener>` on the first Funnel port the node's
@@ -2255,8 +2395,9 @@ subscribes to the device's frames as a JPEG subscriber at 10 frames a second
 and 1280 pixels, as binary messages; the share never asks the recorder to
 record. With `control`, `touch`, `text` and `button` messages from a `control`
 session go through `parseInput` and the control hub as the `Web share`
-controller, which begins one control session without takeover on the first
-input and ends it when the last viewer leaves; every input from a `view`
+controller, which begins one control session without takeover when a viewer with
+`control` connects (or the share resumes) and ends it when the last viewer
+leaves; every input from a `view`
 session is dropped. Each viewer socket is a presence participant: the share
 sends `{ type: 'you', id, name, color, access }` once, then
 `{ type: 'presence', participants }` with the `presence` event's participants
@@ -2508,11 +2649,12 @@ Events are `{ "event", "subscription", ... }`.
   simulator's IOSurface, from the emulator's RGBA frames, or from the page's
   screencast JPEGs, only when the screen changed. A subscriber starts at a keyframe, and `frames.keyframe`
   with its `subscription` asks for another one, such as after its decoder
-  lost state; a device sends at most one requested keyframe every 250 ms.
+  lost state; a device sends at most one requested keyframe every 100 ms.
   A subscriber whose socket holds more than 256 KB unsent drops frames
   until it drains, then gets a keyframe. While it is behind, the device's
   bitrate halves every 2 seconds, from 3 Mbps down to 0.25 Mbps; it climbs
-  back by a quarter every 2 seconds without congestion, up to 8 Mbps. All
+  back by a quarter every 2 seconds without congestion, up to 8 Mbps, or
+  4.5 Mbps while a hosted session's subscriber is attached. All
   video subscribers of a device share one encoder and its bitrate, and JPEG
   subscribers of the same device still get at most the `fps` they asked
   for. Watching video needs only `read`. Without the helper, the result has
@@ -3087,11 +3229,15 @@ sends reaches any other device.
   Without `display`, a touch on an iPhone Duo goes to the panel its latest
   frame showed, and before any frame to the cover.
   `input.text` takes up to 256 printable ASCII characters, where `\n` presses
-  Return, `\t` Tab and `\b` Delete. On an iOS or Android device, `input.key`
-  takes `left`, `right`, `up`, `down` or `escape` with no modifiers: the
-  simulator gets the hardware key, an emulator the key through its gRPC
-  keyboard or `KEYCODE_DPAD_*` and `KEYCODE_ESCAPE` over `adb` without one,
-  and a phone the same Android key events through scrcpy. A web page takes no
+  Return, `\t` Tab and `\b` Delete. On a physical Android phone, `input.key`
+  takes `left`, `right`, `up`, `down` or `escape` with no modifiers, as Android key
+  events through scrcpy. When hello advertises `device-keyboard`, an iOS simulator
+  and an Android emulator take every key of `input.key` (Escape, Tab, Return,
+  Backspace, the arrows, `a-z` and `0-9`) with unique `command`, `shift`, `option`
+  and `control` modifiers: a simulator gets the hardware keys with the modifiers
+  held, and an emulator gets one `adb shell input keycombination`, with `command`
+  as Control, which needs Android 12 or later. Without `device-keyboard` they take
+  the arrows and Escape without modifiers. A web page takes no
   keys. When hello advertises `device-clipboard`, `input.clipboard.set` takes
   `text`, any Unicode text of at most 8192 UTF-8 bytes (a request is one
   message of at most 64 KiB, and JSON escapes a control character in up to six
@@ -3123,7 +3269,8 @@ sends reaches any other device.
   is handed to the device: when it goes through the helper, that is when the
   helper receives it, so native macOS input failures end Control with the reason while its view stays available; other helper failures are logged. A connection may send 120 inputs a second and type 40
   characters a second, with a burst of 256, and rotate or change posture twice a
-  second; more fail with `limit-exceeded`.
+  second; more fail with `limit-exceeded`. A touch `down` or `up` may use up to one
+  second's worth of inputs beyond the limit, so the end of a drag is not refused while moves have used it up.
 - When hello advertises `macos-window-control`, `control.begin` accepts
   `platform: "macos"` for the verified native app in the default slot. It needs
   `control` and takes one exclusive server session per app, with the same

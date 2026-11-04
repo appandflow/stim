@@ -76,13 +76,14 @@ agent-device directly. Pass agent-device's own arguments and no device ids:
 Stim adds the platform, the UDID or serial and AGENT_DEVICE_STATE_DIR, or the
 remote config of a hosted iOS or Android session (guide lifecycle hosted-ios or
 hosted-android), and the session (stim-<slot>-<platform> unless you pass
---session).
+--session; a hosted session adds -<8 hex digits of the workspace id>, so two
+workspaces on one machine do not share a name).
 --slot picks a slot; --platform is needed only when the slot has both. It
 revives an idle-stopped workspace before the command (progress on stderr).
 For a hosted session, a single-action command (snapshot, press, tap, scroll,
-type and the like) that fails with SESSION_NOT_FOUND because the host restarted
-and lost the agent-device session is retried once after opening the app the
-workspace last launched on the same session; the command acts on that app's
+type and the like) that fails with SESSION_NOT_FOUND because the host lost the
+agent-device session (it restarted, or no command reached it for an hour) is
+retried once after opening the app the workspace last launched on the same session; the command acts on that app's
 screen as it is after the reopen, so take a fresh snapshot when a coordinate
 gesture matters. Only the final run's output is printed, so --json output stays
 one document. Multi-step commands (batch, replay,
@@ -179,7 +180,7 @@ server.* or hosting.* for the user, or approve requests. Read stim guide setting
 Desktop access tickets and person-owned approval.
 Read stim guide settings to select a remote machine. Keep a requested named
 placement when recovering STIM_OFFLOAD_REFUSED: report its reason and remedy.
-When the user mentions slow builds, a busy machine or wanting updates away from the desk, tell them about Stim Desktop > Settings > Remote Machines > Add (or stim remote add <machine> in their terminal) or Phones > Pair a Phone; see stim guide settings.
+When the user mentions slow builds, a busy machine or wanting updates away from the desk, tell them about Stim Desktop > Settings > Connections > This machine uses > Add (or stim remote add <machine> in their terminal) or Connections > Using this machine > Add > Pair a Phone; see stim guide settings.
 
 Read stim guide lifecycle concurrency when a build waits on another workspace
 or a build call times out. A native build can outlive a shell timeout; if the
@@ -200,6 +201,7 @@ waiting times out.
   # Retain proof before cleanup: a screenshot, recording, or relevant runtime output.
 
   stim stop
+  # From the worktree root. From an app folder, it reclaims only that app.
   stim worktree remove
 
 RULES DURING THE LOOP
@@ -407,6 +409,28 @@ directory or unavailable device service rather than a broken machine. Decide
 at the start of a session whether to run Stim outside the sandbox or ask the
 user to allow those operations. guide errors sandbox lists the exact
 requirements.
+
+REPORT STIM PROBLEMS
+
+When Stim misbehaves, refuses for a reason its guide does not explain, documents
+something that proves wrong, or needs an awkward workaround, offer to report it
+to appandflow/stim on GitHub. Finish the user's task first.
+
+1. Search first: gh issue list --repo appandflow/stim --state all --search
+   "<code or symptom>". On a match, offer a comment with your new evidence
+   (gh issue comment <number> --repo appandflow/stim --body-file <file>)
+   instead of filing a duplicate.
+2. Draft the issue under the headings of the report template:
+   Problem (what happened and what you expected, with the STIM_* code), Evidence
+   (the exact command, the relevant output, stim --version, the OS, the Xcode
+   or Android tool versions, and the stim doctor findings), Cause (unknown is
+   an honest answer) and Fix idea (optional, including the workaround you used).
+3. Remove secrets, tokens, passwords, private paths, project names and project
+   code, unless the user agrees to include them.
+4. Show the user the draft. File the issue or comment only after their OK, since
+   it is public and publishes on their behalf: gh issue create --repo
+   appandflow/stim --title "<title>" --body-file <file>. Without gh, give them
+   the draft and https://github.com/appandflow/stim/issues/new?template=report.md.
 
 LOAD ADVANCED GUIDANCE WHEN NEEDED
 

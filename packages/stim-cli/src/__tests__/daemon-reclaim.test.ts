@@ -21,7 +21,8 @@ import { resetExecutor } from '../exec.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
-import { teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
+import { shutDownBootedParkedIosSim, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
+import { parkSim } from '../devices/sim-pool.ts';
 import { tryAcquireClaim, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { liveWaiters, takeWaitTicket } from '../engine/wait-queue.ts';
 import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
@@ -41,6 +42,7 @@ vi.mock('../devices/ios.ts', async (original) => ({
 vi.mock('../devices/teardown.ts', () => ({
   teardownOwnedIosSim: vi.fn<typeof import('../devices/teardown.ts').teardownOwnedIosSim>(),
   teardownOwnedAvd: vi.fn<typeof import('../devices/teardown.ts').teardownOwnedAvd>(),
+  shutDownBootedParkedIosSim: vi.fn<typeof import('../devices/teardown.ts').shutDownBootedParkedIosSim>(),
 }));
 
 const NOW = Date.parse('2026-10-07T12:00:00Z');
@@ -119,6 +121,30 @@ const reclaim = (act = true) =>
     log,
     now: NOW,
   });
+
+test('shuts a parked simulator kept booted down before any workspace device, however long that one idled', async () => {
+  add('idle', 90);
+  upsertProject(join(home, 'parker'), { platforms: { ios: { deviceUdid: 'PARKED', owned: true } } });
+  parkSim({
+    platform: 'ios',
+    projectPath: join(home, 'parker'),
+    max: 3,
+    record: {
+      udid: 'PARKED',
+      name: 'stim-parked (iPhone) park',
+      deviceTypeIdentifier: 'iPhone',
+      runtimeIdentifier: 'iOS 27.0',
+      parkedAt: new Date(NOW - MINUTE).toISOString(),
+      bootedUntil: new Date(NOW + 10 * MINUTE).toISOString(),
+      simslimManaged: false,
+    },
+  });
+  otherSims.push(bootedSim('PARKED', 'stim-parked (iPhone) park'));
+  vi.mocked(shutDownBootedParkedIosSim).mockResolvedValue({ status: 'torn-down', label: 'stim-parked' });
+  await expect(reclaim()).resolves.toMatchObject({ kind: 'reclaim-device', target: 'PARKED', outcome: 'done' });
+  expect(shutDownBootedParkedIosSim).toHaveBeenCalledWith('PARKED', expect.objectContaining({ operation }));
+  expect(teardownOwnedIosSim).not.toHaveBeenCalled();
+});
 
 test('shuts down exactly the longest-idle device of another workspace and records the reason and log', async () => {
   add('younger', 4);
