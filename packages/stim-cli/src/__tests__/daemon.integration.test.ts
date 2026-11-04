@@ -23,7 +23,7 @@ import { takeWaitTicket } from '../engine/wait-queue.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import * as measure from '../daemon/measure.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
-import { runHomePasses } from '../daemon/passes.ts';
+import { createMaintenanceLane, runHomePasses } from '../daemon/passes.ts';
 import { macosDir } from '../macos/state.ts';
 import { runDaemon } from '../daemon/run.ts';
 import * as maintenanceMeasure from '../maintenance/measure.ts';
@@ -202,15 +202,20 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     onTestFinished(() => normal.mockRestore());
   }
 
-  function firstTick(): { eventLoopDelay: { maxMs: number }; phases: { maintenanceMs: number } } | undefined {
+  function records<T>(event: string): T[] {
     return daemonLog()
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line))
-      .find((record) => record.event === 'daemon_tick');
+      .filter((record) => record.event === event);
   }
 
-  test('a tick that blocks the event loop reports the stall in its daemon_tick record', async () => {
+  const loopDelays = () =>
+    records<{ eventLoopDelay: { maxMs: number } }>('daemon_tick').map((tick) => tick.eventLoopDelay.maxMs);
+  const maintenanceMs = () =>
+    records<{ phases: { maintenanceMs: number } }>('daemon_maintenance')[0]?.phases.maintenanceMs;
+
+  test('a maintenance pass that blocks the event loop reports the stall in a daemon_tick record', async () => {
     normalMeasurement();
     const blocking = vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(async () => {
       const until = Date.now() + 300;
@@ -218,8 +223,8 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     });
     onTestFinished(() => blocking.mockRestore());
     await runDaemon({ tickMs: 50 });
-    expect(firstTick()?.eventLoopDelay.maxMs).toBeGreaterThanOrEqual(250);
-    expect(firstTick()?.phases.maintenanceMs).toBeGreaterThanOrEqual(250);
+    expect(Math.max(...loopDelays())).toBeGreaterThanOrEqual(250);
+    expect(maintenanceMs()).toBeGreaterThanOrEqual(250);
   }, 20_000);
 
   test.skipIf(process.platform !== 'darwin')(
@@ -242,8 +247,8 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       });
       await runDaemon({ tickMs: 50 });
       expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('fseventsd (pid 123) uses 80.0G');
-      expect(firstTick()?.phases.maintenanceMs).toBeGreaterThanOrEqual(600);
-      expect(firstTick()?.eventLoopDelay.maxMs).toBeLessThan(500);
+      expect(maintenanceMs()).toBeGreaterThanOrEqual(600);
+      expect(Math.max(...loopDelays())).toBeLessThan(500);
     },
     20_000,
   );
@@ -344,7 +349,10 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     });
     const calls = asyncOnlyTools();
 
-    const passes = await runHomePasses({ act: true, trigger: 'daemon', log: () => {} });
+    const passes = await runHomePasses({ act: true, log: () => {} });
+    const lane = createMaintenanceLane(() => {});
+    lane.start(passes, true);
+    await lane.settled();
 
     expect(passes.pressure.level).not.toBe('normal');
     expect(readMaintenanceState()?.lastPass?.trigger).toBe('daemon');
@@ -383,7 +391,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       const calls = asyncOnlyTools();
       sims = [{ udid: 'UDID-B', name: 'stim-booted (iPhone 16 18.0)', state: 'Booted' }];
 
-      const passes = await runHomePasses({ act: true, trigger: 'daemon', log: () => {} });
+      const passes = await runHomePasses({ act: true, log: () => {} });
       const reclaimed = await reclaimForBootWaiters({
         devices: passes.measured.devices,
         sims: passes.measured.sims,
@@ -431,7 +439,9 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       });
       const calls = asyncOnlyTools();
 
-      await runHomePasses({ act: false, trigger: 'daemon', log: () => {} });
+      const lane = createMaintenanceLane(() => {});
+      lane.start(await runHomePasses({ act: false, log: () => {} }), false);
+      await lane.settled();
 
       const state = readMaintenanceState();
       expect(state?.pressure?.memory.level).toBe('warning');

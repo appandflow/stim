@@ -24,7 +24,9 @@ dropping its own autopilot thresholds.
 - One `stim-daemon` per Stim home, scoped homes included. It is the only writer of idle and pressure decisions.
 - Started by every command that creates running state (`start`, `ios`, `android`, `web`, `macos`, `revive`) through
   `ensureDaemon` from #4792. It exits after two consecutive ticks with nothing running in the home and no waiter. Any
-  command restarts it. Amended 2026-11-02 (approved): "nothing running" for this rule also means no workspace has
+  command restarts it. Amended 2026-11-04 (#5023, approved): automatic maintenance and the dormant stage's dependency
+  step run beside the ticks, one pass at a time, never inside the tick that serves waiters; a pass still running counts
+  as something running for this rule. Amended 2026-11-02 (approved): "nothing running" for this rule also means no workspace has
   pending future work. While any workspace is idle but not yet dormant, the daemon stays alive and ticks every 5 minutes instead of 60 s while the pressure level is normal, and every 60 s while
   it is high or critical, until it clears; it exits two ticks after every registered workspace is dormant or removed and
   nothing runs. A workspace counts only until its dormant due time plus one slow tick, and never while the dormant pass

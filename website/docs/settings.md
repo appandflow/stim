@@ -1013,8 +1013,8 @@ reclaim for a run waiting to boot, and
 `web`, `macos` and `revive` start one `stim-daemon` process per Stim home,
 scoped homes included. It ticks each minute while anything runs there or the
 pressure level is above normal, and every 5 minutes otherwise. It exits two
-ticks after nothing runs and no workspace waits for its dormant stage, so the
-stage fires in a quiet home. A workspace waits until its `idle.dormantDays`
+ticks after nothing runs, no maintenance pass runs and no workspace waits for
+its dormant stage, so the stage fires in a quiet home. A workspace waits until its `idle.dormantDays`
 have passed plus one slow tick, and never while `maintenance.keep`,
 `idle.minutes` 0, `idle.dormantDays` 0, a hosted placement, an unreadable state
 or a failing device listing keeps it out, nor with no activity recorded in its
@@ -1023,7 +1023,10 @@ measures the machine once,
 classifies the pressure level, moves workspaces with no activity for
 `idle.minutes` into the [idle stage](./dev-server-and-logs.md#idle-stop) and
 those idle for `idle.dormantDays` into the dormant stage, runs the pressure
-ladder above normal, and runs automatic maintenance. It also wakes the oldest
+ladder above normal, and reclaims a device for a run waiting to boot. Automatic
+maintenance and the dormant stage's dependency deletion run beside the ticks,
+one pass at a time, so a slow `git fetch`, pull request lookup or size scan
+never delays a tick or a waiting run. It also wakes the oldest
 run waiting for a build slot as soon as one is released. `report` logs what
 each pass would do and acts on nothing. `off` runs no daemon and no pass: each
 dev server supervisor stops its own dev server and devices after
