@@ -345,13 +345,19 @@ describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned b
 });
 
 test.skipIf(process.platform === 'win32')(
-  'stopping an app also ends the processes it started in groups of their own, and spares others',
+  'stopping an app ends its server and the helpers in the server group, and spares a setsid daemon and a bystander',
   async () => {
-    const server = 'setInterval(() => {}, 1000)';
-    const app = `const s = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(server)}], { stdio: 'ignore', detached: true });
-      process.stdout.write(s.pid + '\\n'); setInterval(() => {}, 1000)`;
+    const idle = 'setInterval(() => {}, 1000)';
+    const server = `const { spawn } = require('node:child_process');
+      const client = spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { stdio: 'ignore' });
+      const daemon = spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { stdio: 'ignore', detached: true });
+      process.stdout.write(client.pid + ' ' + daemon.pid + '\\n'); ${idle}`;
+    const app = `const { spawn } = require('node:child_process');
+      const s = spawn(process.execPath, ['-e', ${JSON.stringify(server)}], { stdio: ['ignore', 'pipe', 'ignore'], detached: true });
+      const setuid = process.platform === 'darwin' ? spawn('/usr/bin/top', ['-l', '0', '-s', '5'], { stdio: 'ignore' }).pid : 0;
+      s.stdout.on('data', (d) => process.stdout.write(s.pid + ' ' + d.toString().trim() + ' ' + setuid + '\\n')); ${idle}`;
     const supervisor = `const a = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(app)}], { stdio: ['ignore', 'pipe', 'ignore'] });
-      a.stdout.on('data', (d) => process.stdout.write(a.pid + ' ' + d)); setInterval(() => {}, 1000)`;
+      a.stdout.on('data', (d) => process.stdout.write(a.pid + ' ' + d)); ${idle}`;
     const leader = getExecutor().spawn(process.execPath, ['-e', supervisor], {
       detached: true,
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -365,22 +371,30 @@ test.skipIf(process.platform === 'win32')(
       if (pid === undefined || !processToken) throw new Error('The fixture process has no identity.');
       return { pid, processToken, startedAtMicros: 1 };
     };
-    const [supervised, started] = [owned(leader.pid), owned(pids[1])];
+    const [appPid, serverPid, clientPid, daemonPid, setuidPid] = pids;
+    const supervised = owned(leader.pid);
+    const [started, helper, daemon] = [owned(serverPid), owned(clientPid), owned(daemonPid)];
     const bystander = await ownedProcess();
+    const warnings = vi.spyOn(process.stderr, 'write');
     try {
-      writeWorkspaceState(root, { macos: record({ supervisor: supervised, app: owned(pids[0]) }) });
+      writeWorkspaceState(root, { macos: record({ supervisor: supervised, app: owned(appPid) }) });
       expect(await stopMacosApp(root)).toBe(true);
       expect(inspectProcessIdentity(started)).toBe('gone');
+      expect(inspectProcessIdentity(helper)).toBe('gone');
+      expect(inspectProcessIdentity(daemon)).toBe('same');
       expect(inspectProcessIdentity(bystander)).toBe('same');
+      if (process.platform === 'darwin')
+        expect(warnings.mock.calls.map(([text]) => String(text)).join('')).toContain(`pid ${setuidPid}`);
     } finally {
+      warnings.mockRestore();
       for (const pid of [supervised.pid, ...pids]) {
         try {
-          process.kill(pid, 'SIGKILL');
+          process.kill(pid ?? 0, 'SIGKILL');
         } catch {}
       }
     }
   },
-  20_000,
+  30_000,
 );
 
 describe('macOS build placement and promotion', () => {

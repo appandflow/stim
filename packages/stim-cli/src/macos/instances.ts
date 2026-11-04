@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostedAppAttempt, type MacosProcess } from '@stim-cli/core/state';
+import { ambientWrite } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
 import { inspectProcessIdentity, processStartMicros, captureProcessToken } from '../process-identity.ts';
 import { macosDir } from './state.ts';
@@ -86,46 +87,66 @@ function failedBundleListing(record: MacosProcess, error: unknown): string | nul
   return open;
 }
 
-/** `ps -axo pid=,ppid=` rows as `[pid, ppid]`. */
-function parentLinks(psOutput: string): [number, number][] {
-  const rows: [number, number][] = [];
+interface ProcessRow {
+  pid: number;
+  ppid: number;
+  pgid: number;
+}
+
+function processRows(psOutput: string): ProcessRow[] {
+  const rows: ProcessRow[] = [];
   for (const line of psOutput.split('\n')) {
-    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
-    if (match) rows.push([Number(match[1]), Number(match[2])]);
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s*$/.exec(line);
+    if (match) rows.push({ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]) });
   }
   return rows;
 }
 
-/**
- * Every process now descended from a verified live `owners` process, with the identity each had when listed. It must
- * run before the owners are signalled: a child whose parent exits is reparented and no longer reachable this way.
- */
-export async function startedBy(owners: readonly MacosProcess[], operation?: StimContext): Promise<MacosProcess[]> {
-  operation?.signal.throwIfAborted();
-  const live = owners.filter((owner) => inspectProcessIdentity(owner) === 'same');
-  if (!live.length) return [];
-  const links = parentLinks(
-    await runOperationFile(operation, getExecutor(), 'ps', ['-axo', 'pid=,ppid='], {
+async function listProcesses(operation?: StimContext): Promise<ProcessRow[]> {
+  return processRows(
+    await runOperationFile(operation, getExecutor(), 'ps', ['-axo', 'pid=,ppid=,pgid='], {
       cwd: operation?.cwd,
       timeoutMs: 10_000,
       killSignal: 'SIGKILL',
     }),
   );
-  const found = new Set<number>();
-  const queue = live.map((owner) => owner.pid);
-  for (let parent = queue.shift(); parent !== undefined; parent = queue.shift()) {
-    for (const [pid, ppid] of links) {
-      if (ppid !== parent || found.has(pid) || pid === process.pid) continue;
-      found.add(pid);
-      queue.push(pid);
-    }
+}
+
+/**
+ * The commands a verified live `owners` process started: its direct children, and the members of every process
+ * group such a child leads, which holds the child's own helpers such as a server's `adb track-devices` client. It
+ * stops there: a daemon that calls setsid, such as the machine-wide adb server, leads a group of its own and is not
+ * the owner's to end. A process whose identity cannot be captured is skipped with a warning and never signalled.
+ * It must run before the owners are signalled, because a child whose parent exits is reparented and no longer
+ * reachable by its parent.
+ */
+export async function startedBy(owners: readonly MacosProcess[], operation?: StimContext): Promise<MacosProcess[]> {
+  operation?.signal.throwIfAborted();
+  const live = new Set(owners.filter((owner) => inspectProcessIdentity(owner) === 'same').map((owner) => owner.pid));
+  if (!live.size) return [];
+  const rows = await listProcesses(operation);
+  const leaders = new Set(
+    rows.filter((row) => live.has(row.ppid) && row.pgid === row.pid && row.pid !== process.pid).map((row) => row.pid),
+  );
+  const listed = rows.filter(
+    (row) => row.pid !== process.pid && !live.has(row.pid) && (live.has(row.ppid) || leaders.has(row.pgid)),
+  );
+  const recorded: { row: ProcessRow; record: MacosProcess }[] = [];
+  for (const row of listed) {
+    const processToken = captureProcessToken(row.pid);
+    const start = processStartMicros(row.pid);
+    if (processToken && start.status === 'running')
+      recorded.push({ row, record: { pid: row.pid, processToken, startedAtMicros: start.startedAtMicros } });
+    else if (start.status !== 'gone')
+      ambientWrite('stderr', `Not ending pid ${row.pid}: its identity cannot be captured.\n`);
   }
-  const started: MacosProcess[] = [];
-  for (const pid of found) {
-    const record = bundleRecord(pid);
-    if (record) started.push(record);
-  }
-  return started;
+  const current = new Map((await listProcesses(operation)).map((row) => [row.pid, row]));
+  return recorded
+    .filter(({ row }) => {
+      const again = current.get(row.pid);
+      return again?.ppid === row.ppid && again.pgid === row.pgid;
+    })
+    .map(({ record }) => record);
 }
 
 /** The attempt directories under a hosted session's `apps`, each of which holds one `App.app`. */
