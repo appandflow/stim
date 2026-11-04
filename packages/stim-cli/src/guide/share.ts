@@ -112,9 +112,9 @@ no longer knows its sign-in (after a restart) it shows the login page of the sam
 joined again. When stim-server itself stops, viewers get a plain close, not "ended", and reconnect the same way.
 "This share has ended." from a stop or expiry is final.
 
-Only an explicit stop ends a share early: stim share stop, stim stop (the
-workspace, or one slot with --slot), stim worktree remove, Stop in Stim
-Desktop, or stim-server stopping. Tell the user a share survives a rebuild;
+Apart from a device that cannot stream (above), only an explicit stop ends a
+share early: stim share stop, stim stop (the workspace, or one slot with
+--slot), stim worktree remove, Stop in Stim Desktop, or stim-server stopping. Tell the user a share survives a rebuild;
 never run stim share stop to "restart" one.
 
 TAB TITLES

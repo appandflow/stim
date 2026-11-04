@@ -109,8 +109,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
  * `share-reuse` is `share.start`'s `token` and `expiresAt`, which start a share under a URL token a stopped share had.
- * `share-waiting` is `share.stop`'s `slot`, which ends only that slot's shares: a share whose device goes away waits
- * instead of ending, so stopping a slot has to end its shares explicitly.
+ * `share-waiting` is `share.stop`'s `slot`, which ends only that slot's shares: a share whose device goes away is
+ * stopped for now instead of ending, so stopping a slot has to end its shares explicitly.
  * `share-slug` is `share.start`'s `slug` parameter and the rows' `slug`.
  * `hosted-presence` is `device-host.presence.subscribe`: the `presence` events of a hosted session, which carry what the
  * agent drives on it. A host lists it only with `presence`.

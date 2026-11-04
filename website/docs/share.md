@@ -334,9 +334,10 @@ separate state. A stopped-for-now share still counts as a share: it keeps the
 workspace out of the idle stage, the Funnel route and a `stim share`-started
 stim-server up.
 
-Only an explicit stop ends a share before its expiry: `stim share stop`,
-`stim stop` (the workspace, or one slot with `--slot <slot>`),
-`stim worktree remove`, **Stop** in Stim Desktop, or stim-server stopping.
+Apart from the device that cannot stream above, only an explicit stop ends a
+share before its expiry: `stim share stop`, `stim stop` (the workspace, or one
+slot with `--slot <slot>`), `stim worktree remove`, **Stop** in Stim Desktop, or
+stim-server stopping.
 
 ## Requirements
 
@@ -377,8 +378,8 @@ Only an explicit stop ends a share before its expiry: `stim share stop`,
   and control traffic this machine's own viewers would send, and needs no new
   approval. Video viewers and JPEG viewers each share one host stream; a host
   that sends no H.264 gives video viewers JPEG at 10 frames per second. The session must be ready to start a share. When the session stops, is
-  replaced or has its capture closed for an app install, the share waits (see
-  [When the device goes away](#when-the-device-goes-away)) and resumes when a
+  replaced or has its capture closed for an app install, the share is stopped for now (see
+  [When the device goes away](#when-the-device-goes-away)) and comes back when a
   ready session of that slot is back. `stim share list` does not show the Mac.
 
 ## A share keeps its workspace up, also while its device is away
@@ -414,7 +415,7 @@ stim-server cannot list its shares, Stim keeps the workspace running.
 | `--json`              | Print one payload: `url`, `auth`, `viewAuth`, `slug`, `expiresAt`, `control`, target; `password` and `viewPassword` only when generated. |
 
 `stim share list` lists the shares of this Stim home with their target,
-control, whether one waits for its device, viewer count and expiry, never their
+control, viewer count and expiry, never their
 link or password.
 `stim share stop` ends every share of the current workspace. To end one share,
 use **Stop** on its row in Stim Desktop's Settings > Connections > Using this machine > Share links.

@@ -252,7 +252,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
 }
 
 /** Whether the hub has the share's device now, from what it logged; the rows carry no such state. */
-const stateOf = (f: Fixture) => f.phases.at(-1) ?? 'live';
+const stateOf = (f: Fixture) => f.phases.at(-1);
 
 const shareRequest = (overrides: Partial<ShareRequest> = {}): ShareRequest => ({
   workspace: WORKSPACE,
@@ -1751,15 +1751,36 @@ describe('a web share', () => {
 
     it('does not end a share whose device is away for longer than that: it is only stopped until the device is back', async () => {
       const { socket } = await signedIn();
+      f.subscribed[0]?.listener.failed?.('the frame helper stopped');
+      await vi.advanceTimersByTimeAsync(10);
       f.status(payload('Shutdown'));
-      await vi.advanceTimersByTimeAsync(20 * 60_000);
-      expect(f.hub.list()).toHaveLength(1);
+      for (let minute = 0; minute < 40; minute++) {
+        await vi.advanceTimersByTimeAsync(30_000);
+        for (let turn = 0; turn < 3; turn++) await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(f.hub.list()).toEqual([expect.objectContaining({ viewers: 1 })]);
       f.status(payload('Booted'));
       await vi.waitFor(() => expect(f.subscribed).toHaveLength(2));
       f.subscribed[1]?.listener.failed?.('the frame helper stopped');
       await vi.advanceTimersByTimeAsync(10);
       expect(f.hub.list()).toHaveLength(1);
       socket.close();
+    });
+
+    it('does not count a failing stretch nobody watched: a viewer that joins hours later and sees one short failure keeps the share', async () => {
+      const { url, cookie, socket } = await signedIn();
+      f.subscribed[0]?.listener.failed?.('the frame helper stopped');
+      socket.close();
+      await vi.waitFor(() => expect(f.hub.list()[0]?.viewers).toBe(0));
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(f.hub.list()).toHaveLength(1);
+
+      const joined = await connect(url, { origin: origin(url), cookie });
+      await vi.waitFor(() => expect(f.subscribed.length).toBeGreaterThan(1));
+      f.subscribed.at(-1)?.listener.failed?.('the capture closed for an install');
+      await vi.advanceTimersByTimeAsync(10);
+      expect(f.hub.list()).toHaveLength(1);
+      joined.socket.close();
     });
 
     it('follows its slot to another simulator, without a new login', async () => {

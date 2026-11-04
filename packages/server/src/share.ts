@@ -1273,6 +1273,7 @@ export class ShareHub {
       clearInterval(ping);
       viewer.detach?.();
       share.viewers.delete(viewer);
+      if (share.viewers.size === 0) share.failingSince = null;
       if (share.controlSession) share.source?.release?.(share.owner, share.controlSession, viewer.who);
       share.source?.presence?.leave(viewer.who.id);
       if (share.viewers.size === 0 && share.controlSession) {

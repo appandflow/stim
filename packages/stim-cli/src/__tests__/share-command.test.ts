@@ -409,19 +409,20 @@ describe('stim share', () => {
         expect(deps.starts).toBe(0);
       });
 
-      it('does the same for an expired link, an invalid one, one that expires within seconds, and another target', async () => {
-        const ran: unknown[] = [];
-        plant({ expiresAt: '2020-01-01T00:00:00.000Z' });
-        ran.push(await fallsBack());
-        plant({ token: 'short' });
-        ran.push(await fallsBack());
-        plant({ expiresAt: new Date(Date.now() + 2000).toISOString() });
-        ran.push(await fallsBack());
-        plant();
-        ran.push(await fallsBack({ slot: 'tablet' }));
-        plant();
-        ran.push(await fallsBack({ device: true }));
-        expect(ran).toHaveLength(5);
+      it.each([
+        ['an expired link', () => plant({ expiresAt: '2020-01-01T00:00:00.000Z' }), {}],
+        ['an invalid link', () => plant({ token: 'short' }), {}],
+        [
+          'a link that expires within seconds',
+          () => plant({ expiresAt: new Date(Date.now() + 2000).toISOString() }),
+          {},
+        ],
+        ['a link saved for another slot', () => plant(), { slot: 'tablet' }],
+        ['a link saved for the simulator when the device is asked for', () => plant(), { device: true }],
+      ])('does the same for %s', async (_name, arrange, opts) => {
+        arrange();
+        const { result } = await fallsBack(opts);
+        expect(result).toMatchObject({ ok: true });
       });
 
       it('honors the flags given with it, since there is no saved setup to conflict with, and saves the new link', async () => {
