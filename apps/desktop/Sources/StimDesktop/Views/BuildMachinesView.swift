@@ -168,6 +168,7 @@ struct BuildMachinesView: View {
       hostsSimulators: { !model.androidOnlyNames.contains(OffloadMachines.name($0)) },
       hosted: { hostedDevices(on: $0, in: store.payload?.environments ?? []) },
       stopHosted: { stopHosted($0, $1) },
+      showsNotices: !servers.keepsPairings || servers.storeError != nil || servers.forgotten != nil,
       notices: PairingNotices(servers: servers)
     )
   }
@@ -282,6 +283,7 @@ struct BuildMachinesContent<Notices: View>: View {
   var hosted: (String) -> [HostedOnMachine] = { _ in [] }
   var stopHosted: (String, [HostedOnMachine]) -> Void = { _, _ in }
   var thisMachineName = Host.current().localizedName ?? "This machine"
+  var showsNotices = false
   var notices: Notices
 
   var body: some View {
@@ -339,7 +341,7 @@ struct BuildMachinesContent<Notices: View>: View {
 
   private func list(_ entries: [String]) -> some View {
     Form {
-      Section { notices }
+      if showsNotices { Section { notices } }
       localPool
       if failure != nil { Section { failureNotice } }
       Section {
