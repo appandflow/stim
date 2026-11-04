@@ -142,8 +142,8 @@ Without a name a viewer is "Guest 1", "Guest 2" and so on. Host, Agent and
 Guest N belong to the server, so a viewer that chooses one of them is shown as
 its own Guest N. A viewer sees only the people of its own share, even when two
 share links point at the same device; every share also shows the agent's
-actions, whether it drives the device with `stim agent-device` or with
-agent-device directly, and the host's touches. Names are kept only
+actions, whether it drives the device with `stim agent-device` or, on an owned
+simulator or emulator, with agent-device directly, and the host's touches. Names are kept only
 in stim-server's memory while the share lives. A row of colored initials in the
 top bar lists who is here; an eye marks the view-only ones. Click it to open a
 People list with each person's role (controlling, can control or view only), the

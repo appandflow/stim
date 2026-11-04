@@ -9,11 +9,10 @@ import type { ScreenSize } from './device-screen.ts';
 import { AGENT_COMMAND, presenceKey, type PresenceHub } from './presence.ts';
 import type { PresenceGesture } from './protocol.ts';
 
-/** Records older than this when they arrive are history of the follow's start, not something an agent just did. */
 const FRESH_MS = 5000;
-/** How long a gesture one source showed waits for the other source's copy of it. */
 const PAIR_MS = 10_000;
 const MAX_PENDING = 16;
+const SWEEP_AT = 32;
 
 type Source = 'wrapper' | 'records';
 
@@ -25,17 +24,23 @@ interface Follow {
 
 export interface LocalAgentPresenceOptions {
   hub: Pick<PresenceHub, 'subscribe' | 'agent'>;
-  /** Follows a workspace's agent-device records from now on until aborted. */
   follow: (workspace: string, onRecord: (record: NdjsonRecord) => void, signal: AbortSignal) => Promise<() => void>;
-  /** The screen of a simulator (by UDID) or an emulator (by serial) in the units agent-device records points in. */
   screen: (platform: 'ios' | 'android', device: string) => Promise<ScreenSize | null>;
-  /** The latest snapshot tree `stim agent-device` kept for an agent-device session of a workspace. */
   tree?: (workspace: string, session: string) => AgentSnapshotTree | null;
   now?: () => number;
 }
 
 function signature(key: string, gesture: PresenceGesture): string {
   return JSON.stringify([key, gesture.kind, gesture.from, gesture.to ?? null]);
+}
+
+/** The workspace of a device key that an owned simulator or emulator has; null for a physical device or another key. */
+function workspaceOf(key: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(key);
+  } catch {}
+  return Array.isArray(parsed) && typeof parsed[0] === 'string' && parsed[3] !== true ? parsed[0] : null;
 }
 
 /**
@@ -65,12 +70,20 @@ export class LocalAgentPresence {
 
   /** What `stim agent-device` published for a device: its gesture is dropped when the records already showed it. */
   published(key: string, command: string, phase: 'start' | 'end', gesture: PresenceGesture | undefined): void {
-    const repeated = gesture !== undefined && this.paired(key, 'wrapper', gesture);
+    const repeated = gesture !== undefined && this.followed(key) && this.paired(key, 'wrapper', gesture);
     this.options.hub.agent(key, command, phase, repeated ? undefined : gesture);
+  }
+
+  private followed(key: string): boolean {
+    const workspace = workspaceOf(key);
+    return workspace !== null && this.follows.get(workspace)?.keys.has(key) === true;
   }
 
   private paired(key: string, source: Source, gesture: PresenceGesture): boolean {
     const now = (this.options.now ?? Date.now)();
+    if (this.pending.size >= SWEEP_AT)
+      for (const [id, entries] of this.pending)
+        if (entries.every((entry) => now - entry.at >= PAIR_MS)) this.pending.delete(id);
     const id = signature(key, gesture);
     const waiting = (this.pending.get(id) ?? []).filter((entry) => now - entry.at < PAIR_MS);
     const other = waiting.findIndex((entry) => entry.source !== source);
@@ -82,12 +95,8 @@ export class LocalAgentPresence {
   }
 
   private follow(key: string): () => void {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(key);
-    } catch {}
-    if (!Array.isArray(parsed) || typeof parsed[0] !== 'string' || parsed[3] === true) return () => {};
-    const workspace = parsed[0];
+    const workspace = workspaceOf(key);
+    if (workspace === null) return () => {};
     let follow = this.follows.get(workspace);
     if (!follow) {
       const abort = new AbortController();
@@ -150,7 +159,17 @@ export class LocalAgentPresence {
     const id = `${platform}:${device}`;
     let screen = follow.screens.get(id);
     if (!screen) {
-      screen = this.options.screen(platform, device).catch(() => null);
+      const measured: Promise<ScreenSize | null> = this.options.screen(platform, device).then(
+        (size) => {
+          if (size === null && follow.screens.get(id) === measured) follow.screens.delete(id);
+          return size;
+        },
+        () => {
+          if (follow.screens.get(id) === measured) follow.screens.delete(id);
+          return null;
+        },
+      );
+      screen = measured;
       follow.screens.set(id, screen);
     }
     return screen;

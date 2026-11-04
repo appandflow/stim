@@ -22,7 +22,10 @@ const scroll = (ts: number, extra: Partial<NdjsonRecord> = {}): NdjsonRecord => 
   ...extra,
 });
 
-function fixture(tree?: () => AgentSnapshotTree) {
+function fixture(
+  tree?: () => AgentSnapshotTree,
+  measure?: (call: number) => Promise<{ width: number; height: number } | null>,
+) {
   const hub = new PresenceHub();
   const follows: { workspace: string; emit: (record: NdjsonRecord) => void; signal: AbortSignal }[] = [];
   const screens: string[] = [];
@@ -34,7 +37,7 @@ function fixture(tree?: () => AgentSnapshotTree) {
     },
     screen: async (platform, device) => {
       screens.push(`${platform}:${device}`);
-      return SCREEN;
+      return measure ? measure(screens.length) : SCREEN;
     },
     tree,
     now: () => NOW,
@@ -123,4 +126,28 @@ describe('a gesture shown by both `stim agent-device` and the records', () => {
     f.agents.published(KEY, 'scroll', 'end', swipe);
     expect(f.gestures).toEqual([swipe, swipe, undefined]);
   });
+});
+
+test('measures the device again at the next action when measuring failed', async () => {
+  const f = fixture(undefined, async (call) => {
+    if (call === 1) throw new Error('simctl is busy');
+    return SCREEN;
+  });
+  f.subscribe();
+  f.follows[0]!.emit(scroll(NOW - 200));
+  await f.settle();
+  expect(f.gestures).toEqual([undefined]);
+  f.follows[0]!.emit(scroll(NOW - 100));
+  await f.settle();
+  expect(f.gestures.at(-1)).toMatchObject({ kind: 'swipe' });
+});
+
+test('a gesture from `stim agent-device` on a device nobody follows does not wait for a copy from the records', async () => {
+  const f = fixture();
+  const swipe: PresenceGesture = { kind: 'swipe', from: { x: 0.5, y: 0.75 }, to: { x: 0.5, y: 0.25 }, durationMs: 400 };
+  f.agents.published(KEY, 'scroll', 'end', swipe);
+  f.subscribe();
+  f.follows[0]!.emit(scroll(NOW - 100));
+  await f.settle();
+  expect(f.gestures).toEqual([undefined, swipe]);
 });

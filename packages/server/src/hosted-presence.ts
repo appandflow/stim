@@ -23,7 +23,6 @@ type Viewport = NonNullable<AgentSnapshotTree['viewport']>;
 interface Follower {
   listeners: number;
   stop: () => void;
-  /** Measures the session's device when that has not succeeded yet and no measuring is under way. */
   measure: () => void;
 }
 
