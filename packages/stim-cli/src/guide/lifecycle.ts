@@ -304,7 +304,10 @@ CAPACITY
 TWO REPORTS, TWO QUESTIONS
   "What is running" is \`stim status\`: live state, right now, including
   each running ios or android build's phase and time left (see
-  \`guide facts status\`). "How much the
+  \`guide facts status\`). One-shot status reads simulator state from the
+  device listing a boot admission took in the last 10 seconds, when there is
+  one that covers every recorded simulator, so it can lag a device that booted
+  or stopped after that listing by that long plus the listing time; \`stim status --watch\` always lists itself. "How much the
   cache saved" is \`stim stats\`: aggregate counters for this project and for
   the machine, with a hit rate and an estimate of the time saved (see
   \`guide facts stats\`).
@@ -819,6 +822,15 @@ independent and selects a compatible build worker for a cache miss.
 
 The host's own owned devices count toward concurrency.maxDevices and its per-platform cap
 (concurrency.maxIosDevices, concurrency.maxAndroidDevices; macOS apps use concurrency.maxMacosApps).
+
+Each record in stim-server devices --json carries kind (phone for a pairing
+from stim-server pair, which Stim Desktop on another machine also uses,
+build-client or device-host-client), access (view, control, build or
+run-devices), owner (this-machine for a phone, theirs-running-here for a
+build or device-host client) and keyFingerprint, the client key one machine's
+build and device-host records share. A person on the host renames a record
+with stim-server devices rename <id> <name>; the client sees the name on its
+next connection, and its access does not change.
 
 The host's person sees Hosted here rows in stim-server devices; --json adds
 hostedSessions beside devices. Rows show client, platform, device, installed
