@@ -200,9 +200,10 @@ clipboard when you tap it (iOS asks you to allow the paste), sets the device
 clipboard to that text and pastes it into the focused field. Text over 8 KiB is
 not sent. An iOS simulator types printable ASCII, line breaks and tabs into the field,
 about 35 characters a second, so no paste prompt is involved. Text with other characters,
-such as accents and emoji, is pasted instead, which can leave a "Paste from
-CoreSimulatorBridge" suggestion on the device to tap; a simulator slimmed by
-`ios.simslimProfile` cannot show it. Copy reads the device clipboard into the
+such as accents and emoji, is pasted instead. In an app Stim installed on an owned
+simulator it lands without a prompt, because Stim allows that app's paste
+permission; another app can leave a "Paste from CoreSimulatorBridge" suggestion on
+the device to tap, which a simulator slimmed by `ios.simslimProfile` cannot show. Copy reads the device clipboard into the
 phone's. Nothing syncs by itself, only text is sent, and Stim never logs it.
 
 Each machine the phone pairs with reports the work it started, including

@@ -548,8 +548,9 @@ types printable ASCII, line breaks and tabs into the focused field as key presse
 characters a second, so a long paste takes a while), so iOS shows no paste prompt and a
 simulator slimmed by SimSlim takes it too; the field's own typing rules still apply, such as
 smart quotes and dashes. Text with any other character (accents, emoji) is pasted with
-Command-V, where iOS asks "Allow Paste" for text from another source, and a notice says to tap
-the paste suggestion on the device if nothing appears. Apps on the device, and agents driving it, can read the text sent to it.
+Command-V. Stim allows "Paste from Other Apps" for the app it installs on an owned simulator, so
+that app takes it without a prompt; another app has iOS ask "Allow Paste" for text from another
+source, and a notice says to tap the paste suggestion on the device if nothing appears. Apps on the device, and agents driving it, can read the text sent to it.
 
 A device Desktop shows through stim-server (a hosted iOS or Android session, a device of a paired
 machine, a leased Android phone) has the same section once **Control** is on, and a disabled one that names the server to update when its hello lacks the feature. Sync is on by default, so the current Mac text is sent to the device's machine as soon as Control starts. Sync, **Paste Mac

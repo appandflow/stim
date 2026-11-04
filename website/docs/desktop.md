@@ -634,10 +634,11 @@ transfers. Syncing only sets the device clipboard; to insert text, paste in the
 guest. **Paste Mac Clipboard** on an iOS simulator types printable ASCII, line breaks and tabs
 into the focused field, about 35 characters a second, so no paste prompt appears and a
 SimSlim-slimmed simulator takes it too; the field's own typing rules (smart quotes and dashes)
-still apply. Text with other characters, such as accents and emoji, is pasted instead, and an
-iOS simulator shows its own "Allow Paste" prompt for it: click **Allow Paste** in the viewer.
-Desktop then shows a notice that says to tap the paste suggestion on the device if nothing
-appears. Unicode and line breaks are preserved.
+still apply. Text with other characters, such as accents and emoji, is pasted instead. In an app
+Stim installed on an owned simulator it lands without a prompt, because Stim allows that app's
+"Paste from Other Apps" permission when it installs it. In another app an iOS simulator shows its
+own "Allow Paste" prompt: click **Allow Paste** in the viewer. Desktop then shows a notice that says to
+tap the paste suggestion on the device if nothing appears. Unicode and line breaks are preserved.
 
 A device Desktop shows through stim-server has the same options once **Control** is on, with sync on by default, so the current Mac text is sent to the device's machine as soon as Control starts:
 a hosted iOS or Android session, a device of a paired machine, or a leased Android phone.

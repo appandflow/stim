@@ -1421,6 +1421,14 @@ result as proof instead of requiring an unrelated screenshot.`,
   containers, the pasteboard, photos, Safari data and Simulator settings are
   not cleared; \`gc --cache parked --delete\` erases a parked simulator when a
   clean system image is needed.
+  Every install on an owned iOS simulator, an adopted one included, also allows
+  "Paste from Other Apps" for the installed bundle id alone, so a Command-V from
+  Desktop, the phone app or a share lands in that app without an "Allow Paste"
+  prompt. Stim writes that app's \`kTCCServicePasteboard\` row (Allow) in the
+  simulator's own TCC.db after the install and before the launch, once it has
+  checked the simulator is still Stim-owned. No setting turns it off. A failure
+  prints a warning and the install stands. Other apps on the simulator, Safari
+  included, keep iOS's own prompt.
 
   A parked simulator keeps its apps and data, so it can hold gigabytes. It
   uses the Mac's disk, not a fixed partition, so there is no free-space check

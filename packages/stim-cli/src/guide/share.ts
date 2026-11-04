@@ -308,7 +308,7 @@ SECURITY MODEL
   Android phone only. A device an agent or another client drives answers
   busy instead of being taken over.
 - Clipboard, with --control on an iOS simulator, Android emulator or Android phone: Command-V or Control-V while
-  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field; an iOS simulator types printable ASCII, line breaks and tabs, and pastes other text with Command-V, where iOS can ask first. The
+  the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field; an iOS simulator types printable ASCII, line breaks and tabs, and pastes other text with Command-V, which lands without a prompt in an app Stim installed on an owned simulator (Stim allows its paste permission) and where iOS can ask first in any other app. The
   top bar's options menu has a Sync clipboard switch, on by default for control viewers and remembered in the
   browser: while the page is focused and visible it polls the device clipboard every two seconds (slower after
   failures) and writes new text to the browser clipboard, with a Copy from device chip when the browser refuses
