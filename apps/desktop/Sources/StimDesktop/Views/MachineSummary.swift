@@ -11,6 +11,21 @@ struct MachineSummary: View {
   var openMachine: () -> Void
   @State private var expandedResource: ResourceKind?
 
+  @State private var hoveredResource: ResourceKind?
+  @Namespace private var hoverNamespace
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  private func hover(_ resource: ResourceKind) {
+    withAnimation(reduceMotion || hoveredResource == nil ? nil : .spring(response: 0.25, dampingFraction: 0.87)) {
+      hoveredResource = resource
+    }
+    if expandedResource != nil {
+      var transaction = Transaction()
+      transaction.disablesAnimations = true
+      withTransaction(transaction) { expandedResource = resource }
+    }
+  }
+
   private func shows(_ resource: ResourceKind) -> Binding<Bool> {
     Binding(
       get: { expandedResource == resource },
@@ -110,6 +125,10 @@ struct MachineSummary: View {
     }
     .padding(.horizontal, Space.lg)
     .padding(.vertical, Space.xs)
+    .contentShape(Rectangle())
+    .onHover { inside in
+      if !inside { hoveredResource = nil }
+    }
   }
 
   private func cpuItem(_ cpu: Double, load: CapacityLoad?) -> some View {
@@ -136,20 +155,12 @@ struct MachineSummary: View {
       statItem(icon: ResourceKind.cpu.icon, label: "CPU", value: value, tone: tone)
         .padding(Space.sm)
     }
-    .buttonStyle(.hoverRow(radius: Radius.round))
+    .buttonStyle(ResourceHoverStyle(highlighted: hoveredResource == .cpu, namespace: hoverNamespace))
     .accessibilityLabel(accessibilityLabel)
     .accessibilityValue(accessibilityValue)
     .help(help)
     .popover(isPresented: shows(.cpu), arrowEdge: .bottom) { popover(.cpu) }
-    .onHover { hovering in
-      if hovering, expandedResource != nil {
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-          expandedResource = .cpu
-        }
-      }
-    }
+    .onHover { if $0 { hover(.cpu) } }
   }
 
   private func loadItem(_ load: CapacityLoad) -> some View {
@@ -159,20 +170,12 @@ struct MachineSummary: View {
       statItem(icon: ResourceKind.load.icon, label: "Load", value: load.text, tone: load.tone)
         .padding(Space.sm)
     }
-    .buttonStyle(.hoverRow(radius: Radius.round))
+    .buttonStyle(ResourceHoverStyle(highlighted: hoveredResource == .load, namespace: hoverNamespace))
     .accessibilityLabel("Load details")
     .accessibilityValue(load.text)
     .help("Load is the 5-minute average of tasks running or waiting, per core. \(load.busySentence)")
     .popover(isPresented: shows(.load), arrowEdge: .bottom) { popover(.load) }
-    .onHover { hovering in
-      if hovering, expandedResource != nil {
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-          expandedResource = .load
-        }
-      }
-    }
+    .onHover { if $0 { hover(.load) } }
   }
 
   private func memoryItem(_ memory: MachineMemory, cap: Capacity, showsBar: Bool) -> some View {
@@ -194,19 +197,11 @@ struct MachineSummary: View {
       }
       .padding(Space.sm)
     }
-    .buttonStyle(.hoverRow(radius: Radius.round))
+    .buttonStyle(ResourceHoverStyle(highlighted: hoveredResource == .memory, namespace: hoverNamespace))
     .accessibilityLabel("Memory details")
     .accessibilityValue(Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes))
     .popover(isPresented: shows(.memory), arrowEdge: .bottom) { popover(.memory) }
-    .onHover { hovering in
-      if hovering, expandedResource != nil {
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-          expandedResource = .memory
-        }
-      }
-    }
+    .onHover { if $0 { hover(.memory) } }
     .help(
       "Memory used on this Mac, as Activity Monitor counts it. Stim's share: active workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb)) of \(Format.gigabytes(mb: cap.totalMemoryMb))."
     )
@@ -226,20 +221,12 @@ struct MachineSummary: View {
       }
       .padding(Space.sm)
     }
-    .buttonStyle(.hoverRow(radius: Radius.round))
+    .buttonStyle(ResourceHoverStyle(highlighted: hoveredResource == .disk, namespace: hoverNamespace))
     .accessibilityLabel("Disk details")
     .accessibilityValue("\(Format.fileSize(lowest.freeBytes)) free")
     .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
     .popover(isPresented: shows(.disk), arrowEdge: .bottom) { popover(.disk) }
-    .onHover { hovering in
-      if hovering, expandedResource != nil {
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-          expandedResource = .disk
-        }
-      }
-    }
+    .onHover { if $0 { hover(.disk) } }
   }
 
   private var cpuPopover: some View {
@@ -405,5 +392,26 @@ private struct MachineResourcePopover<Content: View>: View {
     .padding(Space.xl)
     .frame(width: 340)
     .background(Palette.surface)
+  }
+}
+
+private struct ResourceHoverStyle: ButtonStyle {
+  let highlighted: Bool
+  let namespace: Namespace.ID
+  @Environment(\.colorScheme) private var scheme
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .contentShape(Rectangle())
+      .background {
+        if highlighted {
+          Capsule()
+            .fill(HoverTint.color(hovering: true, pressed: configuration.isPressed, dark: scheme == .dark))
+            .matchedGeometryEffect(id: "resourceHover", in: namespace)
+            .allowsHitTesting(false)
+        } else if configuration.isPressed {
+          Capsule().fill(HoverTint.color(hovering: false, pressed: true, dark: scheme == .dark))
+        }
+      }
   }
 }
