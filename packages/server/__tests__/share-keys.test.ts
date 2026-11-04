@@ -79,3 +79,38 @@ it('types a character produced with AltGr instead of sending a chord', () => {
     text: '@',
   });
 });
+
+it('names a chord by the character the layout types, and by the physical key when that is not a Latin letter', () => {
+  expect(press({ key: 'a', code: 'KeyQ', metaKey: true })).toEqual({ type: 'key', key: 'a', modifiers: ['command'] });
+  expect(press({ key: 'z', code: 'KeyY', metaKey: true })).toEqual({ type: 'key', key: 'z', modifiers: ['command'] });
+  expect(press({ key: 'c', code: 'KeyJ', metaKey: true })).toEqual({ type: 'key', key: 'c', modifiers: ['command'] });
+  expect(press({ key: '\u044F', code: 'KeyZ', metaKey: true })).toEqual({
+    type: 'key',
+    key: 'z',
+    modifiers: ['command'],
+  });
+  expect(press({ key: '!', code: 'Digit1', metaKey: true, shiftKey: true })).toEqual({
+    type: 'key',
+    key: '1',
+    modifiers: ['command', 'shift'],
+  });
+});
+
+it('types an ASCII character made with Option on a Mac, and keeps Option chords otherwise', () => {
+  expect(press({ key: '@', code: 'KeyL', altKey: true })).toEqual({ type: 'text', text: '@' });
+  expect(press({ key: '\u00E5', code: 'KeyA', altKey: true })).toEqual({
+    type: 'key',
+    key: 'a',
+    modifiers: ['option'],
+  });
+  expect(press({ key: '@', code: 'KeyL', altKey: true, metaKey: true })).toEqual({
+    type: 'key',
+    key: 'l',
+    modifiers: ['command', 'option'],
+  });
+  expect(press({ key: 'a', code: 'KeyA', altKey: true }, false)).toEqual({
+    type: 'key',
+    key: 'a',
+    modifiers: ['option'],
+  });
+});

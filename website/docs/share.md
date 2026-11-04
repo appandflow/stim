@@ -164,10 +164,12 @@ scrolling. With `--control`, click the screen to tap and type with the keyboard.
 the arrow keys and Escape go to the device as well (the D-pad keys and Escape
 on Android, the hardware arrow and Escape keys on iOS). On an iOS simulator or an
 Android emulator whose stim-server advertises `device-keyboard`, Shift with an arrow
-and shortcuts with Command (Control on Windows and Linux), Option or Control, such
-as Command-A, Command-Z and Option-Left, go to the device too; on Android, Command
-acts as Control. Command-V keeps pasting your clipboard. Keys do not reach the device
-while the focus is in a field of the page, such as the password or rename boxes.
+and shortcuts go to the device too: Command on a Mac (Control on Windows and Linux)
+is the shortcut key, and Option and, on a Mac, Control go with it, as in Command-A,
+Command-Z and Option-Left. On Android, Command acts as Control. Command-V keeps
+pasting your clipboard. While the screen has focus the page keeps these shortcuts
+from the browser, such as Command-R and Command-L; click outside the screen to use
+them. Keys do not reach the device while the focus is in a field of the page, such as the password or rename boxes.
 
 With `--control` on an iOS simulator, an Android emulator or an Android phone,
 Command-V (Control-V on Windows and Linux) while the screen has focus pastes the
