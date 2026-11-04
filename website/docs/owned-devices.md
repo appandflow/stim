@@ -334,6 +334,18 @@ one. Android AVDs use the
 assumes that the caller finished all device automation for that Stim session.
 It does not block on other processes attached to the owned device.
 
+An owned iOS simulator is the exception: while macOS memory pressure is normal,
+a device slot is free and `daemon.mode` is `on`, `stim stop` leaves it booted for
+`pool.bootedGraceMinutes` (15 by default). `stop` still ends Metro, the app and
+agent-device sessions, and the simulator stays assigned to the workspace. The
+next `stim ios` uses the booted simulator with no boot, and `stim worktree
+remove` parks it booted. The stim-daemon shuts it down when the grace period
+passes or when memory pressure is not normal. `stop` prints how long it stays
+booted; to shut it down now run `STIM_POOL_BOOTED_GRACE_MINUTES=0 stim stop`,
+and set `pool.bootedGraceMinutes` to `0` to turn the deferral off. A repeated
+`stop` keeps the first expiry. Android emulators, and any simulator stopped with
+`--slot`, are shut down at once.
+
 Android creation records an owned reservation before running native tools.
 Other workspaces can update Stim config during creation, while GC and teardown
 keep that reservation. An interruption leaves an incomplete record; retry
@@ -775,9 +787,8 @@ leftover app, and counts the simulator against the device caps. The stim-daemon
 shuts it down, and keeps it parked, when the grace period passes, under any
 memory pressure before it touches a workspace's device, and before it reclaims
 another workspace's device for a run waiting on a device slot. `stim stop`
-shuts the workspace's simulator down first, so run `stim worktree remove`
-without a prior `stim stop` to keep it booted. Emulators are always shut down
-at park.
+keeps the workspace's simulator booted under the same gates, so `stop` then
+`worktree remove` keeps it booted too. Emulators are always shut down at park.
 
 Adoption gives the new workspace a clean app state without reinstalling. It
 resets privacy grants and the keychain, uninstalls every other user app except

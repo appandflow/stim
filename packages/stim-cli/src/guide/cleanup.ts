@@ -318,7 +318,7 @@ pressure ladder, trims oversized workspace logs
 (\`guide cleanup disk\`) and removes orphaned workspace directories, never a
 checkout. Device recordings can also go without either: stim-server prunes
 them, and turning recording.enabled off deletes them (\`guide cleanup disk\`). \`stim stop\` shuts a device
-DOWN and leaves it assigned, which is what makes returning to a branch cost a
+DOWN (an owned iOS simulator at the end of its booted grace period) and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
 
 Before shutting down, parking or deleting an owned device, Stim best-effort
@@ -653,7 +653,8 @@ SWEEPING FINISHED WORKTREES
   an unexpired device lease. When the simulator or emulator list cannot be
   read, the worktree counts as in use. A device left booted keeps the
   worktree until \`stim stop\` in it, or its idle stage, shuts the device
-  down. A worktree that holds the running stim or the realpath of
+  down. A simulator that \`stim stop\` left booted for its grace period
+  (\`guide lifecycle pool\`) does not keep it. A worktree that holds the running stim or the realpath of
   the \`stim\` on PATH is in use too, and \`stim worktree remove\` refuses it
   even with --force, as it refuses an installed stim-server service's checkout.
 

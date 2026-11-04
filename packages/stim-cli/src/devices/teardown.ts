@@ -5,6 +5,7 @@ import { cancellableSleep } from '../cancellation.ts';
 import { withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { closeOwnedDeviceSessions } from './agent-device-cleanup.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from './device-slots.ts';
+import { recordDeferredShutdown } from './deferred-shutdown.ts';
 import {
   forgetCreatedDevice,
   forgetCreatedDeviceAsync,
@@ -103,6 +104,8 @@ export interface TeardownOutcome {
   evicted?: ParkedDevice[];
   evictionFailures?: string[];
   parkFallback?: string;
+  /** Set when the simulator was left booted: the stim-daemon shuts it down at this time. */
+  deferredUntil?: string;
 }
 
 export interface ParkRequest {
@@ -407,6 +410,7 @@ export async function teardownOwnedIosSim(
     del = false,
     label,
     park,
+    deferShutdown,
     workspace,
     shutdownClock = {},
     operation,
@@ -414,6 +418,8 @@ export async function teardownOwnedIosSim(
     del?: boolean;
     label?: string;
     park?: ParkRequest;
+    /** Leaves a booted simulator booted until `until`, after ending its sessions and its app, and records it for the daemon. */
+    deferShutdown?: { until: string; slot: string; appId?: string | null };
     workspace?: string;
     shutdownClock?: ShutdownSettleClock;
     operation?: StimContext;
@@ -443,6 +449,14 @@ export async function teardownOwnedIosSim(
     if (current.missing) return { status: 'missing' };
     if (current.notOwned)
       return { status: 'skipped', kind: 'not-owned', reason: 'simulator ownership changed before shutdown' };
+    if (deferShutdown && !del && workspace && current.sim?.state === 'Booted') {
+      if (deferShutdown.appId) await terminateIosApp(udid, deferShutdown.appId).catch(() => {});
+      const deferredUntil = await recordDeferredShutdown(workspace, deferShutdown.slot, {
+        udid,
+        until: deferShutdown.until,
+      });
+      return { status: 'torn-down', label: label ?? current.sim.name ?? udid, deferredUntil };
+    }
     const keepBooted = Boolean(del && park && park.max > 0 && park.bootedUntil && current.sim?.state === 'Booted');
     if (!keepBooted) await shutdownIosSim(udid, operation);
     const sim = resolved.sim as IosSimRecord;

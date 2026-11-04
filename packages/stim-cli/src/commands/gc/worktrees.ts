@@ -16,7 +16,8 @@ import { MAINTENANCE_LOG_NAME, settingDefinition } from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
 import { workspaceInUseAsync } from '../../workspace/in-use.ts';
-import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
+import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
+import { holdsDeferredShutdown } from '../../devices/deferred-shutdown.ts';
 import {
   FETCH_FRESH_MS,
   fetchDefaultBranchAsync,
@@ -441,13 +442,14 @@ function deviceUseOf(keys: readonly string[], devices: DeviceReads): string[] {
       reasons.push(`its device records cannot be read: ${(error as Error).message}`);
       continue;
     }
-    for (const { platforms } of slots) {
+    const state = readWorkspaceState(key);
+    for (const { slot, platforms } of slots) {
       const ios = platforms.ios;
       if (ios?.owned && ios.deviceUdid) {
         const sims = devices.sims(ios.deviceUdid);
         const sim = sims?.find((entry) => entry.udid === ios.deviceUdid);
         if (sims === null) reasons.push(`the state of its owned simulator ${ios.deviceUdid} cannot be read`);
-        else if (sim && sim.state !== 'Shutdown') {
+        else if (sim && sim.state !== 'Shutdown' && !holdsDeferredShutdown(state, slot, ios.deviceUdid)) {
           reasons.push(`its owned simulator ${sim.name} is ${sim.state}; \`stim stop\` in ${key} shuts it down`);
         }
       }

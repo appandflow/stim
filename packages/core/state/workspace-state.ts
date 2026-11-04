@@ -141,6 +141,29 @@ export function readDeviceIdleShutdowns(
   return found;
 }
 
+export const DEFERRED_SHUTDOWN_KEY = 'deferredDeviceShutdowns';
+
+/** An owned simulator that `stop` left booted: the stim-daemon shuts it down once `until` passes. */
+export interface DeferredShutdownRecord {
+  udid: string;
+  until: string;
+}
+
+/** The simulators `stop` left booted, by device slot key (`ios`, `ios:<slot>`). */
+export function readDeferredShutdowns(
+  state: WorkspaceState | null | undefined,
+): Record<string, DeferredShutdownRecord> {
+  const records = state?.[DEFERRED_SHUTDOWN_KEY];
+  if (!isJsonObject(records)) return {};
+  const found: Record<string, DeferredShutdownRecord> = {};
+  for (const [key, value] of Object.entries(records)) {
+    if (isJsonObject(value) && typeof value.udid === 'string' && Number.isFinite(Date.parse(String(value.until)))) {
+      found[key] = { udid: value.udid, until: String(value.until) };
+    }
+  }
+  return found;
+}
+
 export const DEV_SERVER_STOP_REQUEST_KEY = 'devServerStopRequest';
 
 /**
