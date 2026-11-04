@@ -2,11 +2,9 @@ import type { StimContext } from '@stim-cli/core';
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { plural } from '../../command-output.ts';
-import { diskUsageCacheFile, readDiskUsage } from '@stim-cli/core/state';
-import { getExecutor } from '../../exec.ts';
-import { writeCacheFile } from '../../status-measures.ts';
+import type { DiskMeasure } from '@stim-cli/core/state';
+import { freshMeasure, isDependencyTree, refreshMeasure } from '../../disk-usage.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
-import { knownPrivateBytes, measureTree, treeSignature } from '../../private-size.ts';
 import { appRoots } from '../../maintenance/artifacts.ts';
 import { ARTIFACT_DIRS, discoveredBuildDirs, xcodebuildOutputDirs } from '../../workspace/regenerable-dirs.ts';
 import { listWorktreesAsync, matchWorktreeEntry, resolveSourceCheckoutAsync } from '../../workspace/worktree.ts';
@@ -18,8 +16,6 @@ import {
   type WorktreeBuildState,
   type WorktreeSweep,
 } from './worktrees.ts';
-import { runOperationFile } from '../../engine/operation-exec.ts';
-import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { eachLimited, mapLimited, readConcurrency, sizeConcurrency } from './limited.ts';
 
 const SIZE_TIMEOUT_MS = 30_000;
@@ -85,46 +81,23 @@ interface DirSize {
   privateBytes: number | null;
 }
 
-function isDependencyTree(dir: string): boolean {
-  return ARTIFACT_DIRS.dependencies.some((name) => dir.endsWith(`${sep}${name.split('/').join(sep)}`));
-}
-
-function cachedSize(dir: string, now: number, privateSized: ReadonlySet<string>): DirSize | null {
-  const cached = readDiskUsage(dir);
-  if (!cached) return null;
-  const at = Date.parse(cached.measuredAt);
-  if (now - at >= BUILD_STATE_MAX_AGE_MS) return null;
-  if (isDependencyTree(dir))
-    return cached.signature === treeSignature(dir)
-      ? { bytes: cached.bytes, privateBytes: knownPrivateBytes(dir) }
-      : null;
+/** Whether the directory is unchanged since it was measured: nothing was added to or removed from it. */
+function unchangedSince(dir: string, measure: DiskMeasure): boolean {
   try {
-    return statSync(dir).mtimeMs > at
-      ? null
-      : { bytes: cached.bytes, privateBytes: privateSized.has(dir) ? (cached.privateBytes ?? null) : null };
+    return statSync(dir).mtimeMs <= Date.parse(measure.measuredAt);
   } catch {
-    return null;
+    return false;
   }
 }
 
-async function duSize(dir: string, operation?: StimContext): Promise<number | null> {
-  let out: string;
-  try {
-    out = await runOperationFile(operation, getExecutor(), 'du', ['-sk', dir], {
-      timeoutMs: BUILD_STATE_TIMEOUT_MS,
-      killSignal: 'SIGKILL',
-      cwd: operation?.cwd,
-      signal: operation?.signal,
-    });
-  } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-      throw error;
-    operation?.signal.throwIfAborted();
-    const stdout = error instanceof Error && 'stdout' in error ? error.stdout : null;
-    out = typeof stdout === 'string' ? stdout : '';
-  }
-  const kb = /^(\d+)\t/.exec(out)?.[1];
-  return kb ? Number(kb) * 1024 : null;
+function sizeOptions(dir: string) {
+  return { maxAgeMs: BUILD_STATE_MAX_AGE_MS, valid: (measure: DiskMeasure) => unchangedSince(dir, measure) };
+}
+
+function dirSize(measure: DiskMeasure | null, dir: string, privateSized: ReadonlySet<string>): DirSize | null {
+  if (!measure) return null;
+  const counted = isDependencyTree(dir) || privateSized.has(dir);
+  return { bytes: measure.bytes, privateBytes: counted ? (measure.privateBytes ?? null) : null };
 }
 
 interface PendingWorktree extends BuildStateDirs {
@@ -135,12 +108,12 @@ interface PendingWorktree extends BuildStateDirs {
 
 /**
  * Sizes the regenerable directories maintenance clears and a project-local `.pnpm-store` in each worktree of the
- * sweep, from the disk-usage cache while an entry is under an hour old and no entry was added to or removed from the
- * directory since (for node_modules and Pods, while their install signature is unchanged). Stale directories are
- * measured with one `du` each, node_modules and Pods with the private-size walk of `measureTree`, at most 4 at once, one at a time while the
+ * sweep through `refreshMeasure`: from the disk-usage cache while an entry is under an hour old and no entry was added
+ * to or removed from the directory since (node_modules and Pods: while their install signature is unchanged and the
+ * entry is under six hours old). Stale directories are walked once each, at most 4 at once, one at a time while the
  * operation declares its children on a claim, with 10 seconds each, so a
- * slow tree delays only itself; a directory du could not measure in time is reported unmeasured (null). Without
- * `measure`, stale directories are reported unmeasured without a `du`. Also lists
+ * slow tree delays only itself; a directory that could not be measured in time is reported unmeasured (null). Without
+ * `measure`, stale directories are reported unmeasured without a walk. Also lists
  * the directories directly under a repository's `.worktrees/` that are no git worktree at all.
  */
 export async function measureWorktreeSweep(
@@ -149,7 +122,6 @@ export async function measureWorktreeSweep(
   measure = true,
 ): Promise<WorktreeSweep> {
   operation?.signal.throwIfAborted();
-  const now = Date.now();
   const measured = sweep.worktrees.filter((candidate) => candidate.skipCode !== 'not-a-worktree');
   const pending: PendingWorktree[] = [];
   await eachLimited([...measured.entries()], readConcurrency(operation), async ([index, candidate]) => {
@@ -159,7 +131,9 @@ export async function measureWorktreeSweep(
       ...found,
       candidate,
       root: canonicalPath(candidate.path),
-      sizes: new Map(found.dirs.map((dir) => [dir, cachedSize(dir, now, found.privateSized)])),
+      sizes: new Map(
+        found.dirs.map((dir) => [dir, dirSize(freshMeasure(dir, sizeOptions(dir)), dir, found.privateSized)]),
+      ),
     };
   });
   const due = measure
@@ -171,27 +145,13 @@ export async function measureWorktreeSweep(
   if (due.length) phase('worktrees', `measuring the build state of ${plural(worktrees, 'worktree')}`, operation);
   await eachLimited(due, sizeConcurrency(operation), async ({ dir, sizes, privateSized }) => {
     operation?.signal.throwIfAborted();
-    const measuredAt = new Date().toISOString();
-    if (isDependencyTree(dir) || privateSized.has(dir)) {
-      const signature = isDependencyTree(dir) ? treeSignature(dir) : null;
-      const size = await measureTree(dir, { timeoutMs: BUILD_STATE_TIMEOUT_MS, operation });
-      if (!size) return;
-      sizes.set(dir, size);
-      operation?.signal.throwIfAborted();
-      writeCacheFile(diskUsageCacheFile(dir), {
-        path: dir,
-        measuredAt,
-        bytes: size.bytes,
-        ...(size.privateBytes !== null ? { privateBytes: size.privateBytes } : {}),
-        ...(signature ? { signature } : {}),
-      });
-      return;
-    }
-    const bytes = await duSize(dir, operation);
-    if (bytes === null) return;
-    sizes.set(dir, { bytes, privateBytes: null });
-    operation?.signal.throwIfAborted();
-    writeCacheFile(diskUsageCacheFile(dir), { path: dir, measuredAt, bytes });
+    const { measure: size } = await refreshMeasure(dir, {
+      timeoutMs: BUILD_STATE_TIMEOUT_MS,
+      operation,
+      private: isDependencyTree(dir) || privateSized.has(dir),
+      ...sizeOptions(dir),
+    });
+    if (size) sizes.set(dir, dirSize(size, dir, privateSized));
   });
   for (const { candidate, root, dirs, sizes, reportOnly } of pending) {
     const entries = dirs.map((dir) => {

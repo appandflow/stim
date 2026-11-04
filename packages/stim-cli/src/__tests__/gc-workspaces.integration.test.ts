@@ -1892,9 +1892,10 @@ function countDu(calls: string[][], fail?: (args: string[]) => string | null) {
   setExecutor({
     ...real,
     runFileAsync: async (file, args: string[], opts) => {
-      if (file === 'du') {
-        calls.push(args);
-        const stdout = fail?.(args);
+      const walk = file === 'nice' ? args.slice(2) : [file, ...args];
+      if (walk[0] === 'du') {
+        calls.push(walk.slice(1));
+        const stdout = fail?.(walk.slice(1));
         if (stdout != null)
           throw Object.assign(new Error('Command timed out after 10000ms: du'), { signal: 'SIGTERM', stdout });
       }

@@ -1,7 +1,7 @@
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkoutRootsCacheFile, isJsonObject, readJsonObject } from '@stim-cli/core/state';
-import { writeCacheFile } from './status-measures.ts';
+import { writeCacheFile } from './cache-file.ts';
 import { nativeCanonicalPath, repoRootAsync } from './workspace/worktree.ts';
 
 const CACHE_SCHEMA = 1;

@@ -2,7 +2,6 @@ import type { ChildProcess } from 'node:child_process';
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
-import { readDiskUsage } from '@stim-cli/core/state';
 import { privateSizeHelper } from './clonefile.ts';
 import { runOperationFile } from './engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
@@ -26,19 +25,26 @@ function parseHelper(output: string): TreeSize | null {
 }
 
 function parseDu(output: string): TreeSize | null {
-  const kb = /^(\d+)\s/m.exec(output)?.[1];
-  return kb ? { bytes: Number(kb) * 1024, privateBytes: null } : null;
+  const sizes = [...output.matchAll(/^(\d+)\s/gm)].map((match) => Number(match[1]));
+  return sizes.length ? { bytes: sizes.reduce((sum, kb) => sum + kb, 0) * 1024, privateBytes: null } : null;
 }
 
 /**
  * The size of the tree at `path` in one walk: on macOS with the Command Line Tools, `stim-privsize` gives the allocated
  * and private bytes; elsewhere, or when the helper fails, `du -sk` gives the allocated bytes and the private bytes stay
- * unknown. Null when neither could measure it, or when the helper was stopped at the timeout. With an operation the walk is its declared child; without one it runs
- * at low priority and `onSpawn` sees it.
+ * unknown. With `targets`, or `private: false`, only `du -sk` runs, over the targets' sum. Null when neither could
+ * measure it, or when the helper was stopped at the timeout. With an operation the walk is its declared child; without
+ * one it runs at low priority and `onSpawn` sees it.
  */
 export async function measureTree(
   path: string,
-  options: { timeoutMs: number; onSpawn?: (child: ChildProcess) => void; operation?: StimContext },
+  options: {
+    timeoutMs: number;
+    onSpawn?: (child: ChildProcess) => void;
+    operation?: StimContext;
+    targets?: string[];
+    private?: false;
+  },
 ): Promise<TreeSize | null> {
   const { operation } = options;
   const exec = getExecutor();
@@ -62,7 +68,7 @@ export async function measureTree(
     const stdout: unknown = error instanceof Error && 'stdout' in error ? error.stdout : undefined;
     return { status, stdout };
   };
-  const helper = await privateSizeHelper(operation);
+  const helper = options.targets || options.private === false ? null : await privateSizeHelper(operation);
   if (helper) {
     try {
       const size = parseHelper(await walk(helper, [path]));
@@ -75,7 +81,7 @@ export async function measureTree(
     }
   }
   try {
-    return parseDu(await walk('du', ['-sk', path]));
+    return parseDu(await walk('du', ['-sk', ...(options.targets ?? [path])]));
   } catch (error) {
     const { status, stdout } = failed(error);
     return status === 1 && typeof stdout === 'string' ? parseDu(stdout) : null;
@@ -99,11 +105,4 @@ export function treeSignature(path: string): string | null {
   const root = stamp(path);
   if (root === null) return null;
   return [root, ...INSTALL_MARKERS.map((name) => stamp(join(path, name)) ?? '-')].join(',');
-}
-
-/** The cached private bytes of the tree at `path` while its signature still matches the measured one, else null. */
-export function knownPrivateBytes(path: string): number | null {
-  const measure = readDiskUsage(path);
-  if (measure?.privateBytes === undefined || measure.signature === undefined) return null;
-  return measure.signature === treeSignature(path) ? measure.privateBytes : null;
 }

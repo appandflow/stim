@@ -19,7 +19,7 @@ import * as teardown from '../devices/teardown.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as fsUtil from '../fs-util.ts';
 import { treeSignature } from '../private-size.ts';
-import { writeCacheFile } from '../status-measures.ts';
+import { writeCacheFile } from '../cache-file.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import * as lightened from '../workspace/lightened.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
