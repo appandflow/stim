@@ -625,7 +625,8 @@ button.primary.small {
 .options[hidden],
 .options-panel[hidden],
 .chip[hidden],
-.options-help[hidden] {
+.options-help[hidden],
+.options-panel .link[hidden] {
   display: none;
 }
 .options-panel {
@@ -689,6 +690,15 @@ input.switch:checked::after {
   display: block;
   margin-top: 10px;
   font-size: 12px;
+}
+@media (pointer: coarse) {
+  .options-panel .link {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    margin-top: 0;
+    font-size: 14px;
+  }
 }
 .chip {
   position: absolute;

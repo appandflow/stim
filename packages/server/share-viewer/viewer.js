@@ -631,6 +631,8 @@ const optionsButton = document.getElementById('options-button');
 const optionsPanel = document.getElementById('options-panel');
 const syncSwitch = document.getElementById('sync-clipboard');
 const syncNote = document.getElementById('sync-note');
+const syncHelp = document.getElementById('sync-help');
+const pasteDevice = document.getElementById('paste-device');
 const copyDevice = document.getElementById('copy-device');
 const copyChip = document.getElementById('copy-chip');
 const SYNC_KEY = 'stim-share-clipboard-sync';
@@ -648,6 +650,7 @@ else {
   const { writeClipboard, nextPollDelay, createClipboardSync } = globalThis.stimClipboard;
   const sync = createClipboardSync();
   const pasteKey = /Mac/.test(navigator.userAgent) ? 'Command' : 'Control';
+  const touchFirst = window.matchMedia('(pointer: coarse)');
   let syncOn = true;
   let readPermission = 'unknown';
   let asked = false;
@@ -697,8 +700,15 @@ else {
   }
 
   function refreshNote() {
-    syncNote.hidden = syncOn && readPermission === 'granted';
-    syncNote.textContent = `Press ${pasteKey}-V on the device screen to paste.`;
+    const touch = touchFirst.matches;
+    syncHelp.textContent = touch
+      ? 'Copy text between this phone or tablet and the device while this page is focused.'
+      : 'Copy text between this browser and the device while this page is focused.';
+    pasteDevice.hidden = !touch;
+    syncNote.hidden = !touch && syncOn && readPermission === 'granted';
+    syncNote.textContent = touch
+      ? 'Tap Paste to device to send your clipboard.'
+      : `Press ${pasteKey}-V on the device screen to paste.`;
   }
 
   async function writeToBrowser(text) {
@@ -810,6 +820,26 @@ else {
       showNote('The browser did not allow copying.');
     }
   });
+  pasteDevice.addEventListener('click', async () => {
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      return showNote('This browser gives the page no clipboard access.');
+    }
+    let text;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (error) {
+      return showNote(
+        error && error.name === 'NotAllowedError'
+          ? 'The browser did not allow reading your clipboard.'
+          : 'Your clipboard could not be read.',
+      );
+    }
+    const request = globalThis.stimClipboard.pasteRequest(text);
+    setOptionsOpen(false, false);
+    if (request && request.message) {
+      if (send(request.message)) sync.sent(request.message.text);
+    } else showNote(request ? request.note : 'Your clipboard has no text.');
+  });
   copyDevice.addEventListener('click', async () => {
     if (!navigator.clipboard) return showNote('This browser gives the page no clipboard access.');
     const text = requestDeviceText().then((value) => {
@@ -843,6 +873,7 @@ else {
     document.visibilityState === 'visible' ? returned() : schedule(),
   );
   kickClipboard = returned;
+  touchFirst.addEventListener('change', refreshNote);
   refreshNote();
   void queryRead();
 }

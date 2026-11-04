@@ -2284,7 +2284,8 @@ With `control` on an iOS simulator, an Android emulator or an Android phone, a
 each costing ten inputs. After a `paste: true` on an iOS simulator that was not typed, the
 viewer is told to tap the paste suggestion on the device. The viewer sends `clipboard-set` with `paste: true` on
 Command-V or Control-V while the screen has focus, from the browser's `paste`
-event. With its options menu's Sync clipboard switch on (the default) and the
+event, and from the options menu's "Paste to device" button, shown where `(pointer: coarse)` matches: the
+button reads `navigator.clipboard.readText()` inside the tap. With its options menu's Sync clipboard switch on (the default) and the
 page focused, it sends `clipboard-get` with `poll: true` every 2 seconds, backing
 off to 30 seconds after failures, and `clipboard-set` without `paste` when the
 browser clipboard it may read changed on focus. A `poll: true` read is answered
