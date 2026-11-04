@@ -255,23 +255,23 @@ new checks.
 
 The fresh reviewer records the outcome with labels. When the review is clear, it
 adds `review: ai-approved` and marks the pull request ready with `gh pr ready`.
-When the diff has a change in one of these that no maintainer has approved, it
-adds `review: needs-human` and removes any `review: human-approved`:
+When the diff contains a product decision that no maintainer has made, it adds
+`review: needs-human` and removes any `review: human-approved`. A product
+decision is a new, removed or renamed command, flag or setting; a changed
+default; or a change to user-visible behavior beyond what the linked issue
+asked for. This is the "explicit product decision" that new commands and flags
+require. A decision recorded in the issue or in a maintainer comment counts as
+approved.
 
-- what another machine can reach or do on this machine: a new or wider network
-  listener, authentication or pairing path, or stim-server capability;
-- how secrets, tokens or signing keys are stored, passed or exposed;
-- deleting or killing something Stim does not own, or a new way to decide that
-  Stim owns it;
-- a release or publishing workflow that holds secrets;
-- a breaking change to on-disk state or a published contract that existing
-  installs or clients cannot read.
-
-Refactors, hardening, stricter validation and bug fixes inside those areas do
-not qualify unless they widen what is exposed or deleted, expose a secret, or
-break what existing installs or clients can read. When it is unclear, leave the
-label off and name the concern in the review; that alone does not block
-`review: ai-approved`.
+Other concerns do not add the label. The reviewer still names them in its
+review: a new or wider way for another machine to reach or act on this one (a
+network listener, an authentication or pairing path, a stim-server capability),
+how secrets, tokens or signing keys are stored, passed or exposed, deleting or
+killing something Stim does not own, a new ownership rule, a release or
+publishing workflow that holds secrets, and a breaking change to on-disk state
+or a published contract. The Required invariants and `RELEASE.md` govern them.
+When it is unclear, leave the label off and name the concern in the review;
+that alone does not block `review: ai-approved`.
 
 With that label, the reviewer posts a comment that starts with `Human review:`
 and lists each unapproved `path:lines`, linked at the reviewed commit, with one
