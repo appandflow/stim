@@ -115,20 +115,32 @@ async function listProcesses(operation?: StimContext): Promise<ProcessRow[]> {
  * The commands a verified live `owners` process started: its direct children, and the members of every process
  * group such a child leads, which holds the child's own helpers such as a server's `adb track-devices` client. It
  * stops there: a daemon that calls setsid, such as the machine-wide adb server, leads a group of its own and is not
- * the owner's to end. A process whose identity cannot be captured is skipped with a warning and never signalled.
+ * the owner's to end. Nothing is listed under an owner that is this process, pid 1 or an ancestor, and no group
+ * that holds one of them is walked. A process whose identity cannot be captured is skipped with a warning and never signalled.
  * It must run before the owners are signalled, because a child whose parent exits is reparented and no longer
  * reachable by its parent.
  */
 export async function startedBy(owners: readonly MacosProcess[], operation?: StimContext): Promise<MacosProcess[]> {
   operation?.signal.throwIfAborted();
-  const live = new Set(owners.filter((owner) => inspectProcessIdentity(owner) === 'same').map((owner) => owner.pid));
-  if (!live.size) return [];
   const rows = await listProcesses(operation);
+  const parents = new Map(rows.map((row) => [row.pid, row]));
+  const protectedPids = new Set([1, process.pid]);
+  for (let pid = parents.get(process.pid)?.ppid; pid && !protectedPids.has(pid); pid = parents.get(pid)?.ppid)
+    protectedPids.add(pid);
+  const protectedGroups = new Set([...protectedPids].flatMap((pid) => parents.get(pid)?.pgid ?? []));
+  const live = new Set(
+    owners
+      .filter((owner) => !protectedPids.has(owner.pid) && inspectProcessIdentity(owner) === 'same')
+      .map((owner) => owner.pid),
+  );
+  if (!live.size) return [];
   const leaders = new Set(
-    rows.filter((row) => live.has(row.ppid) && row.pgid === row.pid && row.pid !== process.pid).map((row) => row.pid),
+    rows
+      .filter((row) => live.has(row.ppid) && row.pgid === row.pid && !protectedGroups.has(row.pgid))
+      .map((row) => row.pid),
   );
   const listed = rows.filter(
-    (row) => row.pid !== process.pid && !live.has(row.pid) && (live.has(row.ppid) || leaders.has(row.pgid)),
+    (row) => !protectedPids.has(row.pid) && !live.has(row.pid) && (live.has(row.ppid) || leaders.has(row.pgid)),
   );
   const recorded: { row: ProcessRow; record: MacosProcess }[] = [];
   for (const row of listed) {

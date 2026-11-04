@@ -46,6 +46,7 @@ import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
 import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { startedBy } from '../macos/instances.ts';
 import { macosDir, macosProcess, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
 import * as registration from '../macos/registration.ts';
 import { spawnEntry } from '../spawn-entry.ts';
@@ -385,14 +386,43 @@ test.skipIf(process.platform === 'win32')(
       expect(inspectProcessIdentity(bystander)).toBe('same');
       if (process.platform === 'darwin') expect(warnings.join('')).toContain(`pid ${setuidPid}`);
     } finally {
-      for (const pid of [supervised.pid, ...pids]) {
+      for (const pid of [supervised.pid, ...pids].filter((each) => each > 1)) {
         try {
-          process.kill(pid ?? 0, 'SIGKILL');
+          process.kill(pid, 'SIGKILL');
         } catch {}
       }
     }
   },
   30_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'the stop walk lists nothing under this process, pid 1 or an ancestor, though it has children',
+  async () => {
+    const idle = 'setInterval(() => {}, 1000)';
+    const owner = getExecutor().spawn(
+      process.execPath,
+      [
+        '-e',
+        `const c = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { stdio: 'ignore' }); process.stdout.write(c.pid + '\\n'); ${idle}`,
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    children.push(owner);
+    const started = Number(
+      await new Promise<string>((resolve) => owner.stdout?.once('data', (d) => resolve(String(d)))),
+    );
+    const identity = (pid: number | undefined): MacosProcess => {
+      const processToken = pid === undefined ? null : captureProcessToken(pid);
+      if (pid === undefined || !processToken) throw new Error('The fixture process has no identity.');
+      return { pid, processToken, startedAtMicros: 1 };
+    };
+    await ownedProcess();
+    expect((await startedBy([identity(owner.pid)])).map((each) => each.pid)).toEqual([started]);
+    expect(await startedBy([identity(process.pid)])).toEqual([]);
+    expect(await startedBy([identity(process.ppid)])).toEqual([]);
+    process.kill(started, 'SIGKILL');
+  },
 );
 
 describe('macOS build placement and promotion', () => {
