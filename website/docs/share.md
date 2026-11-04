@@ -162,7 +162,12 @@ needs a `snapshot` of that session first.
 A watch-only share has no button groups. The page fits the window without
 scrolling. With `--control`, click the screen to tap and type with the keyboard. While the screen has focus,
 the arrow keys and Escape go to the device as well (the D-pad keys and Escape
-on Android, the hardware arrow and Escape keys on iOS).
+on Android, the hardware arrow and Escape keys on iOS). On an iOS simulator or an
+Android emulator whose stim-server advertises `device-keyboard`, Shift with an arrow
+and shortcuts with Command (Control on Windows and Linux), Option or Control, such
+as Command-A, Command-Z and Option-Left, go to the device too; on Android, Command
+acts as Control. Command-V keeps pasting your clipboard. Keys do not reach the device
+while the focus is in a field of the page, such as the password or rename boxes.
 
 With `--control` on an iOS simulator, an Android emulator or an Android phone,
 Command-V (Control-V on Windows and Linux) while the screen has focus pastes the
@@ -571,7 +576,7 @@ reload.
   control session and device lease Stim Desktop and the phone app use. A viewer
   that can control starts the session, and so takes the device lease, when it
   connects; it ends after 5 minutes without input or when the last viewer leaves. Input is limited
-  to taps, two-finger gestures, text, the arrow keys and Escape, pasting and syncing the clipboard with your browser, rotation and the hardware buttons of the shared device. A device an
+  to taps, two-finger gestures, text, the arrow keys, Escape and keyboard shortcuts, pasting and syncing the clipboard with your browser, rotation and the hardware buttons of the shared device. A device an
   agent or another client is driving answers busy; a share never takes it over.
 - **Saved link.** A share lives in stim-server's memory, but `stim share` also
   writes its URL token and passwords to `share-links.json` in the workspace's

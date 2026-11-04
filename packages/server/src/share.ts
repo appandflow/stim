@@ -1452,7 +1452,7 @@ export class ShareHub {
         : method === 'input.text'
           ? { text: fields.text }
           : method === 'input.key'
-            ? { key: fields.key }
+            ? { key: fields.key, ...(fields.modifiers === undefined ? {} : { modifiers: fields.modifiers }) }
             : method === 'input.rotate'
               ? { direction: fields.direction }
               : method === 'input.clipboard.set'
