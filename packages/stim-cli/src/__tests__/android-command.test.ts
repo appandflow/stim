@@ -4499,7 +4499,7 @@ describe('concurrency limits', () => {
     const slotArgs = slotCalls[0];
     expect(slotArgs).toBeTruthy();
     assert(slotArgs);
-    expect(slotArgs.max).toBe(2);
+    expect(slotArgs.max).toBeUndefined();
     expect(slotArgs.root).toBe(root);
     expect(released).toBe(1);
   });

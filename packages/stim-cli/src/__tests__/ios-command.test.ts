@@ -4093,7 +4093,7 @@ describe('concurrency limits', () => {
     expect(exitCode).toBe(null);
     expect(seq).toEqual(['lock', 'slot', 'build', 'releaseLock', 'releaseSlot']);
     assert(slot.args);
-    expect(slot.args.max).toBe(2);
+    expect(slot.args.max).toBeUndefined();
     expect(slot.args.root).toBe(root);
   });
 

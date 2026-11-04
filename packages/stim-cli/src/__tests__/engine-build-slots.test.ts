@@ -206,6 +206,67 @@ describe('acquireBuildSlot', () => {
   });
 });
 
+describe('a waiting build re-reads concurrency.maxBuilds each round', () => {
+  const writeConcurrency = (concurrency: Record<string, number>) =>
+    writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ concurrency }));
+  const waitThen = (change: () => void, extra: { max?: number } = {}) => {
+    let clock = 0;
+    let slept = 0;
+    return acquireBuildSlot({
+      ...extra,
+      root: '/w/waiting',
+      now: () => clock,
+      sleep: async () => {
+        clock += 1000;
+        if (++slept === 1) change();
+      },
+    });
+  };
+
+  test.each([
+    ['a raised concurrency.maxBuilds in config', () => writeConcurrency({ maxBuilds: 2 })],
+    ['a raised STIM_MAX_BUILDS', () => vi.stubEnv('STIM_MAX_BUILDS', '2')],
+  ])('%s admits the build that was already waiting', async (_name, raise) => {
+    writeConcurrency({ maxBuilds: 1 });
+    const held = tryAcquireBuildSlot({ max: 1, root: '/w/held' });
+    assert(held);
+    try {
+      const got = await waitThen(raise);
+      expect(got.index).toBe(1);
+      releaseBuildSlot(got);
+    } finally {
+      vi.unstubAllEnvs();
+      releaseBuildSlot(held);
+    }
+  });
+
+  test('a cap that stays low keeps the build waiting until the ceiling', async () => {
+    writeConcurrency({ maxBuilds: 1 });
+    const held = tryAcquireBuildSlot({ max: 1, root: '/w/held' });
+    assert(held);
+    try {
+      await expect(waitThen(() => writeConcurrency({ maxBuilds: 1 }))).rejects.toMatchObject({
+        code: 'STIM_AT_CAPACITY',
+      });
+    } finally {
+      releaseBuildSlot(held);
+    }
+  });
+
+  test('an explicit max still wins over a raised config', async () => {
+    writeConcurrency({ maxBuilds: 1 });
+    const held = tryAcquireBuildSlot({ max: 1, root: '/w/held' });
+    assert(held);
+    try {
+      await expect(waitThen(() => writeConcurrency({ maxBuilds: 2 }), { max: 1 })).rejects.toMatchObject({
+        code: 'STIM_AT_CAPACITY',
+      });
+    } finally {
+      releaseBuildSlot(held);
+    }
+  });
+});
+
 test('a build behind a slot whose holder cannot be verified refuses after the position ceiling', async () => {
   plantClaim(buildSlotPath(0), 'exclusive', { pid: 4242, processToken: 'nonsense' }, { details: { index: 0 } });
   const held = tryAcquireBuildSlot({ max: 2, root: '/w/held' });

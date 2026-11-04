@@ -1,5 +1,4 @@
 import { acquireBuildSlot, releaseBuildSlot, type BuildSlotHandle } from '../engine/build-slots.ts';
-import { admissionLimits } from '../workspace/config.ts';
 import { existsSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
 import { configDir, type StimContext } from '@stim-cli/core';
@@ -108,7 +107,7 @@ export async function ensureIosRuntime({
         `${(free / 1024 ** 3).toFixed(1)} GB free on ${volume}; installing iOS ${version} requires at least 20 GB for download and unpacking.`,
         'Free space on that volume, then retry. Stim does not delete shared runtimes.',
       );
-    slot = await acquireBuildSlot({ max: admissionLimits().maxBuilds, signal, out: note });
+    slot = await acquireBuildSlot({ signal, out: note });
     note(
       `Installing iOS ${version} with Xcode (typically 8-10 GB; actual size varies). This runtime is shared by every workspace on this Mac.`,
     );
