@@ -205,6 +205,12 @@ In report mode actions and explaining skips are logged only when newly
 planned; in on mode every action taken, failure and explaining skip is logged
 with its bytes, and a pass record carries the bytes freed. Removal of a
 worktree or orphaned directory is logged to the machine log only.
+A linked worktree the worktree check keeps gets a maintenance_skip line with
+its path, the reason, and a code (locked, dirty, unpushed, in-use, submodules,
+last-use-unknown, recent-activity for the grace window, and the other worktree
+skip codes except not-merged), logged again when the code changes. stim gc
+shows the same lines as "kept <path>: <reason>"; gc --json carries them in
+maintenance.skips.
 An iOS build that fails on a corrupt compilation cache logs the emptying,
 or why Stim left the cache alone, with trigger "ios build", in every mode;
 see \`stim guide errors STIM_COMPILATION_CACHE_CORRUPT\`.

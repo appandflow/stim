@@ -26,6 +26,7 @@ import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devi
 import { measureOwnedDevices, type OwnedDeviceReads } from './devices.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
+import { skipKey } from './plan.ts';
 import { capChildLog } from './attempt.ts';
 import { measurePressure, measureSizes, pressureFromMeasurement, sizeScanDeferred } from './measure.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
@@ -208,7 +209,7 @@ function partsAfter(
       ...own.flatMap(({ outcome }) => (outcome.shortfall ? [outcome.shortfall] : [])),
     ];
     const skipKeys = [
-      ...(result.byCheck[part]?.skips ?? []).map((skip) => skip.target),
+      ...(result.byCheck[part]?.skips ?? []).map(skipKey),
       ...own.filter(({ outcome }) => outcome.status === 'kept').map(({ action }) => action.target),
     ];
     if (blocked.length || skipKeys.length) parts[part] = { blocked, skipKeys };
@@ -512,8 +513,8 @@ export async function runMaintenance(
     const previousSkips = new Set(state.skipKeys ?? []);
     const loggedSkips = new Set(previousSkips);
     for (const skip of result.skips) {
-      if (loggedSkips.has(skip.target)) continue;
-      loggedSkips.add(skip.target);
+      if (loggedSkips.has(skipKey(skip))) continue;
+      loggedSkips.add(skipKey(skip));
       record('maintenance_skip', 'info', `Kept ${skip.target}: ${skip.reason}`, skip);
     }
     if (writeError) failures.push(`Could not write the maintenance state or log: ${writeError}`);
