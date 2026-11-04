@@ -110,8 +110,6 @@ final class SimulatorHID {
     case legacy(LegacyHID)
   }
 
-  /// `hardwareKeyboard` switches the simulator to hardware-keyboard mode while it takes input. Pass it only for a
-  /// simulator Stim owns.
   init?(udid: String, hardwareKeyboard: Bool = false) {
     guard let device = CoreSimulator.device(udid: udid) else { return nil }
     self.device = device
@@ -127,8 +125,6 @@ final class SimulatorHID {
     lastInput = Date()
   }
 
-  /// Attaches the keyboard when the simulator took no input for a while, because a test run can detach it. Input
-  /// arrives on the main thread in Stim Desktop, so the CoreSimulator calls run on their own queue.
   private func noteInput() {
     if hardwareKeyboard, Date().timeIntervalSince(lastInput) > Self.keyboardIdle {
       let device = device

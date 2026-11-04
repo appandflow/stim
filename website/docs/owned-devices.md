@@ -599,14 +599,16 @@ Tailscale refuses and Stim prints Tailscale's error message.
 
 ## Typing from a viewer
 
-When Stim Desktop or stim-server sends input to an owned iOS simulator, Stim
-puts the simulator in hardware-keyboard mode, the setting behind Simulator.app's
-Connect Hardware Keyboard. The on-screen keyboard stays hidden and the keys of
-the viewer's keyboard type into the focused field. An XCTest run, including
-agent-device on an iOS simulator, turns the mode off and brings the on-screen
-keyboard back; the next input from a viewer after two idle seconds turns it on
-again. An Android emulator keeps its on-screen keyboard: its keyboard is built in
-to the emulator, so Android's "Use on-screen keyboard" setting does not apply.
+When Stim Desktop takes over an owned iOS simulator, or stim-server sends it
+input, Stim puts the simulator in hardware-keyboard mode, the setting behind
+Simulator.app's Connect Hardware Keyboard. The on-screen keyboard stays hidden
+and the keys of the viewer's keyboard type into the focused field. Nothing turns
+the mode off when the viewer leaves, so the simulator stays without an on-screen
+keyboard until an XCTest run, including agent-device on an iOS simulator, detaches
+it and brings the keyboard back. The next input from a viewer after two idle
+seconds attaches it again. An Android emulator keeps its on-screen keyboard: its
+keyboard is built in to the emulator, so Android's "Use on-screen keyboard"
+setting does not apply.
 
 ## Control from the phone viewer
 
