@@ -66,6 +66,14 @@ function load(): Promise<NodeDataChannel> {
   return loading;
 }
 
+/** Whether node-datachannel loads on this machine; the first call loads it. */
+export function rtcAvailable(): Promise<boolean> {
+  return load().then(
+    () => true,
+    () => false,
+  );
+}
+
 /** Releases the native WebRTC threads so the process can exit; a no-op when no session ever opened. */
 export async function cleanupRtc(): Promise<void> {
   if (!loading) return;

@@ -238,7 +238,7 @@ about 50 ms; when it starts capture, the first frame takes several seconds.
 
 ### WebRTC video
 
-With `share.webrtc` on (see [Settings](./settings.md)), a viewer that can use WebRTC still
+`share.webrtc` is on by default (see [Settings](./settings.md#web-share-exposure)). A viewer that can use WebRTC still
 starts on the WebSocket, so the first frame never waits for a connection. In the
 background the page opens a WebRTC data channel to the machine that owns the
 device, which for a hosted device is the worker, and takes its video from the

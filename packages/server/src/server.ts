@@ -244,7 +244,7 @@ import {
 } from '@stim-cli/transport-tailscale';
 import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DEFAULT_VIDEO_LIMITS, HOSTED_MAX_BITRATE, videoPacket, VideoGate, type AccessUnit } from './video.ts';
-import { openRtc } from './webrtc-sender.ts';
+import { openRtc, rtcAvailable } from './webrtc-sender.ts';
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
@@ -1862,15 +1862,24 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
     async () => tailscaleLoggedIn(await tailscale.rawStatus()),
   );
+  let rtcLoads: boolean | undefined;
+  const probeRtc = () => {
+    if (rtcLoads !== undefined) return;
+    rtcLoads = false;
+    void rtcAvailable().then((loads) => (rtcLoads = loads));
+  };
   const shares = new ShareHub({
     frames,
     control,
-    webrtc: () => {
+    webrtc: (hosted) => {
       try {
-        return loadConfig()?.share?.webrtc === true;
+        if (loadConfig()?.share?.webrtc === false) return false;
       } catch {
         return false;
       }
+      if (hosted) return true;
+      probeRtc();
+      return rtcLoads === true;
     },
     presence: {
       subscribe: (key, listener) => localAgents.subscribe(key, listener),
