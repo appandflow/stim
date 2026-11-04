@@ -31,6 +31,7 @@ import {
   type QuietHours,
 } from './protocol.ts';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
+import { arrayElementSpans } from './json-spans.ts';
 
 export const PAIRING_TTL_MS: number = 5 * 60_000;
 
@@ -226,8 +227,7 @@ export function isDesktopClient(device: PairedDevice): boolean {
 }
 
 function newDeviceId(): string {
-  const { devices, build, deviceHost } = readRegistries();
-  const taken = new Set([...devices, ...build, ...deviceHost].map((device) => device.id));
+  const taken = new Set(REGISTRIES.flatMap((path) => readSlots(path()).map(slotId)));
   let id = newId();
   while (taken.has(id)) id = newId();
   return id;
@@ -284,14 +284,13 @@ export class RegistryUnavailable extends Error {
 const why = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
- * The JSON object in `file`, or null when the file does not exist in a server directory that answers, as on a first
- * run. A server directory that cannot be read, such as one whose Stim home is a symlink to an unmounted volume, and a
- * file that cannot be read or parsed throw {@link RegistryUnavailable}.
+ * The text of `file`, or null when the file does not exist in a server directory that answers, as on a first run. A
+ * server directory that cannot be read, such as one whose Stim home is a symlink to an unmounted volume, and a file
+ * that cannot be read throw {@link RegistryUnavailable}.
  */
-function readRegistryFile(file: string): Record<string, unknown> | null {
-  let text: string;
+function readRegistryText(file: string): string | null {
   try {
-    text = readFileSync(file, 'utf8');
+    return readFileSync(file, 'utf8');
   } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
       throw new RegistryUnavailable(`Cannot read ${file}: ${why(error)}`);
@@ -302,6 +301,9 @@ function readRegistryFile(file: string): Record<string, unknown> | null {
     }
     return null;
   }
+}
+
+function parseRegistry(file: string, text: string): Record<string, unknown> {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -312,12 +314,44 @@ function readRegistryFile(file: string): Record<string, unknown> | null {
   return value;
 }
 
+/** The JSON object in `file`, or null when it does not exist. A file that cannot be read or parsed throws {@link RegistryUnavailable}. */
+function readRegistryFile(file: string): Record<string, unknown> | null {
+  const text = readRegistryText(file);
+  return text === null ? null : parseRegistry(file, text);
+}
+
+/** One entry of a registry's `devices` list: the record it parses to, or null for an entry this version cannot read. */
+interface Slot {
+  /** The entry's own text in the file. */
+  raw: string;
+  value: unknown;
+  device: PairedDevice | null;
+}
+
+const slotId = (slot: Slot): string | undefined => {
+  const id = slot.device ? slot.device.id : isJsonObject(slot.value) ? slot.value.id : undefined;
+  return typeof id === 'string' ? id : undefined;
+};
+
 /** Records of protocol 1, which stored device tokens and tailnet nodes, are not read. */
+function readSlots(file: string): Slot[] {
+  const text = readRegistryText(file);
+  if (text === null) return [];
+  const registry = parseRegistry(file, text);
+  if (registry.version !== REGISTRY_VERSION) return [];
+  const { devices } = registry;
+  if (!Array.isArray(devices)) throw new RegistryUnavailable(`${file} has no devices list.`);
+  const spans = arrayElementSpans(text, 'devices');
+  if (spans?.length !== devices.length) throw new RegistryUnavailable(`Cannot locate the records in ${file}.`);
+  return spans.map(([start, end], index) => ({
+    raw: text.slice(start, end),
+    value: devices[index],
+    device: parseDevice(devices[index]),
+  }));
+}
+
 function readRecords(file: string): PairedDevice[] {
-  const registry = readRegistryFile(file);
-  if (registry?.version !== REGISTRY_VERSION) return [];
-  if (!Array.isArray(registry.devices)) throw new RegistryUnavailable(`${file} has no devices list.`);
-  return registry.devices.flatMap((entry) => parseDevice(entry) ?? []);
+  return readSlots(file).flatMap((slot) => slot.device ?? []);
 }
 
 function recordsOrNone(file: string): PairedDevice[] {
@@ -329,8 +363,54 @@ function recordsOrNone(file: string): PairedDevice[] {
   }
 }
 
+/**
+ * Writes `devices` as the file's records. An entry this version cannot read stays in its place, as the text it has in
+ * the file. A record left in `devices` takes the place of the entry with its id, and a new one goes last.
+ */
 function writeRecords(file: string, devices: PairedDevice[]): void {
-  writeJson(file, { version: REGISTRY_VERSION, devices });
+  const marker = randomBytes(8).toString('hex');
+  const unreadable: string[] = [];
+  const remaining = [...devices];
+  const entries: unknown[] = [];
+  for (const { raw, device } of readSlots(file)) {
+    if (device === null) entries.push(`${marker}${unreadable.push(raw) - 1}`);
+    else {
+      const index = remaining.findIndex((each) => each.id === device.id);
+      if (index >= 0) entries.push(...remaining.splice(index, 1));
+    }
+  }
+  let text = `${JSON.stringify({ version: REGISTRY_VERSION, devices: [...entries, ...remaining] }, null, 2)}\n`;
+  for (const [index, raw] of unreadable.entries()) text = text.replace(`"${marker}${index}"`, () => raw);
+  writeText(file, text);
+}
+
+/** An entry of a registry's `devices` list that this version cannot read. It is kept as it is and grants nothing. */
+export interface UnreadableRecord {
+  /** The registry file's name: `devices.json`, `build-clients.json` or `device-host-clients.json`. */
+  file: string;
+  /** The entry's position in that file's `devices` list. */
+  index: number;
+  /** The entry's own `id`, when it has a string one. */
+  id?: string;
+}
+
+const REGISTRIES = [devicesFile, () => clientsFile('build'), () => clientsFile('device-host')];
+
+/** The entries of the three registries that this version cannot read, or none for a registry that cannot be read. */
+export function readUnreadable(): UnreadableRecord[] {
+  return REGISTRIES.flatMap((path) => {
+    const file = path();
+    try {
+      return readSlots(file).flatMap((slot, index) => {
+        if (slot.device !== null) return [];
+        const id = cleanClientText(slotId(slot) ?? '');
+        return [{ file: basename(file), index, ...(id ? { id } : {}) }];
+      });
+    } catch (error) {
+      if (error instanceof RegistryUnavailable) return [];
+      throw error;
+    }
+  });
 }
 
 export interface Registries {
@@ -419,9 +499,13 @@ function writeSecrets(secrets: SecretRecord[]): void {
 }
 
 export function writeJson(file: string, value: unknown): void {
+  writeText(file, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function writeText(file: string, text: string): void {
   const temporary = join(dirname(file), `.${basename(file)}.${process.pid}.tmp`);
   try {
-    writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    writeFileSync(temporary, text, { mode: 0o600 });
     renameSync(temporary, file);
   } catch (error) {
     rmSync(temporary, { force: true });

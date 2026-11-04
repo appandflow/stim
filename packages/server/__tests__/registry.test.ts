@@ -23,6 +23,7 @@ import {
   readDeviceHostClients,
   readDevices,
   readRegistries,
+  readUnreadable,
   RegistryUnavailable,
   renameDevice,
   revokeDevice,
@@ -31,6 +32,7 @@ import {
   spendSecret,
   storeSetupSecret,
   touchDevice,
+  type PairedDevice,
 } from '../src/registry.ts';
 
 let home: string;
@@ -289,5 +291,85 @@ describe('a Stim home that does not answer', () => {
     expect(() => revokeDevice(phone.id)).toThrow(RegistryUnavailable);
     expect(() => renameDevice(phone.id, 'Renamed')).toThrow(RegistryUnavailable);
     expect(readFileSync(file, 'utf8')).toBe('{"version": 2, "devices": [');
+  });
+});
+
+describe('entries this version cannot read', () => {
+  const malformed = '{"id":"bad","name":5}';
+  const future =
+    '{ "id" : "future-1",  "record":{"kind":"passkey","big":12345678901234567890,"n":1.0,"note":"a \\"quoted\\" ] }, [ { text","list":[1,[2,{"x":"}"}]]} }';
+  const opaque = '"opaque"';
+  const unreadable = [malformed, future, opaque];
+  const file = (name: string) => join(home, 'server', name);
+
+  function interleave(name: string, first: PairedDevice, second: PairedDevice) {
+    const records = [first, second].map((record) => JSON.stringify(record));
+    writeFileSync(
+      file(name),
+      `{"version":2,"devices":[${malformed}, ${records[0]}, ${future},\n${records[1]},${opaque}]}`,
+    );
+  }
+
+  function expectKept(name: string, order: string[]) {
+    const text = readFileSync(file(name), 'utf8');
+    for (const raw of unreadable) expect(text).toContain(raw);
+    const at = order.map((marker) => text.indexOf(marker));
+    expect(at.every((index) => index >= 0)).toBe(true);
+    expect(at).toEqual(at.toSorted((a, b) => a - b));
+  }
+
+  it('writes every kind of change next to them without touching them, in their places', () => {
+    const first = pair('First');
+    const second = pair('Second');
+    interleave('devices.json', first, second);
+    const order = [malformed, first.id, future, second.id, opaque];
+    const at = Date.parse(first.lastSeenAt ?? '') + 120_000;
+
+    touchDevice(first.id, { name: 'Stim Desktop', version: '1' }, at);
+    expectKept('devices.json', order);
+    renameDevice(second.id, 'Studio');
+    expectKept('devices.json', order);
+    expect(grantDevice(first.id, ['read', 'control'])).toBe('granted');
+    expectKept('devices.json', order);
+    expect(readDevices()).toMatchObject([
+      { id: first.id, capabilities: ['read', 'control'], clientApp: 'Stim Desktop' },
+      { id: second.id, name: 'Studio' },
+    ]);
+
+    const third = pair('Third');
+    expectKept('devices.json', [...order, third.id]);
+    expect(revokeDevice(first.id)).toBe(true);
+    expectKept('devices.json', [malformed, future, second.id, opaque, third.id]);
+    expect(readDevices().map((device) => device.id)).toEqual([second.id, third.id]);
+  });
+
+  it.each(['build', 'device-host'] as const)(
+    'keeps them in the %s client registry through rename and revoke',
+    (capability) => {
+      const client = () => {
+        const { ticket, key } = setup([capability]);
+        const records = spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net');
+        assert(records?.[capability]);
+        return records[capability];
+      };
+      const first = client();
+      const second = client();
+      const name = `${capability}-clients.json`;
+      interleave(name, first, second);
+      renameDevice(first.id, 'Box');
+      expectKept(name, [malformed, first.id, future, second.id, opaque]);
+      expect(revokeDevice(first.id)).toBe(true);
+      expectKept(name, [malformed, future, second.id, opaque]);
+    },
+  );
+
+  it('lists them with their position and id, and reads none of them as a client', () => {
+    interleave('devices.json', pair('First'), pair('Second'));
+    expect(readDevices()).toHaveLength(2);
+    expect(readUnreadable()).toEqual([
+      { file: 'devices.json', index: 0, id: 'bad' },
+      { file: 'devices.json', index: 2, id: 'future-1' },
+      { file: 'devices.json', index: 4 },
+    ]);
   });
 });
