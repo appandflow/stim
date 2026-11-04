@@ -1,4 +1,5 @@
 import StimKit
+import StimStores
 import SwiftUI
 
 /// Every native build this Mac recorded, newest first, from `stim logs --source builds`.
@@ -6,6 +7,9 @@ struct BuildsView: View {
   @ObservedObject var history: BuildLedgerModel
   /// The build that starts open.
   var opens: String?
+  /// Lists the builds running now, and the paired machines' among them, above the history.
+  var status: StatusStore? = nil
+  var openWorkspace: (WorkspaceKey) -> Void = { _ in }
   @State private var filter = LedgerFilter()
   @State private var visibleCount = 50
 
@@ -15,6 +19,7 @@ struct BuildsView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxl) {
         header(choices)
+        if let status { RunningBuildsSection(store: status, open: openWorkspace) }
         if let error = history.error, history.items.isEmpty {
           VStack(alignment: .leading, spacing: Space.sm) {
             Text(abbreviatingHome(error)).foregroundStyle(Palette.error)

@@ -46,9 +46,11 @@ public struct ClipboardTooLarge: Error, Equatable, LocalizedError, Sendable {
 
   public init() {}
 
-  public func set(_ text: String, paste: Bool) async throws {
+  /// Returns true when an iOS simulator typed the pasted text instead of pasting it.
+  @discardableResult
+  public func set(_ text: String, paste: Bool) async throws -> Bool {
     guard let stream else { throw ServerError(code: "not-connected", message: "The device is not connected.") }
-    try await stream.setClipboard(text, paste: paste)
+    return try await stream.setClipboard(text, paste: paste)
   }
 
   public func text() async throws -> String {

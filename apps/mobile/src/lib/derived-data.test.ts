@@ -61,6 +61,7 @@ const liveMac: AttentionMachine = {
     capabilities: [],
     features: [],
     deviceId: null,
+    deviceName: null,
   },
   missing: false,
   status,

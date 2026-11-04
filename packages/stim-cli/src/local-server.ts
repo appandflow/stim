@@ -8,7 +8,9 @@ import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import type { Methods, WebShareRow } from '@stim-cli/core/protocol';
 import { isJsonObject, serverLocalSocket } from '@stim-cli/core/state';
 import { canonicalPath } from './commands/gc/paths.ts';
+import { pauseShareLinks } from './workspace/share-links.ts';
 import { getExecutor } from './exec.ts';
+import { pidExists } from './metro.ts';
 
 export type ShareMethod = 'share.start' | 'share.stop' | 'share.list';
 
@@ -28,6 +30,7 @@ export class LocalServerUnavailable extends Error {}
 const TIMEOUT_MS = 120_000;
 const SHARE_LIST_TIMEOUT_MS = 5000;
 const START_WAIT_MS = 60_000;
+const SERVER_EXIT_WAIT_MS = 15_000;
 const START_POLL_MS = 250;
 
 /**
@@ -90,12 +93,20 @@ export function requestLocalServer<M extends LocalMethod>(
 }
 
 /**
- * Ends the web shares of `workspace` in this Stim home's stim-server. Best effort: a missing or silent server has no
- * share to end, and a share whose device stops ends on its own.
+ * Ends the web shares of `workspace`, or of its `slot` alone, in this Stim home's stim-server. A share waits for its
+ * device when the device goes away on its own, so stopping a workspace or slot ends its shares explicitly. Best effort:
+ * a missing or silent server has no share to end.
  */
-export async function endWorkspaceShares(workspace: string): Promise<void> {
+export async function endWorkspaceShares(workspace: string, slot?: string): Promise<void> {
   try {
-    await requestLocalServer('share.stop', { workspace }, { version: 'stim', timeoutMs: 3000 });
+    pauseShareLinks(workspace, slot);
+  } catch {}
+  try {
+    await requestLocalServer(
+      'share.stop',
+      { workspace, ...(slot === undefined ? {} : { slot }) },
+      { version: 'stim', timeoutMs: 3000 },
+    );
   } catch {}
 }
 
@@ -241,9 +252,10 @@ export async function startShareServer(
 
 /**
  * Stops the stim-server `stim share` started for this Stim home, when it holds no share. A server started any other
- * way (Stim Desktop, the LaunchAgent, by hand) holds no such claim and is never stopped. Returns the stopped pid.
+ * way (Stim Desktop, the LaunchAgent, by hand) holds no such claim and is never stopped. Returns its pid and whether it exited,
+ * after waiting up to 15 seconds, so a share started next does not meet a server that is stopping.
  */
-export async function stopIdleShareServer(version: string): Promise<number | null> {
+export async function stopIdleShareServer(version: string): Promise<{ pid: number; exited: boolean } | null> {
   const holder = readClaimSet(shareServerPaths().claim).live[0];
   if (!holder) return null;
   try {
@@ -253,5 +265,9 @@ export async function stopIdleShareServer(version: string): Promise<number | nul
     return null;
   }
   process.kill(holder.owner.pid, 'SIGTERM');
-  return holder.owner.pid;
+  const deadline = Date.now() + SERVER_EXIT_WAIT_MS;
+  while (pidExists(holder.owner.pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return { pid: holder.owner.pid, exited: !pidExists(holder.owner.pid) };
 }

@@ -85,12 +85,23 @@
         </button>
         <div class="options-panel" id="options-panel" role="dialog" aria-label="Options" hidden>
           <label class="switch-row" for="sync-clipboard">
-            <span class="switch-label">Sync clipboard</span>
+            <span class="switch-label" id="sync-title">Sync clipboard</span>
             <input class="switch" id="sync-clipboard" type="checkbox" role="switch" />
           </label>
-          <p class="options-help">Copy text between this computer and the device while this page is focused.</p>
+          <p class="options-help" id="sync-help">
+            Copy text between this browser and the device while this page is focused.
+          </p>
           <p class="options-help" id="sync-note" hidden></p>
+          <button type="button" class="link" id="paste-device" hidden>Paste to device</button>
           <button type="button" class="link" id="copy-device">Copy from device</button>
+          <textarea
+            class="copy-fallback"
+            id="copy-fallback"
+            rows="3"
+            readonly
+            hidden
+            aria-label="Device clipboard text"
+          ></textarea>
         </div>
       </div>
       <button type="button" class="iconbtn" id="full" title="Fullscreen" aria-label="Fullscreen">
@@ -105,6 +116,7 @@
         <div class="aperture" id="aperture">
           <canvas id="screen" aria-label="Shared device screen" role="img"></canvas>
           <canvas id="overlay" aria-hidden="true"></canvas>
+          <p class="away" id="away" role="status">Waiting for the device&hellip;</p>
           <p class="note" id="note" role="status"></p>
           <button type="button" class="chip" id="copy-chip" hidden>Copy from device</button>
         </div>

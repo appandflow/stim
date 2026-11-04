@@ -682,7 +682,15 @@ run waiting to boot, and automatic maintenance.
           into the idle stage (idle.minutes) and dormant ones into the dormant
           stage (idle.dormantDays), runs the pressure ladder above normal,
           reclaims a device for a run waiting to boot, and runs automatic
-          maintenance.
+          maintenance. When one of those commands runs from an installed
+          Stim (a global install or a node_modules dependency) with a newer
+          version than the running daemon, or the daemon runs a development
+          build, the daemon keeps serving the command and one new daemon
+          from the installed build takes over once its current tick
+          finishes, so an upgrade reaches the daemon with the next such
+          command. The same or an older version never replaces it. A
+          development build (a checkout's dist, npm link or pnpm link
+          --global) never replaces a daemon.
   report  the same passes log what they would do and act on nothing.
   off     no daemon and no pass: each dev server supervisor stops its own dev
           server and devices after idle.minutes, and nothing times a device
@@ -995,6 +1003,24 @@ Desktop's pool switches instead affect only that requester's automatic placement
 Set either setting to false to resume that capability. A pause does not make the
 machine idle: wait for existing work to finish or stop the relevant sessions before
 benchmarking. Agents change these settings only when the user asks them to.
+
+KEEP A WORKER AWAKE
+A worker that sleeps stops answering the machines that build or host simulators on it,
+paired phones and share links. On the worker machine:
+
+  stim settings set server.keepAwake true
+
+It defaults to false. On macOS the running server then prevents idle system sleep
+(caffeinate -s, so only on AC power; the display may still sleep) while it accepts
+connections from other machines: its Tailscale or server.lanAddresses listener is up and
+it is not a --loopback-only server. It lets go when the setting turns false, when those
+listeners go away, and when it stops, and it reads the setting without a restart.
+\`stim-server service status\` prints a keep awake line, and /health carries keepAwake
+with held and, when not held, a reason (off, unsupported, loopback-only, not-listening,
+failed). A failed caffeinate is not restarted by itself: restart stim-server to retry. Turning
+the setting off and on also works, but the server polls the setting every 5 seconds, so
+wait more than 5 seconds between the two and confirm with \`stim-server service status\`. On Linux and Windows the setting has no effect and the status says so. Agents
+change this setting only when the user asks them to.
 
 DEVICE HOSTING
 Only \`stim remote add\` and \`doctor --fix\` ask for device-host access: they

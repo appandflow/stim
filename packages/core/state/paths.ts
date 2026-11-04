@@ -66,6 +66,11 @@ export function workspaceLightenedFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'lightened.json');
 }
 
+/** The links `stim share` started in the workspace that `stim share --reuse` can start again; holds secrets, mode 0600. */
+export function workspaceShareLinksFile(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'share-links.json');
+}
+
 export function workspaceStateLock(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'state.lock');
 }
@@ -289,6 +294,11 @@ export function daemonDir(): string {
 /** The ownership claim the running home daemon holds for its lifetime. */
 export function daemonClaimRoot(): string {
   return join(daemonDir(), 'claim');
+}
+
+/** The ownership claim a starting daemon holds while it takes over from a running daemon of another build. */
+export function daemonHandoverClaimRoot(): string {
+  return join(daemonDir(), 'handover');
 }
 
 export function daemonSocket(): string {

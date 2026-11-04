@@ -36,7 +36,7 @@ export const readOnlyFooter = (): string =>
   t`A read-only machine can't be controlled from this phone. Tap it to see how to allow control.`;
 
 export const replayFooter = (): string =>
-  t`A Mac keeps the last 15 minutes of device screens. Turning this off deletes them.`;
+  t`The machine keeps the last 15 minutes of device screens. Turning this off deletes them.`;
 
 export function notifyCategoryLabel(category: string): string {
   switch (category) {
@@ -88,7 +88,8 @@ export function parseQuietHoursValue(value: string): QuietHours | null {
     : null;
 }
 
-export const notificationsFooter = (): string => t`Background notifications need an iPhone and a Mac that sends push.`;
+export const notificationsFooter = (): string =>
+  t`Background notifications need an iPhone and a machine that sends push.`;
 
 export function notificationSuppressionLabel(suppressed: string): string {
   return suppressed === 'muted' ? t`Muted` : suppressed === 'quiet-hours' ? t`Quiet hours` : t`Unknown`;

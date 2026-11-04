@@ -11,6 +11,7 @@ const machine = (patch: Partial<DrawerMachine> = {}): DrawerMachine => ({
     capabilities: [],
     features: [],
     deviceId: null,
+    deviceName: null,
   },
   missing: false,
   diskTone: 'normal',
@@ -20,7 +21,7 @@ const machine = (patch: Partial<DrawerMachine> = {}): DrawerMachine => ({
 describe('drawerStatus', () => {
   it('summarizes one connected Mac', () => {
     expect(drawerStatus([machine()])).toEqual({
-      text: '1 Mac connected',
+      text: '1 machine connected',
       tone: 'normal',
       macId: null,
     });
@@ -28,25 +29,25 @@ describe('drawerStatus', () => {
 
   it('summarizes multiple connected Macs', () => {
     expect(drawerStatus([machine(), machine({ id: 'b' })])).toEqual({
-      text: '2 Macs connected',
+      text: '2 machines connected',
       tone: 'normal',
       macId: null,
     });
   });
 
   it.each([
-    [[machine({ state: { kind: 'connecting' } })], '1 Mac, 1 connecting'],
-    [[machine(), machine({ id: 'b', state: { kind: 'connecting' } })], '2 Macs, 1 connecting'],
+    [[machine({ state: { kind: 'connecting' } })], '1 machine, 1 connecting'],
+    [[machine(), machine({ id: 'b', state: { kind: 'connecting' } })], '2 machines, 1 connecting'],
   ])('counts a connecting Mac separately', (machines, text) => {
     expect(drawerStatus(machines)).toEqual({ text, tone: 'normal', macId: null });
   });
 
   it('reports no paired Macs', () => {
-    expect(drawerStatus([])).toEqual({ text: 'No Macs paired', tone: 'normal', macId: null });
+    expect(drawerStatus([])).toEqual({ text: 'No machines paired', tone: 'normal', macId: null });
   });
 
   it('leaves missing Macs out of the connected count', () => {
-    expect(drawerStatus([machine(), machine({ id: 'b', missing: true })]).text).toBe('1 Mac connected');
+    expect(drawerStatus([machine(), machine({ id: 'b', missing: true })]).text).toBe('1 machine connected');
   });
 
   it('reports a reconnecting machine above everything else', () => {
@@ -71,7 +72,7 @@ describe('drawerStatus', () => {
   it("ignores an unpaired (missing) machine's connection state", () => {
     const missing = machine({ name: 'Old Mac', state: { kind: 'closed' }, missing: true, diskTone: 'critical' });
     expect(drawerStatus([missing])).toEqual({
-      text: 'No Macs paired',
+      text: 'No machines paired',
       tone: 'normal',
       macId: null,
     });

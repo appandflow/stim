@@ -36,6 +36,7 @@ import {
   classifyTransport,
   diagnoseLocalUnreachable,
   diagnoseUnreachable,
+  localMachineName,
   parsePeerStartup,
   wrongTailnetDiagnosis,
   readTailscale,
@@ -220,16 +221,17 @@ export function outdatedServer(
   entry: string,
   version: string,
   command: string | null,
+  host: string = localMachineName(),
 ): { title: string; detail: string; fix: string } {
   const update =
     `On ${entry}, run \`stim-server service update --release ${version}\`` +
     ' (add `--label <name>` for a custom service label; a server Stim Desktop runs updates with Stim Desktop)';
   return {
     title: `Remote machine ${entry} runs an older stim-server`,
-    detail: `The stim-server on ${entry} speaks an older protocol than this Stim, so it cannot authenticate this machine.`,
+    detail: `The stim-server on ${entry} speaks an older protocol than the Stim on ${host}, so it cannot authenticate ${host}.`,
     fix: command
-      ? `${update}, then run this there to approve this machine: ${command}\nAfter approving, run \`stim remote list\` on this machine to reconnect.`
-      : `${update}, then run \`stim remote add ${entry}\` here.`,
+      ? `${update}, then run this on ${entry} to approve ${host}: ${command}\nAfter approving, run \`stim remote list\` on ${host} to reconnect.`
+      : `${update}, then run \`stim remote add ${entry}\` on ${host}.`,
   };
 }
 
@@ -449,6 +451,7 @@ export async function diagnoseOutcome(
     reason: string;
     transport?: Transport;
     code?: string;
+    host?: string;
   },
 ): Promise<RemoteDiagnosis> {
   const { target, ...rest } = input;
@@ -485,7 +488,8 @@ export async function diagnoseConnectFailure(
       ...(failure.code ? { code: failure.code } : {}),
     });
   }
-  const peer = findPeer(await tailscaleStatusAsync(signal), parsed.name);
+  const status = await tailscaleStatusAsync(signal);
+  const peer = findPeer(status, parsed.name);
   if (typeof peer === 'string') return null;
   return diagnoseOutcome(
     { startup: peerStartup },
@@ -494,6 +498,7 @@ export async function diagnoseConnectFailure(
       peer,
       port: parsed.port,
       target: endpoint(peer, parsed.port),
+      host: localMachineName(status),
       reason: failure.failure,
       ...(failure.transport ? { transport: failure.transport } : {}),
       ...(failure.code ? { code: failure.code } : {}),
@@ -503,13 +508,14 @@ export async function diagnoseConnectFailure(
 
 /** Why `status` is null, as a diagnosis of the Tailscale layer; falls back to the daemon being unavailable. */
 export async function diagnoseTailscale(io: TailnetMachineIo): Promise<RemoteDiagnosis> {
-  const reading = readTailscale(io.rawStatus ? await io.rawStatus() : null);
-  return tailscaleDiagnosis(reading.running ? 'tailscale-unavailable' : reading.code);
+  const raw = io.rawStatus ? await io.rawStatus() : null;
+  const reading = readTailscale(raw);
+  return tailscaleDiagnosis(reading.running ? 'tailscale-unavailable' : reading.code, localMachineName(raw));
 }
 
 /**
  * Where to reach a paired machine now, or why Stim cannot; the handshake then checks its pinned key. A machine
- * missing from the tailnet this Mac is signed in to says so when the credential recorded another tailnet.
+ * missing from the tailnet this machine is signed in to says so when the credential recorded another tailnet.
  */
 export async function resolveEndpoint(
   credential: Pick<MachineCredential, 'machine'> & Partial<Pick<MachineCredential, 'address' | 'tailnet'>>,
@@ -523,7 +529,7 @@ export async function resolveEndpoint(
     return found;
   const wrong = wrongTailnet(credential, current);
   if (!wrong) return found;
-  const { message, remedy } = wrongTailnetDiagnosis(credential.machine, wrong);
+  const { message, remedy } = wrongTailnetDiagnosis(credential.machine, wrong, localMachineName(current));
   return `${message} ${remedy}`.replace(/\.$/, '');
 }
 

@@ -87,11 +87,13 @@ export function streamsFrames(device: ServedDevice, features: readonly string[] 
 /** Why a device {@link streamsFrames} does not serve shows no screen. */
 export function unservedReason(device: ServedDevice): string {
   if (device.host && (device.platform === 'ios' || device.platform === 'android'))
-    return device.state === 'stopped' ? t`Not running` : t`Update stim-server on the Mac to see this device's screen.`;
-  if (device.platform === 'macos') return t`Update stim-server on the Mac to view this app window.`;
+    return device.state === 'stopped'
+      ? t`Not running`
+      : t`Update stim-server on the machine to see this device's screen.`;
+  if (device.platform === 'macos') return t`Update stim-server on the machine to view this app window.`;
   if (!device.physical) return t`Frames are only served for devices Stim owns.`;
   if (!device.running) return device.state;
-  return t`Update stim-server on the Mac to see this device's screen.`;
+  return t`Update stim-server on the machine to see this device's screen.`;
 }
 
 function iosDevice(slot: string, sim: SimState): DeviceRef {

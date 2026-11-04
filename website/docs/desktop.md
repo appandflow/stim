@@ -394,14 +394,16 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   **Builds** shows recent build placements and explains when history is unavailable.
   Overview includes the latest three placements when available. Remote machine
   choices show their reported readiness; only the selected choice uses the accent color.
-  The toolbar's **Load** figure is the 5-minute load average per core, amber at or over
-  `server.maxLoadPerCore` and red while new local work waits; CPU reads 100% from about
-  one load per core, and Load keeps counting past that. While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
+  The toolbar's **CPU** figure shows the share of processor time in use and, after a dot,
+  the 5-minute load average per core, such as `83% · 2.7/core`. It takes the worse color
+  of the two: load is amber at or over `server.maxLoadPerCore` and red while new local work
+  waits. CPU tops out at 100%; load keeps counting past one per core. A Mac that reports no
+  load shows CPU alone. While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
   `concurrency.maxAndroidDevices` or `concurrency.maxBuilds` is set, **This Mac** shows **Devices**, **iOS simulators**, **Android emulators** and **Builds** meters, such as
   `6 / 6`. A full device meter lists the devices holding the slots with their slot and idle
   time, each with **Stop**, which runs `stim stop --slot` in that workspace; builds are listed
   by workspace, or as offloaded for a client. A device no workspace records has no **Stop**.
-  Click the toolbar's CPU, load, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
+  Click the toolbar's CPU, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
   in each popover opens the Machines page. CPU covers active workspace processes,
   while memory covers the whole Mac.
   CPU and memory popovers graph recent whole-machine usage. Each disk volume
@@ -440,9 +442,10 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   password. A share with control and a password can also have a separate
   view-only password (generated or chosen), shown as **View password** next to
   the control one. The link and generated passwords appear once, each with a Copy button;
-  Desktop does not keep them. **Settings > Web Shares** lists the live shares with
+  Desktop does not keep them. **Settings > Web Shares** lists the shares, live or waiting, with
   their viewers and time left ("View and control, view password" for a share with
-  two passwords). **Stop** on a row ends that one share; a workspace with
+  two passwords). A share whose device is away waits and keeps its row; Desktop
+  does not mark it yet, but `stim share list` does. **Stop** on a row ends that one share; a workspace with
   several shares also has **Stop All**. A stim-server older than this (without the
   `share-stop-id` feature) has only the workspace-wide **Stop**, which ends every share of
   the workspace. Quitting
@@ -630,10 +633,14 @@ device's apps, and agents driving it, can read text sent to it. Opening a viewer
 Turn it off with **Sync clipboard** in the options popover (the sliders button),
 which also has **Paste Mac Clipboard** and **Copy Device Clipboard** for one-off
 transfers. Syncing only sets the device clipboard; to insert text, paste in the
-guest. An iOS simulator shows its own "Allow Paste" prompt for text that came from
-another source; click **Allow Paste** in the viewer. After a paste on an iOS simulator
-Desktop shows a notice that says to tap the paste suggestion on the device if nothing
-appears. Unicode and line breaks are preserved.
+guest. **Paste Mac Clipboard** on an iOS simulator types printable ASCII, line breaks and tabs
+into the focused field, about 35 characters a second, so no paste prompt appears and a
+SimSlim-slimmed simulator takes it too; the field's own typing rules (smart quotes and dashes)
+still apply. Text with other characters, such as accents and emoji, is pasted instead. In an app
+Stim installed on an owned simulator it lands without a prompt, because Stim allows that app's
+"Paste from Other Apps" permission when it installs it. In another app an iOS simulator shows its
+own "Allow Paste" prompt: click **Allow Paste** in the viewer. Desktop then shows a notice that says to
+tap the paste suggestion on the device if nothing appears. Unicode and line breaks are preserved.
 
 A device Desktop shows through stim-server has the same options once **Control** is on, with sync on by default, so the current Mac text is sent to the device's machine as soon as Control starts:
 a hosted iOS or Android session, a device of a paired machine, or a leased Android phone.
@@ -821,6 +828,15 @@ remote machine reads "on MACHINE", and one a paired machine placed reads "theirs
 offline, Desktop keeps showing its last status with "Offline since" and the
 time. Hiding a paired machine's workspace lasts until Desktop quits.
 
+**Active Workspaces** and the **Overview** list the machine's active workspaces next to this Mac's,
+each card marked with the machine's name and **View Only** or **View and Control**, and
+**Overview** counts each machine's active workspaces, running builds and devices. **Builds**
+shows **Running now** with the builds in progress on every machine and their phases. A card
+opens the same workspace page as the sidebar, and its device screen is live, view only.
+The **This Mac** and **All Machines** switch limits these screens to this Mac. A machine that is offline,
+or whose pairing was revoked, drops out of these lists, and a note names it, rather than
+showing its last status.
+
 Select an iOS or Android device on that page, including a hosted one, to open its
 screen in the viewer. Desktop streams it through the paired machine's server,
 which relays hosted devices from the Mac that runs them, so this Mac needs no
@@ -898,7 +914,7 @@ least one local or configured, approved remote member. Explicit placement is unc
 See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for CLI controls.
 
 **Settings > Remote Machines** lists your remote machines with a status
-(**Approved**, **Waiting for approval**, the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading),
+(**Approved**, **Waiting for approval**, the layer that stopped an unreachable machine (such as **Server not ready** or **Machine is offline**), **Needs update** or the reason it is not offloading),
 a line with its running builds and free disk, what each does (**Builds**, **Simulators**), up and down buttons, **Details** and
 **Remove...**. The status shows only a state that stops this Mac using the machine; notes, such as an
 Android SDK package Gradle downloads on the first build, never change it. With two or more machines each row shows its place in the list. The order is the placement priority: builds, simulators, emulators and macOS apps go to the first machine that has room and a load under its own limit, and to the next only when it has none. The buttons write the new order to `remote.machines`. Right-clicking a row shows the same actions. A machine's page also lists the ten newest builds that ran there, each opening to its phases and failure like the **Builds** page. It updates itself; there is no Refresh button. With none, it

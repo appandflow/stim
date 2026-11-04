@@ -93,7 +93,7 @@ function Components() {
         <ListRow title="Active workspaces" value="4" />
         <ListRow title="Memory pressure" value="warn" valueTone="warning" />
         <ListRow
-          title="Mock Mac"
+          title="Mock machine"
           subtitle="ws://127.0.0.1:7811"
           icon="laptopcomputer"
           accessory="chevron"

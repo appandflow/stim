@@ -10,12 +10,29 @@ struct WallView: View {
   var setScope: (ProjectScope) -> Void = { _ in }
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
-  var openDevice: (String, String) -> Void
+  var openDevice: (WorkspaceKey, String) -> Void
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
+  @AppStorage(AppPreferences.Key.machineScope) private var machineScope = MachineScope.all
 
   var body: some View {
+    let machines = project == nil ? store.pairedMachines(pairedSessions.entries) : []
+    VStack(spacing: 0) {
+      if !machines.isEmpty {
+        HStack(spacing: Space.lg) {
+          if machineScope == .all { UnavailableMachinesNote(machines: machines) }
+          Spacer(minLength: 0)
+          if machines.contains(where: \.isAvailable) { MachineScopeControl(scope: $machineScope) }
+        }
+        .padding(.horizontal, PageInset.horizontal).padding(.top, Space.xl)
+      }
+      page(machines: machines)
+    }
+  }
+
+  @ViewBuilder private func page(machines: [PairedMachine]) -> some View {
     let content = ProjectPage.content(environments: store.environments(in: project), scope: project == nil ? .active : scope)
     let shown: [Workspace] = if case .worktrees(let environments) = content { environments } else { [] }
-    let cards = WallCard.cards(environments: shown)
+    let cards = WallCard.merged(local: WallCard.cards(environments: shown), machines: machines, scope: machineScope)
     if store.payload == nil {
       if let error = store.error {
         EmptyState(title: "Cannot Read stim status", message: error, showsHero: true)
@@ -32,7 +49,7 @@ struct WallView: View {
       .padding(Space.huge)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .id(project.id)
-    } else if shown.isEmpty {
+    } else if cards.isEmpty {
       EmptyState(
         title: project.map { "Nothing Running in \(store.title(of: $0))" } ?? "Nothing Running",
         message: "Workspaces appear here when an agent warms a worktree or runs stim ios or stim android.",
@@ -63,7 +80,9 @@ struct WallView: View {
           WorkspaceCardGrid(
             cards: cards, store: store, metrics: metrics,
             open: { card in
-              selection = project == nil ? .project(store.project(of: card.apps[0].workspace)) : .environment(card.id)
+              selection =
+                card.pairedDestination
+                ?? (project == nil ? .project(store.project(of: card.apps[0].workspace)) : .environment(card.id))
             },
             openDevice: openDevice, openLogs: openLogs)
         }

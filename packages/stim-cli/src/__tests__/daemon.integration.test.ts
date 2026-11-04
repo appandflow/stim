@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn as spawnChild, type SpawnOptions } from 'node:child_process';
 import {
   daemonClaimRoot,
+  daemonHandoverClaimRoot,
   daemonNdjsonFile,
   daemonSocket,
   maintenanceNdjsonFile,
@@ -15,11 +16,11 @@ import {
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
-import { beforeCommand, ensureDaemon, passPlacement, requestDaemonTick } from '../daemon/client.ts';
+import { acquireBuildSlot, releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
+import { liveWaiters, takeWaitTicket } from '../engine/wait-queue.ts';
+import { askDaemon, beforeCommand, ensureDaemon, passPlacement, requestDaemonTick } from '../daemon/client.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
-import { takeWaitTicket } from '../engine/wait-queue.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import * as measure from '../daemon/measure.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
@@ -28,6 +29,8 @@ import { macosDir } from '../macos/state.ts';
 import { runDaemon } from '../daemon/run.ts';
 import * as maintenanceMeasure from '../maintenance/measure.ts';
 import * as maintenanceRun from '../maintenance/run.ts';
+import * as spawnEntry from '../spawn-entry.ts';
+import * as ndjson from '../ndjson.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -52,6 +55,62 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });
+
+/**
+ * A stand-in for a stim-daemon from before handovers: it answers `hello` with no build, closes on an unknown op,
+ * answers a tick when the pass after the request ends, and runs passes back to back, as with other runs asking for
+ * ticks. Like that daemon, SIGTERM releases its claim at once and the process exits only after the pass in progress.
+ * It appends `listening`, `sigterm` per signal, and `exit <ms>` to the file named by its first argument.
+ */
+const LEGACY_DAEMON = `
+import { appendFileSync, mkdirSync, rmSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { daemonClaimRoot, daemonDir, daemonSocket } from '@stim-cli/core/state';
+import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+const record = process.argv[1];
+const note = (line) => appendFileSync(record, line + '\\n');
+mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
+const claim = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon' }).acquired;
+let pending = [];
+let closing = false;
+const server = createServer((socket) => {
+  socket.setEncoding('utf8');
+  socket.on('error', () => {});
+  socket.on('data', (chunk) => {
+    for (const line of chunk.split('\\n').filter(Boolean)) {
+      const { op } = JSON.parse(line);
+      if (op === 'hello') socket.end(JSON.stringify({ op: 'hello', pid: process.pid }) + '\\n');
+      else if (op === 'tick') pending.push(socket);
+      else socket.destroy();
+    }
+  });
+});
+process.on('SIGTERM', () => {
+  note('sigterm');
+  if (closing) return;
+  closing = true;
+  server.close();
+  rmSync(daemonSocket(), { force: true });
+  releaseClaim(claim);
+  for (const socket of pending) socket.destroy();
+});
+const pass = () => {
+  const replying = pending;
+  pending = [];
+  setTimeout(() => {
+    if (closing) {
+      note('exit ' + Date.now());
+      process.exit(0);
+    }
+    for (const socket of replying) socket.end(JSON.stringify({ op: 'ticked', level: 'normal' }) + '\\n');
+    pass();
+  }, 600);
+};
+server.listen(daemonSocket(), () => {
+  note('listening');
+  pass();
+});
+`;
 
 function daemonLog(): string {
   return existsSync(daemonNdjsonFile()) ? readFileSync(daemonNdjsonFile(), 'utf8') : '';
@@ -509,6 +568,277 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     process.kill(holder.owner.pid, 'SIGTERM');
     await vi.waitFor(() => expect(readClaimSet(daemonClaimRoot()).live).toEqual([]), { timeout: 10_000, interval: 50 });
   }, 20_000);
+
+  test('an installed build replaces only a daemon with no installed build or an older version, one at a time', async () => {
+    const current = { installed: true, digest: 'digest-current', version: '1.40.0-next.20261103195518.g76cb4df' };
+    const build = vi.spyOn(spawnEntry, 'stimBuild').mockReturnValue(current);
+    const spawned: (readonly string[])[] = [];
+    setExecutor({
+      ...getExecutor(),
+      spawn(_file, args = []) {
+        spawned.push(args);
+        return spawnChild(process.execPath, ['-e', ''], { stdio: 'ignore' });
+      },
+    });
+    onTestFinished(() => {
+      resetExecutor();
+      build.mockRestore();
+    });
+    const env = { ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' };
+    const run = runDaemon({ tickMs: 60_000 });
+    await listening();
+
+    for (const other of [
+      { ...current, digest: 'digest-other' },
+      { installed: true, digest: 'digest-older', version: '1.40.0-next.20261102000000.gaaaaaaa' },
+      { installed: false, digest: null, version: '1.40.0' },
+    ]) {
+      build.mockReturnValue(other);
+      expect(await ensureDaemon(env)).toBe(true);
+    }
+    build.mockReturnValue({ installed: true, digest: 'digest-newer', version: '1.40.0-next.20261104000000.gbbbbbbb' });
+    const taking = tryAcquireClaim({
+      root: daemonHandoverClaimRoot(),
+      mode: 'exclusive',
+      label: 'stim-daemon handover',
+    });
+    assert(taking.acquired);
+    expect(await ensureDaemon(env)).toBe(true);
+    releaseClaim(taking.acquired);
+    expect(spawned).toEqual([]);
+
+    expect(await ensureDaemon(env)).toBe(true);
+    expect(spawned.map((args) => args.slice(1))).toEqual([['--mode', 'on', '--replace', String(process.pid)]]);
+
+    const idle = connect(daemonSocket());
+    idle.on('error', () => {});
+    const closed = new Promise<void>((done) => idle.once('close', () => done()));
+    await new Promise<void>((done) => idle.once('connect', () => done()));
+    idle.resume();
+    expect(await askDaemon('handover', 1000, { pid: process.pid, build: 'digest-other' })).toEqual({
+      op: 'handover',
+      accepted: false,
+    });
+    expect(await askDaemon('handover', 1000, { pid: process.pid, build: 'digest-current' })).toEqual({
+      op: 'handover',
+      accepted: true,
+    });
+    await run;
+    await closed;
+    expect(daemonLog()).not.toContain('"event":"daemon_tick"');
+    expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
+  }, 20_000);
+
+  test('a command arriving while a successor takes over starts no daemon and leaves the claim to the successor', async () => {
+    const spawned: (readonly string[])[] = [];
+    setExecutor({
+      ...getExecutor(),
+      spawn(_file, args = []) {
+        spawned.push(args);
+        return spawnChild(process.execPath, ['-e', ''], { stdio: 'ignore' });
+      },
+    });
+    onTestFinished(() => resetExecutor());
+    const taking = tryAcquireClaim({
+      root: daemonHandoverClaimRoot(),
+      mode: 'exclusive',
+      label: 'stim-daemon handover',
+    });
+    assert(taking.acquired);
+    onTestFinished(() => {
+      releaseClaim(taking.acquired);
+    });
+
+    const command = ensureDaemon({ ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' });
+    await new Promise((done) => setTimeout(done, 300));
+    const successor = runDaemon({ tickMs: 60_000 });
+    expect(await command).toBe(true);
+    expect(spawned).toEqual([]);
+    expect(readClaimSet(daemonClaimRoot()).live.map((claim) => claim.owner.pid)).toEqual([process.pid]);
+
+    await listening();
+    expect(await askDaemon('handover', 1000, { pid: process.pid, build: null })).toEqual({
+      op: 'handover',
+      accepted: true,
+    });
+    await successor;
+  }, 20_000);
+
+  test('a dev-build daemon hands over to an installed build only after the tick in progress, and queued runs keep their places', async () => {
+    normalMeasurement();
+    let entered!: () => void;
+    const inPass = new Promise<void>((done) => (entered = done));
+    let finishPass!: () => void;
+    const pass = new Promise<void>((done) => (finishPass = done));
+    const blocked = vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(async () => {
+      entered();
+      await pass;
+    });
+    const build = vi
+      .spyOn(spawnEntry, 'stimBuild')
+      .mockReturnValue({ installed: false, digest: null, version: '1.40.0' });
+    onTestFinished(() => {
+      blocked.mockRestore();
+      build.mockRestore();
+    });
+    const run = runDaemon({ tickMs: 50 });
+    await inPass;
+    const holder = tryAcquireBuildSlot({ max: 1 });
+    assert(holder);
+    const acquired: string[] = [];
+    const queue = (root: string) =>
+      acquireBuildSlot({ max: 1, root }).then((slot) => {
+        acquired.push(root);
+        return slot;
+      });
+    const first = queue('/a');
+    await vi.waitFor(() => expect(liveWaiters('build')).toHaveLength(1), { timeout: 10_000, interval: 20 });
+    const second = queue('/b');
+    await vi.waitFor(() => expect(liveWaiters('build')).toHaveLength(2), { timeout: 10_000, interval: 20 });
+
+    build.mockReturnValue({ installed: true, digest: 'digest-installed', version: '1.39.0' });
+    expect(await ensureDaemon({ ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' })).toBe(true);
+    await vi.waitFor(() => expect(daemonLog()).toContain('"event":"daemon_handover"'), {
+      timeout: 10_000,
+      interval: 20,
+    });
+    expect(readClaimSet(daemonClaimRoot()).live.map((claim) => claim.owner.pid)).toEqual([process.pid]);
+    expect(daemonLog()).not.toContain('"event":"daemon_exited"');
+    const ticked = requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
+    await new Promise((done) => setTimeout(done, 200));
+
+    finishPass();
+    await run;
+    await vi.waitFor(
+      () => expect(readClaimSet(daemonClaimRoot()).live.map((claim) => claim.owner.pid)).toEqual([expect.any(Number)]),
+      { timeout: 10_000, interval: 50 },
+    );
+    const [successor] = readClaimSet(daemonClaimRoot()).live;
+    assert(successor && successor.owner.pid !== process.pid);
+    try {
+      await vi.waitFor(() => expect(daemonLog().match(/"event":"daemon_started"/g)).toHaveLength(2), {
+        timeout: 10_000,
+        interval: 20,
+      });
+      const events = daemonLog()
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line).event)
+        .filter((event) => ['daemon_started', 'daemon_handover', 'daemon_tick', 'daemon_exited'].includes(event));
+      expect(events.slice(0, 5)).toEqual([
+        'daemon_started',
+        'daemon_handover',
+        'daemon_tick',
+        'daemon_exited',
+        'daemon_started',
+      ]);
+      expect(await ticked).toBe(true);
+
+      expect(liveWaiters('build').map((queued) => queued.details.root)).toEqual(['/a', '/b']);
+      releaseBuildSlot(holder);
+      const slot = await first;
+      expect(acquired).toEqual(['/a']);
+      releaseBuildSlot(slot);
+      releaseBuildSlot(await second);
+      expect(acquired).toEqual(['/a', '/b']);
+    } finally {
+      process.kill(successor.owner.pid, 'SIGTERM');
+      await vi.waitFor(() => expect(() => process.kill(successor.owner.pid, 0)).toThrow('ESRCH'), {
+        timeout: 30_000,
+        interval: 50,
+      });
+    }
+  }, 90_000);
+
+  test('of many successors started at once against a daemon from before handovers, one signals it once and ticks only after it exits', async () => {
+    const record = join(home, 'legacy.log');
+    const legacy = spawnChild(process.execPath, ['--input-type=module', '-e', LEGACY_DAEMON, record], {
+      cwd: fileURLToPath(new URL('../..', import.meta.url)),
+      env: { ...process.env },
+      stdio: 'ignore',
+    });
+    const legacyExited = new Promise<void>((done) => legacy.once('exit', () => done()));
+    onTestFinished(async () => {
+      legacy.kill('SIGKILL');
+      await legacyExited;
+    });
+    await vi.waitFor(() => expect(readFileSync(record, 'utf8')).toContain('listening'), {
+      timeout: 10_000,
+      interval: 20,
+    });
+    assert(legacy.pid);
+    const successors = Array.from({ length: 6 }, () => {
+      const child = spawnChild(process.execPath, [entry, '--mode', 'on', '--replace', String(legacy.pid)], {
+        env: { ...process.env },
+        stdio: 'ignore',
+      });
+      return { child, exited: new Promise<void>((done) => child.once('exit', () => done())) };
+    });
+    onTestFinished(async () => {
+      for (const { child } of successors) child.kill('SIGTERM');
+      await Promise.all(successors.map(({ exited }) => exited));
+    });
+
+    await vi.waitFor(
+      () => expect(readClaimSet(daemonClaimRoot()).live.map((claim) => claim.owner.pid)).not.toEqual([legacy.pid]),
+      { timeout: 20_000, interval: 50 },
+    );
+    await vi.waitFor(() => expect(readClaimSet(daemonClaimRoot()).live).toHaveLength(1), {
+      timeout: 20_000,
+      interval: 50,
+    });
+    expect(await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' })).toBe(true);
+    const [winner] = readClaimSet(daemonClaimRoot()).live;
+    assert(winner);
+    const losers = successors.filter(({ child }) => child.pid !== winner.owner.pid);
+    expect(losers).toHaveLength(5);
+    await Promise.race([
+      Promise.all(losers.map(({ exited }) => exited)),
+      new Promise((_, fail) => setTimeout(() => fail(new Error('a losing successor still runs')), 1000)),
+    ]);
+
+    await vi.waitFor(() => expect(daemonLog()).toContain('"event":"daemon_tick"'), { timeout: 10_000, interval: 20 });
+    const noted = readFileSync(record, 'utf8').trim().split('\n');
+    expect(noted.filter((line) => line === 'sigterm')).toHaveLength(1);
+    const exitedAt = Number(noted.find((line) => line.startsWith('exit '))?.slice(5));
+    const records = daemonLog()
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(records.filter((logged) => logged.event === 'daemon_handover')).toHaveLength(1);
+    const successorTick = records.find((logged) => logged.event === 'daemon_tick');
+    expect(successorTick?.ts).toBeGreaterThanOrEqual(exitedAt);
+  }, 60_000);
+
+  test('a daemon signalled right after its tick exits at once instead of sleeping through its wait', async () => {
+    normalMeasurement();
+    const before = new Set(process.listeners('SIGTERM'));
+    const create = ndjson.createNdjsonWriter;
+    let signal: (() => void) | null = null;
+    const spy = vi.spyOn(ndjson, 'createNdjsonWriter').mockImplementation((...args) => {
+      const writer = create(...args);
+      return {
+        ...writer,
+        write(record: unknown) {
+          const written = writer.write(record);
+          if (typeof record === 'object' && record !== null && 'event' in record && record.event === 'daemon_tick')
+            signal?.();
+          return written;
+        },
+      };
+    });
+    onTestFinished(() => spy.mockRestore());
+    const run = runDaemon({ tickMs: 60_000 });
+    await listening();
+    const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+    assert(handler);
+    signal = () => handler('SIGTERM');
+    expect(await askDaemon('tick', 10_000)).toMatchObject({ op: 'ticked' });
+    const started = Date.now();
+    await run;
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(daemonLog()).toContain('exiting: SIGTERM');
+  }, 90_000);
 
   test('a daemon started in report mode stays in report mode', async () => {
     await runDaemon({ tickMs: 50, mode: 'report' });

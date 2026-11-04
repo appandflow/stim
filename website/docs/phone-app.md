@@ -176,6 +176,12 @@ The phone must pair again to reconnect.
 To rename a paired phone on the Mac, run `stim-server devices rename <id> <name>`
 there; the phone gets the new name the next time it connects.
 
+`stim-server devices --json` reports each pairing's `kind`: `desktop` for Stim
+Desktop on another machine, which also pairs with `stim-server pair`, and `phone`
+for any other app. Each pairing records the app and version it names when it
+connects, so `kind` and the `clientApp` and `clientVersion` fields appear after
+a pairing's next connection. They are labels only and never change what it may do.
+
 **Forget** on the phone removes the saved Mac and its local status. To revoke
 the server's authorization, use the Mac-side action above.
 
@@ -192,9 +198,12 @@ Device Clipboard** for an iOS simulator, an Android emulator or an Android phone
 when the Mac's `stim-server` is new enough to offer them. Paste reads the phone's
 clipboard when you tap it (iOS asks you to allow the paste), sets the device
 clipboard to that text and pastes it into the focused field. Text over 8 KiB is
-not sent. On an iOS simulator the first paste can leave a "Paste from
-CoreSimulatorBridge" suggestion on the device to tap, and a simulator slimmed by
-`ios.simslimProfile` cannot show it. Copy reads the device clipboard into the
+not sent. An iOS simulator types printable ASCII, line breaks and tabs into the field,
+about 35 characters a second, so no paste prompt is involved. Text with other characters,
+such as accents and emoji, is pasted instead. In an app Stim installed on an owned
+simulator it lands without a prompt, because Stim allows that app's paste
+permission; another app can leave a "Paste from CoreSimulatorBridge" suggestion on
+the device to tap, which a simulator slimmed by `ios.simslimProfile` cannot show. Copy reads the device clipboard into the
 phone's. Nothing syncs by itself, only text is sent, and Stim never logs it.
 
 Each machine the phone pairs with reports the work it started, including

@@ -1,9 +1,17 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { DeviceAppProcess } from '@stim-cli/core/state';
 import { getExecutor, type Executor } from '../exec.ts';
 import { debugLog } from '../debug-log.ts';
 import { approvableSchemes, readBundleSchemes } from './app-schemes.ts';
 import { deviceHoldsApk, deviceHoldsBundle } from './installed-artifact.ts';
-import { iosSimulatorFailureAdvice, listUserApps, uninstallIosApp } from '../devices/ios.ts';
+import {
+  iosSimulatorFailureAdvice,
+  listUserApps,
+  parseSimctlList,
+  resolveOwnedIosSim,
+  uninstallIosApp,
+} from '../devices/ios.ts';
 import { DEV_MENU_LAUNCH_ARGS } from '../collector/ios-device.ts';
 
 export const INSTALL_ERROR = 'STIM_INSTALL_FAILED';
@@ -13,6 +21,7 @@ export const DEFAULT_METRO_PORT = 8081;
 
 const IOS_SCHEME_APPROVAL_DOMAIN = 'com.apple.launchservices.schemeapproval';
 const IOS_SCHEME_APPROVAL_OPENER = 'com.apple.CoreSimulator.CoreSimulatorBridge';
+const IOS_TCC_QUERY_TIMEOUT_MS = 30000;
 const IOS_DEV_MENU_OFF_KEYS = ['EXDevMenuShowsAtLaunch', 'EXDevMenuShowFloatingActionButton'];
 const DEV_CLIENT_ONBOARDING_QUERY = 'disableOnboarding=1';
 const DEV_CLIENT_DISABLE_FAB_QUERY = 'disableFab=1';
@@ -39,6 +48,35 @@ async function writeIosDevMenuOffDefaults(udid: string, bundleId: string, exec: 
   }
 }
 
+// `simctl privacy` has no pasteboard service: "Paste from Other Apps" is this app's kTCCServicePasteboard row in the
+// simulator's own TCC.db, where auth_value 2 is Allow.
+async function grantIosPasteboardAccess(udid: string, bundleId: string, exec: Executor): Promise<string | null> {
+  try {
+    const listing = await exec.runFileAsync('xcrun', ['simctl', 'list', 'devices', '--json'], {
+      timeoutMs: IOS_TCC_QUERY_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+    });
+    const resolved = resolveOwnedIosSim(udid, parseSimctlList(listing));
+    if (!resolved.sim) return `${udid} is not a Stim-owned simulator, so Stim left its paste permission alone`;
+    const database = resolved.sim.dataPath ? join(resolved.sim.dataPath, 'Library', 'TCC', 'TCC.db') : null;
+    if (!database || !existsSync(database)) return 'the simulator has no TCC.db yet';
+    const client = `'${bundleId.replaceAll("'", "''")}'`;
+    await exec.runFileAsync(
+      '/usr/bin/sqlite3',
+      [
+        '-cmd',
+        '.timeout 5000',
+        database,
+        `insert or replace into access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, boot_uuid) values ('kTCCServicePasteboard', ${client}, 0, 2, 4, 2, 'UNUSED', 'UNUSED')`,
+      ],
+      { timeoutMs: IOS_TCC_QUERY_TIMEOUT_MS, killSignal: 'SIGKILL' },
+    );
+    return null;
+  } catch (err) {
+    return describe(err);
+  }
+}
+
 async function describeIosSimulatorFailure(error: unknown, exec: Executor): Promise<string> {
   const detail = describe(error);
   return (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT'
@@ -58,6 +96,7 @@ export type IosInstallResult = {
   artifactDurationMs?: number;
   devClientPreparationDurationMs?: number;
   schemeApprovals?: string[];
+  pasteboardNote?: string;
   failed?: boolean;
   code?: string;
   reason?: string;
@@ -173,7 +212,13 @@ export async function installIosApp(
   }
   const devClientPreparationDurationMs =
     now && preparationStartedAt !== undefined ? now() - preparationStartedAt : undefined;
+  const pasteboardFailure = bundleId ? await grantIosPasteboardAccess(udid, bundleId, e) : null;
   const timing = {
+    ...(pasteboardFailure
+      ? {
+          pasteboardNote: `could not allow Paste from Other Apps for ${bundleId}: ${pasteboardFailure}. Pasting text Stim cannot type may show a prompt or do nothing`,
+        }
+      : {}),
     ...(artifactDurationMs === undefined ? {} : { artifactDurationMs }),
     ...(devClientPreparationDurationMs === undefined ? {} : { devClientPreparationDurationMs }),
     ...(missingApprovals.length > 0

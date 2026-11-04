@@ -2274,6 +2274,8 @@ export function protocolJsonSchema(): JsonSchema {
               physical: { type: 'boolean' },
               control: { type: 'boolean' },
               expiresMinutes: { type: 'integer', minimum: 1, maximum: 480 },
+              expiresAt: { type: 'string', minLength: 20, maxLength: 40 },
+              token: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
               password: { type: 'string', minLength: 8, maxLength: 128 },
               passwordless: { type: 'boolean' },
               view: {
@@ -2288,7 +2290,11 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['workspace'],
             additionalProperties: false,
-            properties: { workspace: { type: 'string', minLength: 1 }, id: { type: 'string', minLength: 1 } },
+            properties: {
+              workspace: { type: 'string', minLength: 1 },
+              id: { type: 'string', minLength: 1 },
+              slot: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
+            },
           }),
           optionalParams('share.list', { type: 'object', maxProperties: 0 }),
           request('presence.publish', {

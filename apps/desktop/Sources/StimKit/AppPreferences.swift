@@ -21,6 +21,8 @@ public enum AppPreferences {
     /// Whether Sparkle also offers the `next` channel's prerelease builds. Unset follows `UpdateChannel.prereleaseUpdatesDefault`.
     public static let prereleaseUpdates = "updates.prerelease"
     public static let tileSize = "tileSize"
+    /// Whether Active Workspaces, the Overview and Builds also list paired machines' workspaces; a `MachineScope`.
+    public static let machineScope = "machineScope"
     public static let maxFramesPerSecond = "maxFramesPerSecond"
     public static let streamQuality = "streamQuality"
     public static let pausesHiddenFrames = "pausesHiddenFrames"

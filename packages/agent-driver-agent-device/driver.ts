@@ -21,10 +21,12 @@ import {
   claimRemoveCommand,
   clearClaimChild,
   markClaimChildPending,
+  readClaimSet,
   releaseClaim,
   setClaimChild,
   tryAcquireClaim,
   type ClaimHandle,
+  type ClaimOwner,
 } from '@stim-cli/core/ownership-claim';
 import {
   captureProcessIdentity,
@@ -104,6 +106,7 @@ const DEVICE_AGENT_DEVICE =
 
 const MAX_RECORDING_MS = 10 * 60_000;
 const MAX_RECORDING_BYTES = 512 * 1024 * 1024;
+const RECORDER_LABEL = 'hosted simulator recorder';
 const CAP_RETRY_MS = 30_000;
 const CAP_ATTEMPTS = 10;
 // agent-device deletes a downloadable artifact nobody fetched after 15 minutes (ARTIFACT_CLEANUP_TIMEOUT_MS).
@@ -268,6 +271,8 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private readonly leases = new Map<string, Lease>();
   private readonly released = new Set<string>();
   private recording: Recording | null = null;
+  private recorder: ClaimHandle | null = null;
+  private recordStarting: Promise<void> | null = null;
 
   constructor(options: AgentDeviceDriverOptions) {
     this.options = {
@@ -520,6 +525,19 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   async stop(): Promise<void> {
     this.stopping = true;
     await this.starting?.catch(() => undefined);
+    await this.recordStarting?.catch(() => undefined);
+    let recorderError: unknown;
+    if (this.options.device?.udid) {
+      clearTimeout(this.recording?.timer);
+      this.recording = null;
+      try {
+        if (this.recorder) await this.trackRecorder(this.options.device.udid);
+        await stopRecorders(recorderClaimRoot(this.options.stateDir), this.recorder);
+        this.recorder = null;
+      } catch (error) {
+        recorderError = error;
+      }
+    }
     const sessions = [...this.released];
     this.released.clear();
     for (const lease of this.leases.values()) clearInterval(lease.renew);
@@ -556,6 +574,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     if (running || this.claim) await this.teardown(running?.proxy, running ?? undefined);
     for (const session of sessions) this.removeSessionDirectories(session);
     rmSync(this.recordings, { recursive: true, force: true });
+    if (recorderError !== undefined) throw recorderError;
   }
 
   private async teardown(proxy?: ChildProcess, running?: Running): Promise<void> {
@@ -958,17 +977,103 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       return;
     }
     this.recording = next;
+    const started = this.startRecording(running, lease, target, body, next, response);
+    this.recordStarting = started;
+    await started;
+    if (this.recordStarting === started) this.recordStarting = null;
+  }
+
+  private async startRecording(
+    running: Running,
+    lease: Lease,
+    target: string,
+    body: Buffer,
+    next: Recording,
+    response: ServerResponse,
+  ): Promise<void> {
+    const udid = this.options.device?.udid;
+    if (udid) {
+      try {
+        await this.claimRecorder(udid);
+      } catch (error) {
+        process.stderr.write(`Hosted recorder claim failed: ${String(error).replace(/\s+/g, ' ')}\n`);
+        if (this.recording === next) this.recording = null;
+        discard(next.dir);
+        response
+          .writeHead(500, { 'content-type': 'text/plain' })
+          .end('The hosting Mac could not prepare the recording.\n');
+        return;
+      }
+    }
     const answer = await this.send(running, lease, target, body).catch(() => null);
     next.pending = false;
+    let tracked = true;
+    if (udid && (!answer || succeeded(answer.body))) tracked = await this.trackRecorder(udid);
+    else if (this.recorder && releaseClaim(this.recorder)) this.recorder = null;
+    if (udid && this.recording === next && answer && succeeded(answer.body) && !tracked) {
+      await this.send(
+        running,
+        lease,
+        '/rpc',
+        Buffer.from(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'stim-recorder-unidentified',
+            method: 'agent_device.command',
+            params: next.stop,
+          }),
+        ),
+      ).catch(() => null);
+      await this.trackRecorder(udid);
+      this.recording = null;
+      discard(next.dir);
+      response
+        .writeHead(500, { 'content-type': 'text/plain' })
+        .end('The hosting Mac could not identify the simulator recorder process, so it stopped the recording.\n');
+      return;
+    }
     if (this.recording === next && answer && succeeded(answer.body)) {
       next.timer = setTimeout(() => this.capLater(running, lease, next), this.options.maxRecordingMs);
       next.timer.unref();
     } else if (this.recording === next) {
       this.recording = null;
-      discard(dir);
+      discard(next.dir);
     }
     if (answer) this.answer(response, answer);
     else response.writeHead(502, { 'content-type': 'text/plain' }).end('Agent control is unavailable.\n');
+  }
+
+  private async claimRecorder(udid: string): Promise<void> {
+    const root = recorderClaimRoot(this.options.stateDir);
+    if (this.recorder) await this.trackRecorder(udid);
+    await stopRecorders(root, this.recorder);
+    this.recorder = null;
+    const attempt = tryAcquireClaim({ root, mode: 'exclusive', label: RECORDER_LABEL });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (!attempt.acquired)
+      throw new Error(`The ${RECORDER_LABEL} claim is held by another process: ${attempt.held?.path ?? root}`);
+    this.recorder = attempt.acquired;
+    markClaimChildPending(this.recorder);
+  }
+
+  private async trackRecorder(udid: string): Promise<boolean> {
+    const claim = this.recorder;
+    if (!claim) return true;
+    let pids: number[];
+    try {
+      pids = recorderPids(await listProcesses(), udid);
+    } catch {
+      return false;
+    }
+    if (pids.length === 0) {
+      if (releaseClaim(claim)) this.recorder = null;
+      return true;
+    }
+    const [pid, other] = pids;
+    const record = pid !== undefined && other === undefined ? this.captured(pid) : null;
+    if (!record) return false;
+    setClaimChild(claim, record);
+    return true;
   }
 
   private async capRecording(running: Running, lease: Lease, recording: Recording): Promise<void> {
@@ -1490,6 +1595,65 @@ function failed(response: ServerResponse, error: unknown): void {
   process.stderr.write(`Hosted agent request failed: ${String(error).replace(/\s+/g, ' ').slice(0, 400)}\n`);
   if (response.headersSent) response.destroy();
   else response.writeHead(500, { 'content-type': 'text/plain' }).end('Agent control failed on the hosting Mac.\n');
+}
+
+export function recorderClaimRoot(stateDir: string): string {
+  return join(stateDir, 'recorder.claims');
+}
+
+function recorderPids(ps: string, udid: string): number[] {
+  const recorder = new RegExp(
+    `(?:^|/)(?:xcrun\\s+)?simctl(?:\\s.*)?\\sio\\s+${udid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+recordVideo\\s`,
+    'i',
+  );
+  return ps.split('\n').flatMap((line) => {
+    const [, pid, command = ''] = /^\s*(\d+)\s+(.*)$/.exec(line) ?? [];
+    return recorder.test(command) ? [Number(pid)] : [];
+  });
+}
+
+async function stopRecorder(record: ClaimOwner): Promise<boolean> {
+  for (const [signal, ms] of [
+    ['SIGINT', 10_000],
+    ['SIGKILL', 2000],
+  ] as const) {
+    const status = inspectProcessIdentity(record);
+    if (status === 'gone' || status === 'different') return true;
+    if (status === 'unknown') return false;
+    try {
+      process.kill(record.pid, signal);
+    } catch {}
+    if (await waitForProcessExit(record, ms)) return true;
+  }
+  return false;
+}
+
+export async function stopRecorders(root: string, own: ClaimHandle | null = null): Promise<void> {
+  const survey = readClaimSet(root);
+  const kept = survey.unresolved.map((problem) => problem.path);
+  let reap = survey.dead.length > 0;
+  for (const holder of survey.live) {
+    const mine = holder.claimId === own?.claimId;
+    if (!mine) {
+      const owner = inspectProcessIdentity(holder.owner);
+      if (owner === 'unknown') kept.push(holder.path);
+      if (owner === 'same' || owner === 'unknown') continue;
+    }
+    if (holder.childDeclared && !(holder.child && (await stopRecorder(holder.child)))) {
+      kept.push(holder.path);
+      continue;
+    }
+    if (mine) releaseClaim(own);
+    else reap = true;
+  }
+  const [unresolved] = kept;
+  if (unresolved !== undefined)
+    throw new Error(
+      `The ${RECORDER_LABEL} is unresolved; its claim ${unresolved} was kept. Once it is gone, clear it with: ${claimRemoveCommand(unresolved)}`,
+    );
+  if (!reap) return;
+  const attempt = tryAcquireClaim({ root, mode: 'exclusive', label: RECORDER_LABEL });
+  releaseClaim(attempt.acquired ?? attempt.pending);
 }
 
 function discard(dir: string): void {

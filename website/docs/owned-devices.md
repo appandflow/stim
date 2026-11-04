@@ -771,6 +771,16 @@ with values recorded when the build was cached, so the check is one `adb shell`
 call instead of reading the whole APK. App-group
 containers, photos, the pasteboard and Simulator settings are not cleared.
 
+Every iOS install `stim ios` makes on a local owned simulator, adopted or not, also allows "Paste from
+Other Apps" for the app it installed, so pasting text Stim cannot type, such as
+accents and emoji, with Command-V from Stim Desktop, the phone app or a share
+lands in that app without an "Allow Paste" prompt. After the install and before
+the launch, Stim checks the simulator is still Stim-owned and writes the
+installed bundle id's `kTCCServicePasteboard` row (Allow) into the simulator's own
+`TCC.db`; no other app's row and nothing on the Mac is touched. A failure prints a
+warning and the install stands. A simulator that `--remote` runs on EAS is not covered. Other apps on the simulator, Safari included, keep
+iOS's own prompt.
+
 Android adoption requires the same system image, disk size and AVD creation
 settings. It keeps the AVD name. An emulator's `/data` partition is fixed, so
 before installing, adoption checks its free space. When there is less than
@@ -977,7 +987,9 @@ which the client downloads, rather than arbitrary host destinations.
 `record stop` downloads the video to that path, or `./recording-<time>.mp4`, on
 your machine. The hosting Mac writes the recording only in a private directory
 for the session in its temporary directory and deletes the files after the download, on `stim stop` or
-session teardown and when the session's daemon restarts. One recording runs per
+session teardown and when the session's daemon restarts. The hosting Mac stops the
+recorder before it parks or deletes the simulator, and a stim-server that restarts
+stops a recorder its previous run left. One recording runs per
 session; a second `record start`, a host output path, `record` inside `batch` and
 a `record stop` from another agent-device session are refused. The host stops a
 recording after 10 minutes; a `record stop` within the next 15 minutes downloads
