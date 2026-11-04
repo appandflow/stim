@@ -1,3 +1,4 @@
+import { hkdfSync } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync, watch, type FSWatcher } from 'node:fs';
 import {
   createServer,
@@ -1638,6 +1639,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     approved: (client, from) =>
       ('client' in from ? from.client === client : from.node !== null && agentNodes.get(client) === from.node) &&
       approved().deviceHost.some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+    tokenFor: (session) =>
+      Buffer.from(hkdfSync('sha256', serverIdentity().privateKey, session, 'stim hosted agent token v1', 32)).toString(
+        'base64url',
+      ),
     withdrawn: (session) => {
       hostedPresence.forget(session);
       for (const stream of agentStreams.get(session) ?? []) stream.destroy();
@@ -1948,9 +1953,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS,
     ).unref();
     push.refresh();
-    retireOnce ??= hostedDevices.reconcileStopped().catch((error: unknown) => {
-      process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
-    });
+    retireOnce ??= hostedDevices
+      .resumeSessions()
+      .then(() => hostedDevices.reconcileStopped())
+      .catch((error: unknown) => {
+        process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
+      });
     if (options.frameHelper === undefined && !helperPath && !helperBuilding) buildHelper();
     if (options.statusAtBoot !== false) statusFeed.hold();
     if (options.record !== false) {
@@ -5371,8 +5379,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       presence.close();
       hostedPresence.close();
       await settle(control.close());
-      await settle(agentDrivers.close());
       await settle(hostedDevices.close());
+      await settle(agentDrivers.close({ keep: hostedDevices.detached() }));
       updates.close();
       recorder?.close();
       await Promise.all(

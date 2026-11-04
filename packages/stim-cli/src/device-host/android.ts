@@ -88,7 +88,7 @@ function selectHostedAndroidDevice(request: HostedDeviceSelectors): HostedAndroi
 
 /** Runs only in the private worker home; a caller cannot select or tear down an existing AVD. */
 export async function runHostedAndroidDevice(
-  mode: 'prepare' | 'stop' | 'install' | 'reverse' | 'park' | 'inspect' | 'adopt',
+  mode: 'prepare' | 'stop' | 'install' | 'reverse' | 'park' | 'inspect' | 'adopt' | 'resume',
   request: { session: string; consolePort?: unknown; systemImage?: string; deviceProfile?: string },
   app?: { attempt: string; metroPort?: number; clientMetroPort?: number },
 ): Promise<HostedWorkerResult> {
@@ -224,6 +224,17 @@ export async function runHostedAndroidDevice(
       await resetAdoptedAvd(device.avdName, device.serial, '');
       removeHostedAppData(home, { keepBlobs: true });
       await muteBootedEmulator(device.serial, device.avdName, hostedNotify);
+      return { state: 'ready', device };
+    }
+    if (mode === 'resume') {
+      if (
+        device.avdName !== ownedAvdName(`hosted-${request.session}`) ||
+        !hostedConsolePort(request.consolePort) ||
+        device.consolePort !== request.consolePort ||
+        (await getAvdNameForSerialAsync(device.serial)) !== device.avdName ||
+        (await androidDeviceAbi(device.serial)) !== device.architecture
+      )
+        throw new Error('The hosted emulator is not running as its recorded owned AVD.');
       return { state: 'ready', device };
     }
     if (mode === 'park') {
