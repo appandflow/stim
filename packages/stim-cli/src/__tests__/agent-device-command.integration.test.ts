@@ -24,7 +24,7 @@ if (args[0] === 'open') {
 if (args[0] === 'tap' || args[0] === 'batch') {
   log('taps', JSON.stringify(args));
   if (!existsSync(join(process.env.STIM_HOME, 'opened'))) {
-    process.stdout.write(JSON.stringify({ success: false, error: { code: 'SESSION_NOT_FOUND' } }) + '\\n');
+    process.stdout.write(JSON.stringify({ success: false, error: { code: process.env.LOST_AS_LEASE ? 'INVALID_ARGS' : 'SESSION_NOT_FOUND' } }) + '\\n');
     process.stderr.write(process.env.LOST_AS_LEASE ? 'Error (INVALID_ARGS): No active proxy device lease for this session; run open first.\\n' : 'Error (SESSION_NOT_FOUND): iOS snapshot requires an active app session on the target device. Run open first\\n');
     process.exit(1);
   }
