@@ -43,6 +43,8 @@ interface Fixture {
   begins: unknown[];
   inputs: unknown[];
   inputResult: { text: string } | { typed: true } | { code: 'action-failed' | 'device-busy'; message: string } | null;
+  /** The simulator keyboard settings the control hub was handed, by control session. */
+  keyboards: { session: string; enabled: boolean }[];
   /** The viewer each input came from, by name. */
   inputBy: string[];
   /** Names of the viewers whose pointer the control hub was told to lift. */
@@ -95,6 +97,7 @@ function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {
     begins: [],
     inputs: [],
     inputResult: null,
+    keyboards: [],
     inputBy: [],
     releases: [],
     endFors: [],
@@ -161,6 +164,9 @@ function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {
       },
       release: (_owner, _session, participant) => {
         f.releases.push(participant.name);
+      },
+      deviceKeyboard: (_owner, session, enabled) => {
+        f.keyboards.push({ session, enabled });
       },
       endFor: (_owner, _reason, message) => {
         f.endFors.push(message);
@@ -752,6 +758,39 @@ describe('a web share', () => {
     socket.close();
   });
 
+  it('with --control, keeps the simulator keyboard setting for the share: every viewer sees it, a later one gets it, and each new control session is handed it', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const headers = { origin: origin(url), cookie: await login(url, share.password ?? '') };
+    const first = await connect(url, headers);
+    await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+    expect(f.keyboards).toEqual([]);
+    await vi.waitFor(() =>
+      expect(first.messages).toContainEqual({ type: 'deviceKeyboard', available: true, on: false }),
+    );
+
+    first.socket.send(JSON.stringify({ type: 'device-keyboard', on: true }));
+    await vi.waitFor(() => expect(f.keyboards.at(-1)).toEqual({ session: 'c1', enabled: true }));
+    const second = await connect(url, headers);
+    await vi.waitFor(() =>
+      expect(second.messages).toContainEqual({ type: 'deviceKeyboard', available: true, on: true }),
+    );
+    expect(first.messages.findLast((m) => m.type === 'deviceKeyboard')).toEqual({
+      type: 'deviceKeyboard',
+      available: true,
+      on: true,
+    });
+
+    f.owner?.send({ event: 'control-ended', session: 'c1', reason: 'failed', message: 'stim-frames exited.' });
+    first.socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+    await vi.waitFor(() => expect(f.keyboards.at(-1)).toEqual({ session: 'c2', enabled: true }));
+
+    second.socket.send(JSON.stringify({ type: 'device-keyboard', on: false }));
+    await vi.waitFor(() => expect(f.keyboards.at(-1)).toEqual({ session: 'c2', enabled: false }));
+    first.socket.close();
+    second.socket.close();
+  });
+
   it('with --control, sets and pastes clipboard text, and drops what the clipboard parser refuses', async () => {
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port ?? 0);
@@ -1015,6 +1054,25 @@ describe('a web share', () => {
       expect(driving).toContain('data-control="true"');
       expect(driving).toContain('data-view-only="false"');
       expect(driving).toContain('data-upgrade="false"');
+    });
+
+    it('offers the simulator keyboard setting only to a control session, and ignores it from a view session', async () => {
+      const { url, headers } = await signed();
+      const watcher = await connect(url, { ...headers, cookie: await login(url, 'view%20password') });
+      const driver = await connect(url, { ...headers, cookie: await login(url, 'control%20pass') });
+      await vi.waitFor(() =>
+        expect(driver.messages).toContainEqual({ type: 'deviceKeyboard', available: true, on: false }),
+      );
+      watcher.socket.send(JSON.stringify({ type: 'device-keyboard', on: true }));
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(watcher.messages.map((m) => m.type)).not.toContain('deviceKeyboard');
+      expect(driver.messages.filter((m) => m.type === 'deviceKeyboard')).toEqual([
+        { type: 'deviceKeyboard', available: true, on: false },
+      ]);
+      expect(f.keyboards.filter((entry) => entry.enabled)).toEqual([]);
+      watcher.socket.close();
+      driver.socket.close();
     });
 
     it('raises a view session to control on the control password, keeps it view on a wrong one, and never lowers one', async () => {

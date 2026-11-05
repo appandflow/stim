@@ -377,6 +377,13 @@ SECURITY MODEL
   one touch pointer: whoever puts a finger down holds it until they lift it,
   and a touch from anyone else meanwhile is dropped with "Name is using the
   screen".
+- Device keyboard, with --control on a local iOS simulator: an iOS simulator Stim shares draws no on-screen keyboard
+  while a viewer types, because stim-server attaches the hardware keyboard to it. A viewer with control gets a Device
+  keyboard switch in the options menu, off by default, that detaches it so the simulator draws its own keyboard. The
+  setting belongs to the share: every viewer sees it, a viewer who connects later gets it, and it is sent again after
+  the frames helper restarts or control restarts. Stopping stim-server resets it to off. Android emulators, physical
+  devices, macOS apps and hosted sessions have no switch, and a view-only viewer cannot change it. Two live shares
+  of one simulator do not coordinate the switch, and ending one turns it off for the other.
 - Clipboard, with --control on an iOS simulator, Android emulator or Android phone: Command-V or Control-V while
   the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field; an iOS simulator types printable ASCII, line breaks and tabs, and pastes other text with Command-V, which lands without a prompt in an app Stim installed on an owned simulator (Stim allows its paste permission) and where iOS can ask first in any other app. The
   top bar's options menu has a Sync clipboard switch, on by default for control viewers and remembered in the

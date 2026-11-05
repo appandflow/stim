@@ -642,7 +642,8 @@ function connect(codec) {
       me = { id: message.id, name: message.name, color: message.color };
       roster.set(me.id, { ...me, self: true, viewOnly });
       renderRoster();
-    } else if (message.type === 'presence') showPresence(message.participants);
+    } else if (message.type === 'deviceKeyboard') showDeviceKeyboard(message);
+    else if (message.type === 'presence') showPresence(message.participants);
     else if (message.type === 'busy') {
       busy = true;
       if (me) overlay.fade(me.id);
@@ -772,8 +773,19 @@ const copyFallback = document.getElementById('copy-fallback');
 const pasteDevice = document.getElementById('paste-device');
 const copyDevice = document.getElementById('copy-device');
 const copyChip = document.getElementById('copy-chip');
+const keyboardGroup = document.getElementById('keyboard-group');
+const keyboardSwitch = document.getElementById('device-keyboard');
 const SYNC_KEY = 'stim-share-clipboard-sync';
 const COPY_TIMEOUT_MS = 15000;
+
+function showDeviceKeyboard(message) {
+  keyboardGroup.hidden = message.available !== true;
+  keyboardSwitch.checked = message.on === true;
+}
+
+keyboardSwitch.addEventListener('change', () => {
+  if (!send({ type: 'device-keyboard', on: keyboardSwitch.checked })) keyboardSwitch.checked = !keyboardSwitch.checked;
+});
 
 function setOptionsOpen(open, restoreFocus) {
   optionsPanel.hidden = !open;

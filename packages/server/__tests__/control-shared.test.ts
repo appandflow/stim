@@ -138,3 +138,19 @@ it("keeps one share viewer's up from lifting another client's finger", async () 
     ['down', 0.5],
   ]);
 });
+
+it('turns the device keyboard off again when the session that turned it on ends, before the input closes', async () => {
+  const desktop = controller('desktop');
+  const id = await begin(desktop);
+  hub.deviceKeyboard(desktop, id, true);
+  expect(sent.at(-1)).toEqual({ input: 'deviceKeyboard', enabled: true });
+  hub.endById(desktop, id);
+  expect(sent.at(-1)).toEqual({ input: 'deviceKeyboard', enabled: false });
+  expect(attached).toBe(0);
+
+  const phone = controller('phone');
+  const next = await begin(phone);
+  const before = sent.length;
+  hub.endById(phone, next);
+  expect(sent).toHaveLength(before);
+});

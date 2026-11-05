@@ -733,6 +733,7 @@ interface Session {
   /** The driver the device had when this session began, and whether another one was already pushed to the owner. */
   driver: string | null;
   driverNoticed: boolean;
+  deviceKeyboard?: boolean;
 }
 
 /** One authenticated connection that can hold control sessions. */
@@ -1306,6 +1307,19 @@ export class ControlHub {
     this.lift(session.control, session.control.grab.release(participant.id));
   }
 
+  /**
+   * Tells the helper of an iOS simulator whether its on-screen keyboard shows: `enabled` detaches the hardware keyboard
+   * and stops input attaching it again. Does nothing without such a session.
+   */
+  deviceKeyboard(owner: Controller, id: string, enabled: boolean): void {
+    const session = this.sessions.get(id);
+    if (!session || session.owner !== owner || session.ended) return;
+    const { control } = session;
+    if (control.device.platform !== 'ios' || control.device.physical) return;
+    session.deviceKeyboard = enabled;
+    control.input.send({ input: 'deviceKeyboard', enabled });
+  }
+
   private async simulator(
     control: DeviceControl,
     command: Extract<InputCommand, { input: 'simulator' }>,
@@ -1405,6 +1419,7 @@ export class ControlHub {
     if (session.hostShown) this.hideHost(session);
     this.sessions.delete(session.id);
     control.sessions.delete(session);
+    if (session.deviceKeyboard) control.input.send({ input: 'deviceKeyboard', enabled: false });
     if (reason) session.owner.send({ event: 'control-ended', session: session.id, reason, message });
     this.audit(session.owner, session.target, 'control.end', {
       ok: true,

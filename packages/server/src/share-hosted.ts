@@ -60,6 +60,11 @@ export interface ShareSource {
     command: InputCommand,
     participant: PresenceParticipant,
   ) => Promise<Refusal | null | object>;
+  /**
+   * Shows or hides the on-screen keyboard of the shared iOS simulator for `session`; absent where the device is not a
+   * local simulator.
+   */
+  deviceKeyboard?: (owner: Controller, session: string, enabled: boolean) => void;
   /** `participant` left: lifts the pointer for it when it holds it. */
   release?: (owner: Controller, session: string, participant: PresenceParticipant) => void;
   /** Who else is on the device and where they touch; absent for a source that shows only a viewer's own touches. */

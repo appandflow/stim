@@ -103,6 +103,16 @@
             hidden
             aria-label="Device clipboard text"
           ></textarea>
+          <div class="options-group" id="keyboard-group" hidden>
+            <label class="switch-row" for="device-keyboard">
+              <span class="switch-label">Device keyboard</span>
+              <input class="switch" id="device-keyboard" type="checkbox" role="switch" />
+            </label>
+            <p class="options-help">
+              Shows the simulator's own on-screen keyboard, for everyone viewing this share. Typing on this browser's
+              keyboard still reaches the device.
+            </p>
+          </div>
         </div>
       </div>
       <button type="button" class="iconbtn" id="full" title="Fullscreen" aria-label="Fullscreen">

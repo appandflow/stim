@@ -111,7 +111,7 @@ export const SHARE_EXPIRY = { default: 60, max: 480 } as const;
 /** What the share hub needs of the rest of stim-server. */
 export interface ShareDeps {
   frames: Pick<FramePool, 'subscribe' | 'keyframe' | 'congested'>;
-  control: Pick<ControlHub, 'begin' | 'input' | 'release' | 'targetOf' | 'endFor' | 'endById'>;
+  control: Pick<ControlHub, 'begin' | 'input' | 'release' | 'deviceKeyboard' | 'targetOf' | 'endFor' | 'endById'>;
   /** Who else touches a local device; without it viewers see only their own touches. */
   presence?: Pick<PresenceHub, 'subscribe' | 'join' | 'leave'>;
   subscribeStatus: (listener: StatusListener) => () => void;
@@ -341,6 +341,7 @@ interface Share {
   controlStarting: Promise<string | null> | null;
   controlRetryAt: number;
   controlUsed: boolean;
+  deviceKeyboard: boolean;
   recordKey: string | null;
   latest: StatusPayload | null;
   /** What the shared device's status says for the page titles, and the app's display name once read. */
@@ -562,6 +563,7 @@ export class ShareHub {
         send: (message: ServerMessage) => this.controlEvent(share, message),
       },
       controlSession: null,
+      deviceKeyboard: false,
       controlStarting: null,
       controlRetryAt: 0,
       controlUsed: false,
@@ -670,6 +672,9 @@ export class ShareHub {
       input: (owner, session, _method, _params, command, participant) =>
         control.input(owner, session, command, participant),
       release: (owner, session, participant) => control.release(owner, session, participant),
+      ...(device.platform === 'ios' && !device.physical
+        ? { deviceKeyboard: (owner, session, enabled) => control.deviceKeyboard(owner, session, enabled) }
+        : {}),
       ...(presence
         ? {
             presence: {
@@ -943,6 +948,7 @@ export class ShareHub {
     for (const viewer of share.viewers) {
       if (viewer.socket.readyState === viewer.socket.OPEN) viewer.socket.send('{"type":"resumed"}');
       this.attach(share, viewer);
+      this.sendDeviceKeyboard(share, viewer, true);
       this.present(share, viewer);
       this.warmControl(share, viewer);
     }
@@ -1261,6 +1267,7 @@ export class ShareHub {
     this.identify(share, viewer);
     share.viewers.add(viewer);
     this.introduce(share, viewer);
+    this.sendDeviceKeyboard(share, viewer, false);
     this.present(share, viewer);
     this.warmControl(share, viewer);
     let alive = true;
@@ -1444,7 +1451,36 @@ export class ShareHub {
       return;
     }
     if (!share.request.control) return;
+    if (message.type === 'device-keyboard') return this.setDeviceKeyboard(share, viewer, message.on);
     await this.input(share, viewer, message);
+  }
+
+  private keyboardOffered(share: Share): boolean {
+    return share.state === 'live' && share.source?.deviceKeyboard !== undefined;
+  }
+
+  /** Tells a viewer with control whether the share's simulator keyboard can be switched and how it stands. */
+  private sendDeviceKeyboard(share: Share, viewer: Viewer, always: boolean): void {
+    const available = this.keyboardOffered(share);
+    if (!share.request.control || (!available && !always)) return;
+    if (this.accessOf(share, viewer.login) !== 'control' || viewer.socket.readyState !== viewer.socket.OPEN) return;
+    viewer.socket.send(JSON.stringify({ type: 'deviceKeyboard', available, on: available && share.deviceKeyboard }));
+  }
+
+  private async setDeviceKeyboard(share: Share, viewer: Viewer, on: unknown): Promise<void> {
+    if (typeof on !== 'boolean' || this.accessOf(share, viewer.login) !== 'control') return;
+    if (
+      !this.keyboardOffered(share) ||
+      !take(viewer.inputs, 1, this.limits.inputPerSecond, this.limits.inputPerSecond, 0)
+    ) {
+      return this.sendDeviceKeyboard(share, viewer, true);
+    }
+    share.deviceKeyboard = on;
+    for (const other of share.viewers) this.sendDeviceKeyboard(share, other, false);
+    const { source } = share;
+    const session = await this.controlSession(share, viewer);
+    if (!source || !session || share.ended || share.source !== source || share.deviceKeyboard !== on) return;
+    source.deviceKeyboard?.(share.owner, session, on);
   }
 
   private rename(share: Share, viewer: Viewer, raw: unknown): void {
@@ -1578,6 +1614,7 @@ export class ShareHub {
         }
         share.controlSession = outcome.session;
         share.controlUsed = false;
+        if (share.deviceKeyboard) source.deviceKeyboard?.(share.owner, outcome.session, true);
         return outcome.session;
       })
       .finally(() => {
