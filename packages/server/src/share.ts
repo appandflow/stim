@@ -341,7 +341,6 @@ interface Share {
   controlStarting: Promise<string | null> | null;
   controlRetryAt: number;
   controlUsed: boolean;
-  /** Whether the shared simulator draws its own keyboard; kept while the share waits and sent again to each new control session. */
   deviceKeyboard: boolean;
   recordKey: string | null;
   latest: StatusPayload | null;
@@ -1472,10 +1471,13 @@ export class ShareHub {
   }
 
   private async setDeviceKeyboard(share: Share, viewer: Viewer, on: unknown): Promise<void> {
-    if (typeof on !== 'boolean' || this.accessOf(share, viewer.login) !== 'control' || !this.keyboardOffered(share)) {
-      return;
+    if (typeof on !== 'boolean' || this.accessOf(share, viewer.login) !== 'control') return;
+    if (
+      !this.keyboardOffered(share) ||
+      !take(viewer.inputs, 1, this.limits.inputPerSecond, this.limits.inputPerSecond, 0)
+    ) {
+      return this.sendDeviceKeyboard(share, viewer, true);
     }
-    if (!take(viewer.inputs, 1, this.limits.inputPerSecond, this.limits.inputPerSecond, 0)) return;
     share.deviceKeyboard = on;
     for (const other of share.viewers) this.sendDeviceKeyboard(share, other, false);
     const { source } = share;

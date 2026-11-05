@@ -167,7 +167,6 @@ function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {
       },
       deviceKeyboard: (_owner, session, enabled) => {
         f.keyboards.push({ session, enabled });
-        return true;
       },
       endFor: (_owner, _reason, message) => {
         f.endFors.push(message);
@@ -788,6 +787,10 @@ describe('a web share', () => {
 
     second.socket.send(JSON.stringify({ type: 'device-keyboard', on: false }));
     await vi.waitFor(() => expect(f.keyboards.at(-1)).toEqual({ session: 'c2', enabled: false }));
+    second.socket.send(JSON.stringify({ type: 'device-keyboard', on: true }));
+    await vi.waitFor(() => expect(f.keyboards.at(-1)).toEqual({ session: 'c2', enabled: true }));
+    await f.hub.stop(WORKSPACE);
+    expect(f.keyboards.at(-1)).toEqual({ session: 'c2', enabled: false });
     first.socket.close();
     second.socket.close();
   });
