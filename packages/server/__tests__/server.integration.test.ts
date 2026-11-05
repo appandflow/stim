@@ -1188,6 +1188,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     });
     const hub = vi.spyOn(ShareHub.prototype, 'start');
     hub.mockImplementationOnce(async () => started({ password: 'generated-pw-1' }));
+    vi.spyOn(ShareHub.prototype, 'list').mockReturnValue([started({})]);
     vi.spyOn(ShareHub.prototype, 'stop').mockResolvedValue([]);
     await routeServer();
     const client = await desktop();
@@ -1230,6 +1231,32 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
 
     await client.request('share.stop', { workspace });
     expect(file().ios.state).toBe('stopped');
+  });
+
+  it('marks a share stopped when it ended while its entry was being saved', async () => {
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+    mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
+    writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
+    vi.spyOn(ShareHub.prototype, 'start').mockImplementation(async () => ({
+      id: 'w1',
+      workspace,
+      platform: 'ios',
+      slot: 'default',
+      physical: false,
+      control: false,
+      viewers: 0,
+      state: 'live',
+      auth: 'generated',
+      viewAuth: null,
+      url: `https://x.test/s/${TOKEN}/`,
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      password: 'generated-pw-1',
+    }));
+    vi.spyOn(ShareHub.prototype, 'list').mockReturnValue([]);
+    await routeServer();
+    const client = await desktop();
+    await client.request('share.start', { workspace, platform: 'ios' });
+    expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links.ios.state).toBe('stopped');
   });
 
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {

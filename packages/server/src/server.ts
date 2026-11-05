@@ -5136,6 +5136,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const started = await shares.start(request);
       if ('code' in started) return send(socket, { id, error: started });
       const saved = await saveStartedShare(request, started);
+      if (saved && !shares.list().some((row) => row.id === started.id)) {
+        await markSavedStopped(() => pauseShareLinkAsync(request.workspace, shareLinkKey(request)));
+      }
       return send(socket, { id, result: saved ? { ...started, saved: true } : started });
     }
 
