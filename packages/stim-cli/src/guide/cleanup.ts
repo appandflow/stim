@@ -1151,8 +1151,8 @@ THE ONE CASE GC WILL NOT REAP
   the commands below would free now.
 
   Watchman is stopped by a plain \`gc --delete\` and by \`gc --delete --cache
-  watchman\`; no other \`--cache\` value runs that step. Every \`gc --delete\`,
-  \`--cache all\` included, also runs the pressure ladder with memory
+  watchman\`; no other \`--cache\` value runs that step. A plain \`gc --delete\` and
+  \`gc --delete --cache all\` also run the pressure ladder with memory
   treated as under pressure, whose rung 6 stops an unused watchman of 1 GiB
   or more by the same check; the plain step above stops one of any size
   first.
