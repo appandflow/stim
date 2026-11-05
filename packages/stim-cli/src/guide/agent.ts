@@ -357,8 +357,9 @@ Ask the user before these actions:
 - worktree remove --force, because it also discards uncommitted and untracked
   files.
 - gc --delete, because it deletes orphaned resources, removes clean linked
-  worktrees whose branch or pull request is merged (or whose pull request
-  was closed), and runs the pressure ladder to its end at high: every
+  worktrees that a stim command has run in (one another tool manages is kept
+  as not-registered) whose branch or pull request is merged (or whose pull
+  request was closed), and runs the pressure ladder to its end at high: every
   workspace idle 2 minutes or more goes idle (stim revive resumes it),
   parked devices are deleted, shared caches are trimmed, and workspaces idle
   10 minutes or more go dormant, losing their owned devices. That includes

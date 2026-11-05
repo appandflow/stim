@@ -10,7 +10,6 @@ import {
   worktreeActivityOf,
   worktreeActivityOfAsync,
 } from '../commands/gc/worktrees.ts';
-import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { recentNativeUseReason, workspaceBuildReasons, workspaceBuildReasonsAsync } from '../commands/gc/workspaces.ts';
 import { reclaimKeys } from '../commands/worktree.ts';
@@ -80,15 +79,14 @@ function pathExists(path: string): boolean {
   }
 }
 
-function scopedRoots(roots: string[], env?: NodeJS.ProcessEnv): string[] {
-  if (!deviceSweepIsScoped(env)) return roots;
+function registeredRoots(roots: string[]): string[] {
   const registry = new Set(listedRoots());
   return roots.filter((root) => registry.has(root));
 }
 
 export function artifactWorktrees(): ArtifactWorktree[] {
   const found = new Map<string, ArtifactWorktree>();
-  for (const root of scopedRoots(candidateRoots())) {
+  for (const root of registeredRoots(candidateRoots())) {
     const entry = artifactWorktree(root, listWorktrees(root));
     if (entry) found.set(entry.path, entry);
   }
@@ -118,7 +116,7 @@ export async function artifactWorktreesAsync(
   operation?: StimContext,
 ): Promise<ArtifactWorktree[]> {
   const found = new Map<string, ArtifactWorktree>();
-  for (const root of scopedRoots(await candidateRootsAsync(operation), operation?.env)) {
+  for (const root of registeredRoots(await candidateRootsAsync(operation))) {
     signal.throwIfAborted();
     const { entries, ...source } = await resolveSourceCheckoutAsync(root, {
       env: operation?.env,

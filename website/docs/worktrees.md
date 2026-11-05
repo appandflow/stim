@@ -432,22 +432,30 @@ git-ignored files, such as `.env.local`, with it. Pin a worktree with
 
 `gc` lists every linked worktree that has a Stim workspace, and every other
 linked worktree of a registered project's repository, and says why each one
-is removed or kept. A merged worktree where no stim command ever ran is
-removed by the same rules. A worktree is finished when its branch is merged into
+is removed or kept. It removes only a worktree Stim has used, meaning a project
+is registered or a workspace is recorded inside it. Any stim command that
+records a workspace leaves that (`start`, `ios`, `android`, `web`, `macos`, or
+`worktree warm` run from the app directory). Stim does not create worktrees, so
+use is the only record it has. A linked worktree that another tool created and
+manages, where no stim command ran, is listed as `not-registered` and kept,
+however merged or idle it is, and automatic maintenance does not clear its
+`node_modules` or build outputs either. `stim worktree remove` still removes it
+on request. A worktree is finished when its branch is merged into
 the default branch, or when its pull request was merged or closed, and plain
 `gc --delete` removes it. `--worktrees` also
 removes a worktree that is idle: no Stim command has used it for
 `--older-than` days, or 7 days without that option. Either way, gc keeps a
-worktree that is the source checkout, bare, not registered in a `STIM_HOME`-scoped
-home (the registry of a scratch home does not list the worktrees of other
-homes, so it does not remove them or clear their `node_modules` and build outputs), locked, holds another worktree
+worktree that is the source checkout, bare, not registered in this Stim home (no
+stim command ran there, or it belongs to another home), locked, pinned by
+`maintenance.keep`, holds another worktree
 (`stim worktree remove` refuses that too), in use, unpushed, or has
 initialized submodules. A dirty worktree (untracked files count, except
 watchman's `.watchman-cookie-*` files) is kept unless it is finished, in which
 case gc archives its uncommitted files first (see below). In use includes a
 running dev server, a Stim run or live build, a booted owned simulator or
 emulator, a held device lease, and a worktree that holds the running `stim`
-or the `stim` on your PATH; a device left booted keeps the worktree until
+or the `stim` on your PATH, and a running Claude Code session or a Codex
+thread active in the last 30 minutes that works in it; a device left booted keeps the worktree until
 `stim stop` or the [idle stage](./dev-server-and-logs.md#idle-stop) shuts it
 down. A simulator that `stim stop` left booted for its
 [grace period](./owned-devices.md) does not keep it. With `--delete`, gc runs

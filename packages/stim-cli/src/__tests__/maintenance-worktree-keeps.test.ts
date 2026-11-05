@@ -37,6 +37,8 @@ const plan = async (worktrees: Candidate[], idleDays: number | null = null) => {
 test('the worktree check reports a code and the path for every reason it keeps a worktree', async () => {
   const kept: [WorktreeSkipCode, string][] = [
     ['locked', 'locked by git worktree lock'],
+    ['pinned', 'pinned by maintenance.keep'],
+    ['not-registered', 'not registered in this Stim home: no project or workspace record names it'],
     ['dirty', 'dirty: 2 uncommitted or untracked files (a.ts, b.ts)'],
     ['unpushed', 'unpushed: 1 commit on no remote or other branch'],
     ['in-use', 'in use: its dev server supervisor (pid 1) is running'],

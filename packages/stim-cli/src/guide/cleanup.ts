@@ -599,9 +599,15 @@ IN USE
 SWEEPING FINISHED WORKTREES
   Every \`gc\` without --cache looks at every registered project root,
   every workspace.json root, and every linked worktree \`git worktree list\`
-  shows for a registered project's repository, whether or not a stim command
-  ever ran in it. It groups them by git worktree and reports each linked
-  worktree with the reason it is removed or kept. A worktree is finished when
+  shows for a registered project's repository. It groups them by git worktree
+  and reports each linked worktree with the reason it is removed or kept. Only
+  a worktree Stim has used is ever removed: a project is registered, or a
+  workspace.json names a root, inside it, which a stim command that records a
+  workspace (start, ios, android, web, macos, or worktree warm from the app
+  directory) leaves. Stim does not create worktrees, so use is the only record
+  it has. A linked worktree another tool created and manages is reported as
+  not-registered and kept, however merged or idle; \`worktree remove\` still
+  removes it on request. A worktree is finished when
   its branch is merged into the default branch, or its pull request was
   merged or closed (PULL REQUESTS below). A clean worktree with no commits
   of its own counts as finished once idle (NO COMMITS OF ITS OWN below).
@@ -611,10 +617,12 @@ SWEEPING FINISHED WORKTREES
   own beyond the default branch (NO COMMITS OF ITS OWN below). Each needs a
   clean state, except a finished one whose changes are archived;
   a worktree is kept when it is the source checkout, bare, locked, pinned by maintenance.keep, holds
-  another worktree (worktree remove refuses it too), in use,
-  not registered in this Stim home while STIM_HOME is set (not-registered:
-  the registry and workspace.json roots of a scoped home do not list it, and
-  the repository's other worktrees may belong to another home),
+  another worktree (worktree remove refuses it too), in use (the sweep also
+  counts a running Claude Code session, or a Codex thread active in the last
+  30 minutes, whose working directory is in the worktree),
+  not registered in this Stim home (not-registered: neither the registry nor
+  a workspace.json root of this Stim home lies in it, so no stim command ran
+  there, or the worktree belongs to another home),
   dirty and not finished, or dirty and finished when its changes cannot be
   archived (ARCHIVED CHANGES below; untracked files count; pod install churn and
   watchman's untracked \`.watchman-cookie-*\` files alone do not), unpushed
