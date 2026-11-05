@@ -40,7 +40,7 @@ test.each([
   {
     name: 'a project property password',
     path: 'android/gradle.properties',
-    text: 'APP_KEY_PASSWORD = x\n',
+    text: 'MYAPP_RELEASE_KEY_PASSWORD = x\n',
     found: true,
   },
   { name: 'a password in an env file', path: '.env.production', text: 'KEY_PASSWORD=x\n', found: true },
@@ -82,11 +82,16 @@ test.each([
   {
     name: 'an empty assignment',
     path: 'android/gradle.properties',
-    text: 'APP_STORE_PASSWORD=\nAPP_ALIAS=k\n',
+    text: 'MYAPP_UPLOAD_STORE_PASSWORD=\nAPP_ALIAS=k\n',
     found: false,
   },
   { name: 'a null credential', path: 'credentials.json', text: '{"keyPassword": null}', found: false },
-  { name: 'a docs placeholder', path: 'android/gradle.properties', text: 'APP_STORE_PASSWORD=*****\n', found: false },
+  {
+    name: 'a docs placeholder',
+    path: 'android/gradle.properties',
+    text: 'MYAPP_UPLOAD_STORE_PASSWORD=*****\n',
+    found: false,
+  },
   { name: 'another word ending in key', path: '.env', text: 'MONKEY_PASSWORD=abc\n', found: false },
   {
     name: 'a TLS trust store',
@@ -97,7 +102,7 @@ test.each([
   {
     name: 'a password with a dollar',
     path: 'android/gradle.properties',
-    text: 'APP_STORE_PASSWORD=P@ss$word\n',
+    text: 'MYAPP_UPLOAD_STORE_PASSWORD=P@ss$word\n',
     found: true,
   },
   {
@@ -106,6 +111,29 @@ test.each([
     text: '{"a":"x#y","keyPassword":null,"keystorePassword":"real"}',
     found: true,
   },
+  {
+    name: 'the React Native upload names',
+    path: 'android/gradle.properties',
+    text: 'MYAPP_UPLOAD_STORE_PASSWORD=x\nMYAPP_UPLOAD_KEY_PASSWORD=y\n',
+    found: true,
+  },
+  {
+    name: 'AGP injected signing',
+    path: 'android/gradle.properties',
+    text: 'android.injected.signing.store.password=x\n',
+    found: true,
+  },
+  { name: 'an exported password', path: '.env', text: 'export KEY_PASSWORD="abc"\n', found: true },
+  { name: 'an encryption key password', path: '.env', text: 'ENCRYPTION_KEY_PASSWORD=abc\n', found: false },
+  { name: 'a JWT key password', path: '.env', text: 'JWT_KEY_PASSWORD=dev\n', found: false },
+  { name: 'an App Store password', path: '.env', text: 'APP_STORE_PASSWORD=x\n', found: false },
+  {
+    name: 'a TLS key store',
+    path: 'android/gradle.properties',
+    text: 'systemProp.javax.net.ssl.keyStorePassword=changeit\n',
+    found: false,
+  },
+  { name: 'a local env template', path: '.env.local.example', text: 'KEY_PASSWORD=changeme\n', found: false },
   { name: 'the debug password', path: 'android/gradle.properties', text: 'storePassword=android\n', found: false },
   {
     name: 'properties with no password',
