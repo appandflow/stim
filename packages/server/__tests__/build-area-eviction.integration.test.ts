@@ -308,6 +308,25 @@ test('retains an area whose claim is held and removes it once released, naming w
   expect(existsSync(path)).toBe(false);
 });
 
+test('an eviction pass reuses the process list across refusals and refreshes it after deletion', async () => {
+  area('a', 'newest', 0);
+  const removedPath = area('a', 'expired', 30);
+  const held = [area('a', 'older-claim', 40), area('a', 'old-claim', 35), area('a', 'later-claim', 25)];
+  for (const path of held) {
+    const claim = tryAcquireClaim({ root: `${path}.claims`, mode: 'exclusive' }).acquired;
+    assert(claim);
+    onTestFinished(() => void releaseClaim(claim));
+  }
+  let listings = 0;
+  processList.requested = () => listings++;
+
+  await start().evictAreas();
+
+  expect(listings).toBe(2);
+  expect(existsSync(removedPath)).toBe(false);
+  expect(held.every(existsSync)).toBe(true);
+});
+
 test('retains an area whose claim a crashed Android build left unresolved', async () => {
   area('a', 'newest', 0);
   const path = area('a', 'subject', 30);
