@@ -837,9 +837,6 @@ test('a reload that reached several devices says so and counts them', async () =
   expect(lines[0]).toContain('not only emulator-5554');
 });
 
-// Soak 2026-11-01 (#4800): Metro kept listing the app's earlier sockets after each reload, so one
-// emulator or simulator showed up as two. `getpeers` captured from the real Metro after back-to-back
-// reloads of one simulator: {"socket#0":"role=ios","socket#5":"role=ios"}.
 test.each([
   ['ios', 'U1', { 'socket#0': 'role=ios', 'socket#5': 'role=ios' }],
   ['android', 'emulator-5554', { 'socket#0': 'app=com.example.android', 'socket#5': 'app=com.example.android' }],
