@@ -24,4 +24,12 @@ enum SimulatorHardwareKeyboard {
     }
     return attached
   }
+
+  @discardableResult
+  static func detach(from device: NSObject) -> Bool {
+    guard device.responds(to: selector) else { return false }
+    let set = unsafeBitCast(device.method(for: selector), to: SetFn.self)
+    var error: NSError?
+    return set(device, selector, false, 0, &error)
+  }
 }

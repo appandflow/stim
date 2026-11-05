@@ -85,6 +85,8 @@ link or password.
 `stim share stop` ends every share of the current workspace. To end one share,
 use **Stop** on its row in Stim Desktop's Settings > Connections > Using this machine > Share links.
 
+A viewer with control on a local iOS simulator also gets a **Device keyboard** switch in the viewer's Options menu. It is off by default, so the simulator draws no on-screen keyboard while a viewer types. On, the simulator draws its own keyboard for every viewer of that share, until someone turns it off or the share ends; stopping and restarting stim-server resets it to off. Android emulators, physical devices, macOS apps and hosted sessions have no switch.
+
 Stim Desktop makes, lists and stops shares too: see [Stim Desktop](./desktop.md).
 
 ## Custom domain

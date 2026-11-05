@@ -681,6 +681,7 @@ button.primary.small {
   flex: none;
 }
 .options[hidden],
+.options-group[hidden],
 .options-panel[hidden],
 .chip[hidden],
 .options-help[hidden],
@@ -739,6 +740,11 @@ input.switch:checked {
 input.switch:checked::after {
   transform: translateX(14px);
   background: var(--on-accent);
+}
+.options-group {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
 .options-help {
   margin: 8px 0 0;

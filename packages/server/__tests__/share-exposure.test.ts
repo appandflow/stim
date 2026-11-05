@@ -117,6 +117,7 @@ describe('web shares in proxy mode', () => {
         targetOf: () => null,
         input: async () => null,
         release: () => {},
+        deviceKeyboard: () => true,
         endFor: () => {},
         endById: () => true,
       },

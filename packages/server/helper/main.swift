@@ -31,7 +31,9 @@ import ImageIO
 // is Return, "\t" is Tab and "\u{8}" is Delete; {"input": "key", "key": "left|right|up|down|escape",
 // "modifiers": []} on an Android device or emulator, and on an iOS simulator also tab, return, backspace, a-z and
 // 0-9 with command, shift, option and control held; and {"input": "button", "button":
-// "home|lock"}, or on an emulator also "back|app-switch"; {"input": "rotate", "direction":
+// "home|lock"}, or on an emulator also "back|app-switch"; {"input": "deviceKeyboard", "enabled": bool}, which on an
+// iOS simulator detaches the hardware keyboard so the simulator draws its own, and stops input attaching it again
+// until the helper exits or the command is sent with false; {"input": "rotate", "direction":
 // "left|right"}; and on an emulator {"input": "posture", "posture":
 // "folded|half-open|unfolded"}. An emulator types and presses buttons only with a hardware
 // keyboard. {"clipboard": "set", "id": n, "text": s, "paste": bool} and {"clipboard": "get", "id": n} set or
@@ -317,6 +319,7 @@ final class SimulatorSource {
   let udid: String
   let inputQueue = DispatchQueue(label: "stim.frames.input")
   var hid: SimulatorHID?
+  private var deviceKeyboard = false
   private let pacer: Pacer
   private var displays: [SimDisplay] = []
   private var displayIndex = 0
@@ -794,7 +797,7 @@ extension AndroidDeviceSource: Source {
       expireClipboard(id)
     case .clipboard(.paste):
       Output.notice(["inputError": "A scrcpy device pastes with SET_CLIPBOARD."])
-    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease, .deviceKeyboard:
       break
     }
   }
@@ -963,7 +966,7 @@ extension WebSource: Source {
       Output.notice(["inputError": "A web page does not rotate or fold."])
     case .clipboard(let request):
       refuseClipboard(request, "A web page has no device clipboard.")
-    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease, .deviceKeyboard:
       break
     }
   }
@@ -986,6 +989,7 @@ indirect enum Command {
   case rotate(clockwise: Bool)
   case posture(EmulatorPosture)
   case clipboard(ClipboardRequest)
+  case deviceKeyboard(Bool)
 }
 
 /// `set` and `get` carry the id their reply notice names. `paste` presses Command-V on an iOS simulator, whose clipboard
@@ -1061,6 +1065,8 @@ func parseCommand(_ line: String, base: Config) -> Command? {
     return (object["text"] as? String).map { .text($0) }
   case "button":
     return (object["button"] as? String).map { .button($0) }
+  case "deviceKeyboard":
+    return (object["enabled"] as? Bool).map { .deviceKeyboard($0) }
   case "rotate":
     let directions = ["left": false, "right": true]
     return (object["direction"] as? String).flatMap { directions[$0] }.map { .rotate(clockwise: $0) }
@@ -1172,8 +1178,7 @@ extension SimulatorSource: Source {
         MainActor.assumeIsolated {
           guard let touch = self.duo?.touch(phase, point: point, revision: revision) else { return }
           self.inputQueue.async {
-            if self.hid?.isConnected != true { self.hid = SimulatorHID(udid: self.udid, hardwareKeyboard: true) }
-            self.hid?.touch(phase, at: touch.point, screenID: touch.screenID)
+            self.openHID()?.touch(phase, at: touch.point, screenID: touch.screenID)
           }
         }
       }
@@ -1184,6 +1189,11 @@ extension SimulatorSource: Source {
       return
     }
     inputQueue.async { self.apply(command) }
+  }
+
+  private func openHID() -> SimulatorHID? {
+    if hid?.isConnected != true { hid = SimulatorHID(udid: udid, hardwareKeyboard: !deviceKeyboard) }
+    return hid
   }
 
   private func releaseDuo(_ touch: DuoFrameRenderer.Touch?) {
@@ -1200,8 +1210,13 @@ extension SimulatorSource: Source {
       }
       return
     }
-    if hid?.isConnected != true { hid = SimulatorHID(udid: udid, hardwareKeyboard: true) }
-    guard let hid else { return Output.notice(["inputError": "\(udid) could not be opened for input."]) }
+    if case .deviceKeyboard(let enabled) = command {
+      deviceKeyboard = enabled
+      guard let hid = openHID() else { return Output.notice(["inputError": "\(udid) could not be opened for input."]) }
+      hid.setHardwareKeyboard(!enabled)
+      return
+    }
+    guard let hid = openHID() else { return Output.notice(["inputError": "\(udid) could not be opened for input."]) }
     switch command {
     case .touch(let phase, let point, let second, let index):
       let displays = CoreSimulator.displays(udid: udid)
@@ -1242,7 +1257,8 @@ extension SimulatorSource: Source {
       hid.hardwareKey(code: command, down: false)
     case .clipboard(let request):
       refuseClipboard(request, "stim-server sets an iOS simulator's clipboard itself.")
-    case .config, .keyframe, .recordKeyframe, .rotate, .posture, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease:
+    case .config, .keyframe, .recordKeyframe, .rotate, .posture, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease,
+      .deviceKeyboard:
       break
     }
   }
@@ -1305,7 +1321,7 @@ extension EmulatorSource: Source {
       }
     case .clipboard(.paste):
       Output.notice(["inputError": "stim-server pastes on an emulator through adb."])
-    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .window, .duoTouch, .duoRelease, .deviceKeyboard:
       break
     }
   }

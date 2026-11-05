@@ -1306,6 +1306,19 @@ export class ControlHub {
     this.lift(session.control, session.control.grab.release(participant.id));
   }
 
+  /**
+   * Tells the helper of an iOS simulator whether its on-screen keyboard shows: `enabled` detaches the hardware keyboard
+   * and stops input attaching it again. False without such a session.
+   */
+  deviceKeyboard(owner: Controller, id: string, enabled: boolean): boolean {
+    const session = this.sessions.get(id);
+    if (!session || session.owner !== owner || session.ended) return false;
+    const { control } = session;
+    if (control.device.platform !== 'ios' || control.device.physical) return false;
+    control.input.send({ input: 'deviceKeyboard', enabled });
+    return true;
+  }
+
   private async simulator(
     control: DeviceControl,
     command: Extract<InputCommand, { input: 'simulator' }>,
