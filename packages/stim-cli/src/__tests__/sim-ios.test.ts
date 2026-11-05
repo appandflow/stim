@@ -372,6 +372,87 @@ test('boot diagnostics retain peak pressure after recovery and unknown readings,
   }
 });
 
+// Captured from `xcrun simctl boot` on an adopted simulator in the 2026-11-01 soak (#4802).
+const BOOT_EXIT_22_STDERR =
+  'An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=22):\nThe operation couldn\u2019t be completed. Invalid argument\nInvalid argument\n';
+
+function bootRejectedExecutor({
+  states,
+  pressure,
+  retryBoots,
+}: {
+  states: string[];
+  pressure: string;
+  retryBoots: boolean;
+}) {
+  const boots: string[] = [];
+  const lists: string[] = [];
+  setExecutor({
+    runFile: (_file, args = []) => {
+      if (args.includes('notifyutil')) return 'com.apple.springboard.finishedstartup 4242\n';
+      if (args[0] === '-n') return pressure;
+      const state = states[Math.min(lists.length, states.length - 1)] ?? 'Shutdown';
+      lists.push(state);
+      return bootSimList(state);
+    },
+    runFileQuiet: () => '',
+    spawn: (_cmd: string, args: readonly string[] = []) => {
+      if (args[1] !== 'boot') return makeExitingChild();
+      boots.push('boot');
+      return boots.length > 1 && retryBoots ? makeExitingChild() : makeExitingChild(22, BOOT_EXIT_22_STDERR);
+    },
+  });
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  return { boots };
+}
+
+describe('simctl boot exit 22', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.restoreAllMocks();
+  });
+
+  test('does not blame memory when pressure stayed normal', async () => {
+    const { boots } = bootRejectedExecutor({ states: ['Shutdown'], pressure: '1', retryBoots: false });
+    const outcome = bootIosSim('UDID-A').catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(5000);
+    const error = await outcome;
+    assert(error instanceof Error);
+    expect(boots).toHaveLength(2);
+    expect(error.message).toContain('failed with exit code 22');
+    expect(error.message).toContain('Highest observed memory pressure: normal');
+    expect(error.message).not.toContain('Stop unused slots');
+    expect(error.message).not.toContain('OOM');
+  });
+
+  test('keeps the memory advice when pressure was read as high', async () => {
+    bootRejectedExecutor({ states: ['Shutdown'], pressure: '2', retryBoots: false });
+    const outcome = bootIosSim('UDID-A').catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(5000);
+    const error = await outcome;
+    assert(error instanceof Error);
+    expect(error.message).toContain('Highest observed memory pressure: warning');
+    expect(error.message).toContain('Stop unused slots');
+  });
+
+  test('continues to the boot wait when the device is booting despite the exit', async () => {
+    const { boots } = bootRejectedExecutor({ states: ['Booting'], pressure: '1', retryBoots: false });
+    const outcome = bootIosSim('UDID-A').catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await outcome).toBeUndefined();
+    expect(boots).toHaveLength(1);
+  });
+
+  test('retries the boot once when the device stayed shut down', async () => {
+    const { boots } = bootRejectedExecutor({ states: ['Shutdown'], pressure: '1', retryBoots: true });
+    const outcome = bootIosSim('UDID-A').catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await outcome).toBeUndefined();
+    expect(boots).toHaveLength(2);
+  });
+});
+
 const LAUNCHD_UDID = 'A48B2B1E-3768-48D8-9816-86B2AC7F2188';
 const OTHER_LAUNCHD_UDID = '9981F3FA-0F95-4720-B4D4-FBC8E90C10A8';
 
