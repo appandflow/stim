@@ -16,6 +16,7 @@ import { MAINTENANCE_LOG_NAME, settingDefinition } from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
 import { workspaceInUseAsync } from '../../workspace/in-use.ts';
+import { maintenancePinnedReader } from '../../maintenance/protect.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
 import { holdsDeferredShutdown } from '../../devices/deferred-shutdown.ts';
 import {
@@ -89,6 +90,8 @@ export interface WorktreeFacts {
   source: 'source' | 'linked' | { refusal: string };
   bare: boolean;
   locked: boolean;
+  /** `maintenance.keep` pins one of the worktree's workspaces, or its pins could not be read. */
+  pinned?: boolean;
   /** A scoped STIM_HOME does not list this worktree, so its registry cannot say the worktree is this home's. */
   unregistered?: boolean;
   nested?: string[];
@@ -111,6 +114,7 @@ export type WorktreeSkipCode =
   | 'source-checkout'
   | 'not-registered'
   | 'locked'
+  | 'pinned'
   | 'nested-worktree'
   | 'in-use'
   | 'status-unreadable'
@@ -220,6 +224,12 @@ function noOwnCommitsActivityBlocker(
   };
 }
 
+async function anyPinned(keys: readonly string[], operation?: StimContext): Promise<boolean> {
+  const pinned = maintenancePinnedReader(operation);
+  for (const key of keys) if (await pinned(key)) return true;
+  return false;
+}
+
 function dirtyLines(porcelain: string[] | null): string[] {
   return excludePodChurn(excludeWatchmanCookies(porcelain).lines).lines;
 }
@@ -281,6 +291,7 @@ function removalBlocker(
     return skip('not-registered', 'not registered in this Stim home: STIM_HOME scopes this config');
   }
   if (facts.locked) return skip('locked', LOCKED_REASON);
+  if (facts.pinned) return skip('pinned', 'pinned by maintenance.keep');
   if (facts.nested?.length) return skip('nested-worktree', `contains the worktree ${facts.nested.join(', ')}`);
   if (facts.inUse.length) return skip('in-use', `in use: ${facts.inUse.join('; ')}`);
   if (facts.porcelain === null) return skip('status-unreadable', 'git status could not be read');
@@ -807,6 +818,7 @@ export async function collectWorktreeSweep({
       source: 'refusal' in source ? source : linked ? 'linked' : 'source',
       bare: Boolean(entry?.bare),
       locked: Boolean(entry?.locked),
+      pinned: linked ? await anyPinned(keys, operation) : false,
       unregistered: scoped && !roots.some((root) => registry.has(root)),
       nested: entry ? nestedWorktrees(entries, entry.path) : [],
       porcelain,

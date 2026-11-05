@@ -610,7 +610,7 @@ SWEEPING FINISHED WORKTREES
   worktree whose last use is unknown is kept, unless it has no commits of its
   own beyond the default branch (NO COMMITS OF ITS OWN below). Each needs a
   clean state, except a finished one whose changes are archived;
-  a worktree is kept when it is the source checkout, bare, locked, holds
+  a worktree is kept when it is the source checkout, bare, locked, pinned by maintenance.keep, holds
   another worktree (worktree remove refuses it too), in use,
   not registered in this Stim home while STIM_HOME is set (not-registered:
   the registry and workspace.json roots of a scoped home do not list it, and
