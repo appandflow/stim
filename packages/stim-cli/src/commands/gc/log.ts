@@ -106,6 +106,7 @@ const MAINTENANCE_KINDS: Record<string, string> = {
   'delete-device-lease': 'deviceLease',
   'delete-expired-archives': 'archive',
   'stop-gradle-daemons': 'gradleDaemon',
+  'stop-watchman': 'watchman',
   'delete-gradle-version': 'gradleVersion',
   'clear-build-dirs': 'buildDirectory',
   'delete-dependencies': 'dependencies',

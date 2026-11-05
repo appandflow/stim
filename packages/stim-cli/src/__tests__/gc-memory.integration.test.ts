@@ -206,6 +206,15 @@ test('watchman may be shut down only when no client is connected and every root 
   expect(idle.process).toMatchObject({ reclaimable: true, reason: null });
 });
 
+test('a Stim dev server that just started keeps watchman, since its Metro has not connected yet', () => {
+  const describe = () => 'a client';
+  const idle = { roots: [{ path: '/repo', stale: null, subscribers: [], triggers: 0 }] };
+  const starting = planWatchman(watchmanFacts({ ...idle, recentStarts: ['/work/app'] }), describe).process;
+  expect(starting).toMatchObject({ reclaimable: false, reason: 'in-use' });
+  expect(starting.detail).toContain('/work/app');
+  expect(planWatchman(watchmanFacts({ ...idle, recentStarts: [] }), describe).process.reclaimable).toBe(true);
+});
+
 test('debug-status clients are read by peer pid, and an unreadable answer is null', () => {
   expect(parseWatchmanClients({ clients: [{ peer: { pid: 7, name: 'node' } }] })).toEqual([{ pid: 7, name: 'node' }]);
   expect(parseWatchmanClients({ clients: [{ state: 'x' }] })).toBeNull();
