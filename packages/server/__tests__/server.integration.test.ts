@@ -9908,6 +9908,7 @@ describe('frames.subscribe', () => {
         { fps: 2, maxEdge: 480, jpegFps: 2, ...jpegOnly },
         { fps: 20, maxEdge: 960, jpegFps: 20, ...jpegOnly },
         { fps: 2, maxEdge: 480, jpegFps: 2, ...jpegOnly },
+        { fps: 0, maxEdge: 480, jpeg: false, video: false, bitrate: 3_000_000 },
       ]);
       await until(() => !alive(run!.pid));
       expect(toolRuns().filter((entry) => entry.tool === 'xcrun')).toEqual([]);
@@ -10389,7 +10390,10 @@ describe('frames.subscribe', () => {
       const pid = Number(started()[0]);
       expect(alive(pid)).toBe(true);
       await until(() => !alive(pid));
-      expect(helperRuns()[0]!.configs).toHaveLength(1);
+      const configs = helperRuns()[0]!.configs;
+      expect(configs.map((config) => config.fps === 0)).toEqual([false, true, false, true, false, true]);
+      expect(configs.at(-1)).toMatchObject({ jpeg: false, video: false });
+      expect(configs.at(-1)).not.toHaveProperty('record');
       await oneFrame();
       expect(started()).toHaveLength(2);
     },
