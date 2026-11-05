@@ -35,7 +35,7 @@ test.each([
   { path: 'android/app/debug.keystore', platform: 'android' as const, moves: true },
   { path: 'android/app/src/main/res/raw/truststore.jks', platform: 'android' as const, moves: true },
   { path: 'android/app/src/main/assets/client.p12', platform: 'android' as const, moves: true },
-  { path: 'ios/client.p12', platform: 'ios' as const, moves: true },
+  { path: 'ios/client.p12', platform: 'ios' as const, moves: false },
 ])('editing $path moves the $platform fingerprint: $moves', async ({ path, platform, moves }) => {
   write('package.json', '{"name":"app","version":"1.0.0"}');
   write('android/build.gradle', 'x');

@@ -106,7 +106,9 @@ Desktop uses it to find a running server and show its route. `keepAwake` is
 `{ "setting", "held", "pid"?, "reason"? }`: whether `server.keepAwake` is on, whether the
 server holds the sleep assertion (`pid` is the `caffeinate` process that owns it), and when
 it does not, `reason` is `off`, `unsupported`, `loopback-only`, `not-listening` or `failed`
-(see [Keep this machine awake](#keep-this-machine-awake)). A request through `tailscale serve` or on a Tailscale address
+(see [Keep this machine awake](#keep-this-machine-awake)). `workerRoot` is
+`{ "path", "bytes", "measuredAt" }`, the worker root's size as `du` last measured it, about every 6 hours and kept in `<root>/usage.json` across restarts,
+or `null` before the first measurement, while the root is missing, for a root that changed until it is measured, and on Windows. A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
 carries, gets only `{ "version" }`, which Stim
 Desktop's Connections settings use to find stim-server on the other machines of the
@@ -1827,7 +1829,7 @@ stim-server service install --serve \
 
 `status` prints whether launchd loaded the job, its state, pid, run count and
 last exit code (a server that exits at start, for example on a port in use,
-restarts every 30 seconds), the `/health` answer, the keep-awake state, the serve route and whether
+restarts every 30 seconds), the `/health` answer, the keep-awake state, the worker root's last measured size, the serve route and whether
 `install` created it, the host app and its permission grants, the log path, and the digest of the bundled Stim's build
 next to the `stim` on PATH. Offload needs the same digest on the client, so a
 mismatch there is not an offload match either. `--json` prints the same fields
@@ -2275,8 +2277,41 @@ area, including linked worktrees of one repository. Separate checkouts repeat
 Gradle wrapper/dependency/transform caches and their first build starts cold.
 Different checkouts can build concurrently within the configured admission
 limits; projects in the same checkout share one mirror and serialize. Moving
-a checkout changes its area identity. Existing areas stay on the worker until
-the client is removed.
+a checkout changes its area identity.
+
+stim-server removes areas of approved clients by itself: any area unused for
+longer than `server.workerAreaMaxAgeDays` (default 7, `0` turns this off) and,
+while the worker root's volume has less than 50 GiB free (40 GiB above the
+floor where it declines builds), the least recently used until it has that much
+again, sparing any area used in the last 3 hours so two worktrees of one client
+do not evict each other in turn. Under the floor that limit no longer applies,
+until the volume is back over the floor. If only recent areas are left above the
+floor, they stay and the log says so once; builds keep running until the floor.
+Use means a build or a cached artifact fetch, recorded in the area's
+`last-used` file; an area from before that record counts from the newest change
+to its `mirror.json`, `out`, `home`, `build.ndjson` or folder. It checks about
+every 15 minutes, every minute near the floor, and when a build starts near it,
+without waiting: a removal never holds a build slot or delays a build.
+
+It never removes a client's most recently used area, and it retains an area with
+a running or unfetched build, a bundle a hosted session can still take, an
+artifact read or query, an open connection sending it a manifest, a running
+Gradle daemon (found in the process list or by a daemon log naming a live
+process), or a claim that is held or unresolved. Each retained area gets one
+`stim-server: retaining the build area <client>/<repo>: <why>` line in the log
+while the reason lasts, and each removed one a `stim-server: removed the build
+area <client>/<repo>: <why>` line. Under the area's claim the area moves to
+`<client>/evicted/<id>/` in one rename, after an empty `<client>/evicted/<id>.json`
+marks it. A client's build can write there, so the server trusts only the file's
+name and derives every path from it, and a name it would not write is logged and
+kept. On Windows the area's short directories move aside under the same claim,
+each only while its `.owner` names this area, so the next build of that checkout
+starts clean. The deletion holds no claim and shutdown does not wait for it. The
+record goes last: when a delete fails, the log says so once with the path and what
+to do, and a later pass, in this server or the next, finishes it before anything
+else. Then blobs that nothing else references
+are pruned. Client-wide blobs and shared
+CocoaPods, pnpm and SwiftPM caches stay until the client is removed.
 
 A build never reads or writes this machine's own Stim home. Each source mirror
 has an initial empty Git commit so development podspecs can resolve `HEAD`;
@@ -2297,8 +2332,7 @@ owned short homes, including a marked legacy client home. With non-zero
 `concurrency.maxBuilds`, a build holds one of the machine's build slots
 (`$STIM_HOME/build-slots/`), so local builds count it too. Each finished build
 appends a `build` record to the [action log](#actions) with the repository as
-`workspace`. The worker root keeps growing with each repository; delete a
-client's directory to reclaim it.
+`workspace`.
 
 ## Web shares
 

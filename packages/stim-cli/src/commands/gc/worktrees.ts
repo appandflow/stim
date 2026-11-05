@@ -19,6 +19,7 @@ import { workspaceInUseAsync } from '../../workspace/in-use.ts';
 import { maintenancePinnedReader } from '../../maintenance/protect.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
 import { holdsDeferredShutdown } from '../../devices/deferred-shutdown.ts';
+import { agentKey, attributeAgentSessions, discoverAgentSessions } from '../../agent-sessions.ts';
 import {
   FETCH_FRESH_MS,
   fetchDefaultBranchAsync,
@@ -58,7 +59,7 @@ import { cachedPullRequest, refreshPullRequests, type PullRequestRequest } from 
 import { worktreeArchiveLimits } from '../../archive.ts';
 import { stimCliEntries, stimCliUseOf } from '../../workspace/service-guard.ts';
 import { uncommittedActivityOf, type WorktreeArchive } from '../../workspace/worktree-archive.ts';
-import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from './devices.ts';
+import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
 import { eachLimited, readConcurrency } from './limited.ts';
@@ -92,7 +93,7 @@ export interface WorktreeFacts {
   locked: boolean;
   /** `maintenance.keep` pins one of the worktree's workspaces, or its pins could not be read. */
   pinned?: boolean;
-  /** A scoped STIM_HOME does not list this worktree, so its registry cannot say the worktree is this home's. */
+  /** No project in the registry and no workspace record of this Stim home lies in the worktree, so Stim never ran in it. */
   unregistered?: boolean;
   nested?: string[];
   porcelain: string[] | null;
@@ -230,6 +231,24 @@ async function anyPinned(keys: readonly string[], operation?: StimContext): Prom
   return false;
 }
 
+/** The agent sessions whose process runs, or a recent Codex thread, in each worktree, as `in use` reasons. */
+export async function agentSessionUse(
+  paths: readonly string[],
+  now: number,
+  signal?: AbortSignal,
+): Promise<string[][]> {
+  signal?.throwIfAborted();
+  const workspaces = paths.map((path) => {
+    const canonical = canonicalPath(path);
+    return { path: canonical, root: canonical, recorded: null };
+  });
+  const sessions = await discoverAgentSessions({ now });
+  signal?.throwIfAborted();
+  return attributeAgentSessions(workspaces, sessions, now).map((found) =>
+    found.map((session) => `an agent session (${agentKey(session)}) is working in it`),
+  );
+}
+
 function dirtyLines(porcelain: string[] | null): string[] {
   return excludePodChurn(excludeWatchmanCookies(porcelain).lines).lines;
 }
@@ -288,7 +307,10 @@ function removalBlocker(
   }
   if (facts.source === 'source') return skip('source-checkout', 'source checkout');
   if (facts.unregistered) {
-    return skip('not-registered', 'not registered in this Stim home: STIM_HOME scopes this config');
+    return skip(
+      'not-registered',
+      'not registered in this Stim home: no project or workspace record names it, so no stim command ran in it; stim worktree warm in it makes it one Stim manages',
+    );
   }
   if (facts.locked) return skip('locked', LOCKED_REASON);
   if (facts.pinned) return skip('pinned', 'pinned by maintenance.keep');
@@ -794,7 +816,6 @@ export async function collectWorktreeSweep({
     }
     groups.set(entry.path, [...(groups.get(entry.path) ?? []), root]);
   }
-  const scoped = deviceSweepIsScoped(operation?.env);
   const registry = new Set(listedRoots());
   const inspected: Inspected[] = [];
   await eachLimited([...[...groups].entries()], readConcurrency(operation), async ([index, [path, roots]]) => {
@@ -819,7 +840,7 @@ export async function collectWorktreeSweep({
       bare: Boolean(entry?.bare),
       locked: Boolean(entry?.locked),
       pinned: linked ? await anyPinned(keys, operation) : false,
-      unregistered: scoped && !roots.some((root) => registry.has(root)),
+      unregistered: !roots.some((root) => registry.has(root)),
       nested: entry ? nestedWorktrees(entries, entry.path) : [],
       porcelain,
       unpushed: linked ? await unlessTimedOut(() => unpushedCommitsAsync(path, read), null) : null,
@@ -861,6 +882,16 @@ export async function collectWorktreeSweep({
   );
   for (const { candidate, facts } of linked) {
     facts.inUse = [...new Set([...facts.inUse, ...deviceUseOf(candidate.keys, devices)])];
+  }
+  const registered = linked.filter(({ facts }) => !facts.unregistered);
+  if (registered.length) {
+    operation?.signal.throwIfAborted();
+    const agents = await agentSessionUse(
+      registered.map(({ candidate }) => candidate.path),
+      now,
+      operation?.signal,
+    );
+    registered.forEach(({ facts }, i) => facts.inUse.push(...(agents[i] ?? [])));
   }
   if (refresh) await lookUpPullRequests(inspected, operation);
   else readCachedPullRequests(inspected, now, freshMs);
@@ -952,6 +983,16 @@ export async function removeWorktrees(
   output: GcOutput = GC_OUTPUT,
 ): Promise<number> {
   let failures = 0;
+  const removable = sweep.worktrees.filter((candidate) => !candidate.skipped);
+  const agents = new Map<string, string[]>();
+  if (removable.length) {
+    const found = await agentSessionUse(
+      removable.map((candidate) => candidate.path),
+      Date.now(),
+      operation?.signal,
+    );
+    removable.forEach((candidate, i) => agents.set(candidate.path, found[i] ?? []));
+  }
   for (const candidate of sweep.worktrees) {
     operation?.signal.throwIfAborted();
     if (candidate.skipped) continue;
@@ -964,6 +1005,7 @@ export async function removeWorktrees(
         ...stimCliUseOf(candidate.path, canonicalPath, stimCliEntries(operation?.env)),
         ...(await inUseOf(lockedKeys, { managedLocks: false }, devices, operation?.signal, operation)),
         ...(await inUseOf(unlocked, { managedLocks: true }, devices, operation?.signal, operation)),
+        ...(agents.get(candidate.path) ?? []),
       ].map((r) => `in use: ${r}`);
       const mergedHead = candidate.merge?.merged
         ? candidate.merge.head

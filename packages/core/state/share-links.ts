@@ -6,13 +6,13 @@ import { workspaceMetadataFile, workspaceShareLinksFile } from './paths.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
 
 /**
- * Whether a saved share should run again on its own: `live` from when `stim share` starts it until a deliberate stop
- * (`stim share stop`, `stim stop`, a reclaimed workspace), `stopped` after. A stim-server restart or crash leaves it
- * `live`, because only the CLI writes it.
+ * Whether a saved share should run again on its own: `live` from when it starts until a deliberate stop (`stim share
+ * stop`, `stim stop`, `share.stop` from any client, a reclaimed workspace), `stopped` after. A stim-server restart or
+ * crash leaves it `live`, because only a start and a deliberate stop write it.
  */
 export type SavedShareState = 'live' | 'stopped';
 
-/** A web share's link and passwords, as `stim share` saved them when it started so `--reuse` can start it again. */
+/** A web share's link and passwords, as saved when it started so `--reuse` and a stim-server restart can start it again. */
 export interface SavedShare {
   platform: 'ios' | 'android';
   slot: string;
@@ -50,6 +50,14 @@ const SHARE_SLUG = new RegExp(SHARE_SLUG_PATTERN);
 export function shareLinkKey(target: ShareLinkTarget): string {
   const slot = target.slot && target.slot !== 'default' ? `@${target.slot}` : '';
   return `${target.platform}${target.physical ? ':device' : ''}${slot}`;
+}
+
+/** The URL's token or slug and the address it is served under, up to `/s/`. */
+export function splitShareUrl(url: string, slug: string | undefined): { token?: string; origin: string } | null {
+  const [, origin, path] = /^(.*\/s\/)([^/?#]+)\/?$/.exec(url) ?? [];
+  if (origin === undefined || path === undefined) return null;
+  if (slug !== undefined) return path === slug ? { origin } : null;
+  return SHARE_TOKEN.test(path) ? { token: path, origin } : null;
 }
 
 const isPassword = (value: unknown): value is string =>

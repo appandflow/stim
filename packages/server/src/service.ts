@@ -17,6 +17,7 @@ import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { clearFreeClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { isJsonObject, stimBuildDigest, tailscaleEnv } from '@stim-cli/core/state';
+import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   answersAs,
   DEFAULT_LABEL,
@@ -187,6 +188,7 @@ interface Health {
   route?: { state: string; port?: number; ports?: number[]; reason?: string };
   lan?: { addresses: string[]; port: number };
   keepAwake?: KeepAwakeStatus;
+  workerRoot?: WorkerRootUsage | null;
 }
 
 export async function fetchHealth(port: number): Promise<Health | null> {
@@ -454,6 +456,8 @@ export interface ServiceStatus {
     route: string | null;
     /** Whether the server holds the keep-awake assertion; null when the server predates it. */
     keepAwake: KeepAwakeStatus | null;
+    /** The last measurement of `server.workerRoot`; null before the first, and on Windows. */
+    workerRoot: WorkerRootUsage | null;
   } | null;
   serve: ServeRecord | null;
   logPath: string | null;
@@ -521,6 +525,7 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
           tailscale: tailscaleText(health.tailscale),
           route: routeText(health.route),
           keepAwake: health.keepAwake ?? null,
+          workerRoot: health.workerRoot ?? null,
         }
       : null,
     serve: installed?.serve ?? null,
@@ -563,6 +568,12 @@ function keepAwakeText(keepAwake: KeepAwakeStatus): string {
   return KEEP_AWAKE_REASONS[keepAwake.reason ?? 'off'];
 }
 
+function workerRootText(usage: WorkerRootUsage | null): string {
+  if (!usage) return 'size not measured';
+  const hours = Math.floor((Date.now() - Date.parse(usage.measuredAt)) / 3_600_000);
+  return `${usage.path}, ${(usage.bytes / 1024 ** 3).toFixed(1)} GB, measured ${hours < 1 ? 'in the last hour' : `${hours} h ago`}`;
+}
+
 function routeText(route: Health['route']): string | null {
   if (!route) return null;
   if (route.state === 'routed') return `routed on https port ${route.port}`;
@@ -597,6 +608,7 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
   if (status.health?.tailscale) lines.push(`  tailscale: ${status.health.tailscale}`);
   if (status.health?.route) lines.push(`  tailscale route: ${status.health.route}`);
   if (status.health?.keepAwake) lines.push(`  keep awake: ${keepAwakeText(status.health.keepAwake)}`);
+  if (status.health) lines.push(`  worker root: ${workerRootText(status.health.workerRoot)}`);
   if (status.serve) {
     lines.push(
       `  serve route: https ${status.serve.port} (${status.serve.created ? 'created by install' : 'not created by install'})`,

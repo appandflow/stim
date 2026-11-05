@@ -81,6 +81,7 @@ import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
+import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   CLIPBOARD_INPUT_COST,
   ControlHub,
@@ -189,9 +190,10 @@ import {
   type StimStopOptions,
 } from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
-import { pauseShareLinkAsync, pauseShareLinksAsync } from 'stim/share-links';
+import { pauseShareLinkAsync, pauseShareLinksAsync, saveShareLinkAsync } from 'stim/share-links';
 import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
 import { restoreSavedShares } from './share-restore.ts';
+import { savedShareFor } from './share-save.ts';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
 import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions } from './push.ts';
@@ -247,7 +249,7 @@ import { DEFAULT_VIDEO_LIMITS, HOSTED_MAX_BITRATE, videoPacket, VideoGate, type 
 import { openRtc, rtcAvailable } from './webrtc-sender.ts';
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
-import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
+import { SHARE_EXPIRY, ShareHub, type ShareRequest, type StartedShare } from './share.ts';
 import { androidScreen, simulatorScreen, type ScreenSize } from './device-screen.ts';
 import { LocalAgentPresence } from './local-agent-presence.ts';
 import { parsePresencePublish, PresenceHub, presenceKey } from './presence.ts';
@@ -431,6 +433,8 @@ interface ServerHealth {
   /** The local network addresses the server listens on now, from `server.lanAddresses`; absent when there are none. */
   lan?: { addresses: string[]; port: number };
   keepAwake: KeepAwakeStatus;
+  /** The last measurement of `server.workerRoot`; null before the first, and on Windows. */
+  workerRoot: WorkerRootUsage | null;
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -1268,6 +1272,25 @@ function leaseGrace(leaseFor: string): { leaseGraceMs?: number } {
   const [, amount, unit] = /^(\d+)(s|m|h)$/.exec(leaseFor) ?? [];
   if (amount === undefined || unit === undefined) return {};
   return { leaseGraceMs: Number(amount) * (unit === 's' ? 1000 : unit === 'm' ? 60_000 : 3_600_000) };
+}
+
+/** Saves a started share through the CLI's share-links module; false when it could not (nothing logs a password). */
+async function saveStartedShare(request: ShareRequest, started: StartedShare): Promise<boolean> {
+  try {
+    let saved = false;
+    await saveShareLinkAsync(request.workspace, shareLinkKey(request), (existing) => {
+      const entry = savedShareFor(request, started, existing);
+      if (!entry) throw new Error('its link or a password is not known');
+      saved = true;
+      return entry;
+    });
+    return saved;
+  } catch (cause) {
+    console.error(
+      `stim-server: could not save the web share ${started.id} for reuse and restart: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    return false;
+  }
 }
 
 /** A share stopped on purpose must not come back when stim-server starts: marks its saved link stopped; why it could not. */
@@ -5112,8 +5135,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
       const resolved = registeredWorkspace(parsed.workspace);
       if ('code' in resolved) return error(id, resolved.code, resolved.message);
-      const started = await shares.start({ ...parsed, workspace: resolved.dir });
-      return send(socket, 'code' in started ? { id, error: started } : { id, result: started });
+      const request = { ...parsed, workspace: resolved.dir };
+      const started = await shares.start(request);
+      if ('code' in started) return send(socket, { id, error: started });
+      const saved = await saveStartedShare(request, started);
+      if (saved && !shares.list().some((row) => row.id === started.id)) {
+        await markSavedStopped(() => pauseShareLinkAsync(request.workspace, shareLinkKey(request)));
+      }
+      return send(socket, { id, result: saved ? { ...started, saved: true } : started });
     }
 
     function publishPresence(id: RequestId, params: unknown): void {
@@ -5553,6 +5582,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ...(options.loopbackOnly ? { loopbackOnly: true as const } : {}),
       ...lanHealth(),
       keepAwake: keepAwake.status(),
+      workerRoot: builds.workerRootUsage(),
     };
     response
       .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })

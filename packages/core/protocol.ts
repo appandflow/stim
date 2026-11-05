@@ -1803,7 +1803,14 @@ export interface WebShareStartParams {
 export interface Methods {
   'share.start': {
     params: WebShareStartParams;
-    result: WebShareRow & { url: string; password?: string; viewPassword?: string; warning?: string };
+    result: WebShareRow & {
+      url: string;
+      password?: string;
+      viewPassword?: string;
+      warning?: string;
+      /** `true` when the server saved the link and passwords for `--reuse` and restarts; an older server omits it. */
+      saved?: true;
+    };
   };
   'share.stop': {
     params: { workspace: string; id?: string; slot?: string };

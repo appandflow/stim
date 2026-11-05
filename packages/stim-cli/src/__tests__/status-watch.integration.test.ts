@@ -38,7 +38,7 @@ import type {
 } from '@stim-cli/core/state';
 
 const watchListeners = vi.hoisted(() => new Map<string, (event: string, name: string | null) => void>());
-const nativeEvents = vi.hoisted(() => ({ enabled: false, generation: 0, ignorePath: '' }));
+const nativeEvents = vi.hoisted(() => ({ useNativeWatchers: false, enabled: false, generation: 0, ignorePath: '' }));
 
 vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
@@ -53,14 +53,20 @@ vi.mock('node:fs', async (importOriginal) => {
       assert(listener);
       const generation = nativeEvents.generation;
       const file = fs.statSync(path).isFile();
-      const watcher = fs.watch(path, (event, name) => {
-        if (
-          nativeEvents.enabled &&
-          path !== nativeEvents.ignorePath &&
-          (!file || generation === nativeEvents.generation)
-        )
-          listener(event, name === null ? null : String(name));
-      });
+      const watcher = nativeEvents.useNativeWatchers
+        ? fs.watch(path, (event, name) => {
+            if (
+              nativeEvents.enabled &&
+              path !== nativeEvents.ignorePath &&
+              (!file || generation === nativeEvents.generation)
+            )
+              listener(event, name === null ? null : String(name));
+          })
+        : Object.assign(new EventEmitter(), {
+            close(this: EventEmitter) {
+              this.emit('close');
+            },
+          });
       watchListeners.set(path, listener);
       watcher.once('close', () => {
         if (watchListeners.get(path) === listener) watchListeners.delete(path);
@@ -368,6 +374,7 @@ test.skipIf(process.platform !== 'darwin').each(['replacement and recreation', '
         return child;
       },
     });
+    nativeEvents.useNativeWatchers = true;
     nativeEvents.enabled = true;
     const sources = watchStatusSources({
       home,
@@ -420,6 +427,7 @@ test.skipIf(process.platform !== 'darwin').each(['replacement and recreation', '
       }
     } finally {
       sources.stop();
+      nativeEvents.useNativeWatchers = false;
       nativeEvents.enabled = false;
       nativeEvents.ignorePath = '';
       vi.useRealTimers();

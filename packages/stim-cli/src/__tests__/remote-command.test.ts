@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
@@ -170,6 +170,23 @@ test('remove drops the entry and its credentials, keeps the others, and prints t
   expect(readBuildMachines().map((each) => each.machine)).toEqual(['studio']);
   expect(readDeviceHostMachines().map((each) => each.machine)).toEqual(['studio']);
   expect(out).toContain('stim-server devices revoke dev-mini');
+});
+
+test('remove --json names an unreadable hosting store and preserves the machine and credentials', async () => {
+  await approveMini();
+  const store = join(home, 'device-host-machines.json');
+  const corrupt = '{"version": 99';
+  writeFileSync(store, corrupt);
+  const out = await remote(fakeIo([]), 'remove', 'mini', '--json');
+  expect(JSON.parse(out)).toMatchObject({
+    code: 'STIM_BAD_ARG',
+    message: expect.stringContaining(store),
+    remedy: expect.stringContaining('trusted backup'),
+  });
+  expect(process.exitCode).toBe(1);
+  expect(loadConfig()?.remote?.machines).toEqual(['mini']);
+  expect(readBuildMachines().map((each) => each.machine)).toEqual(['mini']);
+  expect(readFileSync(store, 'utf8')).toBe(corrupt);
 });
 
 test('remove keeps the credentials when the setting refuses to drop the last enabled build pool member', async () => {

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { workspaceId, workspaceStateDir } from '@stim-cli/core';
-import { readAgentSnapshot, serverLocalSocket, workspaceAgentDeviceDir } from '@stim-cli/core/state';
+import { readAgentSnapshot, serverLocalSocket, workspaceAgentDeviceDir, workspaceLogsDir } from '@stim-cli/core/state';
 
 const cli = fileURLToPath(new URL('../../bin/cli.ts', import.meta.url));
 
@@ -69,6 +69,9 @@ beforeEach(() => {
   bin = join(home, 'agent-device', 'bin', 'agent-device.mjs');
   writeFileSync(bin, FAKE_AGENT_DEVICE);
   vi.stubEnv('STIM_HOME', home);
+  const logs = workspaceLogsDir(app);
+  mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, 'build.ndjson'), '');
 });
 
 afterEach(() => {
@@ -76,13 +79,14 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-const run = (args: string[], cwd = app, env: NodeJS.ProcessEnv = {}) =>
-  spawnSync(process.execPath, [cli, 'agent-device', ...args], {
+const runCli = (args: string[], cwd = app, env: NodeJS.ProcessEnv = {}) =>
+  spawnSync(process.execPath, [cli, ...args], {
     cwd,
     env: { ...process.env, STIM_HOME: home, STIM_AGENT_DEVICE_BIN: bin, STIM_DAEMON: 'off', ...env },
     encoding: 'utf8',
     timeout: 60_000,
   });
+const run = (args: string[], cwd = app, env: NodeJS.ProcessEnv = {}) => runCli(['agent-device', ...args], cwd, env);
 
 test("passes agent-device's stdout, stderr and exit code through, with the workspace's device injected", () => {
   const result = run(['press', '@e2', '--json']);
@@ -242,6 +246,17 @@ describe.skipIf(process.platform === 'win32')('hosted reopen', () => {
         ],
       ]);
       expect(readFileSync(join(home, 'taps'), 'utf8').trim().split('\n')).toHaveLength(2);
+
+      const logs = runCli(['logs', '--slot', 'default', '--source', 'agent', '--json']);
+      expect(logs.status).toBe(0);
+      expect(
+        logs.stdout
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line)),
+      ).toEqual([expect.objectContaining({ src: 'agent', event: 'agent_action', command: 'tap', platform: 'ios' })]);
+      expect(logs.stdout).not.toContain(config);
+      expect(logs.stdout).not.toContain('@e1');
     },
     60_000,
   );
@@ -277,6 +292,11 @@ test.skipIf(process.platform === 'win32')(
     expect(result.status).toBe(1);
     expect(JSON.parse(result.stdout)).toMatchObject({ success: false });
     expect(existsSync(join(home, 'opens'))).toBe(false);
+
+    const logs = runCli(['logs', '--source', 'agent', '--level', 'error', '--json']);
+    expect(logs.status).toBe(0);
+    expect(JSON.parse(logs.stdout)).toMatchObject({ src: 'agent', event: 'agent_failed', command: 'batch' });
+    expect(logs.stdout).not.toContain('SESSION_NOT_FOUND');
   },
   60_000,
 );

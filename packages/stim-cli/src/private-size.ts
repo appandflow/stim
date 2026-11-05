@@ -34,7 +34,7 @@ function parseDu(output: string): TreeSize | null {
  * and private bytes; elsewhere, or when the helper fails, `du -sk` gives the allocated bytes and the private bytes stay
  * unknown. With `targets`, or `private: false`, only `du -sk` runs, over the targets' sum. Null when neither could
  * measure it, or when the helper was stopped at the timeout. With an operation the walk is its declared child; without
- * one it runs at low priority and `onSpawn` sees it.
+ * one `onSpawn` sees it and it runs at low priority. Claimed background walks keep their low priority with an operation.
  */
 export async function measureTree(
   path: string,
@@ -42,24 +42,29 @@ export async function measureTree(
     timeoutMs: number;
     onSpawn?: (child: ChildProcess) => void;
     operation?: StimContext;
+    lowPriority?: true;
     targets?: string[];
     private?: false;
   },
 ): Promise<TreeSize | null> {
   const { operation } = options;
   const exec = getExecutor();
-  const walk = (file: string, args: string[]): Promise<string> =>
-    operation
-      ? runOperationFile(operation, exec, file, args, {
+  const lowPriority = options.lowPriority ?? !operation;
+  const walk = (file: string, args: string[]): Promise<string> => {
+    const command = lowPriority ? 'nice' : file;
+    const argv = lowPriority ? ['-n', NICENESS, file, ...args] : args;
+    return operation
+      ? runOperationFile(operation, exec, command, argv, {
           timeoutMs: options.timeoutMs,
           killSignal: 'SIGKILL',
           cwd: operation.cwd,
           signal: operation.signal,
         })
-      : exec.runFileAsync('nice', ['-n', NICENESS, file, ...args], {
+      : exec.runFileAsync(command, argv, {
           timeoutMs: options.timeoutMs,
           onSpawn: options.onSpawn,
         });
+  };
   const failed = (error: unknown): { status: unknown; stdout: unknown } => {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;

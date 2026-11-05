@@ -453,7 +453,17 @@ outside it moves to its own issue and pull request.
   stay child-pending because Gradle daemons leave that group; cancellation
   releases them only after this repository's verified daemon identities exit.
   Unknown cleanup or a server crash retains unresolved repository and build-slot
-  claims for manual inspection and recovery. Windows has no process groups:
+  claims for manual inspection and recovery. stim-server evicts areas of approved
+  clients unused for longer than `server.workerAreaMaxAgeDays` and, near the disk
+  floor, the least recently used not used in the last 3 hours, which under the
+  floor also go; it keeps each client's most recently used area and retains one
+  with a live build, unfetched output, a running Gradle daemon or a held or
+  unresolved claim. Under the area's claim it creates an empty record, whose name
+  alone carries the repository and id because a client's build can write there,
+  renames the area out of `repos/` and moves aside the short directories whose
+  `.owner` names the area, then deletes outside the claim, the record last, so a
+  later pass finishes a failed or interrupted deletion. Windows has no process
+  groups:
   cancel stops the worker tree with `taskkill /T`; each checkout and repository's
   Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
   because the NDK's ninja cannot open longer paths. The repository's daemon
@@ -574,23 +584,27 @@ outside it moves to its own issue and pull request.
   `share.publicUrl`, and the frame socket accepts exactly that URL's origin,
   never Host or `X-Forwarded-*`. The CLI asks this Stim home's stim-server over its Unix socket
   (`share.start|stop|list`, refused on every network connection); a share
-  lives only in that server's memory and always expires. The CLI saves each
-  share it starts, with its URL token and passwords, in the workspace's
+  lives only in that server's memory and always expires. Each share started
+  through `share.start`, by the CLI or by Stim Desktop, is saved by stim-server
+  as soon as it starts (the CLI saves it itself only when the server's reply
+  lacks `saved: true`, an older server), with its URL token and passwords, in the workspace's
   `share-links.json` (mode 0600, written under the workspace state lock, removed
   with the workspace, by `share stop --forget` and once expired) so that
   `share ios|android --reuse` can start the same link again through
-  `share.start`'s `token` and `expiresAt`; stim-server writes nothing to disk and
-  an expired link is never extended or reused. Each saved entry has a `state`:
+  `share.start`'s `token` and `expiresAt`; stim-server writes this file only
+  through the CLI's own `saveShareLinkAsync` and `pauseShareLinks`, exported as
+  `stim/share-links`, and an expired link is never extended or reused. A start
+  of a link the file already holds with the same passwords keeps the entry's
+  `auth`, `viewAuth` and `createdAt`, and the restore start does not pass
+  through the saving path, so it never rewrites the expiry. Each saved entry has a `state`:
   `live` from when `share` starts or reuses it, `stopped` after a deliberate
   `share stop`, `stim stop` or reclaim of its workspace. A restart or crash
   leaves `live`, and a full stim-server (not the CLI's `--share` server) starts
   every live, unexpired entry of its home again when it starts, through
   `share.start`'s own path with the saved token or slug, passwords and expiry
   (`@stim-cli/core/state`'s `readLiveShareLinks`); one whose device is not there
-  yet starts waiting, a refused one is logged and stays `live`. The only write
-  stim-server makes is `share.stop` marking the entry stopped through the CLI's
-  own `pauseShareLinks`, exported as `stim/share-links`; a share started from
-  Desktop is not saved and does not come back. A share outlives its
+  yet starts waiting, a refused one is logged and stays `live`. `share.stop`
+  marks the entry stopped through the same module. A share outlives its
   device: when the device goes away on its own (frames fail, the device or hosted
   session changes or is not ready) the share waits, keeping its token, passwords,
   viewer sessions and expiry, and resumes on the slot's device when it is back.

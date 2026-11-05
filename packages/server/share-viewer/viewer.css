@@ -261,6 +261,7 @@ body:not([data-control='true']) .pill.mode {
   align-items: center;
   justify-content: center;
   padding: 20px max(20px, env(safe-area-inset-right)) 12px max(20px, env(safe-area-inset-left));
+  position: relative;
   container-type: size;
 }
 .device {
@@ -595,6 +596,11 @@ button.primary.small {
   width: 10em;
   padding: 5px 9px;
   border-radius: 7px;
+}
+@media (pointer: coarse) {
+  .name-card input.field {
+    font-size: 16px;
+  }
 }
 .people {
   flex: none;

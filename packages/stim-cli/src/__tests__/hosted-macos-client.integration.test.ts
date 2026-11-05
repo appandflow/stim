@@ -465,7 +465,17 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     expect(macosAppState(readMacosRecord(root))?.state).toBe('stopped');
   });
 
-  test.each(['different config', 'disconnected', 'unavailable', 'close fails', 'canonical config', 'missing config'])(
+  const hostedAgentConnectionCleanupScenarios = [
+    'different config',
+    'disconnected',
+    'unavailable',
+    'close fails',
+    'close timed out',
+    'already closed',
+    'canonical config',
+    'missing config',
+  ];
+  test.each(hostedAgentConnectionCleanupScenarios)(
     'stop cleans up only its own agent connection, best effort: %s',
     async (scenario) => {
       host.grant = GRANT;
@@ -476,6 +486,8 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       else writeFileSync(otherConfig, '{}');
       if (scenario === 'missing config') rmSync(config);
       const calls: string[][] = [];
+      const closeFails = scenario === 'close fails' || scenario === 'close timed out';
+      const cleansUp = closeFails || scenario === 'already closed' || scenario === 'canonical config';
       setExecutor({
         ...getExecutor(),
         findExecutable: () => (scenario === 'unavailable' ? null : '/fake/agent-device'),
@@ -484,7 +496,17 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
           expect(host.methods).not.toContain('device-host.stop');
           expect(existsSync(config)).toBe(scenario !== 'missing config');
           calls.push(args);
-          if (scenario === 'close fails' && args[0] === 'close') throw new Error('app already exited\nclose failed');
+          if (args[0] === 'close' && (closeFails || scenario === 'already closed')) {
+            const timedOut = scenario === 'close timed out';
+            throw Object.assign(new Error('agent-device close failed'), {
+              status: timedOut ? null : 1,
+              signal: timedOut ? 'SIGKILL' : null,
+              stdout: JSON.stringify({
+                success: false,
+                error: { code: scenario === 'close fails' ? 'COMMAND_FAILED' : 'SESSION_NOT_FOUND' },
+              }),
+            });
+          }
           return JSON.stringify({
             success: true,
             data: {
@@ -503,7 +525,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
             ? []
             : [
                 ['connection', 'status', '--json'],
-                ...(['close fails', 'canonical config'].includes(scenario)
+                ...(cleansUp
                   ? [
                       ['close', '--remote-config', config, '--session', 'named-session', '--json'],
                       ['disconnect', '--session', 'named-session', '--json'],
@@ -511,11 +533,11 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
                   : []),
               ],
         );
-        expect(stderr).toHaveBeenCalledTimes(['close fails', 'canonical config'].includes(scenario) ? 1 : 0);
+        expect(stderr).toHaveBeenCalledTimes(cleansUp ? 1 : 0);
         expect(stderr.mock.calls.map(([line]) => line).join('')).toMatch(
-          scenario === 'close fails'
-            ? /app already exited close failed[^\n]*\n$/
-            : scenario === 'canonical config'
+          closeFails
+            ? /could not clean up agent-device connection for named-session: agent-device close failed/
+            : cleansUp
               ? /closed agent-device connection for named-session/
               : /^$/,
         );
