@@ -10389,7 +10389,10 @@ describe('frames.subscribe', () => {
       const pid = Number(started()[0]);
       expect(alive(pid)).toBe(true);
       await until(() => !alive(pid));
-      expect(helperRuns()[0]!.configs).toHaveLength(1);
+      const configs = helperRuns()[0]!.configs;
+      expect(configs.map((config) => config.fps === 0)).toEqual([false, true, false, true, false, true]);
+      expect(configs.at(-1)).toMatchObject({ jpeg: false, video: false });
+      expect(configs.at(-1)).not.toHaveProperty('record');
       await oneFrame();
       expect(started()).toHaveLength(2);
     },

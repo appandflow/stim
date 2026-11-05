@@ -237,7 +237,8 @@ export async function buildFoldHelper(
 
 /**
  * One `stim-frames` process per device, shared by its subscribers and stopped `lingerMs` after the last of them
- * leaves, unchanged meanwhile, so a subscriber that comes back within that time gets the latest frame at once. It runs
+ * leaves, paused meanwhile (fps 0, no encoders), so a subscriber that comes back within that time gets a frame without
+ * a helper start. It runs
  * at the highest fps and the largest edge any subscriber asked for; each subscriber paces its own frames. The
  * helper exits when its stdin closes, so it cannot outlive the server. `lit` turns the display the helper
  * reports it streams into a posture, which the frames and access units after it carry.
@@ -335,8 +336,8 @@ export class HelperSource {
     if (this.stalled) listener.delayed(true, this.stalled);
     return () => {
       if (!this.listeners.delete(listener)) return;
-      if (this.listeners.size > 0) this.configure();
-      else this.lingerTimer = setTimeout(() => void this.stop(), this.lingerMs);
+      this.configure();
+      if (this.listeners.size === 0) this.lingerTimer = setTimeout(() => void this.stop(), this.lingerMs);
     };
   }
 
@@ -411,7 +412,6 @@ export class HelperSource {
   }
 
   private configure(): void {
-    if (this.listeners.size === 0) return;
     const watching = [...this.listeners].flatMap(([listener, hint]) => (hint ? [{ listener, hint }] : []));
     const hints = watching.map(({ hint }) => hint);
     const viewers = watching.filter(({ listener }) => !listener.record);
