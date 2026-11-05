@@ -540,7 +540,9 @@ stim logs --errors --json`}
 
 The merged timeline includes Metro, client, device, and build records, and the
 actions [agent-device](https://github.com/callstack/agent-device) takes on
-the workspace's owned simulators, emulators and native Mac app. Logs live
+the workspace's owned simulators, emulators and native Mac app. For hosted iOS
+and Android, `stim agent-device` records the command name and result locally.
+The host keeps the detailed action records. Logs live
 in the global workspace directory under `$STIM_HOME/workspaces`, not in the
 project checkout. The Metro, client, and device files are capped at about 8 MiB each.
 Stim keeps one previous generation of each file, and queries read both. The oldest
