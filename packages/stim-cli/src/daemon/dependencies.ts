@@ -24,7 +24,6 @@ import { dormantAfterMs, idleStageCandidates, stillIdle, type DeviceReading, typ
  */
 export const REAL_BYTES_THRESHOLD: number = 256 * 1024 ** 2;
 const HOUR_MS = 60 * 60_000;
-const SCAN_EVERY_MS = 10 * 60_000;
 const WALK_TIMEOUT_MS = 10 * 60_000;
 const RESTORE = 'stim worktree warm';
 const UNKNOWN_KEPT = 'its real size is not measured yet, or the volume cannot tell, so it stays';
@@ -201,9 +200,9 @@ export async function runDormantDependencies(
   return actions;
 }
 
-async function dependencyTrees(): Promise<string[]> {
+async function dependencyTrees(operation: StimContext): Promise<string[]> {
   const trees = new Set<string>();
-  for (const worktree of await artifactWorktreesAsync(new AbortController().signal)) {
+  for (const worktree of await artifactWorktreesAsync(operation.signal, operation)) {
     if (!worktree.linked) continue;
     for (const base of new Set([worktree.path, ...worktree.keys]))
       for (const path of existingDirsOf(base, ARTIFACT_DIRS.dependencies)) trees.add(path);
@@ -211,28 +210,9 @@ async function dependencyTrees(): Promise<string[]> {
   return [...trees];
 }
 
-async function measureDependencyTrees(): Promise<void> {
-  for (const path of await dependencyTrees()) {
-    const { outcome } = await refreshMeasure(path, { timeoutMs: WALK_TIMEOUT_MS, claim: true });
+export async function measureDependencyTrees(operation: StimContext): Promise<void> {
+  for (const path of await dependencyTrees(operation)) {
+    const { outcome } = await refreshMeasure(path, { timeoutMs: WALK_TIMEOUT_MS, claim: true, operation });
     if (outcome === 'busy') return;
   }
-}
-
-let measuring = false;
-let scannedAt = -Infinity;
-
-/**
- * Measures the node_modules and Pods of linked worktrees in the background, one walk at a time on the machine under
- * the disk-usage walk claim, at most every 10 minutes: each tree whose install signature changed since its last
- * measurement or whose measurement is 6 hours old. Never awaited by its caller.
- */
-export function scheduleDependencyMeasures(): void {
-  if (measuring || Date.now() - scannedAt < SCAN_EVERY_MS) return;
-  measuring = true;
-  scannedAt = Date.now();
-  void measureDependencyTrees()
-    .catch(() => {})
-    .finally(() => {
-      measuring = false;
-    });
 }
