@@ -252,6 +252,7 @@ export class HelperSource {
   private artwork: DeviceFrameArtwork | null | undefined;
   private windows: { current: MacosWindow | null; windows: MacosWindow[]; pinned: boolean } | undefined;
   private config = '';
+  private maxEdge: number = FRAME_EDGE.min;
   private stopped = false;
   private notice: string | null = null;
   keyboard: boolean | null = null;
@@ -432,9 +433,10 @@ export class HelperSource {
     const jpegFps = raw.flatMap(({ listener, hint }) => (listener.video ? [] : [hint.fps]));
     const recording = viewers.length < watching.length;
     this.bitrate.limit(Math.min(DEFAULT_VIDEO_LIMITS.maxBitrate, ...hints.map((hint) => hint.maxBitrate ?? Infinity)));
+    if (hints.length) this.maxEdge = Math.max(FRAME_EDGE.min, ...hints.map((hint) => hint.maxEdge));
     const config = JSON.stringify({
       fps: Math.max(0, ...hints.map((hint) => hint.fps)),
-      maxEdge: Math.max(FRAME_EDGE.min, ...hints.map((hint) => hint.maxEdge)),
+      maxEdge: this.maxEdge,
       jpeg: jpegFps.length > 0,
       ...(viewers.some(({ listener }) => listener.artwork !== undefined) ? { deviceFrame: true } : {}),
       ...(duo.length && this.hingeHelper
@@ -451,7 +453,7 @@ export class HelperSource {
       bitrate: this.bitrate.current,
       ...(recording ? { record: { maxEdge: RECORD_HINT.maxEdge, fps: RECORD_HINT.fps, bitrate: RECORD_BITRATE } } : {}),
     });
-    if (!jpegFps.length) this.last = null;
+    if (!jpegFps.length && this.listeners.size > 0) this.last = null;
     if (config === this.config || this.stopped) return;
     this.config = config;
     this.child.stdin!.write(`${config}\n`);
