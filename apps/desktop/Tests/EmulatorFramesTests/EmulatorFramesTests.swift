@@ -132,6 +132,11 @@ import Testing
     #expect([UInt8](InputMessages.key(macKeyCode: 51, down: false)) == [0x08, 0x04, 0x10, 0x01, 0x18, 0x33])
   }
 
+  @Test func sendsTheLetterAAsItsEvdevCodeBecauseTheEmulatorDropsMacKeyCodeZero() {
+    #expect([UInt8](InputMessages.key(macKeyCode: 0, down: true)) == [0x08, 0x01, 0x18, 0x1e])
+    #expect([UInt8](InputMessages.key(macKeyCode: 0, down: false)) == [0x08, 0x01, 0x10, 0x01, 0x18, 0x1e])
+  }
+
   @Test func encodesTextAsTheTextField() {
     #expect([UInt8](InputMessages.text("Hi")) == [0x2a, 0x02, 0x48, 0x69])
   }

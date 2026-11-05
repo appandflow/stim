@@ -18,6 +18,7 @@ enum InputMessages {
     return ""
   }
 
+  static let evdevCodeType: UInt64 = 1
   static let macKeyCodeType: UInt64 = 4
   static let keyup: UInt64 = 1
   static let keypress: UInt64 = 2
@@ -56,9 +57,12 @@ enum InputMessages {
   }
 
   /// A KeyboardEvent for a physical key named by its macOS virtual key code,
-  /// which the emulator translates to an evdev code.
+  /// which the emulator translates to an evdev code. The emulator drops Mac key
+  /// code 0, `a`, whether the field is written or omitted, so that key goes as
+  /// its evdev code, KEY_A (30) in linux/input-event-codes.h.
   static func key(macKeyCode: UInt16, down: Bool) -> Data {
-    message([(1, macKeyCodeType), (2, down ? 0 : keyup), (3, UInt64(macKeyCode))])
+    let (type, code) = macKeyCode == 0 ? (evdevCodeType, UInt64(30)) : (macKeyCodeType, UInt64(macKeyCode))
+    return message([(1, type), (2, down ? 0 : keyup), (3, code)])
   }
 
   /// A KeyboardEvent that presses and releases the key a DOM key name such as
