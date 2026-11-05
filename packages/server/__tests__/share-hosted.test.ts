@@ -81,36 +81,6 @@ describe('a share of a hosted device', () => {
     expect(f.requests.at(-1)).toEqual({ method: 'device-host.unsubscribe', params: { subscription: 'up' } });
   });
 
-  it('relays a WebRTC offer to the host and ends the peer when the host or the viewer does', async () => {
-    const f = fixture({ 'device-host.webrtc.offer': { subscription: 'rtc1', sdp: 'answer-sdp' } }, [
-      'hosted-webrtc',
-      'hosted-webrtc-private',
-    ]);
-    const closed = vi.fn<(reason: string) => void>();
-    const peer = await f.source.webrtc!('offer-sdp', closed);
-    expect(peer.answer).toBe('answer-sdp');
-    expect(f.requests).toEqual([
-      { method: 'device-host.webrtc.offer', params: { session: 'host-session', sdp: 'offer-sdp' } },
-    ]);
-    f.routes.get('s:rtc1')!.event({ event: 'webrtc-closed', subscription: 'rtc1', message: 'WebRTC failed' });
-    expect(closed).toHaveBeenCalledWith('WebRTC failed');
-
-    peer.close();
-    expect(f.routes.has('s:rtc1')).toBe(false);
-    await vi.waitFor(() => expect(f.released).toHaveBeenCalledTimes(1));
-    expect(f.requests.at(-1)).toEqual({ method: 'device-host.unsubscribe', params: { subscription: 'rtc1' } });
-  });
-
-  it.each([[[]], [['hosted-webrtc']]])(
-    'refuses a WebRTC offer to a host that lists %j, without holding the connection',
-    async (features) => {
-      const f = fixture({}, features);
-      await expect(f.source.webrtc?.('offer-sdp', () => {})).rejects.toThrow('mini cannot send WebRTC');
-      expect(f.requests).toEqual([]);
-      expect(f.released).toHaveBeenCalledTimes(1);
-    },
-  );
-
   it('asks the host for the device frame only when a viewer wants it, and replays the artwork to a late viewer', async () => {
     const f = fixture({ 'device-host.frames.subscribe': { subscription: 'up' } });
     const art = vi.fn<(artwork: unknown) => void>();

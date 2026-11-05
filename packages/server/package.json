@@ -43,9 +43,6 @@
   "devDependencies": {
     "@types/ws": "^8.18.1"
   },
-  "optionalDependencies": {
-    "node-datachannel": "0.33.6"
-  },
   "engines": {
     "node": ">=22.12.0"
   }

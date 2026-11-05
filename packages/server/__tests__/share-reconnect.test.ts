@@ -27,8 +27,6 @@ describe('the viewer reconnect', () => {
       platform: 'ios',
       buttons: [],
       rotate: false,
-      webrtc: false,
-      stun: '',
     });
     expect(reconnect.probeVerdict(200, viewer)).toBe('viewer');
     expect(reconnect.probeVerdict(200, loginPage(null, null))).toBe('login');

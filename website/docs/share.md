@@ -34,9 +34,9 @@ Open the link and enter the access code. The viewer shows who is watching and ma
 
 Browsers with compatible H.264 decoding get video. Other browsers fall back to JPEG. Add `#jpeg` to the link to force JPEG.
 
-### WebRTC video
+### Stats panel
 
-Viewers start on WebSocket. With `share.webrtc` enabled (the default), a viewer on the local network or tailnet can switch to a direct WebRTC video stream. Input stays on WebSocket, and video falls back to it when the direct connection fails. [Web share settings](./settings.md#web-share-exposure)
+Add `?stats` to the link to show a panel over the page with the video's round trip, frames per second, bitrate, delay and keyframe requests.
 
 ## Start a stopped share again
 

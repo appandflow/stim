@@ -57,9 +57,6 @@ export type Capability = (typeof CAPABILITIES)[number];
  * and the app's other windows.
  * `hosted-congestion` is `device-host.frames.congested`, which lowers the bitrate of a hosted video subscription
  * whose client is behind.
- * `hosted-webrtc` is `device-host.webrtc.offer`, which answers a viewer's WebRTC offer with a data-channel peer on the host that
- * sends a hosted session's video straight to the viewer. The client's `share.webrtc` decides whether a viewer may ask.
- * `hosted-webrtc-private` says that peer offers only private, link-local and tailnet addresses and uses no STUN server unless the host sets `STIM_WEBRTC_STUN`; a client sends offers only to a host that lists it.
  * `macos-window-select` is `input.window`, which pins the view to a macOS app window named by `macos-windows`,
  * bringing it to the front, or with null resumes following the front window.
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
@@ -145,8 +142,6 @@ export const FEATURES = [
   'duo-frames',
   'workspace-diff',
   'hosted-congestion',
-  'hosted-webrtc',
-  'hosted-webrtc-private',
   'hosted-ios-data',
   'hosted-ios-process',
   'hosted-app-state',
@@ -310,7 +305,6 @@ export const METHODS = [
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
-  'device-host.webrtc.offer',
   'device-host.presence.subscribe',
   'device-host.unsubscribe',
   'device-host.control.begin',
@@ -378,7 +372,6 @@ export const DEVICE_HOST_METHODS = [
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
-  'device-host.webrtc.offer',
   'device-host.presence.subscribe',
   'device-host.unsubscribe',
   'device-host.control.begin',
@@ -1877,10 +1870,6 @@ export interface Methods {
   };
   'device-host.frames.keyframe': Methods['frames.keyframe'];
   'device-host.frames.congested': Methods['frames.keyframe'];
-  'device-host.webrtc.offer': {
-    params: { session: string; sdp: string };
-    result: { subscription: string; sdp: string };
-  };
   'device-host.presence.subscribe': { params: { session: string }; result: { subscription: string } };
   'device-host.unsubscribe': Methods['unsubscribe'];
   'device-host.control.begin': { params: { session: string; takeOver?: boolean }; result: ControlBeginResult };
@@ -2163,13 +2152,6 @@ export interface FrameDelayedEvent {
   subscription: string;
   delayed: boolean;
   reason?: string;
-}
-
-/** A hosted WebRTC peer ended on its own; its subscription is gone. */
-export interface WebrtcClosedEvent {
-  event: 'webrtc-closed';
-  subscription: string;
-  message: string;
 }
 
 /** A point or rectangle as fractions 0-1 of the screen, in the orientation the agent measured it. */
@@ -2558,7 +2540,6 @@ export type ServerEvent =
   | DeviceFrameEvent
   | MacosWindowsEvent
   | FrameDelayedEvent
-  | WebrtcClosedEvent
   | PresenceEvent
   | ReplayEndedEvent
   | ErrorEvent

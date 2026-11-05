@@ -117,7 +117,7 @@ export interface StimConfig {
     workerRoot?: unknown;
     workerAreaMaxAgeDays?: unknown;
   };
-  share?: { exposure?: unknown; publicUrl?: unknown; port?: unknown; webrtc?: unknown };
+  share?: { exposure?: unknown; publicUrl?: unknown; port?: unknown };
   remote?: {
     machines?: unknown;
     easMaxDurationMinutes?: unknown;
