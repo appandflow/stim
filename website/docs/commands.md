@@ -2325,8 +2325,10 @@ shared watchman daemon with its watched roots, Gradle daemons with their Gradle
 version and Gradle home, and Kotlin compile daemons. Each shows its pid,
 physical footprint, uptime and whether it is idle, and the section ends with
 the memory that can be reclaimed. A plain `--delete` stops watchman, and
-`--cache watchman` does the same on its own. `--cache all` does not touch
-watchman, and Gradle and Kotlin daemons need `--cache gradle-daemons`:
+`--cache watchman` does the same on its own, whatever its size. Every
+`--delete` also runs the pressure ladder with memory treated as under
+pressure, so `--cache all` stops an unused watchman of 1 GiB or more through
+rung 6. Gradle and Kotlin daemons need `--cache gradle-daemons`:
 
 - `stim gc --delete` and `stim gc --delete --cache watchman` remove the stale
   roots (a directory that is gone, or a linked worktree git pruned) that no

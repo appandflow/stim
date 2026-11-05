@@ -1151,7 +1151,11 @@ THE ONE CASE GC WILL NOT REAP
   the commands below would free now.
 
   Watchman is stopped by a plain \`gc --delete\` and by \`gc --delete --cache
-  watchman\`; \`--cache all\` and every other \`--cache\` value leave it alone.
+  watchman\`; no other \`--cache\` value runs that step. Every \`gc --delete\`,
+  \`--cache all\` included, also runs the pressure ladder with memory
+  treated as under pressure, whose rung 6 stops an unused watchman of 1 GiB
+  or more by the same check; the plain step above stops one of any size
+  first.
   Manual \`--cache gradle-daemons\` requires fresh memory pressure and no
   local build, including iOS, whatever daemon.mode says; an unreadable macOS
   signal keeps daemons. Critical acts at once; warning needs 10 minutes of
