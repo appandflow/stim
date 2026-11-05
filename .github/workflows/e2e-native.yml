@@ -446,6 +446,13 @@ jobs:
           arch: x86_64
           # A fast, headless boot; the assertions do not need a window.
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          # The runner image can leave less than the emulator's 7.4 GB userdata requirement after SDK setup.
+          pre-emulator-launch-script: >-
+            df -h "$HOME/.android/avd" &&
+            if df -Pk "$HOME/.android/avd" | awk 'NR == 2 { exit ($4 >= 12 * 1024 * 1024) }'; then
+            sudo rm -rf /usr/share/dotnet /usr/local/.ghcup &&
+            df -h "$HOME/.android/avd";
+            fi
           # The action's own emulator only proved the SDK/KVM environment; kill it
           # before the driver runs so stim-cli's owned emulator gets the runner's
           # full memory and CPU (two emulators on a 7 GB runner starve the boot).
