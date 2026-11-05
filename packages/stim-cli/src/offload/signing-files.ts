@@ -11,7 +11,7 @@ const OTHER_STORE_NAME = /trust|javax|(?<![a-z0-9])app[._-]store/i;
 const GRADLE_SCRIPT = /\.gradle(?:\.kts)?$/i;
 const GRADLE_COMMENT = /\/\*[\s\S]*?\*\/|^[ \t]*\/\/.*$/gm;
 const COMMENT_LINE = /^[ \t]*[#!].*$/gm;
-const APPLE_SIGNING_FILE = /\.(?:p8|p12|mobileprovision|provisionprofile)$/i;
+const APPLE_SIGNING_FILE = /\.(?:p8|p12|mobileprovision|provisionprofile)$/;
 const XCODE_BUILD_FILE = /(?:\.(?:pbxproj|xcconfig|podspec|sh)|(?:^|\/)Podfile)$/;
 const APK_CONTENT = /(?:^|\/)src\/[^/]+\/(?:assets|res)\//;
 const GRADLE_PASSWORD = /(?<!['"[])(?:store|key)Password\s*[=(]?\s*["']([^"'\n]+)["']/gi;

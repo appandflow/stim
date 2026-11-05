@@ -196,7 +196,7 @@ test('a script generated outside the synced files still keeps the file it names 
 
 test.each([
   { path: 'apps/app/ios/fastlane/AuthKey_ABC.p8', omitted: true },
-  { path: 'ios/dist.P12', omitted: true },
+  { path: 'ios/dist.P12', omitted: false },
   { path: 'ios/App.mobileprovision', omitted: true },
   { path: 'ios/App.provisionprofile', omitted: true },
   { path: 'ios/pinned.cer', omitted: false },
