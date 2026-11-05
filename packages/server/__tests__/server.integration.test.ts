@@ -9908,6 +9908,7 @@ describe('frames.subscribe', () => {
         { fps: 2, maxEdge: 480, jpegFps: 2, ...jpegOnly },
         { fps: 20, maxEdge: 960, jpegFps: 20, ...jpegOnly },
         { fps: 2, maxEdge: 480, jpegFps: 2, ...jpegOnly },
+        { fps: 0, maxEdge: 240, jpeg: false, video: false, bitrate: 3_000_000 },
       ]);
       await until(() => !alive(run!.pid));
       expect(toolRuns().filter((entry) => entry.tool === 'xcrun')).toEqual([]);
