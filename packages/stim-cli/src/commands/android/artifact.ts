@@ -640,7 +640,7 @@ export async function acquireAndroidArtifact(
       expectedFingerprint: uncached ? null : storeHash,
       request: recipe.offload!.request,
       fingerprintInputs: recipe.offload!.fingerprintInputs,
-      syncRefusal: recipe.offload?.syncRefusal,
+      syncPlan: recipe.offload?.syncPlan,
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
       onEnter: (name) => {

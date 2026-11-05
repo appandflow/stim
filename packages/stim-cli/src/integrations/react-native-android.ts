@@ -39,8 +39,7 @@ import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import { resolveCcache } from '../engine/ccache.ts';
 import { planPrebuild, runPrebuild, staleNativeDirRefusal, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { loadProjectProvider } from '../engine/remote-cache.ts';
-import { firstSigningFile } from '../offload/signing-files.ts';
-import { HOLDS_SIGNING_FILE } from '../offload/selection.ts';
+import { androidSyncPlan } from '../offload/signing-files.ts';
 import { androidRequirements, androidToolchainAsync } from '../offload/toolchain.ts';
 import { detectAndroidPackage, detectAppIds } from '../workspace/app-id.ts';
 import { detectIsExpo } from '../workspace/project-files.ts';
@@ -462,7 +461,7 @@ function reactNativeAndroidArtifact(
           ...(await gitignoredFingerprintInputs(
             root,
             sources,
-            { platform: 'android', androidLayout: layout },
+            { platform: 'android', androidLayout: layout, keepSigningFiles: true },
             { env: operation?.env },
           )),
           ...(release && isExpo
@@ -472,13 +471,19 @@ function reactNativeAndroidArtifact(
             : []),
         ],
       }),
-      syncRefusal: async (repoRoot: string, paths: readonly string[]) => {
+      syncPlan: async (repoRoot: string, paths: readonly string[]) => {
         const keystore = resolveKeystore(root, settings, layout);
-        const found = await firstSigningFile(repoRoot, paths, [
-          keystore.path,
-          ...(keystore.pass.startsWith('file:') ? [resolvePath(root, keystore.pass.slice('file:'.length))] : []),
-        ]);
-        return found ? `${found} ${HOLDS_SIGNING_FILE}, and an offload never sends those to another machine` : null;
+        return androidSyncPlan(repoRoot, paths, {
+          release,
+          configured: [
+            keystore.path,
+            ...(keystore.pass.startsWith('file:') ? [resolvePath(root, keystore.pass.slice('file:'.length))] : []),
+          ],
+          projectScripts: [layout.gradleRoot, layout.moduleDir].flatMap((dir) => [
+            join(dir, 'build.gradle'),
+            join(dir, 'build.gradle.kts'),
+          ]),
+        });
       },
       ...(release
         ? {

@@ -1,16 +1,17 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { HOLDS_SIGNING_FILE } from './selection.ts';
 
 const KEYSTORE_FILE = /(?:\.(?:keystore|jks|p12|pfx)|(?:^|\/)keystore\.properties)$/i;
-const VALUE_FILE =
-  /(?:\.properties|(?:^|\/)credentials\.json|(?:^|\/)\.env(?![^/]*(?:example|sample|template))[^/]*)$/i;
+const VALUE_FILE = /(?:\.properties|(?:^|\/)credentials\.json)$/i;
 const VALUE_ASSIGNMENT = /["']?([\w.-]+)["']?[ \t]*[=:][ \t]*["']?([^\s"',}]+)/g;
 const KEY_PASSWORD_NAME = /^(?:(?:.*[._-])?(?:upload|release|signing|keystore)[._-])?key[._-]?pass(?:word)?$/i;
 const STORE_PASSWORD_NAME = /^(?:.*[._-])?(?:key)?store[._-]?pass(?:word)?$/i;
 const OTHER_STORE_NAME = /trust|javax|(?<![a-z0-9])app[._-]store/i;
+const GRADLE_SCRIPT = /\.gradle(?:\.kts)?$/i;
+const GRADLE_COMMENT = /\/\*[\s\S]*?\*\/|^[ \t]*\/\/.*$/gm;
 const COMMENT_LINE = /^[ \t]*[#!].*$/gm;
 const APK_CONTENT = /(?:^|\/)src\/[^/]+\/(?:assets|res)\//;
-const GRADLE_FILE = /\.gradle(?:\.kts)?$/i;
 const GRADLE_PASSWORD = /(?<!['"[])(?:store|key)Password\s*[=(]?\s*["']([^"'\n]+)["']/gi;
 const NOT_A_PASSWORD = /^(?:android|null|\*+)$|^\$/;
 const DEBUG_KEYSTORE = 'debug.keystore';
@@ -39,16 +40,17 @@ function setsSigningPassword(text: string): boolean {
 }
 
 function writesSigningPassword(text: string): boolean {
-  for (const [, value] of text.replace(COMMENT_LINE, '').matchAll(GRADLE_PASSWORD)) if (isPassword(value)) return true;
+  for (const [, value] of text.replace(GRADLE_COMMENT, '').matchAll(GRADLE_PASSWORD))
+    if (isPassword(value)) return true;
   return false;
 }
 
 /**
  * The first of `paths`, relative to `repoRoot`, that holds an Android signing secret `isSigningKeystore` cannot leave
- * out: a file named in `configured` under any name, a properties, credentials or `.env` file that sets an Android
- * signing password by its usual names, or a Gradle script that writes one as a literal. Null when none does.
+ * out: a file named in `configured` under any name, a properties or credentials file that sets an Android signing
+ * password by its usual names, or a Gradle script that writes one as a literal. Null when none does.
  */
-export async function firstSigningFile(
+async function firstSigningFile(
   repoRoot: string,
   paths: readonly string[],
   configured: readonly string[],
@@ -58,7 +60,7 @@ export async function firstSigningFile(
   for (const path of paths) {
     if (basename(path) === DEBUG_KEYSTORE) continue;
     if (named.has(join(realRoot, path))) return path;
-    const holds = VALUE_FILE.test(path) ? setsSigningPassword : GRADLE_FILE.test(path) ? writesSigningPassword : null;
+    const holds = VALUE_FILE.test(path) ? setsSigningPassword : GRADLE_SCRIPT.test(path) ? writesSigningPassword : null;
     if (!holds) continue;
     let text: string;
     try {
@@ -69,4 +71,46 @@ export async function firstSigningFile(
     if (holds(text)) return path;
   }
   return null;
+}
+
+export interface AndroidSyncPlan {
+  omit: ReadonlySet<string>;
+  refusal: string | null;
+}
+
+/**
+ * What an Android offload of `paths`, relative to `repoRoot`, leaves out or refuses. A release build gets no signing
+ * file and refuses a secret it cannot leave out, because its worker builds unsigned. A debug build is never refused and
+ * keeps a signing file that a Gradle script names, in `paths` or in `projectScripts`, since a script can need it to
+ * configure at all. A name a script builds at run time, or one that only `gradle.properties` holds, is not seen.
+ */
+export async function androidSyncPlan(
+  repoRoot: string,
+  paths: readonly string[],
+  {
+    release,
+    configured,
+    projectScripts,
+  }: { release: boolean; configured: readonly string[]; projectScripts: readonly string[] },
+): Promise<AndroidSyncPlan> {
+  const signing = paths.filter(isSigningKeystore);
+  if (release) {
+    const found = await firstSigningFile(repoRoot, paths, configured);
+    return {
+      omit: new Set(signing),
+      refusal: found
+        ? `${found} ${HOLDS_SIGNING_FILE}, and a release build never sends those to another machine`
+        : null,
+    };
+  }
+  if (signing.length === 0) return { omit: new Set(), refusal: null };
+  const scripts = [
+    ...paths.filter((path) => GRADLE_SCRIPT.test(path)).map((path) => join(repoRoot, path)),
+    ...projectScripts,
+  ];
+  const texts = await Promise.all(scripts.map((script) => readFile(script, 'utf8').catch(() => '')));
+  return {
+    omit: new Set(signing.filter((path) => !texts.some((text) => text.includes(basename(path))))),
+    refusal: null,
+  };
 }

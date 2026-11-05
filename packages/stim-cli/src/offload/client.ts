@@ -58,7 +58,7 @@ import type { FingerprintSource } from '@expo/fingerprint';
 import { isReleaseVariant } from '../commands/android/support.ts';
 import { isReleaseConfiguration } from '../commands/ios/support.ts';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
-import { isSigningKeystore } from './signing-files.ts';
+import type { AndroidSyncPlan } from './signing-files.ts';
 import { ANDROID_RELEASE_UNSUPPORTED, namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import {
@@ -1332,11 +1332,7 @@ function unsupportedBuild(connection: BuildConnection, request: BuildRequest): s
     : null;
 }
 
-function omittedFromSync(platform: BuildRequest['platform']): ((path: string) => boolean) | undefined {
-  return platform === 'android' ? isSigningKeystore : undefined;
-}
-
-type SyncRefusal = (repoRoot: string, paths: readonly string[]) => Promise<string | null>;
+type SyncPlan = (repoRoot: string, paths: readonly string[]) => Promise<AndroidSyncPlan>;
 
 /** Mirrors the checkout on the machine: the manifest in pages, then every blob it lacks. */
 async function syncSource(
@@ -1346,8 +1342,7 @@ async function syncSource(
   native?: NativeInputSnapshot | GradleTransfer,
   signal?: AbortSignal,
   ignored: readonly string[] = [],
-  syncRefusal?: SyncRefusal,
-  omitted: (path: string) => boolean = () => false,
+  syncPlan?: SyncPlan,
 ): Promise<
   { files: number; uploaded: number; uploadedBytes: number; syncMs: number; digest: string } | { failure: string }
 > {
@@ -1359,7 +1354,7 @@ async function syncSource(
     if (inRepo && !isAbsolute(inRepo) && inRepo !== '..' && !inRepo.startsWith(`..${sep}`))
       ignoredPaths.push(inRepo.split(sep).join('/'));
   }
-  const manifest =
+  const listed =
     native && 'declaration' in native
       ? (await nativeGradleTransfer(join(identity.repoRoot, identity.project), native.declaration, signal)).files
       : native
@@ -1369,12 +1364,13 @@ async function syncSource(
             await sourceManifest(identity.repoRoot, false, signal),
             signal,
           )
-        : (await sourceManifest(identity.repoRoot, false, signal, ignoredPaths)).filter((file) => !omitted(file.path));
-  const refused = await syncRefusal?.(
+        : await sourceManifest(identity.repoRoot, false, signal, ignoredPaths);
+  const plan = await syncPlan?.(
     identity.repoRoot,
-    manifest.map((file) => file.path),
+    listed.map((file) => file.path),
   );
-  if (refused) return { failure: refused };
+  if (plan?.refusal) return { failure: plan.refusal };
+  const manifest = plan ? listed.filter((file) => !plan.omit.has(file.path)) : listed;
   if (native && 'declaration' in native && manifestDigest(manifest) !== native.digest)
     return { failure: 'The native Gradle source changed before upload.' };
   const bySha = new Map(manifest.map((file) => [file.sha256, file]));
@@ -1598,8 +1594,8 @@ export async function offloadBuild(
     note: (line: string) => void;
     /** The fingerprint sources behind `expectedFingerprint` and the gitignored files they read, as absolute paths. */
     fingerprintInputs?: () => Promise<FingerprintInputs>;
-    /** Why these repository-relative paths may not go to a remote machine, checked before any is uploaded. */
-    syncRefusal?: SyncRefusal;
+    /** Which of these repository-relative paths stay here, or why none may go, decided before any is uploaded. */
+    syncPlan?: SyncPlan;
     restarts?: number;
   } & (
     | { request: Extract<BuildRequest, { platform: 'macos' }>; expectedFingerprint?: never }
@@ -1793,8 +1789,7 @@ export async function offloadBuild(
         nativeTransferInput(native),
         signal,
         inputs?.ignored,
-        input.syncRefusal,
-        omittedFromSync(request.platform),
+        input.syncPlan,
       );
       checkCancelled();
       if ('failure' in synced) {

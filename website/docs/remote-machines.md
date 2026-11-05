@@ -451,15 +451,19 @@ machine synced, including gitignored `.env.production` files. An
 `EXPO_PUBLIC_` variable set only in this shell is not applied; put it in an
 `.env` file.
 
-An Android offload leaves out keystores (`*.keystore`, `*.jks`, `*.p12`, `*.pfx`)
+A release offload leaves out keystores (`*.keystore`, `*.jks`, `*.p12`, `*.pfx`)
 other than `debug.keystore` and those under an APK's `src/*/assets` or `src/*/res`,
-and `keystore.properties`, and the machine builds with
-its own private Gradle home, so `~/.gradle/gradle.properties` is not read on either
-machine. Builds on a worker run as one macOS or Linux user with no sandbox, which is
-why the key stays here. Stim recognizes signing material only by these names and
-the contents listed below: a key or password anywhere else is still sent, so keep
-them out of the repository. The machine's stim-server must be a release with Android
-release support, and it always rebundles the JavaScript of the synced checkout.
+and `keystore.properties`, and the machine builds with its own private Gradle home,
+so `~/.gradle/gradle.properties` is not read on either machine. Builds on a worker run
+as one macOS or Linux user with no sandbox. Stim recognizes signing material only by
+these names and the contents listed below; `.env` files and other gitignored files are
+sent as usual. The machine's stim-server must be a release with Android release
+support, and it always rebundles the JavaScript of the synced checkout.
+
+A debug offload leaves out the same signing files unless a `build.gradle` or
+`build.gradle.kts` names one, because a script can need it to configure. It is never
+refused over them.
+
 The project's release signing config decides what happens:
 
 - A release build type signed with `debug.keystore`, as the React Native and Expo
@@ -473,9 +477,8 @@ The project's release signing config decides what happens:
   `file(MYAPP_UPLOAD_STORE_FILE)` with no `hasProperty` check, fail there. Guard
   those reads or build here.
 - If the `android.keystore` or `android.keystorePassword` file has another name
-  inside the repository, or a `.properties`, `.env`, `credentials.json` or Gradle
-  file sets a store or key password, Stim refuses before uploading anything, for a
-  debug build as well.
+  inside the repository, or a `.properties`, `credentials.json` or Gradle file sets a
+  signing password, a release offload refuses before uploading anything.
 
 When a remote machine cannot take the build, `auto` and `remote` build here, and a
 named machine refuses with `STIM_OFFLOAD_REFUSED`.

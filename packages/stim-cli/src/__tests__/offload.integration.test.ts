@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
+import { androidSyncPlan } from '../offload/signing-files.ts';
 import * as buildMachines from '../offload/build-machines.ts';
 import {
   buildPlacementSettings,
@@ -599,6 +600,8 @@ describe('strict client routing', () => {
         android: { variant: null, abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'ccache' },
       },
       fingerprintInputs: async () => ({ sources: [], ignored: [join(root, 'android', 'app', 'ignored.jks')] }),
+      syncPlan: (repoRoot, paths) =>
+        androidSyncPlan(repoRoot, paths, { release: true, configured: [], projectScripts: [] }),
       stagingDir: join(root, 'staging'),
       onPhase: () => {},
       onEnter: () => {},
@@ -644,7 +647,7 @@ describe('strict client routing', () => {
     expect(request.mock.calls.some(([method]) => method === 'build.sync')).toBe(synced);
   });
 
-  it('a sync refusal stops the build before any file list or byte reaches the worker', async () => {
+  it('a sync plan refusal stops the build before any file list or byte reaches the worker', async () => {
     const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method) => {
       if (method === 'build.offer') return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) };
       return { result: {} };
@@ -658,9 +661,10 @@ describe('strict client routing', () => {
     vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
     const choice = await choose();
     assert(typeof choice !== 'string');
-    const syncRefusal = vi.fn<(repoRoot: string, paths: readonly string[]) => Promise<string | null>>(
-      async () => 'release.jks holds a signing key',
-    );
+    const syncPlan = vi.fn<NonNullable<Parameters<typeof offloadBuild>[0]['syncPlan']>>(async () => ({
+      omit: new Set<string>(),
+      refusal: 'release.jks holds a signing key',
+    }));
     const outcome = await offloadBuild({
       choice,
       expectedFingerprint: 'fingerprint',
@@ -673,7 +677,7 @@ describe('strict client routing', () => {
         isExpo: false,
         optimizations: {},
       },
-      syncRefusal,
+      syncPlan,
       stagingDir: join(root, 'staging'),
       onPhase: () => {},
       onEnter: () => {},
@@ -681,7 +685,7 @@ describe('strict client routing', () => {
       note: () => {},
     });
     expect(outcome).toEqual({ ok: false, machine: 'mini', reason: 'release.jks holds a signing key' });
-    expect(syncRefusal).toHaveBeenCalledTimes(1);
+    expect(syncPlan).toHaveBeenCalledTimes(1);
     expect(request.mock.calls.map(([method]) => method)).toEqual(['build.offer']);
   });
 });

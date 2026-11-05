@@ -426,7 +426,8 @@ outside it moves to its own issue and pull request.
   every offload failure falls back to a local build unless the selection is
   `remote-only` or one machine, and no failure path
   writes the cache. An Android offload leaves keystores other than
-  `debug.keystore`, and `keystore.properties`, out of the sync and the fingerprint
+  `debug.keystore`, and `keystore.properties`, out of the fingerprint and, unless a
+  debug build's Gradle script names one, out of the sync
   (`packages/stim-cli/src/offload/signing-files.ts`). A release variant's worker
   builds any other signing config unsigned
   (`packages/stim-cli/shim/android-worker-release.gradle`) and the client signs it
