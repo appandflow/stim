@@ -39,6 +39,8 @@ export type MemoryCacheKind = typeof WATCHMAN_KIND | typeof GRADLE_DAEMONS_KIND;
 export interface MemoryScope {
   watchman: boolean;
   gradle: boolean;
+  /** Leaves a watchman with a smaller footprint uninspected, so a pass does not probe every root of a small daemon. */
+  watchmanMinBytes?: number;
 }
 
 /** The memory kind `--cache` names, or null for any other name. */
@@ -95,7 +97,11 @@ export interface MemoryReport {
 }
 
 const WATCHMAN_TIMEOUT_MS = 5000;
-const WATCHMAN_DOCTOR_BYTES = 2 * 1024 ** 3;
+/** The footprint at which doctor notes watchman and automatic maintenance shuts down an unused one. */
+const WATCHMAN_RESTART_BYTES: number = 2 * 1024 ** 3;
+/** The smaller footprint at which maintenance shuts down an unused watchman while the host is under memory pressure. */
+const WATCHMAN_PRESSURE_BYTES: number = 1024 ** 3;
+const WATCHMAN_STARTUP_GRACE_MS = 60_000;
 const GRADLE_STATUS_TIMEOUT_MS = 20_000;
 const GRADLE_STOP_TIMEOUT_MS = 60_000;
 const LSOF_TIMEOUT_MS = 10_000;
@@ -261,6 +267,8 @@ export interface WatchmanFacts extends ProcessMeasure {
   roots: WatchmanRootFacts[] | null;
   /** Connected clients other than gc's own call and the daemon's own connections, or null when `debug-status` did not list them. */
   clients: WatchmanClient[] | null;
+  /** Stim workspaces whose supervisor started under a minute ago: its Metro may not have connected to watchman yet. */
+  recentStarts?: string[];
 }
 
 function staleText(stale: WatchmanRootStale): string {
@@ -319,6 +327,9 @@ export function planWatchman(
   } else if (triggered.length > 0) {
     reason = 'in-use';
     detail = `${triggered.map((root) => root.path).join(', ')} ha${triggered.length === 1 ? 's' : 've'} triggers that stop firing while watchman is down`;
+  } else if (facts.recentStarts?.length) {
+    reason = 'in-use';
+    detail = `the Stim workspace ${facts.recentStarts.join(', ')} started its dev server less than ${WATCHMAN_STARTUP_GRACE_MS / 1000} seconds ago, and a Metro connects to watchman some seconds after it starts`;
   }
   return {
     process: {
@@ -745,18 +756,32 @@ async function collectWatchmanFacts(
   footprints: ReadonlyMap<number, number> | null,
   progress: boolean,
   operation?: StimContext,
+  minBytes?: number,
 ): Promise<WatchmanFacts | null> {
   const pid = parseWatchmanPid(await quietly(() => boundWatchman(['get-pid'], operation), operation));
   if (pid === null) return null;
+  const measure = measureOf(pid, byPid, footprints);
+  if (minBytes !== undefined && measure.bytes < minBytes) return null;
   const roots = await collectWatchmanRoots(pid, progress, operation);
   const clients = (await watchmanClients(operation))?.filter((client) => client.pid !== pid) ?? null;
   return {
     pid,
     startedAt: byPid.get(pid)?.startedAt ?? null,
-    ...measureOf(pid, byPid, footprints),
+    ...measure,
     roots,
     clients,
+    recentStarts: recentSupervisorStarts(byPid, Date.now()),
   };
+}
+
+function recentSupervisorStarts(byPid: ReadonlyMap<number, HostProcess>, now: number): string[] {
+  const recent: string[] = [];
+  for (const [pid, workspace] of supervisorPids()) {
+    const startedAt = byPid.get(pid)?.startedAt;
+    const at = startedAt ? Date.parse(startedAt) : NaN;
+    if (Number.isFinite(at) && now - at < WATCHMAN_STARTUP_GRACE_MS) recent.push(workspace);
+  }
+  return recent;
 }
 
 function watchmanClientDescriber(rows: readonly HostProcess[]): (client: WatchmanClient) => string {
@@ -798,7 +823,7 @@ export async function collectMemoryReport(
   const byPid = new Map(rows.map((row) => [row.pid, row]));
   const footprints = await readFootprints(operation);
   if (scope.watchman) {
-    const facts = await collectWatchmanFacts(byPid, footprints, progress, operation);
+    const facts = await collectWatchmanFacts(byPid, footprints, progress, operation, scope.watchmanMinBytes);
     if (facts) {
       const plan = planWatchman(facts, watchmanClientDescriber(rows));
       report.processes.push(plan.process);
@@ -955,6 +980,18 @@ function keep(
   output.record(kind, 'kept', processLabel(entry), { id: String(entry.pid), bytes: entry.bytes, detail });
 }
 
+const WATCHMAN_EXIT_WAIT_MS = 60_000;
+
+/** Seconds until the daemon's process is gone, or null when it still runs after the wait. A 9.6 GB daemon took 3 to 20 seconds. */
+async function waitForWatchmanExit(pid: number, operation?: StimContext): Promise<number | null> {
+  const started = Date.now();
+  while (alive(pid)) {
+    if (Date.now() - started >= WATCHMAN_EXIT_WAIT_MS) return null;
+    await cancellableSleep(250, { signal: operation?.signal, what: 'watchman shutdown' });
+  }
+  return Math.round((Date.now() - started) / 1000);
+}
+
 async function reclaimWatchman(before: MemoryReport, output: GcOutput, operation?: StimContext): Promise<number> {
   let failures = 0;
   const fresh = await collectMemoryReport({ watchman: true, gradle: false }, true, operation);
@@ -995,9 +1032,21 @@ async function reclaimWatchman(before: MemoryReport, output: GcOutput, operation
   try {
     phase('daemons', `shutting down watchman pid ${current.pid}: no client uses it`, operation);
     await boundWatchman(['shutdown-server'], operation);
+    const seconds = await waitForWatchmanExit(current.pid, operation);
+    if (seconds === null) {
+      failures++;
+      const detail = `it was still running ${WATCHMAN_EXIT_WAIT_MS / 1000} seconds after shutdown-server; it exits once its clients disconnect`;
+      output.log(chalk.red(`Watchman pid ${current.pid} has not exited: ${detail}`));
+      output.record('watchman', 'failed', processLabel(current), {
+        id: String(current.pid),
+        bytes: current.bytes,
+        detail,
+      });
+      return failures;
+    }
     output.log(
       chalk.green(
-        `Shut down watchman pid ${current.pid}, freeing ${formatBytes(current.bytes)}; the next client that needs it starts it again`,
+        `Shut down watchman pid ${current.pid} after ${seconds} seconds, freeing ${formatBytes(current.bytes)}; the next client that needs it starts it again`,
       ),
     );
     output.record('watchman', 'done', processLabel(current), { id: String(current.pid), bytes: current.bytes });
@@ -1251,6 +1300,37 @@ export async function stopIdleGradleDaemons(pids: readonly number[], output: GcO
   return processes.length ? reclaimDaemons({ ...report, processes }, output) : 0;
 }
 
+/** The footprint from which maintenance shuts down an unused watchman. */
+export function watchmanStopBytes(underPressure: boolean): number {
+  return underPressure ? WATCHMAN_PRESSURE_BYTES : WATCHMAN_RESTART_BYTES;
+}
+
+/**
+ * Whether automatic maintenance shuts watchman down: null when its footprint is under the threshold, a reason when
+ * the check keeps it, and `stop` when it is large enough and the same check `gc --delete` applies finds it unused.
+ */
+export function planWatchmanStop(
+  daemon: MemoryProcess | undefined,
+  underPressure: boolean,
+): { stop: true } | { stop: false; reason: string } | null {
+  if (!daemon || daemon.bytes < watchmanStopBytes(underPressure)) return null;
+  return daemon.reclaimable
+    ? { stop: true }
+    : { stop: false, reason: daemon.detail ?? 'it could not be proven unused' };
+}
+
+/** Shuts down the watchman daemon `pid` and removes its stale roots under the checks `gc --delete` applies, then waits for it to exit. Nothing runs while STIM_HOME scopes the config. */
+export async function stopUnusedWatchman(
+  pid: number,
+  output: GcOutput = GC_OUTPUT,
+  operation?: StimContext,
+): Promise<number> {
+  if (memorySweepIsScoped(operation?.env ?? process.env)) return 0;
+  const report = await collectMemoryReport({ watchman: true, gradle: false }, false, operation);
+  const planned = report.processes.find((entry) => entry.kind === 'watchman' && entry.pid === pid);
+  return planned ? reclaimWatchman({ ...report, processes: [planned] }, output, operation) : 0;
+}
+
 /** Whether `gc --delete --cache <cache>` would act on a memory kind: stop a process or remove a watchman root. */
 export function memoryWorkPending(cache: string | null, report: MemoryReport | null | undefined): boolean {
   const kind = reclaimedKind(cache);
@@ -1284,7 +1364,7 @@ export async function reclaimMemory(
 /** A doctor note when watchman's footprint is over 2 GiB: only a restart shrinks it, and gc says when one is safe. */
 export function watchmanFinding(report: MemoryReport): Finding | null {
   const daemon = report.processes.find((entry) => entry.kind === 'watchman');
-  if (!daemon || daemon.bytes < WATCHMAN_DOCTOR_BYTES) return null;
+  if (!daemon || daemon.bytes < WATCHMAN_RESTART_BYTES) return null;
   const stale = report.watchmanRoots.filter((root) => root.stale !== null).length;
   const state = daemon.reclaimable ? 'no client uses it now' : `it is kept: ${daemon.detail}`;
   return {
@@ -1294,7 +1374,7 @@ export function watchmanFinding(report: MemoryReport): Finding | null {
       `The shared watchman daemon (pid ${daemon.pid}) has a ${formatBytes(daemon.bytes)} ${daemon.measure} with ` +
       `${report.watchmanRoots.length} watched root(s), ${stale} of them stale; ${state}. Removing roots stops their ` +
       'recrawls, but only a restart returns the memory.',
-    fix: 'Run `stim gc --cache watchman` to see its roots and clients, then `stim gc --delete --cache watchman` once no workspace uses it.',
+    fix: 'Automatic maintenance shuts it down once nothing uses it. To do it now, run `stim gc --cache watchman` to see its roots and clients, then `stim gc --delete --cache watchman`.',
   };
 }
 

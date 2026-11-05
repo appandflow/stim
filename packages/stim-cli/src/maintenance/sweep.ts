@@ -17,12 +17,18 @@ import {
   type WorktreeSweep,
 } from '../commands/gc/worktrees.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
+import { formatBytes, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
-import { collectMemoryReport, memorySweepIsScoped, runningBuild } from '../commands/gc/memory.ts';
+import {
+  collectMemoryReport,
+  memorySweepIsScoped,
+  planWatchmanStop,
+  runningBuild,
+  watchmanStopBytes,
+} from '../commands/gc/memory.ts';
 import { collectTempLeftovers } from '../commands/gc/temp-leftovers.ts';
 import { collectTrash } from '../commands/gc/trash.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
@@ -181,14 +187,20 @@ async function planGradleDaemonStop(
 }
 
 /**
- * Pressure ladder rung 6, which the daily sweep also runs: stop the idle Gradle and Kotlin daemons, and with `disk`
+ * Pressure ladder rung 6, which the daily sweep also runs: stop the idle Gradle and Kotlin daemons, shut down an
+ * unused watchman whose footprint is over its threshold (a lower one with `memory` pressure), and with `disk`
  * delete the unpinned Gradle versions unmodified for `maintenance.gradleVersionIdleDays`, the recognized TMPDIR
  * leftovers unmodified for 24 hours, and the worktree trash. Gradle and TMPDIR are machine-global, so a scoped
  * Stim home leaves them alone.
  */
 export async function planRung6(
   settings: Pick<MaintenanceSettings, 'gradleVersionIdleDays'>,
-  { disk = true, now = Date.now(), operation }: { disk?: boolean; now?: number; operation?: StimContext } = {},
+  {
+    disk = true,
+    memory = false,
+    now = Date.now(),
+    operation,
+  }: { disk?: boolean; memory?: boolean; now?: number; operation?: StimContext } = {},
 ): Promise<MaintenancePlan> {
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
@@ -200,8 +212,12 @@ export async function planRung6(
     });
   const building = scoped ? null : runningBuild(listBuildLocks(), listBuildSlots());
   if (building) skips.push({ target: 'Gradle daemons', reason: building });
-  else if (!scoped) {
-    const report = await collectMemoryReport({ watchman: false, gradle: true }, false, operation);
+  if (!scoped) {
+    const report = await collectMemoryReport(
+      { watchman: true, gradle: !building, watchmanMinBytes: watchmanStopBytes(memory) },
+      false,
+      operation,
+    );
     const pids = report.processes
       .filter((entry) => entry.reclaimable && (entry.kind === 'gradleDaemon' || entry.kind === 'kotlinDaemon'))
       .map((entry) => entry.pid);
@@ -212,6 +228,17 @@ export async function planRung6(
         bytes: 0,
         reason: 'these Gradle and Kotlin daemons are idle',
       });
+    const daemon = report.processes.find((entry) => entry.kind === 'watchman');
+    const decision = planWatchmanStop(daemon, memory);
+    if (daemon && decision?.stop)
+      actions.push({
+        kind: 'would-stop-watchman',
+        target: `pid ${daemon.pid}`,
+        bytes: 0,
+        reason: `the shared watchman daemon holds ${formatBytes(daemon.bytes)} and nothing uses it`,
+      });
+    else if (daemon && decision && !decision.stop)
+      skips.push({ target: `watchman pid ${daemon.pid}`, reason: decision.reason });
   }
   if (!disk) return { actions, blocked: [], skips };
   if (!scoped && settings.gradleVersionIdleDays > 0) {

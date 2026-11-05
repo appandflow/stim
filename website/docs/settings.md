@@ -990,7 +990,7 @@ the same cap. Under disk pressure the
 unused before that sweep removes it: workspace build outputs, shared cache
 entries, parked simulators and emulators, and clean, pushed linked worktrees
 (only with `maintenance.removeIdleWorktrees`, off by default). The age sweep
-also stops idle Gradle and Kotlin daemons, deletes Gradle versions no project
+also stops idle Gradle and Kotlin daemons, shuts down an unused watchman over 2 GiB, deletes Gradle versions no project
 pins once unmodified for `maintenance.gradleVersionIdleDays` (7; 0 keeps
 them), and deletes TMPDIR leftovers and the worktree trash.
 `maintenance.removeFinishedWorktrees` controls the worktree check. Manual

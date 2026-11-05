@@ -8,7 +8,7 @@ import { discoverCachesAsync, pruneCache, type CacheDescriptor } from '../cache/
 import { emptyCaches, planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { deleteGradleVersion, waitForGradleExit } from '../commands/gc/gradle-versions.ts';
-import { stopIdleGradleDaemons } from '../commands/gc/memory.ts';
+import { stopIdleGradleDaemons, stopUnusedWatchman } from '../commands/gc/memory.ts';
 import { deleteTempLeftovers } from '../commands/gc/temp-leftovers.ts';
 import { deleteTrash } from '../commands/gc/trash.ts';
 import { collectStaleStatusCachesAsync, deleteStaleStatusCaches } from '../commands/gc/status-caches.ts';
@@ -397,6 +397,18 @@ async function stopGradleDaemonsAction(action: MaintenanceAction): Promise<Actio
   };
 }
 
+async function stopWatchmanAction(action: MaintenanceAction): Promise<ActionOutcome> {
+  const pid = Number(/\d+/.exec(action.target)?.[0]);
+  const { value: failures, results } = await quietly(() => stopUnusedWatchman(pid));
+  const failed = results.find((result) => result.status === 'failed');
+  if (failures || failed)
+    return { status: 'failed', bytes: 0, detail: failed?.detail ?? 'watchman could not be shut down' };
+  const stopped = results.find((result) => result.kind === 'watchman' && result.status === 'done');
+  return stopped
+    ? { status: 'done', bytes: 0, detail: `${stopped.label} exited` }
+    : kept(results.find((result) => result.kind === 'watchman')?.detail ?? 'watchman is in use now');
+}
+
 async function deleteGradleVersionAction(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   const before = lowestFree(measureDisk());
   try {
@@ -513,6 +525,8 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
       return clearArtifacts(action, context);
     case 'would-stop-gradle-daemons':
       return stopGradleDaemonsAction(action);
+    case 'would-stop-watchman':
+      return stopWatchmanAction(action);
     case 'would-delete-gradle-version':
       return deleteGradleVersionAction(action, context);
     case 'would-delete-temp-leftovers':

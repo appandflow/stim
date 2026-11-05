@@ -2485,13 +2485,15 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        install) goes after the measured ones, longest-idle first. The daemon
        measures each tree in the background, one walk at a time on the
        machine, after its install changes and at least every 6 hours
-    6. idle Gradle and Kotlin daemons, unpinned Gradle versions unmodified for
+    6. idle Gradle and Kotlin daemons, an unused watchman (over 2 GiB, or over
+       1 GiB under memory pressure), unpinned Gradle versions unmodified for
        maintenance.gradleVersionIdleDays, Stim TMPDIR leftovers unmodified for
        24 hours, and the worktree trash; automatic maintenance's daily sweep
        runs this rung at normal
 
   A level raised only by memory runs only what frees memory: the idle stage
-  of rung 1, which shuts devices down, and the Gradle daemons of rung 6.
+  of rung 1, which shuts devices down, and the Gradle daemons and watchman of
+  rung 6.
   Memory never refuses: it holds boots (\`guide lifecycle concurrency\`).
 
   Every action goes to $STIM_HOME/daemon/daemon.ndjson and to the workspace's

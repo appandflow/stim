@@ -2332,10 +2332,14 @@ watchman, and Gradle and Kotlin daemons need `--cache gradle-daemons`:
   roots (a directory that is gone, or a linked worktree git pruned) that no
   subscription or trigger uses. They then shut watchman down only when no other
   client is connected, every root's subscriptions and triggers were readable
-  and no root has a trigger;
-  otherwise they keep the daemon and name each client, such as the Stim
-  workspace whose Metro uses it. Removing roots does not shrink watchman; only a
-  restart does, and the next client that needs watchman starts it again.
+  and no root has a trigger; otherwise they keep the daemon and name each
+  client, such as the Stim workspace whose Metro uses it. They report the
+  shutdown only once the daemon's process has exited. Removing roots does not
+  shrink watchman; only a restart does, and the next client that needs watchman
+  starts it again and re-crawls its roots. Automatic maintenance applies the
+  same check: the daily sweep and the memory-pressure ladder shut watchman down
+  when it is over 2 GiB (over 1 GiB under memory pressure) and no Stim dev
+  server started in the last minute.
 - `stim gc --delete --cache gradle-daemons` stops each Gradle daemon that its
   own `gradle --status` reports idle, then each Kotlin compile daemon with no
   client connection once no Gradle daemon is busy. Nothing stops while a Stim

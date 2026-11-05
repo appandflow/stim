@@ -22,6 +22,7 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as measurements from '../maintenance/measure.ts';
 import { runMaintenance } from '../maintenance/run.ts';
 import { runLadder } from '../daemon/ladder.ts';
+import { planRung6 } from '../maintenance/sweep.ts';
 import { warnCriticalDisk } from '../maintenance/trigger.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
 import * as memory from '../commands/gc/memory.ts';
@@ -287,4 +288,89 @@ test('a scoped STIM_HOME plans no daemon stop and says why', async () => {
   expect(stop).not.toHaveBeenCalled();
   expect(existsSync(join(version, 'keep'))).toBe(true);
   expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('STIM_HOME scopes this config');
+});
+
+const GIB = 1024 ** 3;
+
+function watchmanReport(bytes: number, detail: string | null = null) {
+  vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
+  const collect = vi.spyOn(memory, 'collectMemoryReport').mockImplementation(async (scope) => ({
+    processes:
+      scope.watchman && bytes >= (scope.watchmanMinBytes ?? 0)
+        ? [
+            {
+              kind: 'watchman',
+              cacheKind: 'watchman',
+              pid: 4242,
+              startedAt: '2026-10-11T00:00:00.000Z',
+              bytes,
+              measure: 'footprint',
+              version: null,
+              gradleHome: null,
+              offloadClient: null,
+              state: detail ? 'busy' : 'idle',
+              reclaimable: detail === null,
+              reason: detail ? 'in-use' : null,
+              detail,
+            },
+          ]
+        : [],
+    watchmanRoots: [],
+    notices: [],
+  }));
+  return collect;
+}
+
+const plan = (options: { memory?: boolean } = {}) =>
+  planRung6({ gradleVersionIdleDays: 0 }, { disk: false, ...options });
+
+test('an unused watchman over 2 GiB is planned for a shutdown by the daily sweep', async () => {
+  watchmanReport(9 * GIB);
+  const { actions, skips } = await plan();
+  expect(actions.map((action) => [action.kind, action.target])).toEqual([['would-stop-watchman', 'pid 4242']]);
+  expect(skips).toEqual([]);
+});
+
+test('a watchman a client uses stays up and the skip names the client', async () => {
+  watchmanReport(9 * GIB, 'used by node (pid 77); shutting it down would break their file watching');
+  const { actions, skips } = await plan();
+  expect(actions).toEqual([]);
+  expect(skips).toEqual([
+    { target: 'watchman pid 4242', reason: 'used by node (pid 77); shutting it down would break their file watching' },
+  ]);
+});
+
+test('a watchman between 1 and 2 GiB is shut down only under memory pressure', async () => {
+  watchmanReport(1.5 * GIB);
+  expect((await plan()).actions).toEqual([]);
+  expect((await plan({ memory: true })).actions.map((action) => action.kind)).toEqual(['would-stop-watchman']);
+});
+
+test('a watchman under 1 GiB is left alone, pressure or not, without probing its roots', async () => {
+  const collect = watchmanReport(0.8 * GIB);
+  expect((await plan({ memory: true })).actions).toEqual([]);
+  expect(collect).toHaveBeenCalledWith(
+    expect.objectContaining({ watchman: true, watchmanMinBytes: GIB }),
+    false,
+    undefined,
+  );
+});
+
+test('a scoped STIM_HOME plans no watchman shutdown', async () => {
+  const collect = watchmanReport(9 * GIB);
+  vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(true);
+  const { actions } = await plan();
+  expect(actions).toEqual([]);
+  expect(collect).not.toHaveBeenCalled();
+});
+
+test('the daily sweep shuts watchman down and records it', async () => {
+  watchmanReport(9 * GIB);
+  const stop = vi.spyOn(memory, 'stopUnusedWatchman').mockImplementation(async () => {
+    recordGcResult('watchman', 'done', 'watchman pid 4242', { id: '4242', bytes: 9 * GIB });
+    return 0;
+  });
+  await pass();
+  expect(stop).toHaveBeenCalledWith(4242);
+  expect(actionKinds()).toContain('stop-watchman');
 });

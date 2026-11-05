@@ -107,6 +107,7 @@ const RESULT_KINDS: Record<string, GcResult['kind']> = {
   'dormant-stage': 'device',
   'delete-dependencies': 'worktreeDependencies',
   'stop-gradle-daemons': 'gradleDaemon',
+  'stop-watchman': 'watchman',
   'delete-gradle-version': 'gradleVersion',
   'delete-temp-leftovers': 'tempLeftover',
   'delete-trash': 'trash',

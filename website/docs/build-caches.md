@@ -692,6 +692,7 @@ In `on` mode a pass works through these steps, cheapest to rebuild first:
    without activity for `idle.dormantDays` go with its
    [dormant stage](./owned-devices.md#cleanup-behavior) instead.
 8. In the daily sweep, pressure ladder rung 6: idle Gradle and Kotlin daemons,
+   the shared watchman daemon when it is over 2 GiB and nothing uses it,
    unpinned Gradle versions unmodified for `maintenance.gradleVersionIdleDays`,
    Stim TMPDIR leftovers unmodified for 24 hours, and the worktree trash.
 9. In the daily sweep, what outlived the thing it describes, by the rules
@@ -726,14 +727,14 @@ under 10% of RAM available) or **critical** (under `disk.criticalFreeGb`, 6 GB,
 or under `disk.hardFloorGb` when that is higher; or critical memory pressure),
 and above normal runs one ladder top-down until the level clears:
 
-| Rung | High                                                                                                | Critical                                                                                                                |
-| ---- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| 1    | The idle stage for every workspace idle 2 minutes; build outputs of workspaces with nothing running | Same                                                                                                                    |
-| 2    | Parked simulators and emulators, oldest first, until the level clears                               | All parked devices                                                                                                      |
-| 3    | Build and Metro caches trimmed, least recently used first, to half their caps                       | Metro and Swift compilation caches emptied; build cache trimmed to the entries a workspace, parked device or build uses |
-| 4    | The dormant stage for workspaces idle 10 minutes                                                    | The dormant stage for every idle workspace                                                                              |
-| 5    | Nothing                                                                                             | `node_modules` and `ios/Pods` of idle linked worktrees holding 256 MB of their own, restored by `stim worktree warm`    |
-| 6    | Idle Gradle and Kotlin daemons, unpinned Gradle versions, TMPDIR leftovers, the worktree trash      | Same                                                                                                                    |
+| Rung | High                                                                                                               | Critical                                                                                                                |
+| ---- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| 1    | The idle stage for every workspace idle 2 minutes; build outputs of workspaces with nothing running                | Same                                                                                                                    |
+| 2    | Parked simulators and emulators, oldest first, until the level clears                                              | All parked devices                                                                                                      |
+| 3    | Build and Metro caches trimmed, least recently used first, to half their caps                                      | Metro and Swift compilation caches emptied; build cache trimmed to the entries a workspace, parked device or build uses |
+| 4    | The dormant stage for workspaces idle 10 minutes                                                                   | The dormant stage for every idle workspace                                                                              |
+| 5    | Nothing                                                                                                            | `node_modules` and `ios/Pods` of idle linked worktrees holding 256 MB of their own, restored by `stim worktree warm`    |
+| 6    | Idle Gradle and Kotlin daemons, an unused watchman, unpinned Gradle versions, TMPDIR leftovers, the worktree trash | Same                                                                                                                    |
 
 Rung 5 never takes the source checkout. `stim worktree warm` clones
 `node_modules` and `ios/Pods` from the source checkout on APFS, and a clone
@@ -748,7 +749,7 @@ measured ones, as before private sizes existed.
 Each rung measures free disk and memory again first, never touches a
 workspace with a build, a driver, a lease or lock, a live web share, a hosted
 placement or `maintenance.keep`, and takes the longest-idle workspace first. A level raised
-by memory alone runs only the idle stage and the Gradle daemons. The age sweep
+by memory alone runs only the idle stage, the Gradle daemons and an unused watchman. The age sweep
 runs rung 6 daily. A directory is cleared only when it is a real directory
 inside its worktree, git tracks nothing in it, and its worktree is not in use,
 locked, building or pinned. Caches owned by other tools, such as the pnpm and
