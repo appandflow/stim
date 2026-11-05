@@ -29,6 +29,21 @@ export function saveShareLink(root: string, key: string, share: SavedShare): voi
   withWorkspaceStateLock(root, () => writeLinks(root, { ...readShareLinks(root), [key]: share }));
 }
 
+/**
+ * {@link saveShareLink} for a caller that must not block on the workspace state lock, such as stim-server. `build`
+ * gets the entry already filed under `key` (unexpired) so it can carry fields over.
+ */
+export function saveShareLinkAsync(
+  root: string,
+  key: string,
+  build: (existing: SavedShare | undefined) => SavedShare,
+): Promise<void> {
+  return withWorkspaceStateLockAsync(root, () => {
+    const links = readShareLinks(root);
+    writeLinks(root, { ...links, [key]: build(links[key]) });
+  });
+}
+
 /** The workspace's links that have not expired; removes the expired ones from disk. */
 export function reusableShareLinks(root: string): Record<string, SavedShare> {
   if (!existsSync(workspaceShareLinksFile(root))) return {};

@@ -57,7 +57,7 @@ import {
   readSetupJournal,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
-import { ShareHub } from '../src/share.ts';
+import { ShareHub, type StartedShare } from '../src/share.ts';
 import * as stim from 'stim';
 import { BuildHost } from '../src/build.ts';
 import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
@@ -169,7 +169,7 @@ setInterval(() => {
 `;
 
 const FAKE_STIM = `
-import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, statSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 const args = process.argv.slice(2);
 const env = process.env;
@@ -1155,11 +1155,81 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       restore: true,
     });
 
+    expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links).toEqual(
+      Object.fromEntries(Object.entries(entries).map(([key, entry]) => [key, expect.objectContaining(entry)])),
+    );
+
     await client.request('share.stop', { workspace, slot: 'tablet' });
     expect(savedStates()).toEqual({ ios: 'live', 'ios@tablet': 'stopped', android: 'stopped' });
     await client.request('share.stop', { workspace });
     expect(savedStates()).toEqual({ ios: 'stopped', 'ios@tablet': 'stopped', android: 'stopped' });
     expect(order[0]).toBe('stop saw {"ios":"live","ios@tablet":"stopped","android":"stopped"}');
+  });
+
+  it("saves a share started over share.start, keeps the first start's password kind on a start under the same link, and share.stop pauses it", async () => {
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+    const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+    mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
+    writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
+    const started = (over: Partial<StartedShare>): StartedShare => ({
+      id: 'w1',
+      workspace,
+      platform: 'ios',
+      slot: 'default',
+      physical: false,
+      control: false,
+      viewers: 0,
+      state: 'live',
+      auth: 'generated',
+      viewAuth: null,
+      url: `https://x.test/s/${TOKEN}/`,
+      expiresAt,
+      ...over,
+    });
+    const hub = vi.spyOn(ShareHub.prototype, 'start');
+    hub.mockImplementationOnce(async () => started({ password: 'generated-pw-1' }));
+    vi.spyOn(ShareHub.prototype, 'stop').mockResolvedValue([]);
+    await routeServer();
+    const client = await desktop();
+    const file = () => JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links;
+
+    expect(await client.request('share.start', { workspace, platform: 'ios' })).toMatchObject({
+      result: { saved: true, password: 'generated-pw-1' },
+    });
+    const first = file().ios;
+    expect(first).toMatchObject({
+      platform: 'ios',
+      slot: 'default',
+      physical: false,
+      token: TOKEN,
+      origin: 'https://x.test/s/',
+      control: false,
+      password: 'generated-pw-1',
+      auth: 'generated',
+      viewAuth: null,
+      state: 'live',
+      expiresAt,
+    });
+    expect(statSync(workspaceShareLinksFile(workspace)).mode & 0o777).toBe(0o600);
+
+    const later = new Date(Date.now() + 7_200_000).toISOString();
+    hub.mockImplementationOnce(async () => started({ auth: 'set', expiresAt: later }));
+    await client.request('share.start', {
+      workspace,
+      platform: 'ios',
+      token: TOKEN,
+      password: 'generated-pw-1',
+      expiresAt: later,
+    });
+    expect(file().ios).toMatchObject({
+      auth: 'generated',
+      createdAt: first.createdAt,
+      expiresAt: later,
+      state: 'live',
+    });
+
+    await client.request('share.stop', { workspace });
+    expect(file().ios.state).toBe('stopped');
   });
 
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {
