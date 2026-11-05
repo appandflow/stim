@@ -39,7 +39,6 @@ export type MemoryCacheKind = typeof WATCHMAN_KIND | typeof GRADLE_DAEMONS_KIND;
 export interface MemoryScope {
   watchman: boolean;
   gradle: boolean;
-  /** Leaves a watchman with a smaller footprint uninspected, so a pass does not probe every root of a small daemon. */
   watchmanMinBytes?: number;
 }
 
@@ -97,9 +96,7 @@ export interface MemoryReport {
 }
 
 const WATCHMAN_TIMEOUT_MS = 5000;
-/** The footprint at which doctor notes watchman and automatic maintenance shuts down an unused one. */
 const WATCHMAN_RESTART_BYTES: number = 2 * 1024 ** 3;
-/** The smaller footprint at which maintenance shuts down an unused watchman while the host is under memory pressure. */
 const WATCHMAN_PRESSURE_BYTES: number = 1024 ** 3;
 const WATCHMAN_STARTUP_GRACE_MS = 60_000;
 const GRADLE_STATUS_TIMEOUT_MS = 20_000;
@@ -267,7 +264,6 @@ export interface WatchmanFacts extends ProcessMeasure {
   roots: WatchmanRootFacts[] | null;
   /** Connected clients other than gc's own call and the daemon's own connections, or null when `debug-status` did not list them. */
   clients: WatchmanClient[] | null;
-  /** Stim workspaces whose supervisor started under a minute ago: its Metro may not have connected to watchman yet. */
   recentStarts?: string[];
 }
 
@@ -982,7 +978,6 @@ function keep(
 
 const WATCHMAN_EXIT_WAIT_MS = 60_000;
 
-/** Seconds until the daemon's process is gone, or null when it still runs after the wait. A 9.6 GB daemon took 3 to 20 seconds. */
 async function waitForWatchmanExit(pid: number, operation?: StimContext): Promise<number | null> {
   const started = Date.now();
   while (alive(pid)) {
@@ -1300,7 +1295,6 @@ export async function stopIdleGradleDaemons(pids: readonly number[], output: GcO
   return processes.length ? reclaimDaemons({ ...report, processes }, output) : 0;
 }
 
-/** The footprint from which maintenance shuts down an unused watchman. */
 export function watchmanStopBytes(underPressure: boolean): number {
   return underPressure ? WATCHMAN_PRESSURE_BYTES : WATCHMAN_RESTART_BYTES;
 }
