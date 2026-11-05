@@ -589,7 +589,7 @@ project's `.xcode.env.local`, replacing any `export NODE_BINARY=` line already
 there. Offloaded React Native and Expo Android builds keep a separate Gradle
 home for each selected Node executable and version. Changing Node starts a cold
 Gradle dependency cache and can retain another warm daemon; switching back reuses
-that Node's cache. These caches stay until the client is removed. Native Gradle
+that Node's cache. These caches go with their repository area, see [Worker disk](#worker-disk). Native Gradle
 projects keep their existing home. A pin naming a version the
 worker does not have, such as `22.22.0`, uses the newest installed Node of that
 major that is not older than the pin, such as Homebrew's `node@22` at 22.23.2.
@@ -597,6 +597,34 @@ Without one, the steps run on the worker's own `node`, and a failed install or
 prebuild names the pin and that Node's version. Install a matching Node on the
 worker, for example `brew install node@22`. When the pinned Node's major
 changes, the worker reinstalls dependencies so native modules match it.
+
+### Worker disk
+
+Each source checkout a client builds from, including each worktree, gets its own
+repository area on the worker with its checkout, dependencies, build outputs and
+Gradle home. The worker removes these areas by itself:
+
+- An area with no build or cached artifact fetch for
+  `server.workerAreaMaxAgeDays` days (default 7, `0` turns this off).
+- While the volume of `server.workerRoot` has less than 50 GB free, the least
+  recently used areas until it has that much again, sparing areas used in the
+  last 3 hours. If only those are left, they stay, the log says so once, and
+  builds keep running.
+- Under 10 GB free the worker declines builds, so those recent areas can go too,
+  until the volume is back over 10 GB.
+
+It always keeps each client's most recently used area. It retains an area with a
+running or unfetched build, a bundle a hosted session can still take, an open
+connection sending it a manifest, a running Gradle daemon, or an ownership claim
+that is held or unresolved. The stim-server log has one line for each removal and
+one for each area it retains, with the reason. If a delete fails, the log says so
+once and a later pass finishes it. The next build of a removed
+checkout uploads what it needs again and starts cold. A client's shared blobs and
+CocoaPods, pnpm and SwiftPM caches stay until the client is removed.
+
+`stim-server service status` prints a `worker root:` line with the root's size as
+last measured, about every 6 hours, and the local `/health` answer carries it as
+`workerRoot`. Windows workers do not measure it.
 
 ### Stim versions
 

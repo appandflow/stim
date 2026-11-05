@@ -4799,6 +4799,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       tailscale: { state: 'not-running', backendState: 'Stopped' },
       nativeViewerOpened: false,
       keepAwake: { setting: false, held: false, reason: 'off' },
+      workerRoot: null,
     });
     const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
     expect(forwarded.status).toBe(200);

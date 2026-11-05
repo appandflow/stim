@@ -1182,6 +1182,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Directory where stim-server keeps the checkouts, dependencies and build state of the machines that build here; default $STIM_HOME/build-worker',
   },
   {
+    key: 'server.workerAreaMaxAgeDays',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 7,
+    description:
+      "Days since its last build or cached artifact fetch after which stim-server removes a repository area under server.workerRoot, keeping each client's most recently used one; 0 turns this age removal off. Areas are still removed, least recently used first, while the volume nears its free disk floor",
+  },
+  {
     key: 'caches.buildCache',
     type: ABSOLUTE_PATH,
     scopes: MACHINE,
