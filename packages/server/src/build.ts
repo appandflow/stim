@@ -1323,8 +1323,9 @@ export class BuildHost {
     const refused = new Set<string>();
     const emptied = new Set<string>();
     const unrefused = (area: AreaEviction) => !refused.has(areaKey(area.client, area.repo));
+    let processes: string | null = null;
     while (!this.closed && this.planEvictions(maxAgeMs).some(unrefused)) {
-      const processes = await listCommandLines();
+      processes ??= await listCommandLines();
       if (this.closed) return;
       const next = this.planEvictions(maxAgeMs).find(unrefused);
       if (!next) continue;
@@ -1347,6 +1348,7 @@ export class BuildHost {
       const { eviction } = outcome;
       const failure =
         outcome.failure ?? (await this.serialized(next.client, () => this.deleteEvicted(next.client, eviction)));
+      processes = null;
       const free = workerFreeBytes(this.root());
       if (failure) {
         this.reported.set(eviction.id, failure);
