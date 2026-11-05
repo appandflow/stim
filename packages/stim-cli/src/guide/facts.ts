@@ -945,7 +945,7 @@ RULES
                   what it would free where gc could measure it. kind is
                   idle-stage, delete-build-outputs, delete-parked-device,
                   trim-cache, empty-cache, dormant-stage, delete-dependencies
-                  (critical only), stop-gradle-daemons,
+                  (critical only), stop-gradle-daemons, stop-watchman,
                   delete-gradle-version, delete-temp-leftovers or
                   delete-trash. workspaces is each registered workspace's
                   { path, stage: "running" | "idle" | "dormant" | "stopped",

@@ -152,7 +152,7 @@ In on mode a pass runs, cheapest to rebuild first:
      without activity for idle.dormantDays go with its dormant stage instead
      (stim guide lifecycle budget).
   8. the age sweep also runs pressure ladder rung 6: idle Gradle and Kotlin
-     daemons, unpinned Gradle versions unmodified for
+     daemons, an unused watchman over 2 GiB (\`guide cleanup memory\`), unpinned Gradle versions unmodified for
      maintenance.gradleVersionIdleDays, Stim TMPDIR leftovers unmodified for 24
      hours, and the worktree trash.
   9. the age sweep also prunes what outlived the thing it describes, by the
@@ -821,8 +821,8 @@ THE PRESSURE LADDER
   runs the ladder to its end at high after its own sweep: the idle stage for every workspace
   idle 2 minutes or more, parked devices, the shared caches trimmed to half
   their caps, the dormant stage for workspaces idle 10 minutes or more, and
-  idle Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the
-  worktree trash. \`gc --delete --cache all\` runs it at critical, which also
+  idle Gradle daemons, an unused watchman, unpinned Gradle versions, TMPDIR
+  leftovers and the worktree trash. \`gc --delete --cache all\` runs it at critical, which also
   empties the Metro and compilation caches, takes every idle workspace
   dormant and deletes the node_modules and Pods of idle linked worktrees. It
   runs whatever daemon.mode says and covers every registered workspace,
@@ -1159,7 +1159,11 @@ THE ONE CASE GC WILL NOT REAP
   the commands below would free now.
 
   Watchman is stopped by a plain \`gc --delete\` and by \`gc --delete --cache
-  watchman\`; \`--cache all\` and every other \`--cache\` value leave it alone.
+  watchman\`; no other \`--cache\` value runs that step. A plain \`gc --delete\` and
+  \`gc --delete --cache all\` also run the pressure ladder with memory
+  treated as under pressure, whose rung 6 stops an unused watchman of 1 GiB
+  or more by the same check; the plain step above stops one of any size
+  first.
   Manual \`--cache gradle-daemons\` requires fresh memory pressure and no
   local build, including iOS, whatever daemon.mode says; an unreadable macOS
   signal keeps daemons. Critical acts at once; warning needs 10 minutes of
@@ -1195,7 +1199,27 @@ THE ONE CASE GC WILL NOT REAP
   needs watchman starts it again and re-watches the roots in its state file.
   Every watchman call uses --no-spawn, so gc never starts the daemon.
   Shutting it down under a Metro that uses watchman would break that Metro's
-  file watching, which is why any connected client keeps it.
+  file watching, which is why any connected client keeps it. A Metro that
+  subscribed to watchman is always a connected client (\`debug-status\` lists
+  it with its pid and name), a Metro that does not use watchman is not and
+  loses nothing, so gc needs no signal for a bundle in flight. Bare React
+  Native Metro uses watchman whenever it is installed, but subscribes only
+  when it watches files: not when CI is set. Expo SDK 56 and later use it only
+  when metro.config.js sets resolver.useWatchman to true. A Metro that lost its
+  connection reconnects, but a file changed before it subscribes again is
+  never seen, and a Metro whose reconnect fails exits.
+
+  Automatic maintenance shuts down an unused watchman too, by pressure ladder
+  rung 6 in the age sweep and under memory pressure: when its footprint is over
+  2 GiB, or over 1 GiB while the host is under memory pressure, and the same
+  check gc --delete applies finds it unused again right before the shutdown.
+  A Stim dev server that started less than 60 seconds ago keeps it, since a
+  Metro connects some seconds after it starts. Maintenance removes the stale
+  roots first, waits for the daemon to exit (a large one took 3 to 20 seconds;
+  it is reported only once its process is gone), and does nothing while
+  STIM_HOME is set. The next client that needs watchman starts it again, and
+  it re-crawls every root in its state file. A tool outside Stim that kept no
+  connection open and used watchman starts it again the same way.
 
   gc finds a Gradle daemon's Gradle user home from the daemon log it holds
   open (lsof), and asks the daemon's own distribution for its status with

@@ -117,6 +117,7 @@ const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
   'would-delete-devices': 5,
   'would-delete-dependencies': 6,
   'would-stop-gradle-daemons': 7,
+  'would-stop-watchman': 7,
   'would-delete-gradle-version': 8,
 };
 
@@ -181,6 +182,8 @@ function describeDone(action: MaintenanceAction): string {
       return `Deleted the installed dependencies ${action.target}`;
     case 'would-stop-gradle-daemons':
       return 'Stopped idle Gradle and Kotlin daemons';
+    case 'would-stop-watchman':
+      return 'Shut down the unused watchman daemon';
     case 'would-delete-gradle-version':
       return `Deleted the unpinned Gradle ${action.target} caches and distributions`;
     case 'would-stop-workspace':

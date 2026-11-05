@@ -18,6 +18,7 @@ export type MaintenanceActionKind =
   | 'would-clear-build-dirs'
   | 'would-delete-dependencies'
   | 'would-stop-gradle-daemons'
+  | 'would-stop-watchman'
   | 'would-delete-gradle-version'
   | 'would-delete-temp-leftovers'
   | 'would-delete-trash'
@@ -161,6 +162,7 @@ const KINDS: readonly string[] = [
   'would-clear-build-dirs',
   'would-delete-dependencies',
   'would-stop-gradle-daemons',
+  'would-stop-watchman',
   'would-delete-gradle-version',
   'would-delete-temp-leftovers',
   'would-delete-trash',

@@ -522,11 +522,15 @@ async function dependenciesRung(context: RungContext): Promise<void> {
 }
 
 /**
- * Rung 6 now: idle Gradle and Kotlin daemons, and for disk the unpinned Gradle versions, TMPDIR leftovers and the
+ * Rung 6 now: idle Gradle and Kotlin daemons, an unused watchman over its threshold, and for disk the unpinned Gradle versions, TMPDIR leftovers and the
  * worktree trash. At normal the daily sweep runs the same plan.
  */
 async function sweepRung(context: RungContext, causes: readonly Cause[]): Promise<void> {
-  const plan = await planRung6(context.settings, { disk: causes.includes('disk'), operation: context.operation });
+  const plan = await planRung6(context.settings, {
+    disk: causes.includes('disk'),
+    memory: causes.includes('memory'),
+    operation: context.operation,
+  });
   for (const action of plan.actions) {
     if (!(await context.stillShort())) return;
     await run(context, action);
