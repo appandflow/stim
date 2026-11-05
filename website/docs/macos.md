@@ -113,8 +113,7 @@ incremental compile work during a build; the plan predicts no duration.
 
 ## Reusing completed builds
 
-Opt in only when the package has pinned, repeatable inputs and produces an app
-that runs after its original checkout and scratch directory are gone:
+SwiftPM reuses compilation work by default. To cache the complete app bundle, declare repeatable artifact inputs.
 
 ```json
 {
@@ -130,132 +129,11 @@ that runs after its original checkout and scratch directory are gone:
 }
 ```
 
-Stim hashes Git-visible repository source, `Package.resolved` even when ignored,
-the development plist, declared resources, Swift/Xcode/SDK identity and CPU
-architecture. `ignored` names exact Git-ignored repository-relative input files.
-`outputs` names generated repository-relative directories already ignored by Git.
-`localFiles` names exact additional private files, relative to the package or
-absolute; `environment` names additional build-time variables. Their contents
-and values are hashed locally and are not placed in the shared receipt.
+Opt in only with pinned dependencies, a self-contained app bundle and a complete list of extra build inputs. List exact Git-ignored input files in `ignored`, Git-ignored output directories in `outputs`, and extra private inputs in `localFiles` or `environment`. Stim hashes private inputs for its local key. For remote builds, resource and asset catalog files must be visible to Git. Declaring an ignored file for caching does not send it to the worker. The installed guide covers both contracts.
 
-Do not declare `complete` for mutable dependencies, build-time network data,
-undeclared local files or environment, or code that needs its original absolute
-source paths, including `#filePath`. Source inventories containing symbolic links
-are currently ineligible. Without a valid declaration, Stim compiles normally
-and keeps SwiftPM incremental reuse.
+<StimTabs code="stim guide macos" />
 
-Completed bundles use the ordinary shared build cache and an optional
-[`cache.provider`](./cache-packages.md) with a `files` capability, including S3.
-`optimizations.buildCache` and `optimizations.remoteBuildCache` apply. A hit skips
-compiler slots and placement, then gets this workspace's identifier and name on
-a re-signed copy. Corrupt or incompatible entries fall back to compilation;
-inputs changed during compilation prevent publication. Compiler scratch outputs
-and package checkouts are not shared by this cache.
-Capable paired workers also retain completed apps after verifying their actual
-source, private inputs and toolchain before and after compilation. After local
-and provider misses, an exact peer hit skips source upload and compiler
-admission, even on a busy worker. The worker rechecks private inputs before
-offering and fetching an archive; private values stay there, and its opaque
-identity does not become this Mac's local cache key. Ignored bundle files need
-an explicit `ignored` or `localFiles` declaration for peer reuse. Removing the
-worker checkout does not discard an archive whose private inputs remain valid.
-Version probes and command selection use the package directory. After checkout
-removal, reuse requires a verified direct Apple toolchain selection; custom
-Swift, `xcrun` or `xcodebuild` launchers need the checkout and otherwise miss.
-`SWIFT_EXEC` and `SWIFT_EXEC_MANIFEST` overrides are resolved and versioned
-separately and also require the checkout. The SDK selected by `SDKROOT`, then
-`SWIFTPM_SDKROOT_macosx`, is checked by real path and build version.
-Explicit local placement, disabled pool members and
-`remoteBuildCache: false` skip peer lookup. Older workers compile normally.
-
-Desktop's macOS Build card has the same **Details**, **Run**, **Last Build** and
-**Next Build** layout as iOS and Android. Build details check automatically while
-visible, reusing a completed build or check for 60 seconds and skipping running
-builds. There is no manual Check button.
-
-Try this agent prompt: “Check my next macOS Swift Package build with
-`stim macos --plan --json`, explain any refused settings, and leave the running
-app untouched.”
-
-SwiftPM scratch outputs and dependencies in `macos/build`, the staged
-`macos/<Product>.app` and interrupted-build `macos/staging-*` directories can
-use substantial disk space under `$STIM_HOME/workspaces/<id>/`. Clear them
-with `stim gc --delete --cache workspaces` after stopping the app. Running,
-building, unverified and hosted macOS apps keep their workspace untouched.
-Runtime locks, state, logs and the project's own `.build` stay; the next
-`stim macos` performs a full Swift build and restages the app.
-
-`--remote-build <local|auto|remote|remote-only|name>` overrides `STIM_REMOTE_BUILD` and the
-machine setting `remote.build` (default `auto`). `local` builds here. A name
-requires the matching configured and paired worker, ignoring this Mac's capacity. Any failure is `STIM_OFFLOAD_REFUSED` with the worker and
-reason; no local xcodebuild, Gradle or SwiftPM compile or another machine follows. Check
-`stim remote list`. Run `stim remote add <machine>` to ask for build
-access if not approved; a person on the worker approves it by running the
-`stim-server setup` command it printed.
-Invalid, unlisted or unpaired selections refuse before stopping the running app
-or changing its build record. To change placement, rerun with `--remote-build auto`,
-`remote` or `local`.
-
-When `--remote <machine>` and `--remote-build <name>` name the same Mac (the same
-paired node), the worker builds the app and runs it, so this Mac's Xcode, macOS SDK
-and CPU architecture do not have to match the worker's. The Stim build
-compatibility version must still match, and the worker needs Xcode and a macOS SDK. This Mac's cache is skipped;
-the worker's completed-app cache is keyed on its own toolchain. In every other
-combination, including `--remote-build auto`, the Xcode and macOS SDK match applies.
-
-`remote.build` also places these SwiftPM Debug builds: `auto` builds here while
-this Mac has capacity, `remote` uses the first approved remote Mac in `remote.machines` order that accepts and
-otherwise builds here, `remote-only` never builds here and refuses when none accepts, and `local` builds here.
-[`remote.buildPoolDisabled`](./remote-machines.md#automatic-machine-pools) excludes
-members from automatic placement and its local fallback; explicit local or named
-placement bypasses membership. Configure `remote.machines` and approve build
-access as described in [settings](./settings.md). The worker needs matching Stim,
-CPU architecture, Xcode and macOS SDK (except for an app built and run on the same Mac, above), and network access to fetch package
-dependencies the first time. It keeps SwiftPM dependencies per client and
-incremental outputs per repository. Verified completed apps can also be reused
-as described above. It runs no
-JavaScript install, prebuild or pod install for this job. It receives the files
-git lists (tracked and untracked, not ignored), so a build input that is
-gitignored is missing there. Resource and asset catalog sources must be tracked
-or untracked and not ignored. Offload sends the resolved source paths relative
-to the repository root; the worker resolves them inside its checkout and stages
-them before signing.
-
-Stim validates the development plist and resource entries before asking a machine
-and verifies the returned archive digest, bundle ID, executable, declared
-resources and ad hoc signature before
-replacing the bundle. With `auto` or `remote`, every offload failure falls back locally; failed staging preserves the previous bundle. The app launches
-locally with the same supervisor and ownership checks. The build record carries
-`buildMachine` for the selection and `builtOn` for the actual worker or `here`
-(absent before a build runs), plus `errorCode` for typed failures. It retains
-`offloadedTo` for a remote build or `offloadFallback` for a fallback, and build
-logs show placement and its reason.
-
-While a macOS build runs, `stim status --json` reports it as `environments[].build` with
-`platform: "macos"`, the same phases and progress as iOS and Android builds: `prepare`,
-`compile`, `install` and `launch`. During `compile`, `detail` carries SwiftPM's
-`[done / total]` counts with `unit: "steps"`, and fetching and planning packages show as the
-`configure` step. `outcome` and `plannedPhases` remain `null`;
-finished runs and the time each phase took, including `launch`, are in `environments[].builds.macos`, with SwiftPM's step total as `compileSteps`. Stim Desktop shows them in the
-workspace's build card.
-
-Stim Desktop offers **Build and Run**, **Open app** (for an app on this Mac) and **Stop** on the
-workspace's app card, with a live preview that updates itself while the app runs. The preview follows the app's front standard window, its
-main window with any attached sheet, as the app opens, switches, closes or resizes
-windows. It never captures another process's windows, menus or the desktop. Without
-**Device Control and Data Access** permission Stim cannot tell which window is in
-front, so the preview shows only an app whose one window contains the others.
-A viewer does not capture its own process recursively. Capture and Open app verify the recorded PID, process start time, bundle ID
-and executable. Open app rechecks the captured window, raising a pinned one, then activates
-that owned app for normal native-window input. The captured view is read-only;
-background mouse/keyboard relay is not included.
-
-Capture requires existing **Screen & System Audio Recording** permission (**Screen Recording** on macOS 14);
-Open app also requires **Device Control and Data Access** permission (**Accessibility** on macOS 26 and earlier).
-The first native viewer opening shows one Desktop setup screen for both permissions, named for your macOS version, with status, **Request Permissions**, **Settings** and **Check Again**. Approve the normal macOS requests; Stim never resets or automatically grants access. **Permissions** on the app card reopens setup. Builds never prompt. If unavailable, use the normal app window and workspace logs.
-An
-unverifiable owner refuses cleanup rather than signalling another app. `stop`
-affects only this workspace's recorded app and supervisor.
+In Desktop, the workspace's app card has **Build and Run**, **Open app** for local apps, and **Stop**. The live preview follows the app's front standard window. Use **Permissions** on the app card if capture or window selection is unavailable.
 
 ## Agent actions
 
@@ -292,242 +170,26 @@ longer returned, and a failed open is not shown.
 
 ## Monitor from your phone
 
-Pair the phone with this Mac's stim-server. Native workspaces show the app, build
-state and runtime state on Home and in the workspace. Tap the build card for
-SwiftPM logs, or the logs card for native runtime output. Metro stays out of this
-workflow.
+Pair your phone with this Mac, open the workspace and tap its app tile. You can see the app's front window, build status and logs. [Pair a phone](./phone-app.md)
 
-Tap the app tile to view the app's front window. A server advertising
-`macos-window` streams that window over the existing authenticated connection with
-read access. It verifies the recorded PID, process start time, executable and
-bundle before capture and on every frame. The view has no replay and never captures the desktop or another app.
-It follows the app's front standard window like the Desktop preview. After the app
-closes its last window the view reports a delay until another opens.
-
-During Control, a server advertising `macos-window-select` adds a **Window** menu to
-the phone's toolbar: **Follow front window**, or one of the app's windows by title.
-Picking a window pins the view to it and brings it to the front of the app, so
-input lands there even when another window comes forward on the Mac. The pin ends
-when you choose Follow front window, when the window closes, or when Control ends
-for any reason, including five idle minutes.
-Stim Desktop's app card and hosted viewer show the same menu above the preview. A server advertising `macos-windows` also
-names the captured window and the app's other windows.
-
-The capture host requires existing **Screen & System Audio Recording** permission
-(**Screen Recording** on macOS 14). When denied, the viewer names the existing host
-to allow in **System Settings → Privacy & Security → Screen & System Audio Recording**. Open **Permissions** in Stim Desktop on that Mac to request both grants, then reconnect the phone viewer. A phone-first native view asks the running Desktop host to show the same setup. A server started outside Desktop uses that launching host's permissions, so granting this copy of Stim may not apply to it. The phone and server never request or reset permissions.
-Status and logs remain available.
-
-With `macos-window-control` and a control pairing, tap **Control** for clicks,
-drags and printable ASCII typing. The main bar offers **Keyboard** and **Scroll**;
-Scroll turns a drag into scrolling. Keyboard attaches one compact scrolling row
-with modifier glyphs, navigation keys and shortcut icons over an iOS material
-backdrop, with a translucent fallback elsewhere. Every control keeps its accessible name.
-Shift, Control, Option and Command apply to the next supported key and then
-clear; dismissing the keyboard also clears them.
-
-This requires a newly built phone client with Keyboard Controller, rather than
-an update to an older binary. A server advertising `macos-keyboard-extended`
-accepts modified letters `a-z` and digits `0-9` one at a time. Older servers keep
-fixed shortcuts and navigation; the phone explains when a server update is
-needed. Modified multi-character input and symbols are unsupported.
-
-Shortcuts for `a-z` and `0-9` use the key that types the character in the
-**Mac's current keyboard layout**, using the Command layer when Command is held.
-Dvorak and Dvorak-QWERTY Command are supported. On Russian and similar layouts
-(Cyrillic, Greek, Hebrew, Arabic), Latin-letter shortcuts work with Command;
-Control-only or Option-only letter shortcuts are refused. With Control, the
-layout's Control table must also yield the requested character or, for letters,
-its C0 control character; otherwise the shortcut is refused. The Mac's selected
-input source is read on each key, so switching layouts takes
-effect on the next key. Letters and digits available only with Shift or Option,
-or through a dead key (for example digits on AZERTY), are refused with a reason
-naming the layout, and Control ends. Stim does not add modifiers to reach those
-characters. Ordinary typing and navigation do not depend on the layout. Symbols
-such as comma remain unsupported key names.
-
-Control posts input to the owned process without activating it or raising its
-window; only choosing a window to pin raises it among the app's windows. Only when the captured window is not the app's key window (or its
-attached sheet) does Stim activate the app to deliver input, waiting up to one
-second for focus. The helper then sends a `controlActivated` notice, which stim-server logs.
-Clicks on views that reject the first mouse, such as custom views and SwiftUI
-`onTapGesture` regions, do not land while the app is in the background. Use
-Desktop's **Open app** to bring the app to the front for those views.
-
-Each action rechecks the exact owned
-process and that the captured window is still the app's front standard window, or
-the window you pinned. The
-app's other windows are allowed; input goes to the captured window, and a sheet
-attached to it takes focus and pointer input. Input that arrives while the view
-moves to another window is dropped and Control continues. A modal dialog window
-refuses input. A sheet larger than the captured window is not supported.
-Several clients can control the app at once, sharing one input session per app
-that lasts while any of them controls it; each client's Control ends on
-disconnect, revocation or five idle minutes, without a CLI device
-lock. Existing **Device Control and Data Access** permission (**Accessibility** on
-macOS 26 and earlier) is required. Stim never requests
-or resets permissions. An input refusal ends every client's Control with its reason while
-viewing and logs remain usable; older servers stay view-only.
-
-Native Control uses dynamically resolved private CoreGraphics input SPI in the
-server helper, outside the phone and Mac App Store app binaries. macOS updates
-can make it unavailable; then Control refuses while viewing and logs remain
-available.
+For live capture, grant **Screen & System Audio Recording** (called **Screen Recording** on macOS 14) on the Mac doing the capture. **Permissions** on the Desktop app card opens setup. Device control also needs **Device Control and Data Access** (called **Accessibility** on macOS 26 and earlier), a control pairing and a compatible server. Tap **Control** to click, drag or type. Use the **Window** menu to select a window when supported. Native windows do not support replay.
 
 ## Run it on another Mac
 
-`stim macos --remote <placement>` (or `macos.remote`) builds the Debug app on this Mac and runs it on
-another Mac over your tailnet, without SSH. List that Mac in
-[`remote.machines`](./settings.md#machine-settings) with `stim remote add <machine>`;
-a person on that Mac runs the `stim-server setup` command it printed, then run
-`stim remote list`. Stim connects only to the stim-server that proves it
-holds the key pinned at approval. If the host refuses or is
-unreachable, the command fails; with a named Mac it never launches the app locally instead.
-
-The `--remote` flag and the `macos.remote` setting take a placement word or a
-remote Mac name from `remote.machines`; the flag overrides the setting:
-
-| Value         | Where the app launches                                                                                                                                                                                                                                                                                                                 |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `local`       | Here. This is the default when neither is set.                                                                                                                                                                                                                                                                                         |
-| `auto`        | Here, unless this Mac is busy (host memory pressure, or load per core at or above `server.maxLoadPerCore`); then the first approved Mac in `remote.machines` order that has room.                                                                                                                                                      |
-| `remote`      | The first approved Mac in `remote.machines` order that has room and a load under its own `server.maxLoadPerCore`; here only when none does.                                                                                                                                                                                            |
-| `remote-only` | The same, never here, so a macOS app does not take focus on this Mac. When every Mac that answered is only full or loaded it waits up to 600 seconds for one with room, then refuses with `STIM_AT_CAPACITY`; with no Mac that could ever take it, it refuses at once with `STIM_HOSTING_REFUSED` and the reason each Mac was skipped. |
-| a Mac name    | Exactly that Mac, with no fallback.                                                                                                                                                                                                                                                                                                    |
-
-A placement word picks the Mac on a new launch and keeps the recorded one while an
-app runs there, until `stim stop`. The command prints a `placement:` line with the
-choice and the skipped Macs. [Automatic machine pools](./remote-machines.md#automatic-machine-pools)
-(`remote.devicePoolDisabled`) also apply to automatic macOS placement. macOS
-refuses `eas` and `proxy` because it has neither backend. These reserved names are
-case-insensitive and trimmed; they refuse with `STIM_BAD_ARG` before state access or
-a connection.
-
-The host records the hosted app's stdout, stderr and exit like a local run.
-`stim logs`, including `--errors`, `--json` and `--follow`, asks the host over the
-same approved connection, copies the records it has not copied yet into the
-workspace's `logs/macos-host.ndjson` and prints them with the local records.
-`stim stop` copies the last ones, including the exit record, before it forgets the
-placement, so the logs stay readable after stop. A host that cannot answer, because
-it is unreachable or runs a `stim-server` that predates this, costs one stderr
-warning (after up to 10 seconds of connecting); stdout still carries the records already copied, so `logs --json` stays
-valid NDJSON. The host's unified log is not collected: `os.Logger` output that is
-not written to stderr does not appear.
-
-Phones and Stim Desktop view and control the hosted app through this Mac's
-stim-server, which relays to the host. Hosted iOS simulators use the same relay
-and show the machine's name in their device tiles. The phone sends clicks, scrolls,
-text and keys; Stim Desktop's Control sends clicks, drags and typed text.
-Desktop sizes the hosted macOS preview from the captured window's point size when the host supplies it, shrinking only to fit the card rather than with the stream's pixel limit.
+Set up an approved [remote machine](./remote-machines.md) with **Run devices** access, then name it. Add `--remote-build` if you also want it to compile the app. Building there requires a separate approval.
 
 <StimTabs
 code={`stim macos --remote janics-mac-mini
-stim macos --remote janics-mac-mini --json
-stim status --json
+stim macos --remote janics-mac-mini --remote-build janics-mac-mini
+stim logs --errors
 stim stop`}
 />
 
-Hosted delivery carries the staged bundle, including declared resources and
-compiled assets. When `remote.build` built the app on the hosting Mac itself
-(the same stim-server, approved for the same client key), the host copies the files from the build it kept for
-this Mac instead of receiving them again over the tailnet. It admits only bytes
-that match the digests of the bundle Stim verified here, and it needs both the
-build and the device-host approval for this Mac. Files the host cannot take, an
-older `stim-server`, or a build fetched more than 10 minutes earlier fall back
-to the upload. The copied bundle keeps its own `CFBundleIdentifier`. The host runs it as
-`<id>.hosted<slot>` from a fixed pool of slots, so its bundle ID stays the same
-across rebuilds. Whether macOS keeps the permissions the hosted app asks for itself
-also depends on how the host signs it.
-Running the command again reuses the session and delivers a new copy.
-`macos.arguments` are passed to the hosted launch as plain arguments, without
-environment injection: at most 32 arguments, 1024 characters each and 8192
-characters total. Empty strings are allowed; NUL, CR and LF are refused. Values
-are stored in the host's app receipt and visible in process listings, so do not
-put secrets there. Older hosts ignore them and Stim warns to update `stim-server`
-on the host. `status --json` reports the host's applied arguments under
-`environments[].macos.arguments`.
+Use `macos.remote` for a default. A named Mac is strict and never launches locally. Use `remote-only` to allow any eligible worker and prevent a local launch. Stop the session before switching hosts. If stop cannot reach the host, retry when it is available.
 
-While the app runs on a host, a local `stim macos` refuses, and so does `--remote`
-with another machine, until
-`stim stop`. `stim stop` and `stim worktree remove` stop the session on the host and
-wait for it to confirm. When the host cannot be reached, the placement stays
-recorded so a later `stim stop` can finish.
+The workspace shows the hosted window in Desktop. The host needs capture and control permissions. To drive it with an agent, configure `hosting.agentDriver` on the host and use the app-scoped command in `macos.host.agent` from the JSON output. The installed guide covers driver setup, build inputs and placement.
 
-To view or control the hosted app from a phone, grant Screen & System Audio Recording
-and Device Control and Data Access (**Accessibility** on macOS 26 and earlier) once to
-the app that runs stim-server on the host, not to the hosted app.
-`stim-server service install` runs the server under the Stim Host app and shows
-macOS's own requests on that Mac's screen, one at a time. Stim Host keeps
-running after install returns, asks for Device Control and Data Access once the
-Screen & System Audio Recording request is answered, and opens that pane with
-Stim Host listed when macOS shows no request for it. A person there approves
-them. If a request does not appear, turn the app on in **System Settings →
-Privacy & Security** in both panes; Stim never changes these settings itself.
-`stim-server service status` shows the grants, and `stim doctor` on this Mac
-reports an approved host that lacks them. A server started by Stim Desktop uses
-Desktop's grants.
-
-Install downloads the signed, notarized **Stim Host** release this version of
-Stim pins, checks its SHA-256 and App & Flow's Developer ID signature, and
-installs it as `~/Applications/Stim Host.app` (`dev.stim.host`), so macOS keeps
-its approvals across Stim and Node updates. A Mac that ran the earlier
-**Stim Host Dev** keeps that app in `~/Applications`; delete it and its System
-Settings entries when you no longer need them.
-
-`macos --json` prints `{ platform, product, launchId, build, host }`, and
-`status --json` reports the same `host` under `environments[].macos`: the
-machine, session, app slot, app attempt, hosted bundle ID and `agent`. Status
-asks the host for the session state only for hosted placements, with about a
-3 s timeout per connection and request and a 10 s cache. It reports `stopped`
-when the host says the session stopped, for example after a stim-server restart
-there, and `unverified` when the host is unreachable or cannot confirm. The
-`host` field stays recorded for cleanup. Run `stim macos --remote <machine>` to
-launch a stopped app again, or `stim stop` to clear or reconcile the placement.
-`agent` is
-`{ "driver": "none", "setting": "hosting.agentDriver" }` until the hosting Mac's
-owner turns on a driver with that setting. With `agent-device`, it names a
-`remoteConfig` file (mode 0600, in the workspace directory) and the `command` to
-run, such as `agent-device screenshot --remote-config <path>`. The credential stays
-in that file and never appears in command output. `stop`, `worktree remove` and
-`gc` first run `agent-device close` and `disconnect` for the connection that
-agent-device reports as connected to that remote config (the default or active
-session), then delete the file, so the next hosted workspace needs no manual
-disconnect. Any other connection, including one under another session name, stays
-untouched, and a failure or a missing agent-device is reported without blocking
-the stop. When the hosted session ends, stim-server removes its agent-device
-session directories under its own state directory. Start with
-`agent-device open <host bundleId> --remote-config <path>`; the lease allows only
-commands that drive that one app (`snapshot`, `click`, `fill`, `type`, `press`,
-`scroll`, `screenshot` and similar), and the agent-device on the client needs the
-`macos-app` lease backend. `record` is refused, because agent-device's `macos-app`
-lease does not allow screen recording. On the hosting Mac, `stim-server service install --env
-STIM_AGENT_DEVICE_BIN=<path>` points stim-server at a specific agent-device.
-A request outside the allowed commands, or a method the relay does not forward,
-is refused with an agent-device `UNAUTHORIZED` error whose `details.reason` is
-`STIM_AGENT_REQUEST_REFUSED` and whose message names the refused command or
-method; do not retry it.
-
-`longpress`, `swipe`, `back` and the other gestures are not allowed; the `longpress`
-and `swipe` that `stim guide lifecycle` lists belong to hosted Android and iOS
-sessions. `click <ref> --button secondary` reaches agent-device, but its native
-macOS backend, which the lease requires, answers `UNSUPPORTED_OPERATION`, so a
-hosted macOS app has no right click or context menu yet.
-
-On macOS 27, `agent-device screenshot` of a hosted app can return an image of the
-window-sharing indicator (66x20 points, 132x40 pixels) instead of the app window.
-macOS adds that small window to the app while something captures the app, and
-agent-device picks it as the front window
-([callstack/agent-device#3961](https://github.com/callstack/agent-device/issues/3961)).
-`snapshot -i` lists it as an `axdialog` named "Window" with a
-`WindowSharingSessionButton` before the real window. Read the UI with `snapshot`
-until agent-device selects the app's main window. Commands that use the front
-window's frame, such as `scroll`, may also target the indicator.
-
-Copy this prompt:
-
-> Run my Swift Package app on janics-mac-mini with `stim macos --remote`. Confirm
-> `stim status --json` reports the hosted session, then stop it with `stim stop`.
-> Do not use SSH or change settings on the other Mac.
+<StimTabs code="stim guide macos" />
 
 ## Try Stim Desktop itself
 
