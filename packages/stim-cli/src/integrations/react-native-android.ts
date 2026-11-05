@@ -472,18 +472,16 @@ function reactNativeAndroidArtifact(
             : []),
         ],
       }),
+      syncRefusal: async (repoRoot: string, paths: readonly string[]) => {
+        const keystore = resolveKeystore(root, settings, layout);
+        const found = await firstSigningFile(repoRoot, paths, [
+          keystore.path,
+          ...(keystore.pass.startsWith('file:') ? [resolvePath(root, keystore.pass.slice('file:'.length))] : []),
+        ]);
+        return found ? `${found} ${HOLDS_SIGNING_FILE}, and an offload never sends those to another machine` : null;
+      },
       ...(release
         ? {
-            syncRefusal: async (repoRoot: string, paths: readonly string[]) => {
-              const keystore = resolveKeystore(root, settings, layout);
-              const found = await firstSigningFile(repoRoot, paths, [
-                keystore.path,
-                ...(keystore.pass.startsWith('file:') ? [resolvePath(root, keystore.pass.slice('file:'.length))] : []),
-              ]);
-              return found
-                ? `${found} ${HOLDS_SIGNING_FILE}, and a release build never sends those to another machine`
-                : null;
-            },
             signUnsigned: async (unsignedPath: string) => {
               let keystore;
               try {

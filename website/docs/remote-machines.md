@@ -474,7 +474,8 @@ The project's release signing config decides what happens:
   those reads or build here.
 - If the `android.keystore` or `android.keystorePassword` file has another name
   inside the repository, or a `.properties`, `.env`, `credentials.json` or Gradle
-  file sets a store or key password, Stim refuses before uploading anything.
+  file sets a store or key password, Stim refuses before uploading anything, for a
+  debug build as well.
 
 When a remote machine cannot take the build, `auto` and `remote` build here, and a
 named machine refuses with `STIM_OFFLOAD_REFUSED`.

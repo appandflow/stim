@@ -1198,7 +1198,7 @@ templates are, is signed there. Any other signing config builds as an unsigned A
 which this machine zipaligns and signs with android.keystore, or
 android/app/debug.keystore when that is unset; it needs the Android SDK build-tools
 and refuses without them. Gradle scripts that read a missing key or password while
-configuring fail there. A release offload refuses before uploading anything when the
+configuring fail there. An Android offload, debug or release, refuses before uploading anything when the
 android.keystore or android.keystorePassword file has another name inside the
 repository, or a .properties, .env, credentials.json or Gradle file sets a store or
 key password. Stim recognizes signing material only by those names and contents: a

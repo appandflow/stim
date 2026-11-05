@@ -7759,17 +7759,17 @@ describe('strict remote machine selection', () => {
     expect(inputs?.ignored.includes(join(root, '.env.production'))).toBe(sent);
   });
 
-  test.each([
-    { variant: 'release', checked: true },
-    { variant: null, checked: false },
-  ])('a $variant offload checks its file list for signing material: $checked', async ({ variant, checked }) => {
-    configureMini();
-    const { offload } = offloadedRelease();
-    writeFileSync(join(root, 'signing.properties'), 'storePassword=hunter2\n');
-    await harness({ buildMachine: 'mini', variant, build: vi.fn<() => never>() }).run();
-    const refusal = await offload.mock.calls[0]?.[0].syncRefusal?.(root, ['signing.properties']);
-    expect(refusal?.includes('signing.properties') ?? false).toBe(checked);
-  });
+  test.each([{ variant: 'release' }, { variant: null }])(
+    'a $variant offload refuses a file that sets a signing password',
+    async ({ variant }) => {
+      configureMini();
+      const { offload } = offloadedRelease();
+      writeFileSync(join(root, 'signing.properties'), 'storePassword=hunter2\n');
+      await harness({ buildMachine: 'mini', variant, build: vi.fn<() => never>() }).run();
+      const refusal = await offload.mock.calls[0]?.[0].syncRefusal?.(root, ['signing.properties']);
+      expect(refusal).toContain('signing.properties');
+    },
+  );
 
   test('an unsigned Release APK from the machine is signed here, and the signed APK is what gets stored', async () => {
     configureMini();

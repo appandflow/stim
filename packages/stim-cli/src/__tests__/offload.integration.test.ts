@@ -567,6 +567,7 @@ describe('strict client routing', () => {
     mkdirSync(join(root, 'android', 'app'), { recursive: true });
     const names = ['android/app/debug.keystore', 'android/app/release.keystore', 'android/keystore.properties'];
     for (const name of names) writeFileSync(join(root, name), 'bytes');
+    writeFileSync(join(root, 'android', 'app', 'ignored.jks'), 'bytes');
     setExecutor({
       runFile: (_file, args) =>
         args?.includes('--git-common-dir') ? join(root, '.git') : args?.includes('ls-files') ? names.join('\0') : root,
@@ -597,6 +598,7 @@ describe('strict client routing', () => {
         isExpo: false,
         android: { variant: null, abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'ccache' },
       },
+      fingerprintInputs: async () => ({ sources: [], ignored: [join(root, 'android', 'app', 'ignored.jks')] }),
       stagingDir: join(root, 'staging'),
       onPhase: () => {},
       onEnter: () => {},
