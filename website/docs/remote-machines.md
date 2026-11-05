@@ -893,6 +893,9 @@ stim remote remove janics-mac-mini
 placement order and asks nothing new. `stim remote remove` drops the entry and
 forgets this machine's credentials for it; the worker keeps its approval until
 a person there runs the `stim-server devices revoke <id>` command it prints.
+If the hosting credentials file is unreadable, `stim remote remove` keeps the
+entry and credentials and names the file. Use a compatible Stim version,
+restore read access, or restore the file from a trusted backup, then retry.
 With `--json`, each machine also carries its server key fingerprint, its
 reachability in this run and those revoke commands.
 `stim settings set remote.machines` replaces the whole list; use it to reorder

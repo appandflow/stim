@@ -2,7 +2,12 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import type { StimContext } from '@stim-cli/core';
 import { keyFingerprint } from '@stim-cli/core/noise-session';
-import { readBuildMachines, readDeviceHostMachines, type MachineCredential } from '@stim-cli/core/state';
+import {
+  deviceHostMachinesFile,
+  readBuildMachines,
+  readDeviceHostMachines,
+  type MachineCredential,
+} from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 import { phaseLine } from '../command-output.ts';
 import { configuredMachines, forgetDeviceHostMachine, inspectDeviceHostMachines } from '../device-host/machines.ts';
@@ -239,9 +244,17 @@ export default function remoteCommand(program: Command, version: string, io: Tai
     .action((machine: string, opts: { json?: boolean }) =>
       run(Boolean(opts.json), async () => {
         if (configuredMachines() === null) throw invalidSetting();
-        const credentials = [...readBuildMachines(), ...readDeviceHostMachines()].filter(
-          (each) => each.machine === machine,
-        );
+        let hosting: MachineCredential[];
+        try {
+          hosting = readDeviceHostMachines();
+        } catch {
+          throw refusal(
+            'STIM_BAD_ARG',
+            `Cannot read hosting credentials in ${deviceHostMachinesFile()}.`,
+            'Use a Stim version that supports the file, restore read access, or restore the file from a trusted backup. Then retry `stim remote remove`.',
+          );
+        }
+        const credentials = [...readBuildMachines(), ...hosting].filter((each) => each.machine === machine);
         const revoke = revokeCommands(credentials);
         const pending = credentials.some((each) => !each.deviceId);
         const { before, after } = await updateRemoteMachinesAsync(

@@ -1430,7 +1430,8 @@ captured"  (in metro.ndjson, bare RN)
   ios.signingIdentitySha1 or ios.lanHost value, a metro.port or
   STIM_METRO_PORT that another workspace reserves or another process holds,
   a changed pin while this workspace's dev server runs or its supervisor
-  cannot be verified,
+  cannot be verified, unreadable hosting credentials during
+  \`stim remote remove\` (see guide settings),
   \`--device\` with an empty
   serial or UDID, \`--device\` together with \`--remote\` other than
   \`local\`, \`ios --runtime\`
