@@ -370,9 +370,9 @@ SECURITY MODEL
 - Control goes through stim-server's control hub and device lease, which Desktop
   and the phone app use too. A viewer that can control starts the share's
   session, and so takes the device lease, when it connects, and the session ends
-  after 5 minutes without input or when the last viewer leaves. On a touch-first browser a Keyboard button in the device toolbar opens a "Type on the device" field above the phone's keyboard, because a phone cannot type through the canvas; a desktop browser types through the canvas. It carries taps, two-finger gestures, text, the arrow keys, Escape and keyboard shortcuts, rotation and the
+  after 5 minutes without input or when the last viewer leaves. It carries taps, two-finger gestures, text, the arrow keys, Escape and keyboard shortcuts, rotation and the
   hardware buttons of the shared device, plus the device clipboard on an iOS simulator, an Android emulator or an
-  Android phone only. Viewers, Stim Desktop, the phone app and agents control
+  Android phone only. On a touch-first browser a Keyboard button in the device toolbar opens a "Type on the device" field above the phone's keyboard, because a phone cannot type through the canvas; a desktop browser types through the canvas. Viewers, Stim Desktop, the phone app and agents control
   the device at the same time; none of them refuses or takes over the others' control. The device has
   one touch pointer: whoever puts a finger down holds it until they lift it,
   and a touch from anyone else meanwhile is dropped with "Name is using the

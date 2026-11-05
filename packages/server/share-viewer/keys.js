@@ -60,7 +60,6 @@
     '\u00A0': ' ',
   };
 
-  /** The printable ASCII a phone keyboard's text types on the device: smart punctuation becomes its ASCII form and other characters are dropped. */
   function asciiText(text) {
     let out = '';
     for (const char of text) {
@@ -71,7 +70,6 @@
     return out;
   }
 
-  /** What to type when the phone's text field changes from `previous` to `next`: a Delete (`\b`) for each character removed after their common prefix, then the characters added. */
   function keyboardDelta(previous, next) {
     const before = asciiText(previous);
     const after = asciiText(next);

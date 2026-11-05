@@ -12,7 +12,13 @@ interface Press {
   altGraph?: boolean;
 }
 
-const { keyMessage }: { keyMessage: (event: unknown, apple: boolean) => unknown } = runInNewContext(
+const {
+  keyMessage,
+  keyboardDelta,
+}: {
+  keyMessage: (event: unknown, apple: boolean) => unknown;
+  keyboardDelta: (previous: string, next: string) => string;
+} = runInNewContext(
   `${readFileSync(new URL('../share-viewer/keys.js', import.meta.url), 'utf8')}\nglobalThis.stimKeys`,
 );
 
@@ -114,10 +120,6 @@ it('types an ASCII character made with Option on a Mac, and keeps Option chords 
     modifiers: ['option'],
   });
 });
-
-const { keyboardDelta }: { keyboardDelta: (previous: string, next: string) => string } = runInNewContext(
-  `${readFileSync(new URL('../share-viewer/keys.js', import.meta.url), 'utf8')}\nglobalThis.stimKeys`,
-);
 
 it('turns a change of the phone field into a Delete per removed character, then the added ones', () => {
   expect(keyboardDelta('', 'abc')).toBe('abc');
