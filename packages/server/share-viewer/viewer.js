@@ -1143,7 +1143,7 @@ document.getElementById('upgrade-open').addEventListener('click', () => {
 });
 const upgradeResult = new URLSearchParams(location.search).get('upgrade');
 if (upgradeResult) {
-  showNote(upgradeResult === 'limited' ? 'Too many wrong passwords. Try again later.' : 'Wrong password.');
+  showNote(upgradeResult === 'limited' ? 'Too many wrong access codes. Try again later.' : 'Wrong access code.');
   history.replaceState(null, '', location.pathname);
 }
 
@@ -1167,16 +1167,14 @@ function chooseName(name) {
   nameForm.hidden = true;
   if (name) sendName(name);
 }
-if (body.dataset.askName === 'true') {
-  const remembered = rememberedName();
-  if (remembered === null) nameForm.hidden = false;
-  else chosenName = remembered;
-  nameForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-    chooseName(nameInput.value);
-  });
-  document.getElementById('name-skip').addEventListener('click', () => chooseName(''));
-}
+const remembered = rememberedName();
+if (remembered === null) nameForm.hidden = false;
+else chosenName = remembered;
+nameForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  chooseName(nameInput.value);
+});
+document.getElementById('name-skip').addEventListener('click', () => chooseName(''));
 
 const fullscreen = document.getElementById('full');
 if (document.fullscreenEnabled) {

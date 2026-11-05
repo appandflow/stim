@@ -961,7 +961,7 @@ How the message is addressed depends on the dev server, and `strategy` reports
 which you got. Where Metro can name its clients, Stim addresses every peer
 matching the platform and reports `metro-websocket`. A workspace Metro serves one
 app, so those peers are that app on however many devices are attached to the
-port; `targets` says how many peers the request addressed. Android peers carry the package
+port; `targets` says how many devices the request addressed: the peers Metro listed, capped at the devices Stim recorded for this app, because Metro keeps listing an app's earlier sockets after a reload. Android peers carry the package
 name and iOS peers carry only `role=ios`, which is enough to keep a reload on one
 platform but not to single out one iOS app among several.
 

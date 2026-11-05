@@ -360,6 +360,22 @@ test('warm does not note carried prebuilt frameworks that match the build config
   expect(result.stderr).not.toMatch(/prebuilt|Release/);
 }, 30_000);
 
+test('warm removes Manifest.lock from carried Pods with broken links so pod install runs', async () => {
+  write(root, 'ios/Pods/Manifest.lock', 'branch pods\n');
+  write(target, 'ios/Podfile.lock', 'branch pods\n');
+  mkdirSync(join(root, 'ios/Pods/Headers/Public'), { recursive: true });
+  symlinkSync('../../../build/rncore-facades/Missing.h', join(root, 'ios/Pods/Headers/Public/Missing.h'));
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(result.stderr).toMatch(
+    /carried ios\/Pods has 1 broken link, such as ios\/Pods\/Headers\/Public\/Missing\.h; removed/,
+  );
+  expect(result.stderr).toMatch(/pod install --clean-install/);
+  expect(result.stderr).not.toMatch(/pod install is not needed/);
+  expect(existsSync(join(target, 'ios/Pods/Manifest.lock'))).toBe(false);
+}, 30_000);
+
 test('warm reports carried node_modules installed from an older lockfile that both checkouts have moved past', async () => {
   const fixture = (name: string) =>
     readFileSync(join(import.meta.dirname, 'fixtures', 'installed-deps', 'npm', name), 'utf-8');

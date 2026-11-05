@@ -14,6 +14,7 @@
     "bindings": [{ "name": "DEMO", "class_name": "DemoServer" }],
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DemoServer"] }],
+  "version_metadata": { "binding": "VERSION" },
   "observability": { "enabled": false },
   "send_metrics": false,
 }
