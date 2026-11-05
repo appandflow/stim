@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { lstatSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BUILD_REPO_PATTERN } from './protocol.ts';
@@ -59,9 +60,9 @@ export function notRealDirectory(path: string): boolean {
 
 /** Records now as the last use of `area`. An unwritable record never stops the build or fetch that uses the area. */
 export function recordAreaUse(area: string): void {
-  const tmp = join(area, `${USE_RECORD}.${process.pid}.tmp`);
+  const tmp = join(area, `${USE_RECORD}.${randomUUID()}.tmp`);
   try {
-    writeFileSync(tmp, String(Date.now()));
+    writeFileSync(tmp, String(Date.now()), { flag: 'wx' });
     renameSync(tmp, join(area, USE_RECORD));
   } catch (error) {
     console.error(`stim-server: could not record the use of the build area ${area}: ${String(error)}`);
@@ -70,7 +71,8 @@ export function recordAreaUse(area: string): void {
 
 /**
  * When `area` was last used: its record, or, for an area older than the record or a record dated in the future, the
- * newest of the few paths every build rewrites, so no pass walks the area. An area with neither counts as used now and is not evicted.
+ * newest of the few paths every build rewrites, so no pass walks the area. Dates in the future do not count, and an
+ * area with no other date counts as used now.
  */
 export function areaLastUsed(area: string): number {
   try {
@@ -80,7 +82,8 @@ export function areaLastUsed(area: string): number {
   let latest = 0;
   for (const trace of USE_TRACES) {
     try {
-      latest = Math.max(latest, statSync(join(area, trace)).mtimeMs);
+      const { mtimeMs } = statSync(join(area, trace));
+      if (mtimeMs <= Date.now()) latest = Math.max(latest, mtimeMs);
     } catch {}
   }
   return latest || Date.now();
@@ -123,9 +126,9 @@ export function readRootUsage(root: string): WorkerRootUsage | null {
 }
 
 export function recordRootUsage(usage: WorkerRootUsage): void {
-  const tmp = join(usage.path, `${USAGE_RECORD}.${process.pid}.tmp`);
+  const tmp = join(usage.path, `${USAGE_RECORD}.${randomUUID()}.tmp`);
   try {
-    writeFileSync(tmp, JSON.stringify(usage));
+    writeFileSync(tmp, JSON.stringify(usage), { flag: 'wx' });
     renameSync(tmp, join(usage.path, USAGE_RECORD));
   } catch (error) {
     console.error(`stim-server: could not record the worker root's size: ${String(error)}`);

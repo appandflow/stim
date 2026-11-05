@@ -23,6 +23,7 @@ import { BuildArtifactCache } from 'stim/build-artifact-cache';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { tryAcquireBuildSlotClaim, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
 import { BuildHost, type BuildHostOptions, type BuildLimits } from '../src/build.ts';
+import { areaLastUsed, recordAreaUse, recordRootUsage } from '../src/worker-areas.ts';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
@@ -261,6 +262,21 @@ test('a last-used dated in the future counts for nothing', async () => {
   await start().evictAreas();
   expect(existsSync(path)).toBe(false);
   expect(existsSync(areaPath('a', 'newest'))).toBe(true);
+});
+
+test('a file date in the future counts for nothing, and with no other date the area counts as used now', () => {
+  const path = area('a', 'subject', null);
+  const future = new Date(Date.now() + 365 * DAY);
+  const old = new Date(Date.now() - 30 * DAY);
+  writeFileSync(join(path, 'mirror.json'), '{}');
+  utimesSync(join(path, 'mirror.json'), future, future);
+  utimesSync(path, old, old);
+  expect(Math.abs(areaLastUsed(path) - old.getTime())).toBeLessThan(1000);
+
+  utimesSync(path, future, future);
+  const before = Date.now();
+  expect(areaLastUsed(path)).toBeGreaterThanOrEqual(before);
+  expect(areaLastUsed(path)).toBeLessThan(future.getTime());
 });
 
 test('a build records its use, so it is what a later pass goes by', async () => {
@@ -714,6 +730,56 @@ test('revoking a symlinked client does not act on what the link points at', asyn
   await start().remove('linked');
   expect(existsSync(join(outside, 'evicted', `z-${UUID}`))).toBe(true);
 });
+
+function linkedClaims(repo: string): string {
+  const outside = join(home, 'outside');
+  mkdirSync(join(outside, '.staging-backup'), { recursive: true });
+  writeFileSync(join(outside, '.staging-backup', 'user-data'), 'x');
+  symlinkSync(outside, `${areaPath('a', repo)}.claims`, 'junction');
+  return join(outside, '.staging-backup', 'user-data');
+}
+
+test('a symlinked claim store is not written through, and its area stays', async () => {
+  area('a', 'newest', 0);
+  const path = area('a', 'subject', 30);
+  const data = linkedClaims('subject');
+  await start().evictAreas();
+  expect(existsSync(data)).toBe(true);
+  expect(readdirSync(dirname(dirname(data)))).toEqual(['.staging-backup']);
+  expect(existsSync(path)).toBe(true);
+  expect(logs.join('\n')).toMatch(/retaining the build area a\/subject: .*subject\.claims is not a real directory/);
+});
+
+test('revoking a client does not clear a claim store through a symlink', async () => {
+  area('a', 'subject', 30);
+  const data = linkedClaims('subject');
+  await start().remove('a');
+  expect(existsSync(data)).toBe(true);
+  expect(existsSync(join(root, 'a'))).toBe(false);
+});
+
+test.each([
+  { name: 'recordAreaUse', file: 'last-used', write: (dir: string) => recordAreaUse(dir) },
+  {
+    name: 'recordRootUsage',
+    file: 'usage.json',
+    write: (dir: string) => recordRootUsage({ path: dir, bytes: 1, measuredAt: new Date().toISOString() }),
+  },
+])(
+  '$name does not write through a planted temp file, and still records',
+  { skip: process.platform === 'win32' },
+  ({ file, write }) => {
+    const temp = `${file}.${process.pid}.tmp`;
+    const victim = join(home, 'victim');
+    writeFileSync(victim, 'keep');
+    const dir = join(home, 'target');
+    mkdirSync(dir);
+    symlinkSync(victim, join(dir, temp));
+    write(dir);
+    expect(readFileSync(victim, 'utf8')).toBe('keep');
+    expect(fs.lstatSync(join(dir, file)).isFile()).toBe(true);
+  },
+);
 
 test('a symlinked repos folder is not listed as areas', async () => {
   const projects = join(home, 'projects');

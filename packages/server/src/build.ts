@@ -1168,6 +1168,10 @@ export class BuildHost {
     }
     for (const area of areas.filter((name) => name.endsWith('.claims'))) {
       const root = join(this.clientDir(client), 'repos', area);
+      if (notRealDirectory(root)) {
+        console.error(`stim-server: not clearing the claims of ${client} through ${root}: it is not a real directory.`);
+        continue;
+      }
       const clearance = clearFreeClaimSet({ root, label: 'build worker' });
       if (clearance.status !== 'cleared') {
         console.error(
@@ -1453,14 +1457,17 @@ export class BuildHost {
     } finally {
       releaseClaim(claim);
     }
-    const clearance = clearFreeClaimSet({ root: claims, label: 'build worker' });
-    if (clearance.status !== 'cleared')
-      console.error(`stim-server: left the claim set of the evicted area at ${claims}: ${clearance.status}.`);
+    const clearance = notRealDirectory(claims) ? null : clearFreeClaimSet({ root: claims, label: 'build worker' });
+    if (clearance?.status !== 'cleared')
+      console.error(
+        `stim-server: left the claim set of the evicted area at ${claims}: ${clearance?.status ?? 'not a real directory'}.`,
+      );
     return { eviction, failure };
   }
 
   private areaClaim(client: string, repo: string): ClaimHandle | string {
     const claims = `${join(this.clientDir(client), 'repos', repo)}.claims`;
+    if (notRealDirectory(claims)) return `${claims} is not a real directory`;
     try {
       const attempt = tryAcquireClaim({
         root: claims,
