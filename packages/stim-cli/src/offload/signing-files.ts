@@ -11,6 +11,8 @@ const OTHER_STORE_NAME = /trust|javax|(?<![a-z0-9])app[._-]store/i;
 const GRADLE_SCRIPT = /\.gradle(?:\.kts)?$/i;
 const GRADLE_COMMENT = /\/\*[\s\S]*?\*\/|^[ \t]*\/\/.*$/gm;
 const COMMENT_LINE = /^[ \t]*[#!].*$/gm;
+const APPLE_SIGNING_FILE = /\.(?:p8|p12|mobileprovision|provisionprofile)$/;
+const XCODE_BUILD_FILE = /(?:\.(?:pbxproj|xcconfig|podspec|sh)|(?:^|\/)Podfile)$/;
 const APK_CONTENT = /(?:^|\/)src\/[^/]+\/(?:assets|res)\//;
 const GRADLE_PASSWORD = /(?<!['"[])(?:store|key)Password\s*[=(]?\s*["']([^"'\n]+)["']/gi;
 const NOT_A_PASSWORD = /^(?:android|null|\*+)$|^\$/;
@@ -73,7 +75,7 @@ async function firstSigningFile(
   return null;
 }
 
-export interface AndroidSyncPlan {
+export interface SyncPlan {
   omit: ReadonlySet<string>;
   refusal: string | null;
 }
@@ -92,7 +94,7 @@ export async function androidSyncPlan(
     configured,
     projectScripts,
   }: { release: boolean; configured: readonly string[]; projectScripts: readonly string[] },
-): Promise<AndroidSyncPlan> {
+): Promise<SyncPlan> {
   const signing = paths.filter(isSigningKeystore);
   if (release) {
     const found = await firstSigningFile(repoRoot, paths, configured);
@@ -109,6 +111,25 @@ export async function androidSyncPlan(
     ...projectScripts,
   ];
   const texts = await Promise.all(scripts.map((script) => readFile(script, 'utf8').catch(() => '')));
+  return {
+    omit: new Set(signing.filter((path) => !texts.some((text) => text.includes(basename(path))))),
+    refusal: null,
+  };
+}
+
+/**
+ * What an iOS offload of `paths`, relative to `repoRoot`, leaves out: an App Store Connect key, certificate or
+ * provisioning profile that no Xcode project, xcconfig, Podfile, podspec or shell script names. A simulator build
+ * signs ad hoc and reads none of them; a file one of those names stays, so the build finds it.
+ */
+export async function iosSyncPlan(repoRoot: string, paths: readonly string[]): Promise<SyncPlan> {
+  const signing = paths.filter((path) => APPLE_SIGNING_FILE.test(path));
+  if (signing.length === 0) return { omit: new Set(), refusal: null };
+  const texts = await Promise.all(
+    paths
+      .filter((path) => XCODE_BUILD_FILE.test(path))
+      .map((path) => readFile(join(repoRoot, path), 'utf8').catch(() => '')),
+  );
   return {
     omit: new Set(signing.filter((path) => !texts.some((text) => text.includes(basename(path))))),
     refusal: null,

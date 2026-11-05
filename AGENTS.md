@@ -428,7 +428,8 @@ outside it moves to its own issue and pull request.
   writes the cache. An Android offload leaves keystores other than
   `debug.keystore`, and `keystore.properties`, out of the fingerprint and, unless a
   debug build's Gradle script names one, out of the sync
-  (`packages/stim-cli/src/offload/signing-files.ts`). A release variant's worker
+  (`packages/stim-cli/src/offload/signing-files.ts`); an iOS offload does the same for
+  `*.p8`, `*.p12`, `*.mobileprovision` and `*.provisionprofile` that no Xcode build file names. A release variant's worker
   builds any other signing config unsigned
   (`packages/stim-cli/shim/android-worker-release.gradle`) and the client signs it
   with its `zipalign` then `apksigner` path, or refuses. Two machines build for each other, and reuse each other's

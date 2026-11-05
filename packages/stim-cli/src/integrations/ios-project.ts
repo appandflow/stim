@@ -52,6 +52,7 @@ export interface IosArtifactRecipe {
     ): Parameters<typeof chooseBuildMachine>[0]['target'] | Promise<Parameters<typeof chooseBuildMachine>[0]['target']>;
     request(runtime: string): Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'ios' }>;
     fingerprintInputs?: Parameters<typeof offloadBuild>[0]['fingerprintInputs'];
+    syncPlan?: Parameters<typeof offloadBuild>[0]['syncPlan'];
     unchanged(): Promise<boolean>;
     /** The identity of an app the machine built under another fingerprint, after its own pod install. */
     rekeyed?(fingerprint: string): IosArtifactIdentity;

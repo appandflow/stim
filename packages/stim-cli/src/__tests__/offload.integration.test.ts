@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
-import { androidSyncPlan } from '../offload/signing-files.ts';
+import { androidSyncPlan, iosSyncPlan } from '../offload/signing-files.ts';
 import * as buildMachines from '../offload/build-machines.ts';
 import {
   buildPlacementSettings,
@@ -609,6 +609,63 @@ describe('strict client routing', () => {
       note: () => {},
     });
     expect(synced).toEqual(['android/app/debug.keystore']);
+  });
+
+  it('an iOS sync leaves an App Store Connect key and signing files out and keeps the rest', async () => {
+    mkdirSync(join(root, 'apps', 'app', 'ios', 'fastlane'), { recursive: true });
+    const names = ['apps/app/ios/App.xcodeproj/project.pbxproj', 'apps/app/ios/GoogleService-Info.plist'];
+    mkdirSync(join(root, 'apps', 'app', 'ios', 'App.xcodeproj'), { recursive: true });
+    const ignored = [
+      'apps/app/ios/fastlane/AuthKey_ABC.p8',
+      'apps/app/ios/dist.p12',
+      'apps/app/ios/App.mobileprovision',
+      'apps/app/ios/App.provisionprofile',
+      'apps/app/ios/.env',
+    ];
+    for (const name of [...names, ...ignored]) writeFileSync(join(root, name), 'bytes');
+    setExecutor({
+      runFile: (_file, args) =>
+        args?.includes('--git-common-dir') ? join(root, '.git') : args?.includes('ls-files') ? names.join('\0') : root,
+    });
+    const synced: string[] = [];
+    const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method, params) => {
+      if (method === 'build.offer') return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) };
+      if (method === 'build.sync') {
+        synced.push(...(params as { files: { path: string }[] }).files.map((file) => file.path));
+        return { result: { missing: [] } };
+      }
+      return { error: { code: 'busy', message: 'stop here' } };
+    });
+    const connection = Object.assign(Object.create(BuildConnection.prototype), {
+      features: [],
+      request,
+      close: vi.fn<() => void>(),
+      onProgress: () => {},
+    }) as BuildConnection;
+    vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
+    const choice = await choose();
+    assert(typeof choice !== 'string');
+    await offloadBuild({
+      choice,
+      expectedFingerprint: 'fingerprint',
+      request: {
+        platform: 'ios',
+        runtime: RUNTIME,
+        configuration: null,
+        scheme: null,
+        iosProjectPath: 'apps/app/ios',
+        isExpo: false,
+        optimizations: {},
+      },
+      fingerprintInputs: async () => ({ sources: [], ignored: ignored.map((name) => join(root, name)) }),
+      syncPlan: iosSyncPlan,
+      stagingDir: join(root, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(synced.toSorted()).toEqual([...names, 'apps/app/ios/.env'].toSorted());
   });
 
   it.each([

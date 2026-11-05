@@ -2226,7 +2226,7 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   Stim ignores paths a fresh checkout never has and no native Debug build
   reads: android/local.properties, android/.idea, *.xcodeproj/xcuserdata, .git (and its contents), .expo,
   on Android the signing files *.keystore, *.jks, *.p12, *.pfx and keystore.properties (but not debug.keystore or
-  an APK's own src/*/assets and src/*/res), which an Android offload does not send, and,
+  an APK's own src/*/assets and src/*/res), which an Android offload does not send, on iOS *.p8, *.p12, *.mobileprovision and *.provisionprofile, which an iOS offload does not send, and,
   while a .gitignore pattern matches them (even when committed), the
   \`react-native bundle\` output ios/main.jsbundle and ios/assets. A project
   does not repeat those.

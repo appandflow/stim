@@ -29,6 +29,7 @@ import { copyAppAside, writeIpTxt } from '../engine/ios-lan.ts';
 import { staleNativeDirRefusal, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { bundlerPin } from '../engine/bundler.ts';
 import { buildsOnlyOnWorker, iosToolchainAsync } from '../offload/toolchain.ts';
+import { iosSyncPlan } from '../offload/signing-files.ts';
 import { resolveIosProjectDir, type IosProjectDir, type SettingsObject } from '../workspace/settings.ts';
 import { IosRecipeRefusal, type IosProject, type IosArtifactContext, type IosArtifactRecipe } from './ios-project.ts';
 
@@ -597,7 +598,7 @@ function reactNativeIosArtifact(
           ...(await gitignoredFingerprintInputs(
             root,
             storeSources,
-            { platform: PLATFORM, iosProjectPath: iosProject.relative },
+            { platform: PLATFORM, iosProjectPath: iosProject.relative, keepSigningFiles: true },
             { env: operation?.env },
           )),
           ...(release && isExpo
@@ -609,6 +610,7 @@ function reactNativeIosArtifact(
         ignoredPaths: ignoredFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
         trackedPaths: trackedFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
       }),
+      syncPlan: iosSyncPlan,
       unchanged: async () => {
         const after = await refingerprintAfterMutation({
           projectRoot: root,
