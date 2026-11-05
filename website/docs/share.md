@@ -50,7 +50,7 @@ stim share stop --forget`}
 
 ## When the device goes away
 
-A share whose device goes away during a rebuild or a temporary disconnect shows as stopped ("This share is stopped.") and comes back on the same page when the same slot has a running device again. The original expiry still applies. A device that is present and ready but fails to stream for 5 minutes in a row ends the share, and viewers see why. To end it early, use `stim share stop` or stop the workspace or slot.
+A share whose device goes away during a rebuild or a temporary disconnect shows as stopped ("This share is stopped.") and comes back on the same page when the same slot has a running device again. The original expiry still applies. A device that is present and ready but fails to stream for 5 minutes in a row ends the share, and viewers see why. The 5 minutes count only while someone is watching, and a replacement device starts over. An ended share is not restarted when stim-server restarts. To end it early, use `stim share stop` or stop the workspace or slot.
 
 ## Requirements
 

@@ -132,6 +132,8 @@ export interface ShareDeps {
   appName?: (udid: string, bundleId: string) => Promise<string | null>;
   lookup?: LeaseLookup;
   limits?: Partial<ShareLimits>;
+  /** Called when a share ended because its device could not stream, so its saved link must not start it again. */
+  gaveUp?: (request: ShareTarget) => void;
   /** Called when {@link ShareHub.unrecordedTargets} changed. */
   recordingChanged?: () => void;
   /** Called when the last share has ended and its route is gone. */
@@ -338,6 +340,8 @@ interface Share {
   backoff: number;
   /** When its stream first failed with no frame since, while its device is present; null when it streams. */
   failingSince: number | null;
+  /** The device or session the failing stretch in `failingSince` belongs to. */
+  failingOn: string | null;
   retry: NodeJS.Timeout | null;
   sessions: Map<string, Login>;
   failures: number[];
@@ -562,6 +566,7 @@ export class ShareHub {
       resumeAt: 0,
       backoff: RESUME_MIN_MS,
       failingSince: null,
+      failingOn: null,
       retry: null,
       sessions: new Map(),
       failures: [],
@@ -592,7 +597,6 @@ export class ShareHub {
       failed: () => {},
     });
     if (!bound) {
-      console.error(`stim-server: web share ${id} started waiting for its device: ${String(resolved)}`);
       this.arm(share);
     }
     return {
@@ -1378,8 +1382,13 @@ export class ShareHub {
             queueMicrotask(() => {
               if (share.source !== source) return;
               const now = Date.now();
+              if (share.failingOn !== share.bound) {
+                share.failingOn = share.bound;
+                share.failingSince = null;
+              }
               share.failingSince ??= now;
               if (now - share.failingSince >= STREAM_GIVE_UP_MS) {
+                this.deps.gaveUp?.(share.request);
                 const helper = message.includes('stim-frames helper, which this Mac has not built');
                 return void this.end(share, message, helper ? VIEWER_TEXT.noHelper : VIEWER_TEXT.noStream);
               }

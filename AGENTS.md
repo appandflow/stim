@@ -611,7 +611,8 @@ outside it moves to its own issue and pull request.
   it is there; rows and the protocol carry no separate state for it. Only
   `share.stop` (which `stim stop`, `stim worktree remove` and Desktop's Stop
   send), expiry, the server stopping and a present, ready device that fails to
-  stream for 5 minutes in a row end it; viewers are told one of a few fixed
+  stream for 5 minutes in a row while a viewer is attached end it, and its saved
+  link is then marked stopped like a `share.stop`; viewers are told one of a few fixed
   reasons, never the raw error, which can name workspaces. `share --reuse` with no
   saved link starts a new share and warns. The server serves
   shares on a separate loopback listener, not the Noise protocol: per share

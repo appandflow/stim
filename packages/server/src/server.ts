@@ -1905,6 +1905,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     lookup: { adbEmulators },
     limits: leaseGrace(controlLimits.leaseFor),
     recordingChanged: () => recorder?.refresh(),
+    gaveUp: (request) =>
+      void markSavedStopped(() => pauseShareLinkAsync(request.workspace, shareLinkKey(request))).then((unsaved) =>
+        unsaved === null
+          ? undefined
+          : console.error(
+              `stim-server: the web share of ${request.workspace} ended, but its saved link could not be marked stopped (${unsaved}), so a restart can start it again`,
+            ),
+      ),
     holdWorkspace: (workspace, stop) => holdNativeRun(workspace, { waitMs: SHARE_CLAIM_WAIT_MS, stop }),
     ...(options.shareServer ? { idle: options.shareServer.idle } : {}),
   });

@@ -99,8 +99,10 @@ retries every few seconds, up to 30 seconds apart. share list and --json show
 such a share like any other, with no separate state. A stopped-for-now share
 still expires at its expiry, still keeps its workspace up and its stim-server
 running. A device that is present and ready but fails to stream for 5 minutes in
-a row, with no frame in between, will not stream: the share then ends and its
-viewers see "This share has ended: its device could not stream." (or, when this
+a row, with no frame in between, will not stream: the share then ends (the
+count runs only while a viewer is attached and starts over for a replacement
+device) and it is marked stopped in the saved links, so a stim-server restart
+does not start it again; its viewers see "This share has ended: its device could not stream." (or, when this
 Mac has not built the stim-frames helper the device needs, that reason); the
 raw error can name workspaces, so it stays in the server log. A device that is
 away, however long, never ends the share this way.

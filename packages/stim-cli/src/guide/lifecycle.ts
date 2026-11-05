@@ -2397,7 +2397,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   no blocker (driver, lock, lease, build, live web share, recent input or
   window use), then wakes the waiter. It shuts down through centralized
   teardown and never deletes; the device's workspace records "reclaimed for
-  a waiting run". A device a live web share keeps booted is never reclaimed:
+  a waiting run". A device a web share keeps booted, live or stopped for now, is never reclaimed:
   the waiter keeps waiting, and its progress line names the share
   ("<workspace> stays booted: it has a live web share ..."). daemon.mode
   report logs the device it would reclaim and acts on nothing. With no
