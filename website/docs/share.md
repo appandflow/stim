@@ -45,7 +45,7 @@ Stop it with: stim share stop (add --forget to make the link unusable)
 ```
 
 Send the link and the password over different channels. Stim saves the link and
-the passwords on this machine so that [`--reuse`](#start-a-stopped-share-again)
+the passwords of a share on this machine, whether `stim share` or Stim Desktop started it, so that [`--reuse`](#start-a-stopped-share-again)
 can start the same share again, so a lost generated password is printed again
 by `--reuse`, not lost. A password you set with `--password` is
 never printed back; note that a value on the command line can land in your
@@ -267,7 +267,7 @@ time, frame rate and lost packets.
 ## Start a stopped share again
 
 `stim share stop` ends a share: its link stops working at once. Stim saves the
-link and the passwords of every share that `stim share ios|android` starts, so
+link and the passwords of every share you start, with `stim share ios|android` or in Stim Desktop, so
 a share you stopped can come back with the same link and the same passwords
 until it expires (a share that stim-server's restart ended comes back by itself,
 see below):
@@ -314,7 +314,7 @@ a single share), it starts every saved share that is still running and has not
 expired again, retrying for about two minutes while Tailscale is not up yet, with the same link, passwords and expiry, without `--reuse`; one
 whose device is not there yet waits for it like any waiting share. Stopping a share,
 including with Stim Desktop's Stop, marks it stopped so it does not come back.
-A share started from Stim Desktop is not saved, so it does not come back.
+A share started from Stim Desktop is saved the same way, so it comes back too and `stim share ios|android --reuse` can start it.
 
 ## When the device goes away
 

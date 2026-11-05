@@ -45,9 +45,9 @@ generated.
 SHARE AGAIN AFTER A STOP
 
 stim share stop and stim stop end a share and its link stops working; a
-stim-server restart ends it only until the server starts again (see below). stim share ios|android saves the link's 256-bit URL token and its
+stim-server restart ends it only until the server starts again (see below). A share started by stim share ios|android or by Stim Desktop is saved: stim-server writes the link's 256-bit URL token and its
 passwords, in clear, in share-links.json in the workspace's directory under
-$STIM_HOME/workspaces (mode 0600; written when a share starts; deleted with the
+$STIM_HOME/workspaces (mode 0600; written when a share starts, whichever client started it; deleted with the
 workspace, by stim share stop --forget, and when stim share, starting, reusing or
 stopping in the workspace, finds it expired). stim share ios|android --reuse starts that
 target's saved link again (a share started with --slug is saved and started again
@@ -74,8 +74,8 @@ share.stop (also Stim Desktop's Stop) change it, so a stim-server restart or
 crash leaves it live. When a full stim-server starts (not the --share one) it
 starts every live, unexpired
 saved share again by itself, with the same link, passwords and expiry; one whose
-device is not there yet waits for it. A share started from Stim Desktop is not
-saved, so it does not come back. Tell the
+device is not there yet waits for it. A share started from Stim Desktop is
+saved the same way, so it comes back too and --reuse finds it. Tell the
 user that the saved file holds the token and passwords; when they want a link
 revoked for good, run stim share stop --forget.
 

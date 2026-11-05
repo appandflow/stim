@@ -573,23 +573,27 @@ outside it moves to its own issue and pull request.
   `share.publicUrl`, and the frame socket accepts exactly that URL's origin,
   never Host or `X-Forwarded-*`. The CLI asks this Stim home's stim-server over its Unix socket
   (`share.start|stop|list`, refused on every network connection); a share
-  lives only in that server's memory and always expires. The CLI saves each
-  share it starts, with its URL token and passwords, in the workspace's
+  lives only in that server's memory and always expires. Each share started
+  through `share.start`, by the CLI or by Stim Desktop, is saved by stim-server
+  as soon as it starts (the CLI saves it itself only when the server's reply
+  lacks `saved: true`, an older server), with its URL token and passwords, in the workspace's
   `share-links.json` (mode 0600, written under the workspace state lock, removed
   with the workspace, by `share stop --forget` and once expired) so that
   `share ios|android --reuse` can start the same link again through
-  `share.start`'s `token` and `expiresAt`; stim-server writes nothing to disk and
-  an expired link is never extended or reused. Each saved entry has a `state`:
+  `share.start`'s `token` and `expiresAt`; stim-server writes this file only
+  through the CLI's own `saveShareLinkAsync` and `pauseShareLinks`, exported as
+  `stim/share-links`, and an expired link is never extended or reused. A start
+  of a link the file already holds with the same passwords keeps the entry's
+  `auth`, `viewAuth` and `createdAt`, and the restore start does not pass
+  through the saving path, so it never rewrites the expiry. Each saved entry has a `state`:
   `live` from when `share` starts or reuses it, `stopped` after a deliberate
   `share stop`, `stim stop` or reclaim of its workspace. A restart or crash
   leaves `live`, and a full stim-server (not the CLI's `--share` server) starts
   every live, unexpired entry of its home again when it starts, through
   `share.start`'s own path with the saved token or slug, passwords and expiry
   (`@stim-cli/core/state`'s `readLiveShareLinks`); one whose device is not there
-  yet starts waiting, a refused one is logged and stays `live`. The only write
-  stim-server makes is `share.stop` marking the entry stopped through the CLI's
-  own `pauseShareLinks`, exported as `stim/share-links`; a share started from
-  Desktop is not saved and does not come back. A share outlives its
+  yet starts waiting, a refused one is logged and stays `live`. `share.stop`
+  marks the entry stopped through the same module. A share outlives its
   device: when the device goes away on its own (frames fail, the device or hosted
   session changes or is not ready) the share waits, keeping its token, passwords,
   viewer sessions and expiry, and resumes on the slot's device when it is back.
