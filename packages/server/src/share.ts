@@ -379,6 +379,8 @@ export class ShareHub {
   private readonly shares = new Map<string, Share>();
   /** Keys of shares that gave up and whose saved link is being marked stopped: their link is not yet free to start. */
   private readonly marking = new Set<string>();
+  /** Whether `idle` was called since the last start began, so a recheck after a mark cannot call it twice. */
+  private idleReported = false;
   private readonly controlled = new Map<string, number>();
   private readonly wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
   private listener: Server | null = null;
@@ -458,7 +460,11 @@ export class ShareHub {
 
   private checkIdle(): void {
     if (this.closed) return;
-    if (this.isIdle()) return this.deps.idle?.();
+    if (this.isIdle()) {
+      if (this.idleReported) return;
+      this.idleReported = true;
+      return this.deps.idle?.();
+    }
     if (
       this.shares.size ||
       this.listener ||
@@ -488,6 +494,7 @@ export class ShareHub {
   }
 
   private async begin(request: ShareRequest, restore: boolean): Promise<StartedShare | Refusal> {
+    this.idleReported = false;
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
     if (request.control && request.physical && request.platform === 'ios') {
       return { code: 'bad-request', message: 'A physical iPhone is view only: share it without --control.' };
@@ -924,6 +931,8 @@ export class ShareHub {
       } finally {
         this.marking.delete(share.key);
       }
+      await this.teardown();
+      return this.checkIdle();
     }
     await this.teardown();
   }

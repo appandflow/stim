@@ -1893,6 +1893,29 @@ describe('a web share', () => {
       socket.close();
     });
 
+    it('reports idle after the last mark settles, also when another share ended and closed the listener during the wait', async () => {
+      let release = () => {};
+      f.gaveUpGate = new Promise<void>((resolve) => (release = resolve));
+      const { socket } = await signedIn();
+      const other = await started(f);
+      f.subscribed[0]?.listener.failed?.('xcrun simctl io failed (code 1)');
+      for (let round = 0; round < 20 && f.gaveUp.length === 0; round++) {
+        await stepLive(socket, 31_000);
+        f.subscribed.at(-1)?.listener.failed?.('xcrun simctl io failed (code 1)');
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      expect(f.gaveUp).toHaveLength(1);
+
+      await f.hub.stopOne(WORKSPACE, other.id);
+      await vi.waitFor(() => expect(f.routeCloses).toBe(1));
+      await vi.advanceTimersByTimeAsync(10);
+      expect(f.idle).toBe(0);
+
+      release();
+      await vi.waitFor(() => expect(f.idle).toBe(1));
+      socket.close();
+    });
+
     it('still ends the share, once, when marking its saved link fails or the share is stopped meanwhile', async () => {
       let release = () => {};
       f.gaveUpGate = new Promise<void>((resolve) => (release = resolve));
