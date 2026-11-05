@@ -1508,6 +1508,7 @@ describe('pairing', () => {
           'server-update',
           'build-compat',
           'build-jdk',
+          'build-android-release',
           'build-reuse-artifact',
           'share-stop-id',
           'presence',

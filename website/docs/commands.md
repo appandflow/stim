@@ -697,7 +697,7 @@ process-only app. Re-run `stim android` after an edit; `stop` keeps the existing
 scoped device cleanup and physical-device lease behavior.
 
 Builds or restores the Android app. Stim then boots an owned emulator, installs
-the app, opens it, and checks launch logs. A React Native emulator debug build
+the app, opens it, and checks launch logs. A React Native emulator build, debug or release,
 can compile on a paired remote machine instead: see `remote.build` in
 [machine settings](./settings.md#machine-settings).
 

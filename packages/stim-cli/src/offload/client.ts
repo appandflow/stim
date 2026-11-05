@@ -55,9 +55,11 @@ import {
 import { nativeGradleTransfer, type GradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
+import { isReleaseVariant } from '../commands/android/support.ts';
 import { isReleaseConfiguration } from '../commands/ios/support.ts';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
-import { namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
+import type { AndroidSyncPlan } from './signing-files.ts';
+import { ANDROID_RELEASE_UNSUPPORTED, namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import {
   buildsOnlyOnWorker,
@@ -1319,6 +1321,19 @@ async function resumeJob(
   return `no connection to it within ${RESUME_WINDOW_MS / 60_000} min (${last})`;
 }
 
+function unsupportedBuild(connection: BuildConnection, request: BuildRequest): string | null {
+  const native = request.platform !== 'macos' ? request.native : undefined;
+  if (native)
+    return connection.supports(NATIVE_BUILD_FEATURE[native.provider]) ? null : unsupportedNative(native.provider);
+  return request.platform === 'android' &&
+    isReleaseVariant(request.android.variant) &&
+    !connection.supports('build-android-release')
+    ? ANDROID_RELEASE_UNSUPPORTED
+    : null;
+}
+
+type SyncPlan = (repoRoot: string, paths: readonly string[]) => Promise<AndroidSyncPlan>;
+
 /** Mirrors the checkout on the machine: the manifest in pages, then every blob it lacks. */
 async function syncSource(
   connection: BuildConnection,
@@ -1327,6 +1342,7 @@ async function syncSource(
   native?: NativeInputSnapshot | GradleTransfer,
   signal?: AbortSignal,
   ignored: readonly string[] = [],
+  syncPlan?: SyncPlan,
 ): Promise<
   { files: number; uploaded: number; uploadedBytes: number; syncMs: number; digest: string } | { failure: string }
 > {
@@ -1338,7 +1354,7 @@ async function syncSource(
     if (inRepo && !isAbsolute(inRepo) && inRepo !== '..' && !inRepo.startsWith(`..${sep}`))
       ignoredPaths.push(inRepo.split(sep).join('/'));
   }
-  const manifest =
+  const listed =
     native && 'declaration' in native
       ? (await nativeGradleTransfer(join(identity.repoRoot, identity.project), native.declaration, signal)).files
       : native
@@ -1349,6 +1365,12 @@ async function syncSource(
             signal,
           )
         : await sourceManifest(identity.repoRoot, false, signal, ignoredPaths);
+  const plan = await syncPlan?.(
+    identity.repoRoot,
+    listed.map((file) => file.path),
+  );
+  if (plan?.refusal) return { failure: plan.refusal };
+  const manifest = plan ? listed.filter((file) => !plan.omit.has(file.path)) : listed;
   if (native && 'declaration' in native && manifestDigest(manifest) !== native.digest)
     return { failure: 'The native Gradle source changed before upload.' };
   const bySha = new Map(manifest.map((file) => [file.sha256, file]));
@@ -1572,6 +1594,8 @@ export async function offloadBuild(
     note: (line: string) => void;
     /** The fingerprint sources behind `expectedFingerprint` and the gitignored files they read, as absolute paths. */
     fingerprintInputs?: () => Promise<FingerprintInputs>;
+    /** Which of these repository-relative paths stay here, or why none may go, decided before any is uploaded. */
+    syncPlan?: SyncPlan;
     restarts?: number;
   } & (
     | { request: Extract<BuildRequest, { platform: 'macos' }>; expectedFingerprint?: never }
@@ -1740,10 +1764,10 @@ export async function offloadBuild(
         if (moveOn(reason)) continue;
         return fail(reason);
       }
-      if (native && !choice.connection.supports(NATIVE_BUILD_FEATURE[native.provider])) {
-        const reason = unsupportedNative(native.provider);
-        if (moveOn(reason)) continue;
-        return fail(reason);
+      const unsupported = unsupportedBuild(choice.connection, request);
+      if (unsupported) {
+        if (moveOn(unsupported)) continue;
+        return fail(unsupported);
       }
       cached = await peerArtifact(choice, request, expectedFingerprint);
       if (cached) {
@@ -1765,6 +1789,7 @@ export async function offloadBuild(
         nativeTransferInput(native),
         signal,
         inputs?.ignored,
+        input.syncPlan,
       );
       checkCancelled();
       if ('failure' in synced) {
