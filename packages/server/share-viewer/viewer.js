@@ -1250,8 +1250,28 @@ if (control) {
   const typeField = document.getElementById('type-field');
   const touchFirst = window.matchMedia('(pointer: coarse)');
   const viewport = window.visualViewport;
+  const CHUNK_CHARS = 7;
+  const CHUNK_MS = 200;
   let typed = '';
+  let queued = '';
+  let pump = 0;
   const typing = () => !typebar.hidden;
+  const dropQueued = () => {
+    queued = '';
+    clearTimeout(pump);
+    pump = 0;
+  };
+  const sendChunk = () => {
+    if (!live) {
+      dropQueued();
+      return;
+    }
+    if (queued) {
+      send({ type: 'text', text: queued.slice(0, CHUNK_CHARS) });
+      queued = queued.slice(CHUNK_CHARS);
+      pump = setTimeout(sendChunk, CHUNK_MS);
+    } else pump = 0;
+  };
   const placeBar = () => {
     const root = document.documentElement.style;
     root.setProperty('--vv-top', `${viewport ? viewport.offsetTop : 0}px`);
@@ -1276,9 +1296,11 @@ if (control) {
   const typeText = (text) => {
     if (!live) {
       closeTyping();
+      dropQueued();
       return;
     }
-    send({ type: 'text', text });
+    queued += text;
+    if (!pump) sendChunk();
   };
   const refreshKeyboardButton = () => {
     keyboardButton.hidden = !touchFirst.matches;
@@ -1318,6 +1340,7 @@ if (control) {
   releaseInput = () => {
     closeInput();
     closeTyping();
+    dropQueued();
   };
   screen.addEventListener('keydown', (event) => {
     if (!live) return;
