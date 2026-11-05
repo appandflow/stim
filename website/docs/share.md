@@ -28,7 +28,7 @@ Use `--control --view-password` to generate a second access code for watching. T
 
 ## The viewer
 
-Open the link and enter the access code. The viewer shows who is watching and marks touches from the host, agents and other viewers. A viewer with control can click or tap, type and use the hardware buttons. Rotation is available on owned simulators and emulators. A physical iPhone is view-only.
+Open the link and enter the access code. The viewer shows who is watching and marks touches from the host, agents and other viewers. A viewer with control can click or tap, type and use the hardware buttons. On a phone or tablet, the Keyboard button in the toolbar opens a field above the browser's keyboard that types into the device's focused field; a desktop browser types through the screen directly. Rotation is available on owned simulators and emulators. A physical iPhone is view-only.
 
 ### Video and JPEG
 

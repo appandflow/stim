@@ -1174,7 +1174,7 @@ if (control) {
   };
   screen.tabIndex = 0;
   screen.addEventListener('pointerdown', (event) => {
-    screen.focus();
+    if (document.activeElement !== typeField) screen.focus();
     screen.setPointerCapture(event.pointerId);
     event.preventDefault();
     if (!live) return;
@@ -1241,6 +1241,76 @@ if (control) {
     else if (request) showNote(request.note);
   });
   const apple = /Mac|iPhone|iPad/.test(navigator.userAgent);
+  const keyboardButton = document.getElementById('keyboard-button');
+  const typebar = document.getElementById('typebar');
+  const typeField = document.getElementById('type-field');
+  const touchFirst = window.matchMedia('(pointer: coarse)');
+  const viewport = window.visualViewport;
+  let typed = '';
+  const typing = () => !typebar.hidden;
+  const placeBar = () => {
+    const root = document.documentElement.style;
+    root.setProperty('--vv-top', `${viewport ? viewport.offsetTop : 0}px`);
+    root.setProperty('--vv-height', `${viewport ? viewport.height : window.innerHeight}px`);
+  };
+  const closeTyping = () => {
+    if (!typing()) return;
+    typebar.hidden = true;
+    body.classList.remove('typing');
+    keyboardButton.setAttribute('aria-pressed', 'false');
+    typeField.value = '';
+    typed = '';
+    typeField.blur();
+  };
+  const openTyping = () => {
+    placeBar();
+    typebar.hidden = false;
+    body.classList.add('typing');
+    keyboardButton.setAttribute('aria-pressed', 'true');
+    typeField.focus();
+  };
+  const typeText = (text) => {
+    if (!live) {
+      closeTyping();
+      return;
+    }
+    send({ type: 'text', text });
+  };
+  const refreshKeyboardButton = () => {
+    keyboardButton.hidden = !touchFirst.matches;
+    keyboardButton.closest('.group').hidden = keyboardButton.hidden;
+    if (keyboardButton.hidden) closeTyping();
+  };
+  touchFirst.addEventListener('change', refreshKeyboardButton);
+  refreshKeyboardButton();
+  if (viewport) {
+    viewport.addEventListener('resize', () => typing() && placeBar());
+    viewport.addEventListener('scroll', () => typing() && placeBar());
+  }
+  keyboardButton.addEventListener('click', () => (typing() ? closeTyping() : openTyping()));
+  document.getElementById('type-done').addEventListener('click', closeTyping);
+  typeField.addEventListener('blur', closeTyping);
+  for (const surface of [document.getElementById('toolbar'), typebar, screen]) {
+    surface.addEventListener('mousedown', (event) => typing() && event.preventDefault());
+  }
+  typeField.addEventListener('input', () => {
+    const delta = globalThis.stimKeys.keyboardDelta(typed, typeField.value);
+    typed = typeField.value;
+    if (delta) typeText(delta);
+  });
+  typeField.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      typeField.value = '';
+      typed = '';
+      typeText('\n');
+    } else if (event.key === 'Backspace' && typeField.value === '') typeText('\b');
+  });
+  const closeInput = releaseInput;
+  releaseInput = () => {
+    closeInput();
+    closeTyping();
+  };
   screen.addEventListener('keydown', (event) => {
     if (!live) return;
     const message = globalThis.stimKeys.keyMessage(event, apple);
@@ -1250,4 +1320,5 @@ if (control) {
   });
 }
 
-for (const group of document.querySelectorAll('.group')) group.hidden = !group.querySelector('button');
+if (!control) document.querySelector('[data-group="keyboard"]').remove();
+for (const group of document.querySelectorAll('.group')) group.hidden = !group.querySelector('button:not([hidden])');
