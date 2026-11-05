@@ -1,5 +1,6 @@
 import {
   closeSync,
+  existsSync,
   fstatSync,
   mkdirSync,
   openSync,
@@ -14,6 +15,7 @@ import { constants } from 'node:os';
 import { dirname, join } from 'node:path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
+import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
   agentActionGesture,
   agentSnapshotFile,
@@ -24,6 +26,7 @@ import {
   readDeviceIdleShutdowns,
   readIdleStop,
   workspaceAgentDeviceDir,
+  workspaceLogsDir,
   type WorkspaceState,
 } from '@stim-cli/core/state';
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
@@ -35,6 +38,7 @@ import { deviceSlotKey, parseDeviceSlotKey, projectDeviceSlots } from '../device
 import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } from '../engine/device-lease.ts';
 import { getExecutor } from '../exec.ts';
 import { requestLocalServer } from '../local-server.ts';
+import { createNdjsonWriter } from '../ndjson.ts';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
@@ -772,6 +776,21 @@ async function execute(
   }
   process.exitCode = exit.signal ? 128 + (constants.signals[exit.signal] ?? 0) : (exit.code ?? 1);
   if (hosted && target) {
+    const directory = workspaceLogsDir(hosted.root);
+    if (AGENT_DEVICE_COMMANDS.has(hosted.command) && existsSync(directory)) {
+      const failed = exit.code !== 0 || exit.signal !== null;
+      const writer = createNdjsonWriter(join(directory, 'hosted-agent.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+      writer.write({
+        src: 'agent',
+        level: failed ? 'error' : 'info',
+        event: failed ? 'agent_failed' : 'agent_action',
+        msg: `Hosted agent-device ${hosted.command} ${failed ? 'failed' : 'finished'}`,
+        command: hosted.command,
+        platform: hosted.device.platform,
+        ...(target.slot === undefined ? {} : { slot: target.slot }),
+      });
+      writer.close();
+    }
     await started;
     return publish(version, { ...target, command: hosted.command, phase: 'end' });
   }
