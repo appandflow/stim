@@ -9,7 +9,7 @@ import { WebSocket } from 'ws';
 
 /**
  * Checks a deployed demo server: its pairing code, a protocol 2 first contact with `token`, `hello`, and a first
- * status event. The client key is derived from the token, so every run pairs the same device record again instead of
+ * workspaces event. The client key is derived from the token, so every run pairs the same device record again instead of
  * adding one; anyone holding the token can pair a phone anyway. A deploy restarts the Worker, so a failed attempt is
  * retried within `windowMs`, every step bounded by what is left of it. With `version`, the Worker version that answers
  * `/pairing` must be that one. Throws an Error naming the last check that failed with its whole step timeout.
@@ -115,8 +115,12 @@ async function check(url, endpoint, secret, version, stepMs) {
     const hello = await next((message) => message.id === 1, 'hello reply');
     if (hello.error) throw new Error(`hello failed: ${hello.error.code}, ${hello.error.message}`);
     if (hello.result?.protocol !== 2) throw new Error(`hello answered protocol ${hello.result?.protocol}, not 2.`);
-    socket.send(JSON.stringify({ id: 2, method: 'status.subscribe', params: {} }));
-    await next((message) => message.event === 'status', 'status event');
+    socket.send(JSON.stringify({ id: 2, method: 'workspaces.subscribe', params: {} }));
+    const first = await next(
+      (message) => message.event === 'workspaces' || (message.id === 2 && message.error),
+      'workspaces event',
+    );
+    if (first.error) throw new Error(`workspaces.subscribe failed: ${first.error.code}, ${first.error.message}`);
   } finally {
     socket.close(1000, 'done');
   }
