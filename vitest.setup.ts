@@ -49,7 +49,7 @@ delete process.env.SHELL;
 process.env.npm_config_offline ??= 'true';
 
 beforeEach(({ task }) => {
-  if (/\.(?:integration|compat|browser)\.test\.(?:ts|mjs)$/.test(task.file.filepath)) return;
+  if (/\.(?:integration|compat)\.test\.(?:ts|mjs)$/.test(task.file.filepath)) return;
   vi.useFakeTimers({
     toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance', 'hrtime'],
   });

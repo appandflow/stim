@@ -246,7 +246,6 @@ import {
 } from '@stim-cli/transport-tailscale';
 import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DEFAULT_VIDEO_LIMITS, HOSTED_MAX_BITRATE, videoPacket, VideoGate, type AccessUnit } from './video.ts';
-import { openRtc, rtcAvailable } from './webrtc-sender.ts';
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest, type StartedShare } from './share.ts';
@@ -528,8 +527,6 @@ const MACOS_ONLY_FEATURES: readonly string[] = [
   'duo-frames',
   'native-xcode-build',
   'native-xcode-toolchain',
-  'hosted-webrtc',
-  'hosted-webrtc-private',
 ];
 /**
  * Test switch: set to 1, a `physical` target may resolve to an emulator its workspace leases with `stim device
@@ -1885,25 +1882,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
     async () => tailscaleLoggedIn(await tailscale.rawStatus()),
   );
-  let rtcLoads: boolean | undefined;
-  const probeRtc = () => {
-    if (rtcLoads !== undefined) return;
-    rtcLoads = false;
-    void rtcAvailable().then((loads) => (rtcLoads = loads));
-  };
   const shares = new ShareHub({
     frames,
     control,
-    webrtc: (hosted) => {
-      try {
-        if (loadConfig()?.share?.webrtc === false) return false;
-      } catch {
-        return false;
-      }
-      if (hosted) return true;
-      probeRtc();
-      return rtcLoads === true;
-    },
     presence: {
       subscribe: (key, listener) => localAgents.subscribe(key, listener),
       join: (key, who) => presence.join(key, who),
@@ -4961,39 +4942,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             () => socket.readyState === socket.OPEN && controllers.get(socket) === owner,
           );
           return 'code' in outcome ? error(id, outcome.code, outcome.message) : send(socket, { id, result: outcome });
-        } catch (cause) {
-          return error(id, 'action-failed', (cause as Error).message);
-        }
-      }
-      if (method === 'device-host.webrtc.offer') {
-        if (typeof params.session !== 'string' || typeof params.sdp !== 'string')
-          return error(id, 'bad-request', 'A hosted session and an SDP offer are required.');
-        if (subscriptions.size >= MAX_SUBSCRIPTIONS)
-          return error(id, 'limit-exceeded', `A connection can hold ${MAX_SUBSCRIPTIONS} subscriptions.`);
-        const hostedSession = params.session;
-        const subscription = `s${nextSubscription++}`;
-        try {
-          const view = hostedViews.target(session.id, hostedSession);
-          const rtc = await openRtc(
-            params.sdp,
-            {
-              subscribe: (video, failed) =>
-                hostedViews.subscribe(
-                  session.id,
-                  hostedSession,
-                  { frame: () => {}, video, delayed: () => {}, failed },
-                  { fps: FRAME_FPS.video, maxEdge: 1280 },
-                ),
-              keyframe: () => view.frames.keyframe(view.device),
-              congested: () => view.frames.congested(view.device),
-            },
-            (reason) => {
-              if (!subscriptions.delete(subscription)) return;
-              send(socket, { event: 'webrtc-closed', subscription, message: reason });
-            },
-          );
-          subscriptions.set(subscription, () => rtc.close());
-          return send(socket, { id, result: { subscription, sdp: rtc.answer } });
         } catch (cause) {
           return error(id, 'action-failed', (cause as Error).message);
         }

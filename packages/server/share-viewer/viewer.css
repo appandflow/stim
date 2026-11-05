@@ -928,7 +928,7 @@ input.switch:checked::after {
   }
 }
 
-.rtc-stats {
+.stats-panel {
   position: fixed;
   left: 8px;
   bottom: 8px;
@@ -942,12 +942,12 @@ input.switch:checked::after {
     Menlo,
     monospace;
 }
-.rtc-stats pre {
+.stats-panel pre {
   margin: 0 0 6px;
   white-space: pre-wrap;
   font: inherit;
 }
-.rtc-stats button {
+.stats-panel button {
   margin-right: 6px;
   padding: 3px 8px;
   border-radius: 6px;

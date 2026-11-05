@@ -93,15 +93,6 @@ launchers, SDK symlink retargeting and SDK build upgrades in place.
 It uses private Stim homes and removes
 its owned worker areas.
 
-`pnpm run test:browser` runs the `*.browser.test.ts` files in real browsers through
-`playwright-core`, with real clocks. Today that is the web share viewer against a share on
-loopback whose device is a looping H.264 clip: it starts on WebSocket, switches to WebRTC and
-falls back when the channel dies. It uses the Chrome installed on the machine (set
-`SHARE_BROWSER_CHANNEL` to another channel) because Chromium builds without proprietary codecs
-cannot decode H.264, and `SHARE_BROWSERS=chromium,webkit` adds Playwright's WebKit after
-`pnpm exec playwright-core install webkit`. The stage runs in the `Full suite`, not on pull
-requests.
-
 `pnpm run test:e2e` covers the real CLI and cache flow without native tools.
 `pnpm run test:runtime` checks the built packages at their published runtime floor.
 CI also runs `test/runtime-refusal.mjs` under Node 18, below that floor, where

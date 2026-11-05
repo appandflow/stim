@@ -290,29 +290,6 @@ jobs:
         if: runner.os == 'macOS'
         run: node --test test/e2e/native-cleanup.e2e.js
 
-  share-viewer-browsers:
-    name: share viewer in real browsers
-    if: inputs.full
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-stim
-
-      # A share on loopback whose device is a looping H.264 clip, in the Chrome the runner has installed (it decodes
-      # H.264): the page starts on WebSocket, switches to WebRTC, and falls back when the channel dies.
-      - name: Share viewer in Chrome
-        run: pnpm run test:browser
-
-      # Playwright's WebKit may lack WebCodecs or data channels; the test skips itself without them. Informational.
-      - name: Share viewer in WebKit
-        continue-on-error: true
-        env:
-          SHARE_BROWSERS: webkit
-        run: |
-          pnpm exec playwright-core install --with-deps webkit
-          pnpm run test:browser
-
   runtime-floor:
     name: published runtime (node 22.12.0)
     runs-on: ubuntu-latest

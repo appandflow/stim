@@ -123,6 +123,10 @@ export const REPLACED_SETTINGS: Readonly<Record<string, RemovedSetting>> = {
     replacement: 'idle.minutes, which stops the dev server and the owned devices together',
     value: sameNumber,
   },
+  'share.webrtc': {
+    replacement: 'nothing replaced it; web share viewers take video over the share socket only',
+    env: 'STIM_WEBRTC_STUN',
+  },
   'devices.reclaimIdleMinutes': {
     replacement:
       "the stim-daemon's reclaim rule replaced it: while a run waits to boot, the daemon shuts down the longest-idle device of another workspace idle 2 minutes or more",
@@ -1089,14 +1093,6 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: SHARE_DEFAULT_PORT,
     description:
       'The loopback port the share listener binds in proxy mode, so your reverse proxy can name it. It is not used in tailscale mode, which picks a free port',
-  },
-  {
-    key: 'share.webrtc',
-    type: { kind: 'boolean' },
-    scopes: MACHINE,
-    default: true,
-    description:
-      'Whether web shares from this machine let viewers take video over a WebRTC data channel. Every viewer starts on WebSocket, tries WebRTC in the background and switches only once the channel delivers a keyframe; it returns to WebSocket when the channel fails or loses too much video. The sending machine offers only private, link-local and Tailscale addresses, so only viewers on the same network or tailnet connect directly. Off, shares neither advertise nor accept WebRTC. Needs the optional node-datachannel package, and for a hosted device the worker must also support it',
   },
   {
     key: 'server.lanAddresses',

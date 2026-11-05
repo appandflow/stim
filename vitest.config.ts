@@ -39,7 +39,7 @@ export default defineConfig({
       'website/scripts/**/*.test.mjs',
       'website/src/**/*.test.ts',
     ],
-    exclude: ['**/*.compat.test.ts', '**/*.browser.test.ts'],
+    exclude: ['**/*.compat.test.ts'],
     pool: 'forks',
   },
 });

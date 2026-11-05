@@ -1,7 +1,7 @@
 'use strict';
 
 const body = document.body;
-const rtc = window.stimRtc;
+const stats = window.stimStats;
 const control = body.dataset.control === 'true';
 const allowedButtons = (body.dataset.buttons || '').split(' ').filter(Boolean);
 const canRotate = control && body.dataset.canRotate === 'true';
@@ -164,7 +164,6 @@ const VIDEO_KEYFRAME = 1;
 const PROBE_CODEC = 'avc1.4d0028';
 const MAX_DECODE_QUEUE = 3;
 const KEYFRAME_ASK_MS = 500;
-const RTC_KEYFRAME_ASK_MS = 250;
 
 let decoder = null;
 let decoderKey = '';
@@ -181,12 +180,11 @@ function canDecodeVideo() {
   );
 }
 
-function askForKeyframe(minMs = KEYFRAME_ASK_MS) {
+function askForKeyframe() {
   waitingForKeyframe = true;
-  if (Date.now() - keyframeAskedAt < minMs) return;
+  if (Date.now() - keyframeAskedAt < KEYFRAME_ASK_MS) return;
   keyframeAskedAt = Date.now();
-  if (rtc.keyframe()) return;
-  rtc.countKeyframe();
+  stats.keyframe();
   send({ type: 'keyframe' });
 }
 
@@ -212,7 +210,7 @@ function drawUndrawn() {
   if (!frame) return;
   if (undrawn.length) drawScheduled = requestAnimationFrame(drawUndrawn);
   renderFrame(frame, frame.displayWidth, frame.displayHeight);
-  rtc.drawn(frame.timestamp / 1000);
+  stats.drawn(frame.timestamp / 1000);
   frame.close();
   if (!live && !finished) {
     live = true;
@@ -296,76 +294,12 @@ function configure(sps, pps) {
   decoderKey = key;
 }
 
-let lastSequence = -1;
-const REORDER_MS = Number(new URLSearchParams(location.search).get('reorder')) || 40;
-const reordered = new Map();
-let reorderTimer = null;
-
-function resetSequence() {
-  lastSequence = -1;
-  reordered.clear();
-  clearTimeout(reorderTimer);
-  reorderTimer = null;
-}
-
-/** Plays a packet of the unordered channel; one after a missing packet cannot decode unless it is a keyframe. */
-function playSequenced(buffer, gap) {
-  const view = new DataView(buffer);
-  lastSequence = view.getUint32(4);
-  if (gap) {
-    rtc.gap();
-    if (rtc.active !== 'webrtc') return;
-    if ((view.getUint8(1) & VIDEO_KEYFRAME) === 0) return askForKeyframe(RTC_KEYFRAME_ASK_MS);
-  }
-  showVideo(buffer);
-}
-
-function drainReordered() {
-  while (reordered.has(lastSequence + 1)) {
-    const next = reordered.get(lastSequence + 1);
-    reordered.delete(lastSequence + 1);
-    playSequenced(next, false);
-  }
-  if (!reordered.size) {
-    clearTimeout(reorderTimer);
-    reorderTimer = null;
-  }
-}
-
-function giveUpOnMissing() {
-  reorderTimer = null;
-  if (!reordered.size) return;
-  const next = Math.min(...reordered.keys());
-  const buffer = reordered.get(next);
-  reordered.delete(next);
-  playSequenced(buffer, true);
-  drainReordered();
-  if (reordered.size) reorderTimer = setTimeout(giveUpOnMissing, REORDER_MS);
-}
-
-/** An unordered, lossy channel delivers packets late and out of order; waits briefly for a missing one. */
-function receiveRtc(buffer) {
-  if (buffer.byteLength < 21) return;
-  const sequence = new DataView(buffer).getUint32(4);
-  if (lastSequence >= 0 && sequence <= lastSequence) {
-    rtc.late();
-    return;
-  }
-  if (lastSequence < 0 || sequence === lastSequence + 1) {
-    playSequenced(buffer, false);
-    drainReordered();
-    return;
-  }
-  reordered.set(sequence, buffer);
-  reorderTimer ??= setTimeout(giveUpOnMissing, REORDER_MS);
-}
-
 /** Decodes one video packet: the header the server's videoPacket writes, then an Annex-B access unit. */
 function showVideo(buffer) {
   const view = new DataView(buffer);
   if (buffer.byteLength < 21 || view.getUint8(0) !== 1) return;
   const keyframe = (view.getUint8(1) & VIDEO_KEYFRAME) !== 0;
-  rtc.received(buffer.byteLength);
+  stats.received(buffer.byteLength);
   const units = nalUnits(new Uint8Array(buffer, view.getUint16(2)));
   if (keyframe) {
     const sps = units.find((unit) => nalType(unit) === 7);
@@ -373,10 +307,7 @@ function showVideo(buffer) {
     if (!sps || !pps) return askForKeyframe();
     configure(sps, pps);
     waitingForKeyframe = false;
-  } else if (waitingForKeyframe || !decoder) {
-    if (rtc.active === 'webrtc') askForKeyframe(RTC_KEYFRAME_ASK_MS);
-    return;
-  }
+  } else if (waitingForKeyframe || !decoder) return;
   if (decoder.decodeQueueSize > MAX_DECODE_QUEUE) return askForKeyframe();
   try {
     decoder.decode(
@@ -647,11 +578,9 @@ function connect(codec) {
   socket = current;
   if (previous && previous.readyState <= WebSocket.OPEN) previous.close();
   body.dataset.codec = codec;
-  resetSequence();
-  rtc.stop();
   current.binaryType = 'arraybuffer';
   current.addEventListener('open', () => {
-    if (rtc.visible) {
+    if (stats.visible) {
       const clock = () => send({ type: 'clock', c: Date.now() });
       clock();
       const clockTimer = setInterval(
@@ -668,7 +597,7 @@ function connect(codec) {
       if (new Uint8Array(event.data, 0, 1)[0] === 0xff) {
         const blob = new Blob([event.data], { type: 'image/jpeg' });
         pending = pending.then(() => showJpeg(blob)).catch(() => {});
-      } else if (codec === 'h264' && rtc.active !== 'webrtc') showVideo(event.data);
+      } else if (codec === 'h264') showVideo(event.data);
       return;
     }
     const message = JSON.parse(event.data);
@@ -681,7 +610,6 @@ function connect(codec) {
       if (typeof message.title === 'string') document.title = message.title;
       expiresAt = Date.parse(message.expiresAt);
       refreshStatus();
-      if (codec === 'h264') rtc.schedule();
     } else if (message.type === 'title') {
       if (typeof message.title === 'string') document.title = message.title;
     } else if (message.type === 'clipboard') {
@@ -689,16 +617,13 @@ function connect(codec) {
       copies.delete(message.id);
       if (waiting && typeof message.text === 'string') waiting.resolve(message.text);
       else if (waiting) waiting.reject(new Error(message.error || 'The device did not return its clipboard.'));
-    } else if (message.type === 'clock') rtc.clock(message);
-    else if (message.type === 'webrtc-answer') rtc.answer(message);
-    else if (message.type === 'webrtc-failed') rtc.refused(message);
+    } else if (message.type === 'clock') stats.clock(message);
     else if (message.type === 'artwork') void setArtwork(message.artwork);
     else if (message.type === 'delayed') {
       if (away) return;
       live = !message.delayed && hasFrame;
       refreshStatus();
     } else if (message.type === 'waiting') {
-      rtc.stop();
       dropUndrawn();
       away = true;
       resuming = false;
@@ -711,11 +636,7 @@ function connect(codec) {
       live = false;
       waitingForKeyframe = true;
       refreshStatus();
-      resetSequence();
-      if (codec === 'h264') {
-        askForKeyframe();
-        rtc.schedule();
-      }
+      if (codec === 'h264') askForKeyframe();
     } else if (message.type === 'you') {
       me = { id: message.id, name: message.name, color: message.color };
       roster.set(me.id, { ...me, self: true, viewOnly });
@@ -740,7 +661,6 @@ function retryIn(delay) {
 }
 
 function lostConnection() {
-  rtc.stop();
   live = false;
   away = false;
   resuming = false;
@@ -828,25 +748,6 @@ const send = (message) => {
 for (const surface of [device, document.getElementById('toolbar')]) {
   surface.addEventListener('contextmenu', (event) => event.preventDefault());
 }
-
-rtc.attach({
-  ready: () => socket !== null && socket.readyState === 1 && body.dataset.codec === 'h264' && !away,
-  send,
-  video: receiveRtc,
-  commit: (rtcAttempt) => {
-    waitingForKeyframe = true;
-    keyframeAskedAt = 0;
-    resetSequence();
-    send({ type: 'transport', via: 'webrtc', attempt: rtcAttempt });
-  },
-  fallback: () => {
-    waitingForKeyframe = true;
-    keyframeAskedAt = 0;
-    resetSequence();
-    send({ type: 'transport', via: 'ws' });
-    askForKeyframe();
-  },
-});
 
 void canDecodeVideo().then((supported) => connect(supported ? 'h264' : 'jpeg'));
 
