@@ -802,8 +802,22 @@ test('a no-peer reload routes to the device reload controls before a relaunch', 
 // A workspace Metro serves one app, so several matching peers are that app on
 // several devices. The agent asked about one device and has to learn the others
 // reloaded too.
+const tabletSlot = {
+  getProject: () => ({
+    ...project,
+    deviceSlots: { tablet: { android: { avdName: 'stim-tablet', serial: 'emulator-5556', owned: true } } },
+  }),
+  readLaunches: () => ({
+    android: androidLaunch,
+    'android:tablet': { ...androidLaunch, deviceId: 'emulator-5556' },
+  }),
+  resolveAndroid: async (avdName: string) => ({
+    serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554',
+  }),
+};
+
 test('a reload that reached several devices says so and counts them', async () => {
-  const deps = reloadDeps({ reloadMetro: async () => ({ ok: true, peers: 3, targets: 2 }) });
+  const deps = reloadDeps({ ...tabletSlot, reloadMetro: async () => ({ ok: true, peers: 3, targets: 2 }) });
   const result = await runReload({ root: '/project', platform: 'android', deps });
 
   expect(result.ok && result.facts).toMatchObject({ strategy: 'metro-websocket', targets: 2 });
@@ -822,6 +836,34 @@ test('a reload that reached several devices says so and counts them', async () =
   expect(lines[0]).toContain('2 devices are running this app');
   expect(lines[0]).toContain('not only emulator-5554');
 });
+
+test.each([
+  ['ios', 'U1', { 'socket#0': 'role=ios', 'socket#5': 'role=ios' }],
+  ['android', 'emulator-5554', { 'socket#0': 'app=com.example.android', 'socket#5': 'app=com.example.android' }],
+] as const)(
+  'one %s device listed as several Metro sockets is not reported as several devices',
+  async (platform, deviceId, sockets) => {
+    const peers = Object.keys(sockets).length;
+    const deps = reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch, android: androidLaunch }),
+      reloadMetro: async () => ({ ok: true, peers, targets: peers }),
+    });
+    const result = await runReload({ root: '/project', platform, deps });
+    expect(result.ok && result.facts).toMatchObject({ deviceId, targets: 1 });
+
+    const program = new Command();
+    registerReload(program, deps);
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (line) => lines.push(String(line));
+    try {
+      await program.parseAsync(['node', 'stim', 'reload', platform]);
+    } finally {
+      console.log = originalLog;
+    }
+    expect(lines[0]).not.toContain('devices are running this app');
+  },
+);
 
 test('a reload that reached one device does not mention other devices', async () => {
   const program = new Command();
