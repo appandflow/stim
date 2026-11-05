@@ -134,3 +134,9 @@ it('types smart punctuation as ASCII and drops other characters', () => {
   expect(keyboardDelta('', 'aé\u{1F600}b')).toBe('ab');
   expect(keyboardDelta('’', "'")).toBe('');
 });
+
+it('ignores the zero-width resting value of the phone field', () => {
+  expect(keyboardDelta('​', '​abc')).toBe('abc');
+  expect(keyboardDelta('​abc', '')).toBe('\b\b\b');
+  expect(keyboardDelta('​', '')).toBe('');
+});

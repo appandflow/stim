@@ -467,6 +467,24 @@ body.viewer.typing footer {
 .typebar[hidden] {
   display: none;
 }
+.typewrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.typehint {
+  position: absolute;
+  inset: 0 12px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 16px;
+  pointer-events: none;
+}
+.typehint[hidden] {
+  display: none;
+}
 .typefield {
   flex: 1;
   min-width: 0;

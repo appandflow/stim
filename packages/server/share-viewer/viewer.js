@@ -1175,10 +1175,8 @@ if (control) {
   };
   screen.tabIndex = 0;
   screen.addEventListener('pointerdown', (event) => {
-    if (typing()) {
-      typeField.value = '';
-      typed = '';
-    } else screen.focus();
+    if (typing()) resetField();
+    else screen.focus();
     screen.setPointerCapture(event.pointerId);
     event.preventDefault();
     if (!live) return;
@@ -1250,12 +1248,20 @@ if (control) {
   const typeField = document.getElementById('type-field');
   const touchFirst = window.matchMedia('(pointer: coarse)');
   const viewport = window.visualViewport;
+  const typeHint = document.getElementById('type-hint');
+  const REST = '\u200b';
   const CHUNK_CHARS = 7;
   const CHUNK_MS = 200;
-  let typed = '';
+  let typed = REST;
   let queued = '';
   let pump = 0;
   const typing = () => !typebar.hidden;
+  const resetField = () => {
+    typeField.value = REST;
+    typed = REST;
+    typeHint.hidden = false;
+    typeField.setSelectionRange(REST.length, REST.length);
+  };
   const dropQueued = () => {
     queued = '';
     clearTimeout(pump);
@@ -1282,8 +1288,6 @@ if (control) {
     typebar.hidden = true;
     body.classList.remove('typing');
     keyboardButton.setAttribute('aria-pressed', 'false');
-    typeField.value = '';
-    typed = '';
     typeField.blur();
   };
   const openTyping = () => {
@@ -1291,6 +1295,7 @@ if (control) {
     typebar.hidden = false;
     body.classList.add('typing');
     keyboardButton.setAttribute('aria-pressed', 'true');
+    resetField();
     typeField.focus();
   };
   const typeText = (text) => {
@@ -1320,21 +1325,21 @@ if (control) {
     surface.addEventListener('mousedown', (event) => typing() && event.preventDefault());
   }
   typeField.addEventListener('input', () => {
-    const delta = globalThis.stimKeys.keyboardDelta(typed, typeField.value);
-    typed = typeField.value;
+    const value = typeField.value;
+    let delta = globalThis.stimKeys.keyboardDelta(typed, value);
+    if (value === '' && delta === '') delta = '\b';
     if (delta) typeText(delta);
-    if (typed.length >= typeField.maxLength) {
-      typeField.value = '';
-      typed = '';
+    if (value === '' || value.length >= typeField.maxLength) resetField();
+    else {
+      typed = value;
+      typeHint.hidden = value !== REST;
     }
   });
   typeField.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      typeField.value = '';
-      typed = '';
-      typeText('\n');
-    } else if (event.key === 'Backspace' && typeField.value === '') typeText('\b');
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    resetField();
+    typeText('\n');
   });
   const closeInput = releaseInput;
   releaseInput = () => {

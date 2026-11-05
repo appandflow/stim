@@ -175,23 +175,25 @@
       </div>
     </nav>
     <div class="typebar" id="typebar" hidden>
-      <input
-        class="typefield"
-        id="type-field"
-        type="text"
-        autocomplete="off"
-        autocapitalize="off"
-        autocorrect="off"
-        spellcheck="false"
-        enterkeyhint="send"
-        maxlength="100"
-        data-1p-ignore
-        data-lpignore="true"
-        data-bwignore
-        data-form-type="other"
-        placeholder="Type on the device"
-        aria-label="Type on the device"
-      />
+      <span class="typewrap">
+        <input
+          class="typefield"
+          id="type-field"
+          type="text"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          enterkeyhint="send"
+          maxlength="100"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
+          data-form-type="other"
+          aria-label="Type on the device"
+        />
+        <span class="typehint" id="type-hint" aria-hidden="true">Type on the device</span>
+      </span>
       <button class="typedone" id="type-done" type="button">Done</button>
     </div>
     <footer>
