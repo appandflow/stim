@@ -14,173 +14,19 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 
 :::
 
-Stim creates and records its local simulators and emulators. Their names start
-with `stim-`. It never creates, boots, or deletes a simulator or emulator that
-another tool made.
+Stim creates a simulator or emulator for your workspace and reuses it on later runs. It boots and deletes devices that it can verify it owns. A name starting with `stim-` by itself does not prove ownership.
 
-The Stim phone viewer's control toolbar offers **Shake** and **Slow Animations**
-for owned iOS simulators when the paired server supports them. Slow animations
-shows the confirmed simulator state. These options require control access and
-are hidden on older servers or devices that do not support them. They use
-Stim's viewer and never open Device Hub.
+<StimTabs
+code={`stim ios
+stim android
+stim status`}
+/>
 
-A `stim-` name alone does not make a device Stim's. Stim lists every device it
-creates in `~/.stim/created-devices.json`, or in `$STIM_HOME/created-devices.json`
-when `STIM_HOME` points somewhere else. For devices created before that ledger,
-it also accepts a device its config records in the device pool or in a
-workspace as owned. `stim gc --delete` removes only those devices when no
-workspace references them. It lists any other `stim-*` device, including one
-another `STIM_HOME` created, with the command that deletes it (`rm -rf <dir>`
-for AVD data with no registration), and leaves it for you to run.
+Use the command for your platform. With Stim Desktop installed, its workspace viewer is the default on macOS. Use `stim settings set iosSimulatorApp xcode` or `stim settings set androidEmulatorApp emulator` to open the platform's own viewer. [Settings](./settings.md)
 
-A booted simulator also gets a folder under `/private/var/tmp`,
-`com.apple.CoreSimulator.SimDevice.<udid>`, where CoreSimulator keeps its
-`launchd.log` and the SimSlim overrides Stim applies. `simctl delete` leaves
-that folder behind, so Stim removes it when it deletes an owned simulator.
-`stim gc` lists the folders whose UDID has no simulator in Xcode's device set,
-with their sizes, and never deletes them: a simulator in another `simctl`
-device set is not in Xcode's list, and removing its folder would drop its
-SimSlim overrides. Remove one yourself with `rm -rf` once you are sure its
-simulator is gone.
+For a connected phone, use `stim ios --device [udid]` or `stim android --device [serial]`. Stim leases physical devices for the run. Use `stim device lock` to keep one leased across runs. A physical iPhone needs a development profile that lists it. [Provision an iPhone](./commands.md#device-provision)
 
-With `STIM_HOME` set, gc skips the device sweep because simulators and AVDs are
-machine-global. Pruning a dead project still deletes the devices its record marks
-as owned, and the dry run lists them under "Device sweep notices". Every other
-`stim-*` device is reported as not touched.
-
-When a simulator in the ledger is deleted outside Stim, for example from Xcode,
-`stim gc` reports its UDID as a stale ledger entry and `stim gc --delete` removes
-it from the ledger. Stim does this only when `simctl` lists every simulator,
-unavailable ones included, and that UDID is not among them.
-
-The Android ledger records AVD names, and another `STIM_HOME` can create an AVD
-with the same name later. `stim gc` reports an AVD name as stale when
-`emulator -list-avds` answered, the AVD home exists, and no AVD root has a
-registration or data directory for that name. It does not report a name that an
-unfinished `stim android` setup has reserved. `stim gc --delete` checks again
-before it forgets the name. After you delete a Stim AVD by hand, run `stim gc
---delete` so a later AVD with that name is not treated as this home's.
-
-`stim android --device [serial]` and `stim ios --device [udid]` install, launch,
-and read available logs on connected physical devices. An iPhone can be cabled
-or paired over Wi-Fi; with no UDID, Stim picks a cabled iPhone first. Stim leases the device
-for the run, then releases the lease. Use `stim device lock` to hold it across
-runs. Hardware never enters the owned-device registry and is never booted,
-shut down, or deleted by Stim.
-
-A new iPhone needs a Development profile that lists it before `stim ios
---device` can install a build. Builds never create one.
-[`stim device provision ios`](./commands.md#device-provision) registers the
-phone with the project's team and creates the profile after you confirm the
-listed account changes; building once from Xcode does the same.
-
-While a workspace holds the lease, `stim status` lists the device under that
-workspace with its name, model, whether the machine reaches it, and when the lease
-ends, and Stim Desktop and the Stim phone app show it as a tile with a
-Physical badge. To keep a phone on screen while you work, lock it:
-
-```bash
-stim device lock ios --for 30m
-stim status
-```
-
-Or ask an agent:
-
-```text
-Lease my connected iPhone to this workspace with stim device lock for 30 minutes, then run stim status and tell me whether it shows as connected.
-```
-
-A leased iPhone cabled over USB also streams its screen to the phone app
-through `stim-server`, view only: Stim sends a physical iPhone no taps, text
-or buttons. Over Wi-Fi it shows no screen. The iPhone must be unlocked and
-trust the Mac. macOS
-counts the iPhone's screen as a camera, so the first stream asks for Camera
-access for Stim, the app that runs `stim-server`.
-
-While a workspace holds an Android phone's lease, the phone app and Stim Desktop
-also show the phone's screen live through `stim-server`. **Control** in Stim
-Desktop, or a phone paired with control, can tap, swipe, type and press Home,
-Back, Apps and Lock on it. Stim Desktop also shows a cabled iPhone's screen,
-view only. The stream runs over
-adb with the [scrcpy](https://github.com/Genymobile/scrcpy) server, which
-`stim-server` pushes to `/data/local/tmp` and deletes when the stream stops. It
-installs nothing, changes no setting, and cannot rotate the phone. Control ends
-when the workspace releases the lease or it expires. Some Android 15 and 16
-phones send no picture until their screen changes. With the screen off, you see
-what the phone's display shows, such as an always-on display, and watching never
-wakes it.
-
-Each workspace keeps its owned-device assignments for later runs.
-After boot, Stim opens its owned iOS simulator in Device Hub on Xcode 27, or
-Simulator on older Xcode. Stim passes the workspace's simulator ID to Device Hub
-so it can open that device's window.
-Opening the window is best effort; a window failure does not undo a successful boot.
-On Xcode 27 (confirmed on 27A266a), quitting Device Hub by default shuts down
-every booted simulator on the machine, including ones it never opened a
-window for and ones other workspaces or agents are using. Never quit Device
-Hub to free memory or clean up; use `stim stop` on workspaces you own
-instead. [Siniulator's setup notes](https://github.com/kmagiera/Siniulator#working-with-device-hub)
-describe a macOS preference that stops this; it is undocumented whether that
-preference also covers simulators Device Hub never displayed. See
-[Keep simulators running when Device Hub quits](#keep-simulators-running-when-device-hub-quits).
-To display owned simulators in Siniulator, set `"iosSimulatorApp": "siniulator"`
-at the top level of `~/.stim/config.json` after installing it. For one launch,
-use `stim ios --simulator-app siniulator` (or `--simulator-app xcode` to use
-Apple's viewer). This also opens an already running owned simulator without
-rebooting it or saving the override. Siniulator
-shuts down a simulator when its window closes by default. In Siniulator Settings,
-enable **Leave simulator running after window is closed** to keep Stim's device
-running.
-
-When [Stim Desktop](./desktop.md) is installed, it is the default viewer for
-both platforms: `iosSimulatorApp` and `androidEmulatorApp` default to
-`"stim-desktop"`. Stim looks the app up by its bundle id
-(`dev.stim.desktop`) in Launch Services. Without Stim Desktop the defaults
-stay `"xcode"` and `"emulator"`, and a value you set always wins.
-`stim settings get iosSimulatorApp` prints the effective value and, on stderr,
-`(default: Stim Desktop installed)` when the default comes from the app.
-
-For owned simulators, Stim Desktop keeps the current page and shows a launch
-card with a **Show** button. Clicking **Show** opens the workspace that owns the
-simulator and focuses that device, and no simulator window opens. It only displays the simulator; it never boots or shuts it
-down. Pass
-`--simulator-app stim-desktop` to use it for one launch.
-
-When Stim Desktop is not running, Stim starts it without the command's
-`STIM_HOME`. Stim Desktop then reads the same Stim home, and serves the same
-paired phones, as when you open it yourself. It shows only devices from that
-home, so a simulator booted under another `STIM_HOME` does not appear in it.
-
-For owned Android emulators, Stim starts newly booted emulators on macOS with
-`-no-window -gpu host`, which keeps GPU acceleration, and opens
-`stim-desktop://open?serial=<serial>` in the background so Stim Desktop
-shows a launch card. Clicking **Show** opens that emulator. An emulator that is already running keeps its current display
-until it next boots, and physical devices are unaffected.
-
-To keep the simulator and emulator windows with Stim Desktop installed:
-
-```sh
-stim settings set iosSimulatorApp xcode
-stim settings set androidEmulatorApp emulator
-```
-
-An iPhone Duo simulator shows its active screen, with the frame fitted to
-that screen. Both screens appear side by side until the active screen is
-known. While **Control** is on, its tile has a **Fold / Unfold** button that sweeps the simulated hinge to the other posture. The
-button needs the bundled app, and because it uses private iOS interfaces, a
-new iOS runtime can break it. **Rotate Left** and **Rotate Right** work in
-folded, half-open and unfolded postures. Apps keep their supported
-orientations, and the Duo home screen stays portrait.
-When the Desktop viewer is open and the installed devicectl supports hinge
-observation, its preset selection follows changes made by other controllers.
-Arbitrary angles leave all presets unselected. Older tools retain the posture
-Desktop last requested. **Hinge Angle** opens a slider from 0 to 180 degrees
-while **Control** is on; release it to apply the selected angle. Selecting the
-current preset does nothing.
-When its observed angle is below 180 degrees, the Desktop viewer projects the
-active inner display around its hinge. Taps and drags follow the projected
-screen. The cover and fully open display stay flat; without angle observation,
-the inner display also stays flat.
+Stim Desktop and the phone app can view a leased Android phone or control it with permission. A physical iPhone is view-only and must be unlocked, trusted and connected by USB. On the Mac, allow Camera access if asked.
 
 ## Multiple devices with slots
 
@@ -465,59 +311,11 @@ a copy button for each command.
 
 ## Idle shutdown
 
-A stalled agent can leave its simulator or emulator booted for hours. Once a
-workspace has had no activity for `idle.minutes`, 15 by default, the
-per-home `stim-daemon` shuts its owned devices down together with its dev
-server, in the [idle stage](./dev-server-and-logs.md#idle-stop), whether or
-not a dev server runs, so a Release run or a failed build no longer leaves a
-simulator booted. Set it for the machine or for one project; `0` turns it off:
+After 15 minutes of inactivity by default, Stim can stop Metro and shut down owned devices. Change `idle.minutes` for a workspace or machine. Set it to `0` to disable idle stop. App logs alone do not keep a workspace active. A build, device control, lease or live share can keep it up.
 
-```bash
-stim settings set idle.minutes 60 --scope machine
-```
+<StimTabs code="stim settings set idle.minutes 60 --scope machine" />
 
-Activity is a Stim command or native build in the workspace, a Metro bundle or
-HMR request, an agent-device action, an input sent to the device through
-`stim-server` (the phone app or Stim Desktop; a view that only streams frames
-does not count), a `stim device lock`, and, on macOS, you using the device in
-the frontmost Simulator, Device Hub or emulator window. App and device logs never count,
-whatever the device's last launch. A device stays up while a tool drives it,
-while `stim device lock` or an agent-device session holds it, while a build
-runs in the workspace, and while its activity cannot be read.
-
-The device is shut down, never deleted, through the same path as `stim stop`.
-Physical devices are never touched. `stim status` shows
-`shut down after 15m idle` on the device, and the next `stim ios`,
-`stim android` or `stim revive` boots it again. The daemon reads the setting on
-every tick. With `daemon.mode off`, the workspace's dev server supervisor
-checks once a minute and shuts its own devices down after `idle.minutes`; a
-device with no dev server then stays booted.
-
-Queue reclaim is a separate, faster path. Every boot waits for a device slot
-under a derived cap (`concurrency.maxDevices` overrides it; see
-[settings](./settings.md#machine-settings)). While a run waits to boot because
-the booted devices fill a cap, the `stim-daemon` shuts down, once per tick, the
-longest-idle booted owned device of another workspace of this Stim home that
-has had no activity for 2 minutes and has no blocker, then wakes the waiter.
-The same activity counts as for idle shutdown: no driver, Stim or agent-device
-lock, build or device lock, and no Stim command, Metro bundle, agent action,
-stim-server input or use of its Simulator or emulator window; app and device
-logs do not count. Reclaim rechecks under the target workspace's native-run
-lock and re-resolves ownership through centralized teardown. It shuts down,
-never deletes, and excludes the waiting workspace, physical, hosted, remote,
-parked and other homes' devices, and the devices of a workspace with a live
-[web share](./share.md); the run keeps waiting and its progress line names the
-share. The reclaimed workspace's status and
-`device_idle_shutdown` log say `reclaimed for a waiting run`. With no daemon,
-waiters wait without reclaim. `devices.reclaimIdleMinutes` is no longer read.
-
-Agent prompt:
-
-```text
-Change Stim's idle stop for this project to 60 minutes with
-`stim settings set idle.minutes 60 --scope workspace`, and confirm with
-`stim settings get idle.minutes`.
-```
+When a run is waiting on a full device pool, Stim can shut down another eligible device after two idle minutes. Run `stim revive`, `stim ios` or `stim android` to use the workspace again. [Idle stop](./dev-server-and-logs.md#idle-stop)
 
 ## Remote devices
 
@@ -690,480 +488,45 @@ back through it in the Stim phone app.
 
 ## Cleanup behavior
 
-- `stim stop` releases the active environment and device leases. It ends an owned
-  remote session. On a physical iPhone, stopping the log collector also closes
-  the app; it does not shut down the phone or uninstall anything.
-- `stim worktree remove` releases leases, parks eligible owned iOS simulators and
-  Android emulators for another workspace. Each platform keeps up to three
-  parked devices by default and deletes the oldest when full. Disabling
-  parking makes removal delete the device; see [settings](/docs/settings).
-  While the disk pressure level is high or critical removal deletes the
-  devices instead of parking them, and says so in its output.
-- Stim treats owned simulators and emulators as disposable: the next run
-  recreates them. The `stim-daemon`'s dormant stage deletes the owned devices
-  of a workspace with nothing running and no activity for `idle.dormantDays`
-  (3 days; fractions allowed; `0` never), the parked pool untouched; its
-  pressure ladder does so at high disk pressure for a workspace idle 10
-  minutes, and at critical for every idle workspace. Automatic maintenance deletes them after
-  `gc.worktreeGraceMinutes` for a workspace whose worktree is finished but
-  kept, unless a [web share](./share.md) of it is live. A workspace pinned with
-  `maintenance.keep` keeps its devices. `stim status` shows the disk they use.
-  Its daily age sweep also deletes parked simulators and emulators parked for
-  `maintenance.olderThanDays` (7 days; 0 never), through centralized teardown.
-- `stim gc` reports stale and orphaned resources. `stim gc --json` prints the
-  same report as one JSON object.
-- `stim gc --delete` removes verified resources from the report, including
-  parked simulators, emulators, and expired device lease files. With
-  `--older-than <days>`, it removes only the devices parked at least that long.
-  It also deletes the owned devices of a linked worktree whose branch is merged
-  or whose pull request ended but that it keeps, for example because it is
-  dirty, under the same idle rules as automatic maintenance, a live web share
-  included. It then runs the
-  `stim-daemon`'s pressure ladder at high, whatever the machine measures, which
-  deletes parked devices and moves workspaces idle 10 minutes or more into the
-  dormant stage, deleting their owned devices. `stim gc` prints
-  the disk owned devices use as `Owned device disk`.
-- `stim gc --cache parked` lists only the parked devices, with the app each
-  one holds and its size. With `--delete` it erases each verified parked
-  simulator (`simctl erase`) and wipes each parked emulator's user data and
-  snapshots, and keeps them parked for the next workspace.
+| Action                            | What happens                                                                                        |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `stim stop`                       | Stops this workspace and releases leases. It keeps its owned device assignments for later.          |
+| `stim worktree remove`            | Reclaims the workspace and parks eligible owned devices for reuse.                                  |
+| `stim gc`                         | Previews cleanup and shows disk use.                                                                |
+| `stim gc --delete`                | Removes verified stale resources and can delete parked devices. It also runs disk-pressure cleanup. |
+| `stim gc --cache parked --delete` | Erases parked device data and keeps the devices in the pool.                                        |
 
-Before shutting down, parking or deleting an owned simulator or emulator, Stim
-attempts to close local `agent-device` sessions on that exact iOS UDID or live
-Android serial. An Android session must also name the owned AVD, because the
-next emulator on a console port reuses the serial. For an emulator that is
-already shut down, Stim closes the sessions that name its AVD on any serial
-that no connected device now holds. `stim stop` (including
-`stop --slot`) closes a session only when agent-device's claim on the device
-names that session and was taken inside the workspace being stopped. A session
-claimed from the workspace's git root, such as the worktree root when the app
-lives in a subdirectory, is closed too, but only after `stop` has shut its
-device down and Stim has checked that the device is still stopped and that no
-other device holds its serial. Stim
-rechecks ownership and asks agent-device to reject a close if the session now
-targets another device. Sessions from another workspace or claim, including
-sibling directories under the git root, sessions on other devices, and physical
-devices stay open. The integration is optional: a
-missing binary skips cleanup; failures print a warning and device teardown
-continues. Agent-device calls have
-a combined 15-second budget per device and pass (the pass `stop` makes after
-shutdown has its own), and require local socket transport and
-support for `--session-lock reject`. Remote daemons are never used.
+Each platform parks up to three local devices by default. Stim clears the previous app's data before reusing a parked device. Disk pressure can shorten its lifetime. The dormant stage can delete owned devices from an inactive workspace after `idle.dormantDays` (three days by default). Physical devices stay outside Stim's device cleanup. [Disk pressure](./build-caches.md#disk-pressure)
 
-An owned emulator counts as stopped only when no emulator process launched for
-its AVD is left. Stim asks it to quit with `adb emu kill`. A hung emulator that
-ignores that for 60 seconds, or that adb cannot reach, gets SIGTERM and then
-SIGKILL, but only after Stim verifies that the process runs that AVD and is the
-same process it saw before shutdown. Windows has no such check, so Stim signals
-nothing there. If the emulator still runs, `stop`, `worktree remove` and
-`gc` report `teardown failed` and keep the device record instead of reporting it
-stopped or parked.
+If teardown fails, Stim keeps the ownership record for a retry. For pool settings, reuse rules and recovery, run the version-matched guide.
 
-If deletion fails, Stim keeps the ownership record and exits with an error. A
-later cleanup can then retry without losing track of the resource.
-
-Parked-device adoption and deletion share a process-identity claim. The next
-attempt recovers a proven dead or different owner, while a live owner keeps
-the device protected. An opaque deletion marker also protects the device from
-older Stim versions. When that marker outlives its owner, adoption treats the
-device as erased and drops its recorded app, cache key and scheme approvals.
-An erase by `gc --cache parked --delete` that fails after the erase command
-started keeps the device parked without them for the same reason.
-If Stim dies during a device-tool call, its native child
-may still be running: inspect both before following the claim's removal remedy.
-Older inline `deletionClaim` fields require manual inspection and removal of
-only that field; keep the device and pool record. Run `stim guide lifecycle pool`
-for the recovery steps.
-
-Runtime state lives under `$STIM_HOME`, which defaults to `~/.stim`. Each
-workspace stores state and logs in a directory derived from its absolute path.
-
-Parking keeps the device as it is: the app stays installed and the pool
-record names it. A parked device can therefore hold gigabytes until
-`stim gc --cache parked --delete` erases it. Stim parks a simulator only after
-it reports `Shutdown`: it waits up to 15 seconds, retries the shutdown once,
-and waits up to 15 seconds more. A simulator that stays booted is deleted
-instead, and `stim worktree remove` prints `could not park <name>: ... --
-deleted it instead`.
-
-A simulator that is booted when `stim worktree remove` parks it stays booted
-for `pool.bootedGraceMinutes` (15 by default; `0` shuts it down at park), so the
-next `stim ios` that adopts it skips the boot. Stim keeps it booted only while
-macOS memory pressure is normal, a device slot is free and `daemon.mode` is `on`, terminates the
-leftover app, and counts the simulator against the device caps. The stim-daemon
-shuts it down, and keeps it parked, when the grace period passes, under any
-memory pressure before it touches a workspace's device, and before it reclaims
-another workspace's device for a run waiting on a device slot. `stim stop`
-keeps the workspace's simulator booted under the same gates, so `stop` then
-`worktree remove` keeps it booted too. Emulators are always shut down at park.
-
-Adoption gives the new workspace a clean app state without reinstalling. It
-resets privacy grants and the keychain, uninstalls every other user app except
-XCUITest runner apps, and
-clears the workspace app's data: on iOS it empties the app's data container
-and resets its preferences, and on Android it runs `pm clear`. It does this on
-every adoption, whichever workspace parked the device. The reset preferences
-of an iOS expo-dev-client app hold only the two that hide the Expo dev menu and
-its Tools button, so the menu stays off when an agent or a crash relaunches
-the app. Stim then compares the installed app with the requested build and
-skips the install when they match, so a new worktree running the
-same build as the parked device boots it warm and launches without copying the
-app. On iOS it hashes both bundles. On Android it compares the installed APK's
-size and the SHA-256 of its signing block, central directory and end record
-with values recorded when the build was cached, so the check is one `adb shell`
-call instead of reading the whole APK. App-group
-containers, photos, the pasteboard and Simulator settings are not cleared.
-
-Every iOS install `stim ios` makes on a local owned simulator, adopted or not, also allows "Paste from
-Other Apps" for the app it installed, so pasting text Stim cannot type, such as
-accents and emoji, with Command-V from Stim Desktop, the phone app or a share
-lands in that app without an "Allow Paste" prompt. After the install and before
-the launch, Stim checks the simulator is still Stim-owned and writes the
-installed bundle id's `kTCCServicePasteboard` row (Allow) into the simulator's own
-`TCC.db`; no other app's row and nothing on the Mac is touched. A failure prints a
-warning and the install stands. A simulator that `--remote` runs on EAS is not covered. Other apps on the simulator, Safari included, keep
-iOS's own prompt.
-
-Android adoption requires the same system image, disk size and AVD creation
-settings. It keeps the AVD name. An emulator's `/data` partition is fixed, so
-before installing, adoption checks its free space. When there is less than
-twice the APK size plus 512 MB, Stim trims app caches, and if that is not
-enough it wipes the emulator's user data, boots it again and says so in the
-output. An install that fails with `INSTALL_FAILED_INSUFFICIENT_STORAGE` gets
-the same cleanup and retries. Simulators use the Mac's disk, so iOS has no such
-check. AVDs created before Stim recorded their creation configuration are
-deleted when removed.
+<StimTabs code="stim guide lifecycle pool" />
 
 ## Run iOS on another Mac
 
-If Stim is not installed globally, replace `stim` with `npx stim`.
-Use the [hosting approval setup](#paired-mac-hosting-approval), then name the Mac:
+After [hosting approval](#paired-mac-hosting-approval), choose the worker and one of its installed runtimes.
 
-<StimTabs code={`stim ios --remote janics-mac-mini --device-type "iPhone 17 Pro" --runtime "iOS 27.0"
+<StimTabs
+code={`stim ios --remote janics-mac-mini --device-type "iPhone 17 Pro" --runtime "iOS 27.0"
 stim status
 stim reload ios
-stim stop`} />
+stim stop`}
+/>
 
-Set `ios.remote` to that name for a default: `--scope machine` for every app on this machine, or a workspace, repo or committed scope for one app. `eas` and `proxy` keep
-those backend meanings. No flag or setting runs here. `auto` places iOS or
-Android on an approved Mac when this machine is full or busy; see
-[automatic device placement](./remote-machines.md#automatic-device-placement). `--device` and `--simulator-app` cannot target a hosting Mac; a `--device` run ignores `ios.remote`.
-The host boots headless; this machine's viewer setting is ignored.
+Metro stays on this machine. If a port conflict is reported, run `stim stop` and retry without starting Metro first, or choose a port free on both Macs. Use `--remote-build` separately to place the build. Run `stim stop` before changing hosts. A named host is strict and reports the reason if it cannot take the run.
 
-`--slot`, `--scheme`, `--configuration` and `--eas-profile` work as usual.
-Model and runtime selectors use the host's installed choices. The build targets
-its simulator architecture. `--remote-build` independently selects a compatible
-build worker. A named host never falls back: `STIM_HOSTING_REFUSED` names
-unreachable, declined or uncertain placement and its reason.
+Open the device in Stim Desktop to view or control it. To drive it with an agent, set `hosting.agentDriver=agent-device` on the host and use agent-device 0.21.30 or later on both machines.
 
-Metro stays on this machine. Its supervisor opens authenticated connections to the
-host that carry each connection the simulator makes to the host's loopback bridge;
-the host never connects back, and no `stim start --remote` is needed. For an Expo dev
-client the bridge listens on this machine's Metro port, because the dev server
-writes that port into the manifest's bundle URL. When the iOS run starts Metro,
-it asks the host first and picks a port free on both Macs, moving the workspace's
-recorded port if the host uses it. A Metro that is already running on a port the
-host uses, or a `metro.port` pin the host uses, refuses before the build: run
-`stim stop`, then `stim ios --remote <mac>` without `stim start`, or pin a port
-free on both Macs. `metro.tunnel` and
-`metro.publicUrl` are ignored, and non-Debug runs skip Metro. Hosted Debug runs
-require a running supervisor and a host stim-server that support these links
-before reserving a simulator; `--no-metro-check` refuses with `STIM_BAD_ARG`. If Metro is missing or
-uses an older supervisor, run `stim stop; stim start`, then retry. Fast Refresh and
-`stim reload ios` use this workspace's Metro. `launched` stays `unverified`
-until bundle evidence, or positive native process evidence for a release run.
-
-Reruns reattach to the recorded session and upload a new app attempt. A stopped
-or missing session is replaced. An unreachable or unknown session refuses
-replacement. Switching between this machine and a hosting Mac, or to a different
-hosting Mac, requires `stim stop` first for that slot.
-`status --json` adds `ios.host` with `machine`, `session`, `selected`, the device's
-`name` and `runtime`, `agent`, and the probed `state`. A shutdown local simulator
-is replaced in status without a warning. A booted or unknown local simulator
-stays visible alongside `ios.host` with a warning; plain status shows both. The
-default slot appears only in `ios`, never in `slots[]`. The host UDID never appears
-in local device fields. A hosted `stim ios --json` result uses `udid: null` and
-reports the actual simulator name as `deviceName`; use `host.agent.command` for
-hosted agent control. Stop and worktree removal wait for the host, park its
-eligible owned simulator within the host's `pool.iosParkedMax` limit (delete
-otherwise), then clear placement. `stop --json` reports
-each hosted slot under `outcomes.device["ios:host:<slot>"]`, alongside local
-outcomes; one failure does not hide siblings that stopped. An unreachable host
-keeps the placement and fails cleanup; rerun `stim stop` when it answers. Missing
-or unapproved local credentials require `stim doctor` to restore access first.
-Unreadable machine or session state stays recorded: status warns, and stop names
-the workspace-state key to inspect. Only that slot's iOS run refuses; restore
-its recorded machine and session from the host, then run `stim stop` for that
-slot. Reload reports the failure and remedy in JSON when no other app can
-reload, and logs remain readable. A hello refusal after this machine loses hosting
-access clears its placement during stop or worktree removal; other refusals
-retain it.
-A host server restart leaves ready iOS and Android sessions running, and the
-restarted server resumes them once their ownership claim is provably free. The
-simulator or emulator stays booted, the Metro bridge listens on its recorded port
-again and the agent-device grant keeps its token, so a rerun reattaches and the
-client's Metro links and agent config keep working. A session whose device is not
-verified as the recorded, ledger-owned, running one is stopped instead; an install
-that was in flight at shutdown, a revoked session and a macOS app are stopped too.
-A session whose owner is still held by a live process stays `unknown` until explicit
-stop. Eligible parked devices persist for adoption by the same client.
-On the hosting Mac, `stim gc` lists parked hosted devices and `stim gc --delete`
-deletes them through their owning session homes under a session claim. A held
-claim or unverified ledger ownership keeps the device. Android deletion requires
-the AVD to be visible from this shell; otherwise run gc with the server's
-`ANDROID_AVD_HOME`/`HOME`. Records no longer listed in their session ledger are
-already removed and skipped. The server reconciles
-its parked marker after deletion empties the ledger.
-See [hosted parking](./remote-machines.md#hosted-parking-and-restart) for cleanup,
-compatibility and eviction.
-
-Reruns upload only missing manifest and file digests from a session-scoped store;
-the host verifies bytes before reuse. When an offloaded iOS simulator build ran
-on the hosting Mac's own stim-server, approved for the same client key, the host takes files that match the client's
-manifest from that build. A refused or timed-out handoff falls back to upload, retrying a still-busy host for at most one minute.
-
-`stim logs` and `stim logs --errors` pull native device records through bounded
-host queries. Concurrent followers share a collection, throttled per session,
-without blocking app delivery, viewing or control. Stop limits each log drain to
-30 seconds with progress on stderr and stops if neither cursor nor collection
-checkpoint advances. The host captures a bounded final tail before parking or deletion,
-also on revocation or server close, and stop copies it back afterwards. If that
-collection drops a backlog interval and eventually succeeds, a device warning
-record names the interval.
-A damaged collection checkpoint is ignored and rebuilt; collected records remain
-readable. The client waits up to 280 seconds for stop. The final collection,
-parking, the stop that follows a failed park and worker termination paths fit
-within that wait; an in-flight handoff copy and
-closing Metro or view transports are outside those worker bounds. Collected
-records remain in the session home for the client to copy, until the host removes the home an hour after the session stopped;
-app blobs and materialized bundles are removed at stop.
-Native queries read persisted entries, overlap by five seconds and de-duplicate;
-info-level or later-persisted entries may be unavailable. JavaScript logs reach Metro.
-An older host prints an update note, uses uploads and shows previously copied logs.
-
-Stim Desktop shows the simulator with the machine's name and the phone app with an
-**on &lt;machine&gt;** label. Turn on **Allow connections** in Desktop and pair the phone with the client
-machine. Both view and control it through that machine's local stim-server relay;
-neither connects directly to the hosting Mac. Named slots work independently.
-Touch and text work in Desktop. Local Simulator.app, rotation, hardware buttons
-and simulator options are hidden there. The phone also sends supported buttons,
-rotation and the postures reported by the host. Hosted viewing has no replay,
-Duo frame rendering or physical-device target. A stopped session shows a rerun
-command; an unavailable host reports the connection failure.
-
-`idle.minutes` does not stop hosted
-simulators in this phase; their recorded sessions prevent Metro idle stop.
-`maintenance.idleStopHours` does stop them: see
-[hosted sessions stop when they are idle](./remote-machines.md#hosted-sessions-stop-when-they-are-idle).
-
-For agent control, set `hosting.agentDriver` to `agent-device` on the hosting Mac.
-Both machines need agent-device **0.21.30 or later**, with the daemon policy, command list and remote-config contract.
-The host starts one loopback daemon per installed session, under an ownership claim
-whose child is that daemon. Its policy allows exactly the session's simulator UDID and
-refuses shutdown. Stop, close, revocation, reinstall and graceful server close stop
-the daemon and invalidate its grant. A server crash can leave detached daemon
-processes and claims; restart alone does not prove they stopped. An unexpected exit restarts only that session; rerun
-`stim ios` to refresh the rotated grant.
-An unresolved proxy or daemon retains its claim and blocks reinstall and native
-teardown. Clear a named claim only after proving its owner and child are gone.
-
-`ios.host.agent` reports `driver`, `remoteConfig` and `command`. Plain status prints
-`agent: <command>`. Each slot has its own 0600 config under the workspace's Stim
-state directory; tokens never appear in placement or status.
-[`stim agent-device`](./commands.md#agent-device) passes that file for you:
-
-```bash
-stim agent-device open <bundleId>
+<StimTabs
+code={`stim agent-device open <bundleId>
 stim agent-device snapshot
-stim agent-device click <ref>
-stim agent-device screenshot
-```
+stim agent-device click <ref>`}
+/>
 
-Underneath, the command shape is `agent-device <command> --remote-config <file>`. `open`
-automatically allocates an `ios-instance` lease through the `proxy` provider in
-this session's tenant. The config contains `daemonBaseUrl`, `daemonAuthToken`,
-`tenant`, `sessionIsolation`, `runId`, `clientId`, `deviceKey`, `leaseBackend`,
-`leaseProvider` and `platform`, with no preallocated `leaseId`. `close` releases
-the lease. `stim stop` closes the matching connection and removes that slot's
-config once the host confirms stop or revocation. An unreachable host keeps the
-config and placement for retry.
-The host stops the session daemon and identity-checked agent-device runners
-targeting its exact simulator UDID before deleting the simulator, even without `close`.
-
-Allowed commands are `devices`, `open`, `close`, `snapshot`, `diff`, `wait`, `find`, `get`,
-`is`, `click`, `fill`, `press`, `type`, `focus`, `scroll`, `screenshot`,
-`longpress`, `swipe`, `gesture`, `back`, `home`, `orientation`, `fold`, `appstate`,
-`alert`, `batch`, `record start` and `record stop`, `action-button`, `app-switcher`,
-`hardware-button`, `keyboard`, `apps`, `capabilities`, `events`, `network`,
-`react-native`, `telephony` and `trigger-app-event`. Some are guarded: `push` takes
-`<app id> <inline JSON object>`, never a payload file; `perf` allows only `frames` and
-`memory sample`; `artifacts` lists this session's artifacts and takes no provider
-session; `settings` refuses `permission` for `accessibility`, `screen-recording` and
-`input-monitoring`, which are permissions of the hosting Mac.
-
-Each command takes only the flags and input fields Stim lists for it, so a flag
-that a newer agent-device adds is refused until Stim allows it. `open` refuses
-`--metro-host`, `--metro-port`, `--bundle-url`, `--launch-url`, `--launch-args`,
-`--launch-console`, `--surface` and `--save-script`. Stim's Metro bridge already
-points the app at your Metro; a client-chosen address would let the hosted app
-reach any service the hosting Mac can.
-
-These commands are refused, and the error gives the reason: `install`, `reinstall`,
-`install-from-source` and `uninstall` (Stim installs the app and tracks it), `boot`,
-`shutdown` and `close --shutdown` (use `stim stop`), `logs` (use `stim logs`), `trace`,
-`audio`, `doctor`, `prepare`, `replay`, `test`, `clipboard` (a simulator or emulator
-can share the clipboard of the hosting Mac), `hover`, `viewport`, `tv-remote`, and
-agent-device's client-side commands. The allowed commands inspect, interact with or record
-the simulator and its installed apps. `devices`
-lists only the session's simulator, filtered by the daemon policy. Its device
-claims are session-local and record `/` as the workspace; a host-side agent-device
-using the same simulator is not visible to the hosted daemon. Client device
-selectors are stripped and requests are pinned to iOS and that UDID; an explicitly
-named foreign UDID is refused. Selecting another device, erase and uploads are
-refused. Agents cannot enumerate other host devices or write host files. Ambient client fields (`cwd`,
-`stateDir`, `config` and `remoteConfig`) are stripped, including within batch steps.
-Host paths and launch inputs (`--out`, baseline, launchConsole, developerDir,
-installSource and similar fields) are refused, including within batch steps.
-Runtime hints (the Metro and launch URL flags of `open`) are refused, and only reporting/artifact metadata is forwarded. Screenshots accept agent-device's generated remote temp artifact,
-which the client downloads, rather than arbitrary host destinations.
-
-`agent-device record start [path] --remote-config <file>` records the simulator, and
-`record stop` downloads the video to that path, or `./recording-<time>.mp4`, on
-your machine. The hosting Mac writes the recording only in a private directory
-for the session in its temporary directory and deletes the files after the download, on `stim stop` or
-session teardown and when the session's daemon restarts. The hosting Mac stops the
-recorder before it parks or deletes the simulator, and a stim-server that restarts
-stops a recorder its previous run left. One recording runs per
-session; a second `record start`, a host output path, `record` inside `batch` and
-a `record stop` from another agent-device session are refused. The host stops a
-recording after 10 minutes; a `record stop` within the next 15 minutes downloads
-it.
-A finished recording over 512 MiB is deleted instead. A hosting Mac whose Stim
-predates hosted recording refuses `record` as a command outside its allowed list.
-
-If the setting is `none`, the daemon cannot enforce the policy, or the host
-lacks the `hosted-ios-agent` hello feature, agent access stays
-`{ driver: 'none', setting: 'hosting.agentDriver' }`. Update the host and check
-its agent-device installation and setting. A run whose host disables the driver
-prints a notice; plain status also names the host setting when agent control is
-unavailable. This never grants another device.
-Client hello carries only name and version, not features, so the host cannot gate
-daemon startup or grant issuance on client support. The client checks the host's
-`hosted-ios-agent` feature before using a grant.
-
-Copy this prompt into your coding agent:
-
-```text
-Run this workspace's iOS app on janics-mac-mini with stim ios --remote janics-mac-mini.
-Use the host's offered simulator architecture, keep Metro here, report launch evidence
-and status. Open the app with stim agent-device open <bundleId>, then snapshot
-and click through stim agent-device. Run stim stop when finished. If the host refuses, report its reason.
-```
+[Remote machines](./remote-machines.md) · [Agent-device commands](./commands.md#agent-device)
 
 ## Paired Mac hosting approval
 
-Device-host approval is separate from build offloading and phone control. On the
-client machine, run `stim remote add <machine>` from any directory to add the
-machine to `remote.machines` and request approval. Stim stores a
-separate private, node-pinned credential and reports its state under
-`deviceHosts` in JSON. iOS and macOS can run on a named approved Mac.
-See [machine settings](/docs/settings#machine-settings).
-A person approves `device-host` access by running the `stim-server setup`
-command that Stim Desktop's Add Machine flow or `stim remote add` on the
-requesting machine shows, with that machine's setup ticket. Inspect approvals
-with `stim-server devices` and remove one with `stim-server devices revoke <id>`.
-Hosting approval permits that client's native app code to run in its own
-hosted simulators, emulators or macOS app sessions. Approve only an expected client.
+Add the worker with `stim remote add <machine>` or use the [Desktop wizard](./remote-machines.md#use-the-desktop-wizard). A person at the worker approves `device-host` using the generated setup command. Approve only an expected client, since hosting lets it run native code on that Mac. Build and viewer access have separate grants.
 
-Before reserving, an approved client can query the
-[hosted availability offer protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-availability-offers)
-for an installed iOS or Android SDK choice or the macOS host version, host
-architecture, current hosted
-reservation capacity, memory pressure, load and free disk on the Stim home
-volume. An unavailable or unknown choice carries a decline reason. This query
-creates no device or session. Offers are advisory snapshots; reserve still
-admits atomically and rechecks native conditions. Ordinary local device
-producers do not participate in hosted capacity, and Android AVD storage can
-be on a different volume. Named iOS placement uses these offers before building or reserving.
-
-An approved client can reserve, boot, reconnect to and stop its own iOS simulator
-through the [hosted session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-session-protocol).
-It can also transfer a digest-verified simulator `.app` bundle and install and
-launch it through the [app delivery protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-app-delivery).
-The worker checks the expected bundle identity, simulator platform, executable
-architecture and minimum OS. Bundle links must stay inside the app. Uploads
-resume at recorded byte offsets; replaying a completed app attempt returns its
-result without launching twice. Stop and revocation cancel installation before
-deleting that exact owned simulator.
-Replaying an attempt resolves the same session after a lost reply. Unknown
-creation or deletion outcomes retain the reservation until exact reconciliation;
-explicit stop and approval revocation delete only that session's exact
-ledger-owned simulator. At start, stim-server retires leftover stopped iOS and
-Android devices. An hour after a session stops, stim-server removes its home when the ledger lists no device (a session that stopped before creating one counts), nothing holds its claims and it is not parked; the journal record stays.
-Hosted reservations are atomic with each other; ordinary local device producers
-do not participate, so this is not a machine-wide hard capacity guarantee.
-
-The worker also accepts an Android reservation with optional installed
-`systemImage` and `deviceProfile` selectors. It gives that opaque session a
-unique owned AVD and a journal-reserved console port, verifies the exact running
-AVD and ABI, and reconnects to that same record. Explicit stop and revocation
-delete only that exact ledger-owned AVD. The session home goes later, as described for iOS, and the record stays. Ports are coordinated
-among hosted sessions; ordinary local producers can still race a reservation.
-Android Metro and screen/input routing remain follow-ups in #2266;
-Android sessions refuse the iOS Metro, view and input routes. The
-protocol details are in the
-[hosted Android session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-android-session-protocol).
-
-Android app delivery uses the same resumable transfer methods with a single
-`App.apk` file and the expected package identity. The worker checks byte digests,
-minimum SDK, native ABI and its exact ledger-owned running AVD before install
-and launch. An installed app attempt replays without launching twice. An install
-or signature conflict refuses without uninstalling an existing app. See the
-[Android app delivery protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-android-app-delivery).
-
-The host also accepts `platform: "macos"` without selectors. It reserves one
-of 64 app slots and accepts a prebuilt release `.app` with a digest-verified
-`Contents/Info.plist` and executable under `Contents/MacOS/`. The worker checks
-bundle identity, architecture and minimum macOS version, refuses Apple bundle
-identities, URL registrations and update feeds, then stamps
-`<bundleId>.hosted<appSlot>` and ad hoc signs the app. The owned macOS supervisor
-runs it with a private home and temporary directory; this is not an OS sandbox.
-Stop and revocation stop only the recorded processes and remove the last hosted
-identity's preferences domain and plist, the private app home and delivered bytes,
-keeping logs and receipts. Unresolved sessions retain their app slots.
-Until a driver runs, the host reports `agent: { driver: 'none' }` for installed macOS apps, and `stim doctor` on the host names `hosting.agentDriver`.
-macOS hosting supports viewing and control of the running app on the host. Metro
-is refused; see [macOS placement](./macos.md#run-it-on-another-mac).
-See the [macOS session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-macos-app-sessions).
-
-Development launches remain `unverified` until a Metro bridge proves a bundle
-request. Release launches report success only after positive native process
-evidence; absent evidence remains `unverified`.
-
-The [private Metro protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#private-hosted-metro)
-routes the hosted iOS app through worker loopback to its client's verified Metro
-over connections the client opens and authenticates; the worker never connects
-to the client. Reconnect keeps the worker port while its session owner lives;
-stop and revocation close the links and streams. No public tunnel or Funnel is needed.
-Expo development clients need the forwarded-origin manifest contract described
-in that protocol; older client/CLI versions are not covered by this slice.
-
-Automatic placement and Android Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
-This protocol slice does not change where `stim ios` or `stim android` runs.
-Hosting approval grants no access to unrelated
-workspaces, phone control or build offloading.
-
-The [hosted view and input protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-and-macos-view-and-input)
-streams and controls only the approved client's ready, owned iOS simulator or
-running macOS app. macOS frames show only the hosted app's window. Viewing is
-refused before launch and after exit. On the host, grant Screen & System Audio Recording and
-Device Control and Data Access (Accessibility on macOS 26 and earlier) once to the
-app that runs stim-server: Stim Host for a server run by
-`stim-server service install`, or Stim Desktop. The worker derives
-the exact simulator or app identity from its private records and keeps the
-capture helper under the session's ownership claim. Reconnect preserves the
-native session; subscribe and begin control again. Installation, stop and
-revocation close capture and input before native work. An uncertain journal
-retains native ownership while ending known capture. Surviving or unresolved
-posture input blocks native replacement and teardown after a server crash.
-Automatic CLI placement remains under #2266.
+On the worker, run `stim-server devices` to list approvals or `stim-server devices revoke <id>` to remove one. [Hosted session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-session-protocol)
