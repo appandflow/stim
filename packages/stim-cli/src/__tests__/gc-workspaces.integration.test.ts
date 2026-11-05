@@ -49,11 +49,17 @@ import {
   type PullRequestFact,
   type PullRequestLookup,
 } from '../workspace/pull-request.ts';
-import { getProject, saveConfig, upsertProject } from '../workspace/config.ts';
+import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceName } from '../workspace/paths.ts';
 import { workspaceInUse, withIdleWorkspace } from '../workspace/in-use.ts';
-import { clearArtifact, collectArtifacts, artifactWorktrees } from '../maintenance/artifacts.ts';
+import {
+  clearArtifact,
+  collectArtifacts,
+  collectArtifactsAsync,
+  artifactWorktrees,
+  artifactWorktreesAsync,
+} from '../maintenance/artifacts.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -1877,6 +1883,77 @@ test('the maintenance ladder collects .dd and CMake output of a registered workt
   expect(existsSync(join(registered, 'build-device', 'Build'))).toBe(true);
   expect(await clear(join(registered, 'android', 'app', '.cxx'))).toMatchObject({ status: 'done' });
 });
+
+function maintenanceArtifactFixture(sessions: Awaited<ReturnType<typeof agentSessions.discoverAgentSessions>>) {
+  const { repo, worktrees } = gitRepoWithWorktrees(['registered']);
+  const registered = realpathSync.native(worktrees.registered ?? '');
+  upsertProject(repo, { metroPort: null });
+  upsertProject(registered, { metroPort: null });
+  recordWorkspaceUse(registered, new Date(Date.now() - 10 * DAY_MS));
+  writeDerivedData(join(registered, '.dd'));
+  vi.spyOn(agentSessions, 'discoverAgentSessions').mockResolvedValue(sessions);
+  const signal = new AbortController().signal;
+  const options = { now: Date.now(), windowMs: 0, protectedRoot: '', pinned: () => false };
+  const dd = join(registered, '.dd');
+  return {
+    registered,
+    dd,
+    collect: () => collectArtifactsAsync('build', options, signal),
+    clear: async () =>
+      clearArtifact({ kind: 'would-clear-build-dirs', target: dd, bytes: 0, reason: 'test' }, 'build', {
+        ...options,
+        worktrees: await artifactWorktreesAsync(signal),
+      }),
+  };
+}
+
+test('maintenance keeps the build output of a registered worktree a running agent session works in', async () => {
+  const probe = maintenanceArtifactFixture([]);
+  vi.mocked(agentSessions.discoverAgentSessions).mockResolvedValue([
+    { tool: 'codex', sessionId: 'live-thread', cwd: join(probe.registered, 'src') },
+  ]);
+
+  const found = await probe.collect();
+  const cleared = await probe.clear();
+
+  expect(found.candidates).toEqual([]);
+  expect(found.skips).toContainEqual({
+    target: probe.dd,
+    reason: 'in use: an agent session (codex:live-thread) is working in it',
+  });
+  expect(cleared).toMatchObject({ status: 'kept', detail: expect.stringContaining('agent session') });
+  expect(existsSync(probe.dd)).toBe(true);
+});
+
+test('maintenance clears the build output of a registered worktree no agent session works in', async () => {
+  const probe = maintenanceArtifactFixture([]);
+
+  expect((await probe.collect()).candidates.map((candidate) => candidate.path)).toEqual([probe.dd]);
+  expect(await probe.clear()).toMatchObject({ status: 'done' });
+});
+
+test.skipIf(process.platform !== 'darwin')(
+  'worktree remove that git refuses keeps the registration of a worktree known only by its app directory',
+  async () => {
+    const { worktrees } = repoWithTwoBranches({ registerWorktrees: false });
+    const merged = worktrees.merged ?? '';
+    const app = join(merged, 'app');
+    mkdirSync(app);
+    upsertProject(app, { metroPort: null });
+    ensureWorkspaceStorage(app);
+    const locked = join(merged, 'package.json');
+    execSync(`chflags uchg "${locked}"`);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await removeWorktreeTarget(merged, { linkedOnly: true })).toBe(false);
+    } finally {
+      execSync(`chflags nouchg "${locked}"`);
+    }
+
+    expect(loadConfig()?.projects[app]).toBeDefined();
+  },
+  240_000,
+);
 
 function builtWorktree(dirs: readonly string[]) {
   const { repo, worktrees } = gitRepoWithWorktrees(['built']);

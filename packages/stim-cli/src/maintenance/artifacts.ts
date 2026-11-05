@@ -4,6 +4,7 @@ import { join, relative, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { lastNativeUseFrom, type MaintenanceAction } from '@stim-cli/core/state';
 import {
+  agentSessionUse,
   candidateRoots,
   listedRoots,
   candidateRootsAsync,
@@ -53,6 +54,8 @@ export interface ArtifactWorktree {
   linked: boolean;
   locked: boolean;
   keys: string[];
+  /** Why a running agent session keeps the worktree, read when the worktrees were listed. */
+  agents?: string[];
 }
 
 export interface ArtifactCandidate {
@@ -60,6 +63,7 @@ export interface ArtifactCandidate {
   path: string;
   keys: string[];
   locked: boolean;
+  agents?: string[];
 }
 
 function isDirectory(path: string): boolean {
@@ -125,6 +129,17 @@ export async function artifactWorktreesAsync(
     });
     const entry = artifactWorktree(root, entries, source);
     if (entry) found.set(entry.path, entry);
+  }
+  const linked = [...found.values()].filter((entry) => entry.linked);
+  if (linked.length) {
+    const agents = await agentSessionUse(
+      linked.map((entry) => entry.path),
+      Date.now(),
+      signal,
+    );
+    linked.forEach((entry, i) => {
+      entry.agents = agents[i] ?? [];
+    });
   }
   return [...found.values()];
 }
@@ -323,6 +338,7 @@ function artifactGuard(
   const { worktree, path, keys } = candidate;
   if (keys.some(pinned)) return 'pinned by maintenance.keep';
   if (candidate.locked) return LOCKED_REASON;
+  if (candidate.agents?.length) return `in use: ${candidate.agents.join('; ')}`;
   if (!pathExists(path)) return 'it is already gone';
   let real: string;
   try {
@@ -380,7 +396,13 @@ export async function collectArtifactsAsync(
           signal.throwIfAborted();
           continue;
         }
-        const candidate = { worktree: worktree.path, path, keys: worktree.keys, locked: worktree.locked };
+        const candidate = {
+          worktree: worktree.path,
+          path,
+          keys: worktree.keys,
+          locked: worktree.locked,
+          agents: worktree.agents,
+        };
         const inUse = protectedHere ? null : await inUseOf(candidate, kind, signal, operation);
         let reason = !inUse
           ? 'the command that started this pass runs inside its worktree'
@@ -460,7 +482,14 @@ export async function clearArtifact(
   const root = canonicalPath(worktree.path);
   if (options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`))
     return { status: 'kept', bytes: 0, detail: 'the command that started this pass runs inside its worktree' };
-  const candidate = { worktree: worktree.path, path: action.target, keys: worktree.keys, locked: worktree.locked };
+  const agents = worktree.linked ? ((await agentSessionUse([worktree.path], Date.now(), signal))[0] ?? []) : [];
+  const candidate = {
+    worktree: worktree.path,
+    path: action.target,
+    keys: worktree.keys,
+    locked: worktree.locked,
+    agents,
+  };
   const running = kind === 'dependencies' ? await readRunningProcessesAsync() : null;
   const pinned = await pinsOf(candidate.keys, options.pinned);
   const early = keptReason(

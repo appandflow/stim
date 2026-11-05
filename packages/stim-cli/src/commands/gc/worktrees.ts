@@ -232,12 +232,18 @@ async function anyPinned(keys: readonly string[], operation?: StimContext): Prom
 }
 
 /** The agent sessions whose process runs, or a recent Codex thread, in each worktree, as `in use` reasons. */
-async function agentSessionUse(paths: readonly string[], now: number): Promise<string[][]> {
+export async function agentSessionUse(
+  paths: readonly string[],
+  now: number,
+  signal?: AbortSignal,
+): Promise<string[][]> {
+  signal?.throwIfAborted();
   const workspaces = paths.map((path) => {
     const canonical = canonicalPath(path);
     return { path: canonical, root: canonical, recorded: null };
   });
   const sessions = await discoverAgentSessions({ now });
+  signal?.throwIfAborted();
   return attributeAgentSessions(workspaces, sessions, now).map((found) =>
     found.map((session) => `an agent session (${agentKey(session)}) is working in it`),
   );
@@ -883,6 +889,7 @@ export async function collectWorktreeSweep({
     const agents = await agentSessionUse(
       registered.map(({ candidate }) => candidate.path),
       now,
+      operation?.signal,
     );
     registered.forEach(({ facts }, i) => facts.inUse.push(...(agents[i] ?? [])));
   }
@@ -976,6 +983,16 @@ export async function removeWorktrees(
   output: GcOutput = GC_OUTPUT,
 ): Promise<number> {
   let failures = 0;
+  const removable = sweep.worktrees.filter((candidate) => !candidate.skipped);
+  const agents = new Map<string, string[]>();
+  if (removable.length) {
+    const found = await agentSessionUse(
+      removable.map((candidate) => candidate.path),
+      Date.now(),
+      operation?.signal,
+    );
+    removable.forEach((candidate, i) => agents.set(candidate.path, found[i] ?? []));
+  }
   for (const candidate of sweep.worktrees) {
     operation?.signal.throwIfAborted();
     if (candidate.skipped) continue;
@@ -988,7 +1005,7 @@ export async function removeWorktrees(
         ...stimCliUseOf(candidate.path, canonicalPath, stimCliEntries(operation?.env)),
         ...(await inUseOf(lockedKeys, { managedLocks: false }, devices, operation?.signal, operation)),
         ...(await inUseOf(unlocked, { managedLocks: true }, devices, operation?.signal, operation)),
-        ...((await agentSessionUse([candidate.path], Date.now()))[0] ?? []),
+        ...(agents.get(candidate.path) ?? []),
       ].map((r) => `in use: ${r}`);
       const mergedHead = candidate.merge?.merged
         ? candidate.merge.head
