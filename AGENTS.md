@@ -451,10 +451,12 @@ outside it moves to its own issue and pull request.
   floor, the least recently used not used in the last 3 hours, which under the
   floor also go; it keeps each client's most recently used area and retains one
   with a live build, unfetched output, a running Gradle daemon or a held or
-  unresolved claim. Under the area's claim it writes a record naming the area's
-  short directories, renames the area out of `repos/` and moves those directories
-  aside, then deletes outside the claim, the record last, so a later pass finishes
-  a failed or interrupted deletion. Windows has no process groups:
+  unresolved claim. Under the area's claim it creates an empty record, whose name
+  alone carries the repository and id because a client's build can write there,
+  renames the area out of `repos/` and moves aside the short directories whose
+  `.owner` names the area, then deletes outside the claim, the record last, so a
+  later pass finishes a failed or interrupted deletion. Windows has no process
+  groups:
   cancel stops the worker tree with `taskkill /T`; each checkout and repository's
   Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
   because the NDK's ninja cannot open longer paths. The repository's daemon

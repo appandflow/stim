@@ -677,8 +677,7 @@ hours, always keeping each client's most recently used area
 (see [Worker disk](./remote-machines.md#worker-disk)).
 While an offloaded build runs, it holds one of the remote machine's build slots, so a local `stim ios` or
 `stim android` there waits for the slot and counts the machine as busy. The
-slot is freed when the build ends, is cancelled, or its process is gone. Delete
-a client's directory there to reclaim its space.
+slot is freed when the build ends, is cancelled, or its process is gone.
 
 For Android builds, the remote machine builds on an installed JDK of the same
 major version as the client (found in the system JVM directories, Homebrew,

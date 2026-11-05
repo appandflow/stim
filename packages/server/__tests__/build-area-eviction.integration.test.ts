@@ -254,6 +254,15 @@ test.each([
   expect(existsSync(path)).toBe(kept);
 });
 
+test('a last-used dated in the future counts for nothing', async () => {
+  area('a', 'newest', 1);
+  const path = area('a', 'subject', -365);
+  fs.utimesSync(path, new Date(Date.now() - 30 * DAY), new Date(Date.now() - 30 * DAY));
+  await start().evictAreas();
+  expect(existsSync(path)).toBe(false);
+  expect(existsSync(areaPath('a', 'newest'))).toBe(true);
+});
+
 test('a build records its use, so it is what a later pass goes by', async () => {
   area('a', 'newest', 1);
   const path = area('a', 'subject', 30);
@@ -453,25 +462,26 @@ const failDeletionOf = (matches: (path: string) => boolean) => {
 const evictedIn = (client: string) => join(root, client, 'evicted');
 const leftovers = (client: string) => (existsSync(evictedIn(client)) ? readdirSync(evictedIn(client)) : []);
 
-function interruptedEviction(external: Array<{ dir: string; aside: string }>, parked = true): string {
-  const id = 'subject-interrupted';
+const UUID = '11111111-2222-4333-8444-555555555555';
+const INTERRUPTED = `subject-${UUID}`;
+
+function interruptedEviction(parked = true): void {
   mkdirSync(evictedIn('a'), { recursive: true });
-  writeFileSync(join(evictedIn('a'), `${id}.json`), JSON.stringify({ repo: 'subject', external }));
-  if (parked) mkdirSync(join(evictedIn('a'), id, 'src'), { recursive: true });
-  return id;
+  writeFileSync(join(evictedIn('a'), `${INTERRUPTED}.json`), '');
+  if (parked) mkdirSync(join(evictedIn('a'), INTERRUPTED, 'src'), { recursive: true });
 }
 
-function externalDir(name: string): { dir: string; aside: string } {
+function externalDir(name: string, owner: string | null = 'key'): { dir: string; key: string; aside: string } {
   const dir = join(home, 'sw', name);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(`${dir}.owner`, 'key');
-  return { dir, aside: `${dir}.evicted-fixture` };
+  if (owner !== null) writeFileSync(`${dir}.owner`, owner);
+  return { dir, key: 'key', aside: `${dir}.evicted-${UUID}` };
 }
 
-function reportExternalDirs(dirs: string[]): void {
-  const original: unknown = Reflect.get(BuildHost.prototype, 'windowsAreaDirs');
-  Reflect.set(BuildHost.prototype, 'windowsAreaDirs', () => dirs);
-  onTestFinished(() => void Reflect.set(BuildHost.prototype, 'windowsAreaDirs', original));
+function reportExternalDirs(dirs: Array<{ dir: string; key: string }>): void {
+  const original: unknown = Reflect.get(BuildHost.prototype, 'externalDirs');
+  Reflect.set(BuildHost.prototype, 'externalDirs', () => dirs);
+  onTestFinished(() => void Reflect.set(BuildHost.prototype, 'externalDirs', original));
 }
 
 test('a failed delete is reported as what happened, once, and a later pass finishes it', async () => {
@@ -498,15 +508,13 @@ test('a failed delete is reported as what happened, once, and a later pass finis
 test('an external directory that cannot be deleted keeps the evicted area and its record until it can', async () => {
   area('a', 'newest', 0);
   const path = area('a', 'subject', 30);
-  const external = join(home, 'sw', 'abc');
-  mkdirSync(external, { recursive: true });
-  writeFileSync(`${external}.owner`, 'key');
+  const external = externalDir('abc');
   reportExternalDirs([external]);
-  const restore = failDeletionOf((target) => target.startsWith(`${external}.evicted-`));
+  const restore = failDeletionOf((target) => target.startsWith(`${external.dir}.evicted-`));
   const host = start();
   await host.evictAreas();
   expect(existsSync(path)).toBe(false);
-  expect(existsSync(external)).toBe(false);
+  expect(existsSync(external.dir)).toBe(false);
   expect(readdirSync(join(home, 'sw')).filter((name) => name.startsWith('abc.evicted-'))).toHaveLength(1);
   expect(leftovers('a')).toHaveLength(2);
   expect(removed()).toEqual([]);
@@ -523,8 +531,9 @@ test.each([
 ])('a new server finishes an eviction interrupted $name', async ({ moved }) => {
   area('a', 'newest', 0);
   const external = externalDir('abc');
+  reportExternalDirs([external]);
   if (moved) fs.renameSync(external.dir, external.aside);
-  interruptedEviction([external]);
+  interruptedEviction();
   await start().evictAreas();
   expect(existsSync(external.dir)).toBe(false);
   expect(existsSync(external.aside)).toBe(false);
@@ -536,17 +545,46 @@ test('an external directory stays with a new area of the same repository', async
   area('a', 'newest', 0);
   const fresh = area('a', 'subject', 0);
   const external = externalDir('abc');
-  interruptedEviction([external]);
+  reportExternalDirs([external]);
+  interruptedEviction();
   await start().evictAreas();
   expect(existsSync(external.dir)).toBe(true);
+  expect(existsSync(`${external.dir}.owner`)).toBe(true);
   expect(existsSync(fresh)).toBe(true);
   expect(leftovers('a')).toEqual([]);
 });
 
-test('a record written just before a failed rename leaves the area alone', async () => {
+test.each([
+  { name: 'another owner', owner: 'other-key', says: /its owner marker names another area/ },
+  { name: 'no owner', owner: null, says: /it has no owner marker/ },
+])('a short directory of $name stays, with its marker, and the eviction still finishes', async ({ owner, says }) => {
+  area('a', 'newest', 0);
+  const external = externalDir('abc', owner);
+  reportExternalDirs([external]);
+  interruptedEviction();
+  await start().evictAreas();
+  expect(existsSync(external.dir)).toBe(true);
+  expect(existsSync(`${external.dir}.owner`)).toBe(owner !== null);
+  expect(existsSync(external.aside)).toBe(false);
+  expect(leftovers('a')).toEqual([]);
+  expect(logs.join('\n')).toMatch(says);
+});
+
+test('a first eviction leaves a short directory that names another owner', async () => {
+  area('a', 'newest', 0);
+  const path = area('a', 'subject', 30);
+  const external = externalDir('abc', 'other-key');
+  reportExternalDirs([external]);
+  await start().evictAreas();
+  expect(existsSync(path)).toBe(false);
+  expect(existsSync(external.dir)).toBe(true);
+  expect(removed()).toEqual(['a/subject']);
+});
+
+test('a record marking an eviction whose rename never happened leaves the area alone', async () => {
   area('a', 'newest', 0);
   const path = area('a', 'subject', 0);
-  interruptedEviction([], false);
+  interruptedEviction(false);
   await start().evictAreas();
   expect(existsSync(join(path, 'src', 'file'))).toBe(true);
   expect(leftovers('a')).toEqual([]);
@@ -555,7 +593,8 @@ test('a record written just before a failed rename leaves the area alone', async
 test('an interrupted eviction waits while the area claim is held, naming why once', async () => {
   area('a', 'newest', 0);
   const external = externalDir('abc');
-  interruptedEviction([external]);
+  reportExternalDirs([external]);
+  interruptedEviction();
   const claim = tryAcquireClaim({ root: `${areaPath('a', 'subject')}.claims`, mode: 'exclusive' }).acquired;
   assert(claim);
   const host = start();
@@ -564,6 +603,7 @@ test('an interrupted eviction waits while the area claim is held, naming why onc
   expect(existsSync(external.dir)).toBe(true);
   expect(leftovers('a')).toHaveLength(2);
   expect(logs.filter((line) => /could not finish deleting .* is held/.test(line))).toHaveLength(1);
+  expect(logs.join('\n')).toContain(join(evictedIn('a'), INTERRUPTED));
 
   releaseClaim(claim);
   await host.evictAreas();
@@ -571,22 +611,29 @@ test('an interrupted eviction waits while the area claim is held, naming why onc
   expect(leftovers('a')).toEqual([]);
 });
 
-test.each(['{', '{}'])('an unreadable record %s keeps its evicted area', async (content) => {
-  area('a', 'newest', 0);
-  interruptedEviction([]);
-  writeFileSync(join(evictedIn('a'), 'subject-interrupted.json'), content);
-  await start().evictAreas();
-  expect(leftovers('a')).toHaveLength(2);
-  expect(logs.join('\n')).toMatch(/its record is unreadable/);
-});
+test.each(['...json', '..json', '.json', 'x.json', `..-${UUID}.json`, `a-${UUID}x.json`])(
+  'a record named %s is logged and kept, and nothing is deleted for it',
+  async (name) => {
+    const newest = area('a', 'newest', 0);
+    mkdirSync(join(evictedIn('a'), `pending-${UUID}`), { recursive: true });
+    writeFileSync(join(evictedIn('a'), 'other-file'), '');
+    writeFileSync(join(evictedIn('a'), name), '');
+    await start().evictAreas();
+    expect(existsSync(newest)).toBe(true);
+    expect(existsSync(join(evictedIn('a'), name))).toBe(true);
+    expect(existsSync(join(evictedIn('a'), `pending-${UUID}`))).toBe(true);
+    expect(existsSync(join(evictedIn('a'), 'other-file'))).toBe(true);
+    expect(logs.filter((line) => line.includes(`keeping ${join(evictedIn('a'), name)}`))).toHaveLength(1);
+  },
+);
 
 test.each([
   {
-    name: 'its record cannot be written',
+    name: 'its record cannot be created',
     fail: () => {
       const write = fs.writeFileSync;
       vi.spyOn(fs, 'writeFileSync').mockImplementation((target, ...rest) => {
-        if (String(target).endsWith('.json.tmp')) throw new Error('fixture: disk full');
+        if (String(target).startsWith(evictedIn('a'))) throw new Error('fixture: disk full');
         write(target, ...rest);
       });
     },
@@ -613,10 +660,159 @@ test.each([
   expect(logs.join('\n')).toMatch(/retaining the build area a\/subject: it could not be moved aside/);
 });
 
+test('a record contents carry no authority', async () => {
+  area('a', 'newest', 0);
+  reportExternalDirs([externalDir('abc')]);
+  const victim = join(home, 'victim');
+  const other = join(home, 'other');
+  mkdirSync(victim);
+  mkdirSync(other);
+  mkdirSync(evictedIn('a'), { recursive: true });
+  writeFileSync(
+    join(evictedIn('a'), `subject-${UUID}.json`),
+    JSON.stringify({ repo: '../../../traversal', external: [{ dir: other, aside: victim }] }),
+  );
+  await start().evictAreas();
+  expect(existsSync(victim)).toBe(true);
+  expect(existsSync(other)).toBe(true);
+  expect(readdirSync(home)).not.toContain('traversal.claims');
+  expect(existsSync(join(home, 'sw', 'abc'))).toBe(false);
+  expect(leftovers('a')).toEqual([]);
+});
+
+test('a forged repository in a record takes no claim outside the client', async () => {
+  area('a', 'newest', 0);
+  reportExternalDirs([externalDir('abc')]);
+  mkdirSync(evictedIn('a'), { recursive: true });
+  writeFileSync(join(evictedIn('a'), `..-${UUID}.json`), JSON.stringify({ repo: '../../../traversal' }));
+  await start().evictAreas();
+  expect(readdirSync(root).filter((name) => name.endsWith('.claims'))).toEqual([]);
+  expect(readdirSync(join(root, 'a', 'repos')).filter((name) => name.endsWith('.claims'))).toEqual([]);
+  expect(existsSync(join(home, 'sw', 'abc'))).toBe(true);
+});
+
+test('a symlinked evicted folder is not followed, and blocks evicting into it', async () => {
+  area('a', 'newest', 0);
+  const old = area('a', 'old', 30);
+  const outside = join(home, 'outside');
+  mkdirSync(join(outside, `z-${UUID}`), { recursive: true });
+  writeFileSync(join(outside, `z-${UUID}.json`), '');
+  symlinkSync(outside, evictedIn('a'), 'junction');
+  await start().evictAreas();
+  expect(existsSync(join(outside, `z-${UUID}`))).toBe(true);
+  expect(existsSync(join(outside, `z-${UUID}.json`))).toBe(true);
+  expect(existsSync(old)).toBe(true);
+  expect(readdirSync(outside)).toHaveLength(2);
+  expect(logs.filter((line) => line.includes('is not a real directory')).length).toBeGreaterThan(0);
+});
+
+test('revoking a symlinked client does not act on what the link points at', async () => {
+  const outside = join(home, 'outside');
+  mkdirSync(join(outside, 'evicted', `z-${UUID}`), { recursive: true });
+  writeFileSync(join(outside, 'evicted', `z-${UUID}.json`), '');
+  symlinkSync(outside, join(root, 'linked'), 'junction');
+  await start().remove('linked');
+  expect(existsSync(join(outside, 'evicted', `z-${UUID}`))).toBe(true);
+});
+
+test('a symlinked repos folder is not listed as areas', async () => {
+  const projects = join(home, 'projects');
+  for (const project of ['projA', 'projB']) {
+    mkdirSync(join(projects, project), { recursive: true });
+    writeFileSync(join(projects, project, 'last-used'), String(Date.now() - 30 * DAY));
+  }
+  mkdirSync(join(projects, 'projA.claims'));
+  mkdirSync(join(root, 'a'));
+  symlinkSync(projects, join(root, 'a', 'repos'), 'junction');
+  const host = start();
+  await host.evictAreas();
+  await host.evictAreas();
+  expect(readdirSync(projects).toSorted()).toEqual(['projA', 'projA.claims', 'projB']);
+  expect(logs.filter((line) => line.includes('is not a real directory'))).toHaveLength(1);
+  await host.remove('a');
+  expect(readdirSync(projects).toSorted()).toEqual(['projA', 'projA.claims', 'projB']);
+});
+
+test('an interrupted eviction takes no claim through a symlinked repos folder', async () => {
+  const projects = join(home, 'projects');
+  mkdirSync(projects);
+  mkdirSync(join(root, 'a'));
+  symlinkSync(projects, join(root, 'a', 'repos'), 'junction');
+  const external = externalDir('abc');
+  reportExternalDirs([external]);
+  interruptedEviction();
+  await start().evictAreas();
+  expect(readdirSync(projects)).toEqual([]);
+  expect(existsSync(external.dir)).toBe(true);
+  expect(leftovers('a')).toHaveLength(2);
+});
+
+test("one client's evicted file stops neither the pass nor another client's eviction", async () => {
+  area('a', 'newest', 0);
+  const kept = area('a', 'old', 30);
+  writeFileSync(evictedIn('a'), '');
+  area('b', 'newest', 0);
+  const old = area('b', 'old', 30);
+  const host = start();
+  await host.evictAreas();
+  expect(existsSync(old)).toBe(false);
+  expect(existsSync(kept)).toBe(true);
+  expect(logs.join('\n')).toMatch(/retaining the build area a\/old: .* is not a real directory/);
+
+  await host.remove('a');
+  expect(existsSync(join(root, 'a'))).toBe(false);
+});
+
+test('a removal that fails is logged and does not reject', async () => {
+  const host = start();
+  const original: unknown = Reflect.get(BuildHost.prototype, 'removeClient');
+  Reflect.set(BuildHost.prototype, 'removeClient', () => Promise.reject(new Error('fixture: refused')));
+  onTestFinished(() => void Reflect.set(BuildHost.prototype, 'removeClient', original));
+  await expect(host.remove('a')).resolves.toBeUndefined();
+  expect(logs.join('\n')).toMatch(/retaining the build area of a: Error: fixture: refused/);
+});
+
+test('a pass and a revocation work through the same records one at a time, and the client still goes', async () => {
+  area('a', 'newest', 0);
+  mkdirSync(evictedIn('a'), { recursive: true });
+  for (const repo of ['one', 'two']) {
+    writeFileSync(join(evictedIn('a'), `${repo}-${UUID}.json`), '');
+    mkdirSync(join(evictedIn('a'), `${repo}-${UUID}`));
+  }
+  let inFlight = 0;
+  let most = 0;
+  let open: () => void = () => {};
+  const started = new Promise<void>((resolve) => (open = resolve));
+  let release: () => void = () => {};
+  const blocked = new Promise<void>((resolve) => (release = resolve));
+  const remove = fsPromises.rm;
+  vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+    if (typeof path !== 'string' || dirname(path) !== evictedIn('a')) return remove(path, options);
+    inFlight += 1;
+    most = Math.max(most, inFlight);
+    open();
+    await blocked;
+    await remove(path, options);
+    inFlight -= 1;
+  });
+  syncBuiltinESMExports();
+  const host = start();
+  const pass = host.evictAreas();
+  await started;
+  const revoking = host.remove('a');
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  await Promise.all([pass, revoking]);
+  expect(most).toBe(1);
+  expect(existsSync(join(root, 'a'))).toBe(false);
+});
+
 test("revoking a client finishes its evictions first, and keeps the client while one can't", async () => {
   area('a', 'newest', 0);
   const external = externalDir('abc');
-  interruptedEviction([external]);
+  reportExternalDirs([external]);
+  fs.renameSync(external.dir, external.aside);
+  interruptedEviction();
   const restore = failDeletionOf((target) => target === external.aside);
   const host = start();
   await host.remove('a');
@@ -641,7 +837,7 @@ test('closing does not wait for a deletion, and a closed server starts none', as
   release();
   await pass;
 
-  interruptedEviction([]);
+  interruptedEviction();
   await host.evictAreas();
   expect(leftovers('a')).toHaveLength(2);
 });
@@ -670,6 +866,59 @@ test(
     expect(existsSync(path)).toBe(false);
     expect(readdirSync(dirname(checkout))).toEqual([]);
     expect(leftovers('a')).toEqual([]);
+  },
+);
+
+function windowsArea(repo: string): { path: string; checkout: string; gradle: string } {
+  vi.stubEnv('SystemDrive', home);
+  const path = areaPath('a', repo);
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, 'last-used'), String(Date.now() - 30 * DAY));
+  const real = fs.realpathSync(path);
+  const checkout = windowsShortDir(real);
+  mkdirSync(checkout, { recursive: true });
+  writeFileSync(join(checkout, 'file'), 'x');
+  writeFileSync(`${checkout}.owner`, windowsShortDirKey('checkout', real));
+  symlinkSync(checkout, join(path, 'src'), 'junction');
+  const gradle = windowsShortDir(win32.join(path, 'cache', 'gradle'));
+  mkdirSync(gradle, { recursive: true });
+  writeFileSync(`${gradle}.owner`, windowsShortDirKey('gradle', path));
+  return { path, checkout, gradle };
+}
+
+test(
+  'recovery on windows derives the same short directories eviction used',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    area('a', 'newest', 0);
+    const { path, checkout, gradle } = windowsArea('subject');
+    mkdirSync(evictedIn('a'), { recursive: true });
+    writeFileSync(join(evictedIn('a'), `${INTERRUPTED}.json`), '');
+    fs.renameSync(path, join(evictedIn('a'), INTERRUPTED));
+    await start().evictAreas();
+    expect(existsSync(checkout)).toBe(false);
+    expect(existsSync(`${checkout}.owner`)).toBe(false);
+    expect(existsSync(gradle)).toBe(false);
+    expect(readdirSync(dirname(checkout))).toEqual([]);
+    expect(leftovers('a')).toEqual([]);
+  },
+);
+
+test(
+  'deleting an evicted area on windows does not follow its junction into a short directory a new area took back',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    area('a', 'newest', 0);
+    const { path, checkout } = windowsArea('subject');
+    mkdirSync(evictedIn('a'), { recursive: true });
+    writeFileSync(join(evictedIn('a'), `${INTERRUPTED}.json`), '');
+    fs.renameSync(path, join(evictedIn('a'), INTERRUPTED));
+    mkdirSync(path);
+    symlinkSync(checkout, join(path, 'src'), 'junction');
+    await start().evictAreas();
+    expect(leftovers('a')).toEqual([]);
+    expect(readFileSync(join(checkout, 'file'), 'utf8')).toBe('x');
+    expect(readFileSync(join(path, 'src', 'file'), 'utf8')).toBe('x');
   },
 );
 
@@ -865,12 +1114,19 @@ test(
   },
 );
 
-test('a missing root reports not measured instead of a fresh zero', async () => {
-  rmSync(root, { recursive: true, force: true });
-  const host = start({ daemonSweepMs: 5 });
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(host.workerRootUsage()).toBeNull();
-});
+test(
+  'a missing root reports not measured instead of a fresh zero, until it comes back',
+  { skip: process.platform === 'win32' },
+  async () => {
+    rmSync(root, { recursive: true, force: true });
+    const host = start({ daemonSweepMs: 5 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(host.workerRootUsage()).toBeNull();
+
+    mkdirSync(root);
+    await vi.waitFor(() => expect(host.workerRootUsage()?.path).toBe(root));
+  },
+);
 
 test('a recorded measurement is reported before the first check', () => {
   const measuredAt = new Date(Date.now() - 3_600_000).toISOString();
@@ -904,4 +1160,31 @@ test('a bundle that cannot be deleted does not pin its area', async () => {
   syncBuiltinESMExports();
   await host.evictAreas();
   expect(existsSync(path)).toBe(false);
+});
+
+test('a symlinked root reports the size of what it points at', { skip: process.platform === 'win32' }, async () => {
+  const target = join(home, 'target');
+  mkdirSync(target);
+  writeFileSync(join(target, 'big'), Buffer.alloc(1024 * 1024));
+  const link = join(home, 'link');
+  symlinkSync(target, link);
+  config({ workerRoot: link });
+  const host = start({ daemonSweepMs: 5 });
+  await vi.waitFor(() => expect(host.workerRootUsage()?.bytes).toBeGreaterThanOrEqual(1024 * 1024));
+});
+
+test('after an unmount or a change of root the old size is no longer reported', async () => {
+  const measuredAt = new Date(Date.now() - 3_600_000).toISOString();
+  writeFileSync(join(root, 'usage.json'), JSON.stringify({ bytes: 42, measuredAt }));
+  const host = start();
+  expect(host.workerRootUsage()).toEqual({ path: root, bytes: 42, measuredAt });
+
+  const other = join(home, 'other-root');
+  config({ workerRoot: other });
+  expect(host.workerRootUsage()).toBeNull();
+
+  config({});
+  expect(host.workerRootUsage()).toEqual({ path: root, bytes: 42, measuredAt });
+  rmSync(root, { recursive: true });
+  expect(host.workerRootUsage()).toBeNull();
 });

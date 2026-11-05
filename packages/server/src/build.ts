@@ -16,6 +16,7 @@ import {
   rmSync,
   statfsSync,
   statSync,
+  writeFileSync,
   type Dirent,
 } from 'node:fs';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
@@ -60,14 +61,14 @@ import {
   areaLastUsed,
   areasToEvict,
   measureTreeBytes,
-  readEvictedRecord,
+  evictionOf,
+  notRealDirectory,
   readRootUsage,
   recordAreaUse,
   recordRootUsage,
-  writeEvictedRecord,
   type AreaEviction,
   type DiskSpace,
-  type EvictedRecord,
+  type Eviction,
   type WorkerArea,
   type WorkerRootUsage,
 } from './worker-areas.ts';
@@ -429,18 +430,6 @@ async function deletionFailure(dir: string): Promise<string | null> {
   }
 }
 
-function moveExternalsAside({ external }: EvictedRecord): string | null {
-  try {
-    for (const { dir, aside } of external) {
-      if (existsSync(dir)) renameSync(dir, aside);
-      rmSync(`${dir}.owner`, { force: true });
-    }
-    return null;
-  } catch (error) {
-    return String(error);
-  }
-}
-
 function unknownGradleProcess(home: string, known: ReadonlySet<number>): Error | null {
   const homes = [home];
   if (existsSync(home))
@@ -553,7 +542,8 @@ export class BuildHost {
   private readonly sweeper: NodeJS.Timeout;
   private readonly pins = new Map<string, number>();
   private readonly areaRefusals = new Map<string, string>();
-  private readonly deletionFailures = new Map<string, string>();
+  private readonly reported = new Map<string, string>();
+  private readonly recoveries = new Map<string, Promise<unknown>>();
   private reportedLow = false;
   private evicting: Promise<void> | null = null;
   private lastEviction = 0;
@@ -1143,7 +1133,9 @@ export class BuildHost {
     if (!client || client === '.' || client === '..' || basename(client) !== client) return Promise.resolve();
     const pending = this.removals.get(client);
     if (pending) return pending;
-    const removal = this.removeClient(client).finally(() => this.removals.delete(client));
+    const removal = this.removeClient(client)
+      .catch((error: unknown) => console.error(`stim-server: retaining the build area of ${client}: ${String(error)}`))
+      .finally(() => this.removals.delete(client));
     this.removals.set(client, removal);
     return removal;
   }
@@ -1164,7 +1156,9 @@ export class BuildHost {
     }
     let areas: string[];
     try {
-      areas = await readdir(join(this.clientDir(client), 'repos'));
+      areas = notRealDirectory(join(this.clientDir(client), 'repos'))
+        ? []
+        : await readdir(join(this.clientDir(client), 'repos'));
     } catch (error) {
       if (!isMissing(error)) {
         console.error(`stim-server: retaining unreadable build areas of ${client}: ${String(error)}`);
@@ -1185,7 +1179,7 @@ export class BuildHost {
     if (process.platform === 'win32') await this.sweepDaemons(client);
     if (process.platform === 'win32') {
       const repos = join(this.clientDir(client), 'repos');
-      const dirs = (await readdir(repos).catch(() => [])).flatMap((repo) => this.windowsAreaDirs(join(repos, repo)));
+      const dirs = areas.flatMap((repo) => this.windowsAreaDirs(join(repos, repo)));
       if (ownsWindowsGradleHome(this.clientDir(client))) dirs.push(gradleUserHome(this.clientDir(client)));
       if (!(await this.removeWindowsDirs(client, dirs))) return;
     }
@@ -1243,7 +1237,6 @@ export class BuildHost {
     const path = this.root();
     if (!existsSync(path)) {
       this.lastMeasure = 0;
-      this.rootUsage = null;
       return;
     }
     const recorded = readRootUsage(path);
@@ -1262,9 +1255,14 @@ export class BuildHost {
   }
 
   workerRootUsage(): WorkerRootUsage | null {
-    if (!this.rootUsage && (this.options.ready?.() ?? true)) {
+    if (this.options.ready?.() ?? true) {
       try {
-        this.rootUsage = readRootUsage(this.root());
+        const path = this.root();
+        if (this.rootUsage && (this.rootUsage.path !== path || !existsSync(path))) {
+          this.rootUsage = null;
+          this.lastMeasure = 0;
+        }
+        this.rootUsage ??= readRootUsage(path);
       } catch {}
     }
     return this.rootUsage;
@@ -1323,12 +1321,14 @@ export class BuildHost {
         next.reason === 'age'
           ? `unused for ${days} days, over the ${maxAgeMs / DAY_MS} of server.workerAreaMaxAgeDays`
           : `the least recently used (${days} days ago) while the volume is near its disk floor`;
-      const failure = outcome.failure ?? (await this.deleteEvicted(next.client, outcome.id, outcome.record));
+      const { eviction } = outcome;
+      const failure =
+        outcome.failure ?? (await this.serialized(next.client, () => this.deleteEvicted(next.client, eviction)));
       const free = workerFreeBytes(this.root());
       if (failure) {
-        this.deletionFailures.set(outcome.id, failure);
+        this.reported.set(eviction.id, failure);
         console.error(
-          `stim-server: moved the build area ${key} out of repos (${why}) but could not delete it: ${failure}. A later pass retries.`,
+          `stim-server: moved the build area ${key} out of repos (${why}) but could not delete it: ${failure}. ${this.evictedRemedy(next.client, eviction.id)}`,
         );
       } else
         console.error(
@@ -1363,6 +1363,13 @@ export class BuildHost {
   private workerAreas(): WorkerArea[] {
     return this.workerClients().flatMap((client) => {
       const repos = join(this.clientDir(client), 'repos');
+      if (notRealDirectory(repos)) {
+        this.reportOnce(
+          repos,
+          `stim-server: retaining the build areas of ${client}: ${repos} is not a real directory.`,
+        );
+        return [];
+      }
       try {
         return readdirSync(repos, { withFileTypes: true })
           .filter(
@@ -1409,7 +1416,7 @@ export class BuildHost {
   private evictArea(
     { client, repo }: AreaEviction,
     processes: string,
-  ): { kept: string } | { id: string; record: EvictedRecord; failure: string | null } {
+  ): { kept: string } | { eviction: Eviction; failure: string | null } {
     const area = join(this.clientDir(client), 'repos', repo);
     const busy = this.areaBusy(client, repo);
     if (busy) return { kept: busy };
@@ -1422,26 +1429,25 @@ export class BuildHost {
     } catch (error) {
       return { kept: `its Gradle processes could not be checked: ${String(error)}` };
     }
+    if (notRealDirectory(join(this.clientDir(client), EVICTED_DIR)))
+      return { kept: `${join(this.clientDir(client), EVICTED_DIR)} is not a real directory` };
     const claims = `${area}.claims`;
     const claim = this.areaClaim(client, repo);
     if (typeof claim === 'string') return { kept: claim };
-    const id = `${repo}-${randomUUID()}`;
-    const parked = join(this.clientDir(client), EVICTED_DIR, id);
-    const record: EvictedRecord = {
-      repo,
-      external: this.windowsAreaDirs(area).map((dir) => ({ dir, aside: `${dir}.evicted-${randomUUID()}` })),
-    };
+    const uuid = randomUUID();
+    const eviction: Eviction = { id: `${repo}-${uuid}`, repo, uuid };
+    const parked = join(this.clientDir(client), EVICTED_DIR, eviction.id);
     let failure: string | null;
     try {
       mkdirSync(dirname(parked), { recursive: true, mode: 0o700 });
-      writeEvictedRecord(`${parked}.json`, record);
+      writeFileSync(`${parked}.json`, '');
       try {
         renameSync(area, parked);
       } catch (error) {
         rmSync(`${parked}.json`, { force: true });
         throw error;
       }
-      failure = moveExternalsAside(record);
+      failure = this.moveExternalsAside(client, eviction);
     } catch (error) {
       return { kept: `it could not be moved aside: ${String(error)}` };
     } finally {
@@ -1450,7 +1456,7 @@ export class BuildHost {
     const clearance = clearFreeClaimSet({ root: claims, label: 'build worker' });
     if (clearance.status !== 'cleared')
       console.error(`stim-server: left the claim set of the evicted area at ${claims}: ${clearance.status}.`);
-    return { id, record, failure };
+    return { eviction, failure };
   }
 
   private areaClaim(client: string, repo: string): ClaimHandle | string {
@@ -1470,58 +1476,149 @@ export class BuildHost {
     }
   }
 
-  /** Deletes what an eviction moved aside, the record last; what could not be deleted stays for a later pass. */
-  private async deleteEvicted(client: string, id: string, record: EvictedRecord): Promise<string | null> {
-    const parked = join(this.clientDir(client), EVICTED_DIR, id);
-    for (const dir of [...record.external.map(({ aside }) => aside), parked]) {
-      const failure = await deletionFailure(dir);
-      if (failure) return failure;
+  private externalDirs(client: string, repo: string): Array<{ dir: string; key: string }> {
+    if (process.platform !== 'win32') return [];
+    const repos = join(this.clientDir(client), 'repos');
+    const real = join(realpathSync(repos), repo);
+    const area = join(repos, repo);
+    return [
+      { dir: windowsShortDir(real), key: windowsShortDirKey('checkout', real) },
+      { dir: gradleUserHome(area), key: windowsShortDirKey('gradle', area) },
+    ];
+  }
+
+  /**
+   * Takes an evicted area's short directories out of use. Their names can collide (`makePrivateWindowsDirs`), so each
+   * moves only while its `.owner` names this area.
+   */
+  private moveExternalsAside(client: string, { repo, uuid }: Eviction): string | null {
+    try {
+      for (const { dir, key } of this.externalDirs(client, repo)) {
+        let owner: string | null = null;
+        try {
+          owner = readFileSync(`${dir}.owner`, 'utf8');
+        } catch {}
+        if (owner !== key) {
+          if (owner !== null || existsSync(dir))
+            console.error(
+              `stim-server: leaving ${dir} of the evicted build area ${areaKey(client, repo)}: ${owner === null ? 'it has no owner marker' : 'its owner marker names another area'}.`,
+            );
+          continue;
+        }
+        if (existsSync(dir)) renameSync(dir, `${dir}.evicted-${uuid}`);
+        rmSync(`${dir}.owner`, { force: true });
+      }
+      return null;
+    } catch (error) {
+      return String(error);
     }
-    rmSync(`${parked}.json`, { force: true });
-    this.deletionFailures.delete(id);
+  }
+
+  /** Deletes what an eviction moved aside, the record last; what could not be deleted stays for a later pass. */
+  private async deleteEvicted(client: string, { id, repo, uuid }: Eviction): Promise<string | null> {
+    const parked = join(this.clientDir(client), EVICTED_DIR, id);
+    try {
+      const asides = this.externalDirs(client, repo).map(({ dir }) => `${dir}.evicted-${uuid}`);
+      for (const dir of [...asides, parked]) {
+        const failure = await deletionFailure(dir);
+        if (failure) return failure;
+      }
+      rmSync(`${parked}.json`, { force: true });
+    } catch (error) {
+      return String(error);
+    }
+    this.reported.delete(id);
     try {
       rmdirSync(dirname(parked));
     } catch {}
     return null;
   }
 
+  private evictedRemedy(client: string, id: string): string {
+    const parked = join(this.clientDir(client), EVICTED_DIR, id);
+    return `It stays at ${parked} and a later pass retries; if this repeats, fix the cause or delete it and ${parked}.json by hand.`;
+  }
+
+  private reportOnce(key: string, message: string): void {
+    if (this.reported.get(key) !== message) console.error(message);
+    this.reported.set(key, message);
+  }
+
+  private serialized<T>(client: string, work: () => Promise<T>): Promise<T> {
+    const run = (this.recoveries.get(client) ?? Promise.resolve()).then(work);
+    this.recoveries.set(client, run);
+    const forget = () => {
+      if (this.recoveries.get(client) === run) this.recoveries.delete(client);
+    };
+    run.then(forget, forget);
+    return run;
+  }
+
+  /** One client's recovery at a time, so a pass and a revocation never work through the same records together. */
+  private resumeEvicted(client: string): Promise<boolean> {
+    return this.serialized(client, () =>
+      this.finishEvictions(client).catch((error: unknown) => {
+        this.reportOnce(client, `stim-server: could not finish the evictions of ${client}: ${String(error)}.`);
+        return false;
+      }),
+    );
+  }
+
   /**
    * Finishes the evictions an earlier pass or server left, each directory outside the worker root before the area that
    * names it. A directory a new area of the same repository took over is its own again. Returns whether none is left.
    */
-  private async resumeEvicted(client: string): Promise<boolean> {
+  private async finishEvictions(client: string): Promise<boolean> {
     const dir = join(this.clientDir(client), EVICTED_DIR);
-    let records: string[];
+    if (notRealDirectory(this.clientDir(client))) return true;
+    if (notRealDirectory(dir)) {
+      this.reportOnce(
+        dir,
+        `stim-server: ignoring ${dir}: it is not a real directory. Delete it to allow evictions of ${client}.`,
+      );
+      return true;
+    }
+    let names: string[];
     try {
-      records = readdirSync(dir).filter((name) => name.endsWith('.json'));
+      names = readdirSync(dir).filter((name) => name.endsWith('.json'));
     } catch (error) {
       if (isMissing(error)) return true;
       throw error;
     }
     let finished = true;
-    for (const name of records) {
-      const id = name.slice(0, -'.json'.length);
-      const record = readEvictedRecord(join(dir, name));
-      const parked = existsSync(join(dir, id));
-      const failure = record
-        ? (this.claimExternals(client, record) ?? (await this.deleteEvicted(client, id, record)))
-        : 'its record is unreadable';
+    for (const name of names) {
+      const eviction = evictionOf(name);
+      if (!eviction) {
+        this.reportOnce(
+          join(dir, name),
+          `stim-server: keeping ${join(dir, name)}: stim-server does not name an eviction record that, so it deletes nothing for it. Check it and delete it by hand.`,
+        );
+        continue;
+      }
+      const parked = existsSync(join(dir, eviction.id));
+      const failure = this.claimExternals(client, eviction) ?? (await this.deleteEvicted(client, eviction));
       if (failure) {
         finished = false;
-        if (this.deletionFailures.get(id) !== failure)
-          console.error(`stim-server: could not finish deleting the evicted build area ${client}/${id}: ${failure}.`);
-        this.deletionFailures.set(id, failure);
-      } else if (parked) console.error(`stim-server: finished deleting the evicted build area ${client}/${id}.`);
+        if (this.reported.get(eviction.id) !== failure)
+          console.error(
+            `stim-server: could not finish deleting the evicted build area ${client}/${eviction.id}: ${failure}. ${this.evictedRemedy(client, eviction.id)}`,
+          );
+        this.reported.set(eviction.id, failure);
+      } else if (parked)
+        console.error(`stim-server: finished deleting the evicted build area ${client}/${eviction.id}.`);
     }
     return finished;
   }
 
-  private claimExternals(client: string, record: EvictedRecord): string | null {
-    if (!record.external.some(({ dir }) => existsSync(dir) || existsSync(`${dir}.owner`))) return null;
-    const claim = this.areaClaim(client, record.repo);
+  private claimExternals(client: string, eviction: Eviction): string | null {
+    const repos = join(this.clientDir(client), 'repos');
+    const externals = this.externalDirs(client, eviction.repo);
+    if (!externals.some(({ dir }) => existsSync(dir) || existsSync(`${dir}.owner`))) return null;
+    if (notRealDirectory(repos)) return `${repos} is not a real directory`;
+    const claim = this.areaClaim(client, eviction.repo);
     if (typeof claim === 'string') return claim;
     try {
-      return existsSync(join(this.clientDir(client), 'repos', record.repo)) ? null : moveExternalsAside(record);
+      return existsSync(join(repos, eviction.repo)) ? null : this.moveExternalsAside(client, eviction);
     } finally {
       releaseClaim(claim);
     }

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
-import { readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { lstatSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { BUILD_REPO_PATTERN } from './protocol.ts';
 
 const USE_RECORD = 'last-used';
 const USAGE_RECORD = 'usage.json';
@@ -27,33 +28,32 @@ export interface AreaEviction extends WorkerArea {
 /** Where the worker root's volume stands against its eviction margin and its disk floor. */
 export type DiskSpace = 'ok' | 'low' | 'floor';
 
+const EVICTED_RECORD = /^(.+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.json$/;
+
 /**
- * Written to `<client>/evicted/<id>.json` before the area moves to `<client>/evicted/<id>/`, and deleted last, so a
- * later pass can always finish what an eviction started, the directories outside the worker root included.
+ * An eviction under way, named by its record `<client>/evicted/<id>.json`, which is created before the area moves to
+ * `<client>/evicted/<id>/` and deleted last. The record has no content: a client's build can write there, so all of
+ * this comes from its name and every path is derived from it.
  */
-export interface EvictedRecord {
+export interface Eviction {
+  id: string;
   repo: string;
-  /** Short directories the area owned outside the worker root, and the names they move to for deletion. */
-  external: Array<{ dir: string; aside: string }>;
+  uuid: string;
 }
 
-export function writeEvictedRecord(path: string, record: EvictedRecord): void {
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify(record));
-  renameSync(tmp, path);
+/** The eviction a record's file name stands for, or null when no eviction would be named that. */
+export function evictionOf(recordName: string): Eviction | null {
+  const [, repo, uuid] = EVICTED_RECORD.exec(recordName) ?? [];
+  return repo && uuid && new RegExp(BUILD_REPO_PATTERN).test(repo) ? { id: `${repo}-${uuid}`, repo, uuid } : null;
 }
 
-/** The record at `path`, or null when it cannot be read as one, so nothing it may name is discarded. */
-export function readEvictedRecord(path: string): EvictedRecord | null {
+/** Whether something other than a real directory, such as a symlink, is at `path`. */
+export function notRealDirectory(path: string): boolean {
   try {
-    const { repo, external }: Partial<EvictedRecord> = JSON.parse(readFileSync(path, 'utf8'));
-    const valid =
-      typeof repo === 'string' &&
-      Array.isArray(external) &&
-      external.every((entry) => typeof entry?.dir === 'string' && typeof entry?.aside === 'string');
-    return valid ? { repo, external } : null;
+    const stats = lstatSync(path, { throwIfNoEntry: false });
+    return stats !== undefined && !stats.isDirectory();
   } catch {
-    return null;
+    return true;
   }
 }
 
@@ -69,13 +69,13 @@ export function recordAreaUse(area: string): void {
 }
 
 /**
- * When `area` was last used: its record, or, for an area older than the record, the newest of the few paths every
- * build rewrites, so no pass walks the area. An area with neither counts as used now and is not evicted.
+ * When `area` was last used: its record, or, for an area older than the record or a record dated in the future, the
+ * newest of the few paths every build rewrites, so no pass walks the area. An area with neither counts as used now and is not evicted.
  */
 export function areaLastUsed(area: string): number {
   try {
     const recorded = Number(readFileSync(join(area, USE_RECORD), 'utf8'));
-    if (Number.isSafeInteger(recorded) && recorded > 0) return recorded;
+    if (Number.isSafeInteger(recorded) && recorded > 0 && recorded <= Date.now()) return recorded;
   } catch {}
   let latest = 0;
   for (const trace of USE_TRACES) {
@@ -141,7 +141,7 @@ export function measureTreeBytes(root: string, signal: AbortSignal): Promise<num
   return new Promise((resolve) => {
     execFile(
       'nice',
-      ['-n', '19', 'du', '-sk', root],
+      ['-n', '19', 'du', '-skH', root],
       { signal, timeout: MEASURE_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
       (_error, stdout) => {
         const kilobytes = /^(\d+)\s/.exec(stdout)?.[1];

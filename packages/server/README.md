@@ -108,7 +108,7 @@ server holds the sleep assertion (`pid` is the `caffeinate` process that owns it
 it does not, `reason` is `off`, `unsupported`, `loopback-only`, `not-listening` or `failed`
 (see [Keep this machine awake](#keep-this-machine-awake)). `workerRoot` is
 `{ "path", "bytes", "measuredAt" }`, the worker root's size as `du` last measured it, about every 6 hours and kept in `<root>/usage.json` across restarts,
-or `null` before the first measurement, while the root is missing, and on Windows. A request through `tailscale serve` or on a Tailscale address
+or `null` before the first measurement, while the root is missing, for a root that changed until it is measured, and on Windows. A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
 carries, gets only `{ "version" }`, which Stim
 Desktop's Connections settings use to find stim-server on the other machines of the
@@ -2301,12 +2301,15 @@ process), or a claim that is held or unresolved. Each retained area gets one
 `stim-server: retaining the build area <client>/<repo>: <why>` line in the log
 while the reason lasts, and each removed one a `stim-server: removed the build
 area <client>/<repo>: <why>` line. Under the area's claim the area moves to
-`<client>/evicted/<id>/` in one rename, after `<client>/evicted/<id>.json` records
-the short directories it owns on Windows, which move aside under the same claim,
-so the next build of that checkout starts clean. The deletion holds no claim and
-shutdown does not wait for it. The record goes last: when a delete fails, the log
-says so once and what is left stays, and a later pass, in this server or the
-next, finishes it before anything else. Then blobs that nothing else references
+`<client>/evicted/<id>/` in one rename, after an empty `<client>/evicted/<id>.json`
+marks it. A client's build can write there, so the server trusts only the file's
+name and derives every path from it, and a name it would not write is logged and
+kept. On Windows the area's short directories move aside under the same claim,
+each only while its `.owner` names this area, so the next build of that checkout
+starts clean. The deletion holds no claim and shutdown does not wait for it. The
+record goes last: when a delete fails, the log says so once with the path and what
+to do, and a later pass, in this server or the next, finishes it before anything
+else. Then blobs that nothing else references
 are pruned. Client-wide blobs and shared
 CocoaPods, pnpm and SwiftPM caches stay until the client is removed.
 
