@@ -1249,7 +1249,8 @@ RULES
                             stim-server
     linkedWorktrees         not-a-worktree | bare-repository |
                             source-checkout-unknown | source-checkout |
-                            not-registered | locked | nested-worktree |
+                            not-registered | locked | pinned |
+                            nested-worktree |
                             in-use |
                             status-unreadable | dirty |
                             unpushed-unchecked | unpushed | submodules |

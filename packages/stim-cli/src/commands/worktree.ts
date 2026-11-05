@@ -753,10 +753,12 @@ async function reclaimAll(
   keys: readonly string[] = reclaimKeys(rootPath),
   {
     preserveRootProject = false,
+    preserveAllProjects = false,
     removedBy,
     operation,
   }: {
     preserveRootProject?: boolean;
+    preserveAllProjects?: boolean;
     removedBy?: 'worktree-remove' | 'gc' | 'maintenance';
     operation?: StimContext;
   } = {},
@@ -788,7 +790,7 @@ async function reclaimAll(
         archive: removedBy ? { removedBy } : undefined,
         deleteOwnedDevices: true,
         parkOwnedDevices: pressure === 'normal',
-        preserveProjectRecord: preserveRootProject && key === rootPath,
+        preserveProjectRecord: preserveAllProjects || (preserveRootProject && key === rootPath),
         stopRequester: { by: 'stim worktree remove' },
         operation,
       });
@@ -1500,7 +1502,7 @@ async function removeOrRefuse(
             if (archive) await discardWorktreeArchive(archive);
           };
           const result = await reclaimAll(path, lockedKeys, {
-            preserveRootProject: true,
+            preserveAllProjects: true,
             removedBy: opts.removedBy ?? 'worktree-remove',
             operation: opts.operation,
           });
@@ -1615,6 +1617,15 @@ async function removeOrRefuse(
           }
           onRemoved();
           try {
+            for (const key of result.reclaimedKeys) {
+              if (key === path) continue;
+              try {
+                await withConfigLockAsync(() => removeProject(key));
+              } catch (error) {
+                output.error(chalk.yellow(`Could not remove the project record of ${key}: ${String(error)}`));
+                output.fail();
+              }
+            }
             forgetStatusMeasures(path, result.reclaimedKeys);
             const finish = (): void => {
               printRemovalCleanup(result, false, output);

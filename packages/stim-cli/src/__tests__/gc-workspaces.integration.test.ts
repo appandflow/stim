@@ -23,6 +23,7 @@ import { testContext } from './_context.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { removeWorktreeTarget } from '../commands/worktree.ts';
 import { matchWorktreeEntry } from '../workspace/worktree.ts';
+import * as agentSessions from '../agent-sessions.ts';
 import { classifyStatusCaches, deleteStaleStatusCaches } from '../commands/gc/status-caches.ts';
 import {
   classifyWorkspaceDirs,
@@ -48,11 +49,17 @@ import {
   type PullRequestFact,
   type PullRequestLookup,
 } from '../workspace/pull-request.ts';
-import { getProject, saveConfig, upsertProject } from '../workspace/config.ts';
+import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceName } from '../workspace/paths.ts';
 import { workspaceInUse, withIdleWorkspace } from '../workspace/in-use.ts';
-import { clearArtifact, collectArtifacts, artifactWorktrees } from '../maintenance/artifacts.ts';
+import {
+  clearArtifact,
+  collectArtifacts,
+  collectArtifactsAsync,
+  artifactWorktrees,
+  artifactWorktreesAsync,
+} from '../maintenance/artifacts.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -1877,6 +1884,91 @@ test('the maintenance ladder collects .dd and CMake output of a registered workt
   expect(await clear(join(registered, 'android', 'app', '.cxx'))).toMatchObject({ status: 'done' });
 });
 
+function maintenanceArtifactFixture(sessions: Awaited<ReturnType<typeof agentSessions.discoverAgentSessions>>) {
+  const { repo, worktrees } = gitRepoWithWorktrees(['registered']);
+  const registered = realpathSync.native(worktrees.registered ?? '');
+  upsertProject(repo, { metroPort: null });
+  upsertProject(registered, { metroPort: null });
+  recordWorkspaceUse(registered, new Date(Date.now() - 10 * DAY_MS));
+  writeDerivedData(join(registered, '.dd'));
+  vi.spyOn(agentSessions, 'discoverAgentSessions').mockResolvedValue(sessions);
+  const signal = new AbortController().signal;
+  const options = { now: Date.now(), windowMs: 0, protectedRoot: '', pinned: () => false };
+  const dd = join(registered, '.dd');
+  return {
+    registered,
+    dd,
+    collect: () => collectArtifactsAsync('build', options, signal),
+    clear: async () =>
+      clearArtifact({ kind: 'would-clear-build-dirs', target: dd, bytes: 0, reason: 'test' }, 'build', {
+        ...options,
+        worktrees: await artifactWorktreesAsync(signal),
+      }),
+  };
+}
+
+test('maintenance keeps the build output of a registered worktree a running agent session works in', async () => {
+  const probe = maintenanceArtifactFixture([]);
+  vi.mocked(agentSessions.discoverAgentSessions).mockResolvedValue([
+    { tool: 'codex', sessionId: 'live-thread', cwd: join(probe.registered, 'src') },
+  ]);
+
+  const found = await probe.collect();
+  const cleared = await probe.clear();
+
+  expect(found.candidates).toEqual([]);
+  expect(found.skips).toContainEqual({
+    target: probe.dd,
+    reason: 'in use: an agent session (codex:live-thread) is working in it',
+  });
+  expect(cleared).toMatchObject({ status: 'kept', detail: expect.stringContaining('agent session') });
+  expect(existsSync(probe.dd)).toBe(true);
+});
+
+test('maintenance clears the build output of a registered worktree no agent session works in', async () => {
+  const probe = maintenanceArtifactFixture([]);
+
+  expect((await probe.collect()).candidates.map((candidate) => candidate.path)).toEqual([probe.dd]);
+  expect(await probe.clear()).toMatchObject({ status: 'done' });
+});
+
+test('worktree remove drops the registration of a worktree known only by its app directory', async () => {
+  const { worktrees } = repoWithTwoBranches({ registerWorktrees: false });
+  const merged = worktrees.merged ?? '';
+  const app = join(merged, 'app');
+  mkdirSync(app);
+  upsertProject(app, { metroPort: null });
+  ensureWorkspaceStorage(app);
+
+  expect(await removeWorktreeTarget(merged, { linkedOnly: true })).toBe(true);
+
+  expect(existsSync(merged)).toBe(false);
+  expect(loadConfig()?.projects[app]).toBeUndefined();
+}, 240_000);
+
+test.skipIf(process.platform !== 'darwin')(
+  'worktree remove that git refuses keeps the registration of a worktree known only by its app directory',
+  async () => {
+    const { worktrees } = repoWithTwoBranches({ registerWorktrees: false });
+    const merged = worktrees.merged ?? '';
+    const app = join(merged, 'app');
+    mkdirSync(app);
+    upsertProject(app, { metroPort: null });
+    ensureWorkspaceStorage(app);
+    const locked = join(merged, 'package.json');
+    execSync(`chflags uchg "${locked}"`);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await removeWorktreeTarget(merged, { linkedOnly: true })).toBe(false);
+    } finally {
+      execSync(`chflags nouchg "${locked}"`);
+    }
+
+    expect(loadConfig()?.projects[app]).toBeDefined();
+  },
+  240_000,
+);
+
 function builtWorktree(dirs: readonly string[]) {
   const { repo, worktrees } = gitRepoWithWorktrees(['built']);
   const built = realpathSync.native(worktrees.built ?? '');
@@ -2488,25 +2580,82 @@ test('gc keeps a merged worktree that holds another worktree under an ignored pa
   expect(existsSync(merged)).toBe(true);
 }, 240_000);
 
-test('gc --delete also removes merged linked worktrees of a registered repository where no stim command ran', async () => {
-  unscopedHome();
+test('gc --delete keeps merged linked worktrees where no stim command ran, and removes the one a stim command used', async () => {
   const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+  upsertProject(worktrees.merged ?? '', { metroPort: null });
+  recordWorkspaceUse(worktrees.merged ?? '');
 
-  const at = (name: string) => worktrees[name] ?? name;
+  const output = await captureLog(() => runGc({ delete: true }));
 
-  await captureLog(() => runGc({ delete: true }));
-  for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(at(name))).toBe(false);
-  for (const name of ['fresh', 'evil', 'open', 'dirty']) expect(existsSync(at(name))).toBe(true);
+  expect(existsSync(worktrees.merged ?? '')).toBe(false);
+  for (const name of ['squashed', 'rebased']) expect(existsSync(worktrees[name] ?? name)).toBe(true);
+  expect(output).toContain('kept: not registered in this Stim home: no project or workspace record names it');
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
 }, 240_000);
 
-test('a scoped STIM_HOME keeps merged linked worktrees of a registered repository that it does not list', async () => {
-  const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+test('a worktree only a workspace.json names counts as used', async () => {
+  const { worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+  const merged = worktrees.merged ?? '';
+  ensureWorkspaceStorage(merged);
 
   const output = await captureLog(() => runGc({ delete: true }));
-  for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name] ?? name)).toBe(true);
-  expect(output).toContain('kept: not registered in this Stim home');
-  expect(existsSync(join(repo, 'package.json'))).toBe(true);
+
+  expect(existsSync(merged)).toBe(false);
+  expect(existsSync(worktrees.squashed ?? '')).toBe(true);
+  expect(output).toContain('Removed the worktree');
+}, 240_000);
+
+test('gc --delete keeps a finished worktree pinned with maintenance.keep', async () => {
+  const { worktrees } = repoWithMergedBranches();
+  writeFileSync(join(worktrees.merged ?? '', '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+
+  const { payload } = await gcJson({ delete: true });
+
+  const entry = payload.sections.linkedWorktrees.find(
+    (w: { path: string }) => realpathSync.native(w.path) === worktrees.merged,
+  );
+  expect(entry).toMatchObject({ willRemove: false, reason: 'pinned', detail: 'pinned by maintenance.keep' });
+  expect(existsSync(worktrees.merged ?? '')).toBe(true);
+  expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+}, 240_000);
+
+test('gc --delete keeps a finished worktree a running agent session works in', async () => {
+  const { worktrees } = repoWithMergedBranches();
+  const merged = worktrees.merged ?? '';
+  vi.spyOn(agentSessions, 'discoverAgentSessions').mockResolvedValue([
+    { tool: 'claude-code', sessionId: 'live-session', cwd: join(merged, 'apps') },
+  ]);
+
+  const { payload } = await gcJson({ delete: true });
+
+  const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === merged);
+  expect(entry).toMatchObject({
+    willRemove: false,
+    reason: 'in-use',
+    detail: 'in use: an agent session (claude-code:live-session) is working in it',
+  });
+  expect(existsSync(merged)).toBe(true);
+  expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+}, 240_000);
+
+test('worktree remove removes a clean linked worktree no stim command ran in', async () => {
+  const { worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+  const merged = worktrees.merged ?? '';
+
+  expect(await removeWorktreeTarget(merged, { linkedOnly: true })).toBe(true);
+  expect(existsSync(merged)).toBe(false);
+}, 240_000);
+
+test('maintenance clears no node_modules or build output in a worktree no stim command ran in', async () => {
+  const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+  upsertProject(worktrees.merged ?? '', { metroPort: null });
+
+  const paths = artifactWorktrees().map((w) => realpathSync.native(w.path));
+
+  expect(paths).toContain(worktrees.merged);
+  expect(paths).toContain(realpathSync.native(repo));
+  expect(paths).not.toContain(worktrees.squashed);
+  expect(paths).not.toContain(worktrees.rebased);
 }, 240_000);
 
 test('plain gc --delete removes merged worktrees, squash merges included, after fetching the default branch', async () => {
@@ -2750,10 +2899,11 @@ function backdateWorktreeActivity(path: string, when: Date): void {
   }
 }
 
-test('gc --worktrees --delete removes idle worktrees with no commits of their own where no stim command ran', async () => {
+test('gc --worktrees --delete removes idle worktrees with no commits of their own that have a project and no recorded use', async () => {
   unscopedHome();
   const { worktrees, git } = repoWithMergedBranches({ registerWorktrees: false });
   const at = (name: string) => worktrees[name] ?? name;
+  for (const path of Object.values(worktrees)) upsertProject(path, { metroPort: null });
   for (const name of ['fresh', 'followup', 'reused', 'open']) {
     backdateWorktreeActivity(at(name), new Date(Date.now() - 10 * DAY_MS));
   }
@@ -2868,6 +3018,7 @@ test('gc --delete removes a clean detached worktree on the default branch once i
   backdateWorktreeActivity(baseline, new Date(Date.now() - 3 * 60 * 60_000));
   const fresh = join(projects, 'fresh-baseline');
   git(`worktree add -q --detach "${fresh}" origin/main`);
+  for (const path of [baseline, fresh]) upsertProject(path, { metroPort: null });
 
   const output = await captureLog(() => runGc({ delete: true }));
 
@@ -2881,7 +3032,7 @@ test('gc --delete removes a clean detached worktree on the default branch once i
 
 test('gc keeps a finished worktree that holds the running stim, and worktree remove refuses it', async () => {
   unscopedHome();
-  const { worktrees, git, upstream } = repoWithTwoBranches({ registerWorktrees: false });
+  const { worktrees, git, upstream } = repoWithTwoBranches();
   git('merge -q --no-ff origin/open -m merge-control', upstream);
   git('push -q origin HEAD', upstream);
   const merged = worktrees.merged ?? '';
