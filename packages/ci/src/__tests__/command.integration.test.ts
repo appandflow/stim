@@ -82,7 +82,7 @@ test.skipIf(process.platform === 'win32')(
   'waits for a resistant background child with closed output streams before reporting completion',
   async () => {
     const pidFile = join(root, 'descendant.pid');
-    const descendant = `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`;
+    const descendant = `process.on('SIGTERM', () => {}); const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(`${pidFile}.tmp`)}, String(process.pid)); fs.renameSync(${JSON.stringify(`${pidFile}.tmp`)}, ${JSON.stringify(pidFile)}); setInterval(() => {}, 1000);`;
     const script = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], {stdio:'ignore'}); setInterval(() => { if (require('node:fs').existsSync(${JSON.stringify(pidFile)})) process.exit(0); }, 10);`;
     try {
       const result = await runCommand({
@@ -97,9 +97,10 @@ test.skipIf(process.platform === 'win32')(
       expect(result.error).toBeUndefined();
       expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
     } finally {
-      if (existsSync(pidFile)) {
+      const pid = existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8')) : NaN;
+      if (Number.isInteger(pid) && pid > 1) {
         try {
-          process.kill(Number(readFileSync(pidFile, 'utf8')), 'SIGKILL');
+          process.kill(pid, 'SIGKILL');
         } catch (caught) {
           expect(caught).toMatchObject({ code: 'ESRCH' });
         }
