@@ -1932,6 +1932,20 @@ test('maintenance clears the build output of a registered worktree no agent sess
   expect(await probe.clear()).toMatchObject({ status: 'done' });
 });
 
+test('worktree remove drops the registration of a worktree known only by its app directory', async () => {
+  const { worktrees } = repoWithTwoBranches({ registerWorktrees: false });
+  const merged = worktrees.merged ?? '';
+  const app = join(merged, 'app');
+  mkdirSync(app);
+  upsertProject(app, { metroPort: null });
+  ensureWorkspaceStorage(app);
+
+  expect(await removeWorktreeTarget(merged, { linkedOnly: true })).toBe(true);
+
+  expect(existsSync(merged)).toBe(false);
+  expect(loadConfig()?.projects[app]).toBeUndefined();
+}, 240_000);
+
 test.skipIf(process.platform !== 'darwin')(
   'worktree remove that git refuses keeps the registration of a worktree known only by its app directory',
   async () => {

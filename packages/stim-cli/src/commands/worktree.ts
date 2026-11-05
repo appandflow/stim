@@ -1599,7 +1599,13 @@ async function removeOrRefuse(
           onRemoved();
           try {
             for (const key of result.reclaimedKeys) {
-              if (key !== path) await withConfigLockAsync(() => removeProject(key));
+              if (key === path) continue;
+              try {
+                await withConfigLockAsync(() => removeProject(key));
+              } catch (error) {
+                output.error(chalk.yellow(`Could not remove the project record of ${key}: ${String(error)}`));
+                output.fail();
+              }
             }
             forgetStatusMeasures(path, result.reclaimedKeys);
             const finish = (): void => {
