@@ -628,6 +628,7 @@ function connect(codec) {
       away = true;
       resuming = false;
       live = false;
+      releaseInput();
       body.dataset.away = 'true';
       refreshStatus();
     } else if (message.type === 'resumed') {
@@ -1174,7 +1175,10 @@ if (control) {
   };
   screen.tabIndex = 0;
   screen.addEventListener('pointerdown', (event) => {
-    if (document.activeElement !== typeField) screen.focus();
+    if (typing()) {
+      typeField.value = '';
+      typed = '';
+    } else screen.focus();
     screen.setPointerCapture(event.pointerId);
     event.preventDefault();
     if (!live) return;
@@ -1297,6 +1301,10 @@ if (control) {
     const delta = globalThis.stimKeys.keyboardDelta(typed, typeField.value);
     typed = typeField.value;
     if (delta) typeText(delta);
+    if (typed.length >= typeField.maxLength) {
+      typeField.value = '';
+      typed = '';
+    }
   });
   typeField.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
