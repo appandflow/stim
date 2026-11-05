@@ -251,7 +251,7 @@ export interface FingerprintTarget {
   androidLayout?: AndroidLayout | null;
   ignoredPaths?: readonly string[];
   trackedPaths?: readonly string[];
-  /** Lists Android signing files as inputs, for the sync's own decision about them; they still hash to nothing. */
+  /** Lists Android and iOS signing files as inputs, for the sync's own decision about them; they still hash to nothing. */
   keepSigningFiles?: boolean;
 }
 

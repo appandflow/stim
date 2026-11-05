@@ -226,6 +226,7 @@ test.each([
   write(file, text);
   const plan = await iosSyncPlan(root, [...paths, file]);
   expect(plan.omit.size).toBe(3);
+  expect(paths.filter((path) => !plan.omit.has(path))).toHaveLength(1);
 });
 
 test.each([
