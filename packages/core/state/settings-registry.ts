@@ -123,6 +123,10 @@ export const REPLACED_SETTINGS: Readonly<Record<string, RemovedSetting>> = {
     replacement: 'idle.minutes, which stops the dev server and the owned devices together',
     value: sameNumber,
   },
+  'share.webrtc': {
+    replacement: 'nothing replaced it; web share viewers take video over the share socket only',
+    env: 'STIM_WEBRTC_STUN',
+  },
   'devices.reclaimIdleMinutes': {
     replacement:
       "the stim-daemon's reclaim rule replaced it: while a run waits to boot, the daemon shuts down the longest-idle device of another workspace idle 2 minutes or more",

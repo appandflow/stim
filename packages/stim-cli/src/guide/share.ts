@@ -317,7 +317,7 @@ STATS PANEL
 Add ?stats to a viewer link to show a panel over the page with the video's round
 trip, frames per second, bitrate, delay (p50 and p95) and keyframe requests. The
 page measures them over its share socket; the round trip and delay need the
-page to ping the server every 2 s, which it does only while the panel is open.
+page to ping the server every 2 s, which it does on a page opened with ?stats.
 
 SECURITY MODEL
 
