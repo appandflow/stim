@@ -23,7 +23,6 @@ const started = (over: Partial<StartedShare> = {}): StartedShare => ({
   control: false,
   expiresAt: EXPIRES,
   viewers: 0,
-  state: 'live',
   auth: 'generated',
   viewAuth: null,
   url: `https://mac.test/s/${TOKEN}/`,
