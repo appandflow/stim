@@ -502,7 +502,7 @@ export async function bootIosSim(
           await cancellableSleep(BOOT_REJECTED_RETRY_DELAY_MS);
           await awaitBootCommand(['simctl', 'boot', udid], Math.max(1, deadline - Date.now()), onLine).catch(
             (retryError: unknown) => {
-              if (!String((retryError as Error)?.message || retryError).includes('Booted')) throw retryError;
+              if (!(retryError instanceof Error && retryError.message.includes('Booted'))) throw retryError;
             },
           );
         } else if (state !== 'Booting' && state !== 'Booted') throw e;
