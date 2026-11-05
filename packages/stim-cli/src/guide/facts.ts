@@ -487,10 +487,17 @@ leased until <time>" for each one.`,
                   change, reload from the app's own error screen or dev menu
                   "cdp" -- web: Page.reload on the owned Chrome page, sent
                   over a DevTools connection verified to reach that Chrome
-  targets         how many peers the reload was addressed to, or null when
-                  broadcast. Greater than 1 means several devices are running
-                  this app on that Metro and the request addressed all of
-                  them, not only deviceId. Completion is not observed
+  targets         how many devices the reload was addressed to, or null when
+                  broadcast: the peers Metro listed for this platform, capped
+                  at the devices Stim recorded for this app on that Metro. Metro
+                  lists one device once per socket it opened and never closed,
+                  and iOS peers carry no device identity, so extra sockets are
+                  not extra devices; a device Stim did not launch is not
+                  counted. Greater than 1 means several of this workspace's
+                  devices are running this app and the request addressed all
+                  of them, not only deviceId. For apps Stim did not launch
+                  (appId null) it is the number of Metro clients addressed.
+                  Completion is not observed
   reverseRestored the Android serials whose adb reverse for metroPort was
                   missing and that Stim re-applied before reloading; [] when
                   none was, and always [] for iOS and web
