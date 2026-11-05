@@ -1175,10 +1175,9 @@ if (control) {
   };
   screen.tabIndex = 0;
   screen.addEventListener('pointerdown', (event) => {
-    if (typing()) {
-      dropQueued();
-      resetField();
-    } else screen.focus();
+    dropQueued();
+    if (typing()) resetField();
+    else screen.focus();
     screen.setPointerCapture(event.pointerId);
     event.preventDefault();
     if (!live) return;
