@@ -12,7 +12,13 @@ interface Press {
   altGraph?: boolean;
 }
 
-const { keyMessage }: { keyMessage: (event: unknown, apple: boolean) => unknown } = runInNewContext(
+const {
+  keyMessage,
+  keyboardDelta,
+}: {
+  keyMessage: (event: unknown, apple: boolean) => unknown;
+  keyboardDelta: (previous: string, next: string) => string;
+} = runInNewContext(
   `${readFileSync(new URL('../share-viewer/keys.js', import.meta.url), 'utf8')}\nglobalThis.stimKeys`,
 );
 
@@ -113,4 +119,24 @@ it('types an ASCII character made with Option on a Mac, and keeps Option chords 
     key: 'a',
     modifiers: ['option'],
   });
+});
+
+it('turns a change of the phone field into a Delete per removed character, then the added ones', () => {
+  expect(keyboardDelta('', 'abc')).toBe('abc');
+  expect(keyboardDelta('abc', 'abcd')).toBe('d');
+  expect(keyboardDelta('abc', 'ab')).toBe('\b');
+  expect(keyboardDelta('abc', 'axy')).toBe('\b\bxy');
+  expect(keyboardDelta('abc', 'abc')).toBe('');
+});
+
+it('types smart punctuation as ASCII and drops other characters', () => {
+  expect(keyboardDelta('', 'it’s “ok”…')).toBe('it\'s "ok"...');
+  expect(keyboardDelta('', 'aé\u{1F600}b')).toBe('ab');
+  expect(keyboardDelta('’', "'")).toBe('');
+});
+
+it('ignores the zero-width resting value of the phone field', () => {
+  expect(keyboardDelta('​', '​abc')).toBe('abc');
+  expect(keyboardDelta('​abc', '')).toBe('\b\b\b');
+  expect(keyboardDelta('​', '')).toBe('');
 });

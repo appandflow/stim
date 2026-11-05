@@ -151,6 +151,14 @@
           </svg>
         </button>
       </div>
+      <div class="group" data-group="keyboard">
+        <button type="button" id="keyboard-button" title="Keyboard" aria-label="Keyboard" aria-pressed="false" hidden>
+          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3" y="6.5" width="18" height="11" rx="2.5" />
+            <path d="M7 10h.01M10 10h.01M14 10h.01M17 10h.01M8 14h8" />
+          </svg>
+        </button>
+      </div>
       <div class="group" data-group="rotate">
         <button type="button" data-rotate="left" title="Rotate left" aria-label="Rotate left">
           <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
@@ -166,6 +174,28 @@
         </button>
       </div>
     </nav>
+    <div class="typebar" id="typebar" hidden>
+      <span class="typewrap">
+        <input
+          class="typefield"
+          id="type-field"
+          type="text"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          enterkeyhint="send"
+          maxlength="100"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
+          data-form-type="other"
+          aria-label="Type on the device"
+        />
+        <span class="typehint" id="type-hint" aria-hidden="true">Type on the device</span>
+      </span>
+      <button class="typedone" id="type-done" type="button">Done</button>
+    </div>
     <footer>
       <p class="credit">
         Shared with <a href="https://stim.appandflow.com" target="_blank" rel="noopener noreferrer">Stim</a> by

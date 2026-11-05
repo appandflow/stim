@@ -49,5 +49,34 @@
     return { type: 'key', key, modifiers };
   }
 
-  globalThis.stimKeys = { keyMessage };
+  const REPLACEMENTS = {
+    '\u2018': "'",
+    '\u2019': "'",
+    '\u201C': '"',
+    '\u201D': '"',
+    '\u2013': '-',
+    '\u2014': '-',
+    '\u2026': '...',
+    '\u00A0': ' ',
+  };
+
+  function asciiText(text) {
+    let out = '';
+    for (const char of text) {
+      for (const c of REPLACEMENTS[char] ?? char) {
+        if ((c >= ' ' && c <= '~') || c === '\n') out += c;
+      }
+    }
+    return out;
+  }
+
+  function keyboardDelta(previous, next) {
+    const before = asciiText(previous);
+    const after = asciiText(next);
+    let common = 0;
+    while (common < before.length && common < after.length && before[common] === after[common]) common++;
+    return '\b'.repeat(before.length - common) + after.slice(common);
+  }
+
+  globalThis.stimKeys = { keyMessage, keyboardDelta };
 })();
