@@ -881,9 +881,6 @@ export class ShareHub {
       setTimeout(() => socket.terminate(), CLOSE_GRACE_MS).unref?.();
     }
     share.viewers.clear();
-    if (share.deviceKeyboard && share.controlSession) {
-      share.source?.deviceKeyboard?.(share.owner, share.controlSession, false);
-    }
     share.source?.endFor(share.owner, message);
     share.source?.close();
     this.releaseRecording(share);
