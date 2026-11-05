@@ -1091,6 +1091,9 @@ access, and uncertain replies or unreadable credentials preserve the pin.
 An invalid remote.machines setting reports an error and preserves every saved credential.
 \`stim remote remove\` forgets the credentials of the machine it removes, and
 \`doctor --fix\` forgets those of entries removed from remote.machines otherwise.
+If the hosting credentials are unreadable, \`stim remote remove\` keeps the
+entry and credentials. Use a compatible Stim version, restore read access, or
+restore the file from a trusted backup, then retry.
 For a replaced machine, run \`stim remote remove <machine>\`, then
 \`stim remote add <machine>\` to request a new approval. A definite revoked or
 lapsed request can be requested again with \`stim remote add\` or --fix.
