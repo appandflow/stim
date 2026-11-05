@@ -849,6 +849,11 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   simulator reports Booting or Booted but bootstatus has not completed, and
   then until SpringBoard has finished starting, which \`simctl launch\` needs.
   Booted alone does not end that wait. The failure names the udid and the wait.
+  When \`simctl boot\` itself exits 22 (EINVAL), Stim lists the simulator: it
+  continues the boot wait when the simulator is Booting or Booted, and boots
+  once more after two seconds when it is Shutdown. A second refusal keeps the
+  exit code in the failure and recommends memory relief only when the highest
+  observed pressure was warning or critical.
   After boot, a process-spawn probe must finish within 30 seconds before
   installation. A probe that times out while the simulator still reports Booted
   is retried for about three minutes, since a loaded host can leave a booted
@@ -1780,6 +1785,15 @@ not on any remote"  (worktree remove)
   and does not print this line. When the locks match but Pods still name the
   source path and warm cannot move it, it prints "removed <dir>/Pods/Manifest.lock
   so pod install runs" and \`stim ios\` runs \`pod install\`.
+
+"carry       carried <dir>/Pods has N broken link(s), such as <path>; removed <dir>/Pods/Manifest.lock so pod install runs"
+  The carried Pods contain symlinks that do not resolve, usually header links
+  into <dir>/build/ that the source checkout lost. Matching locks do not make
+  such Pods usable, so warm removes Manifest.lock and \`stim ios\` runs
+  \`pod install\` here, which recreates the links. The line also names the
+  \`pod install --clean-install\` command for the source checkout, which
+  \`stim doctor\` reports as well; until that is run, every new worktree
+  warmed from it pays one \`pod install\`.
 
 "carry       carried <dir>/Pods: The source checkout's Pods were last built as ..."
   Warm copied Pods whose React-Core-prebuilt, ReactNativeDependencies or

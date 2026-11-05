@@ -30,6 +30,7 @@ import {
 } from '../workspace/config.ts';
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
+import { brokenPodLinks } from '../diagnostics/doctor.ts';
 import { relocatePods } from '../workspace/pods-relocate.ts';
 import { detectIsExpo, isMobileProject, findProjectRoot } from '../workspace/project.ts';
 import { nativeDirCarry, recordPrebuildAsync } from '../engine/prebuild.ts';
@@ -111,11 +112,29 @@ function cloneReplacementNote(target: string, dirs: string[]): string {
     : '';
 }
 
-function relocateCarriedPods(root: string, target: string, copied: string[], out: (line: string) => void): void {
+async function relocateCarriedPods(
+  root: string,
+  target: string,
+  copied: string[],
+  out: (line: string) => void,
+): Promise<void> {
   const canRelocate = depsOutOfSync(root, target, copied).length === 0;
   for (const rel of copied) {
     if (rel !== 'Pods' && !rel.endsWith('/Pods')) continue;
     const iosDir = rel === 'Pods' ? '' : rel.slice(0, -'/Pods'.length);
+    const broken = await brokenPodLinks(join(target, rel));
+    if (broken.length > 0) {
+      rmSync(join(target, rel, 'Manifest.lock'), { force: true });
+      out(
+        chalk.yellow(
+          phaseLine(
+            'carry',
+            `carried ${rel} has ${broken.length} broken link${broken.length === 1 ? '' : 's'}, such as ${relative(target, broken[0] ?? '')}; removed ${rel}/Manifest.lock so pod install runs. To fix the source checkout, run ${podInstallCommand(root, join(root, iosDir), '--clean-install')} in ${join(root, iosDir)}`,
+          ),
+        ),
+      );
+      continue;
+    }
     try {
       const result = relocatePods({
         podsDir: join(target, rel),
@@ -423,7 +442,7 @@ export async function warmWorktreeTarget(opts: {
             }
             if (result.copied.length) {
               out(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
-              relocateCarriedPods(root, target, result.copied, out);
+              await relocateCarriedPods(root, target, result.copied, out);
               reportCarriedStateHealth(root, target, result.copied, iosConfigurationSetting(settings) ?? 'Debug', out);
             }
             out(

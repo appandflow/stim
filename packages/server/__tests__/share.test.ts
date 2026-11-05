@@ -407,8 +407,10 @@ describe('a web share', () => {
     const url = local(share, f.hub.port!);
     const page = await http(url);
     expect(page.status).toBe(200);
-    expect(page.body).toContain('name="password"');
+    expect(page.body).toContain('name="access"');
     expect(page.body).not.toContain('type="password"');
+    expect(page.body).not.toMatch(/password/i);
+    expect(page.body.match(/<input/g)).toHaveLength(1);
     expect(page.headers['cache-control']).toBe('no-store');
     for (let attempt = 0; attempt < 3; attempt++) {
       expect((await http(`${url}login`, { method: 'POST', body: 'password=wrong' })).status).toBe(401);
@@ -416,6 +418,16 @@ describe('a web share', () => {
     const locked = await http(`${url}login`, { method: 'POST', body: `password=${share.password!}` });
     expect(locked.status).toBe(429);
     expect(locked.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('admits the access code field and still the earlier password field a page left open across an update posts', async () => {
+    const share = await started(f);
+    const url = local(share, f.hub.port ?? 0);
+    const named = await http(`${url}login`, { method: 'POST', body: `access=${share.password ?? ''}` });
+    expect(named.status).toBe(303);
+    expect(String(named.headers['set-cookie'])).toContain('stim_share=');
+    const legacy = await http(`${url}login`, { method: 'POST', body: `password=${share.password ?? ''}` });
+    expect(legacy.status).toBe(303);
   });
 
   it('sets an HttpOnly, Secure, SameSite=Strict session cookie scoped to the share and ending with it', async () => {
@@ -1093,7 +1105,6 @@ describe('a web share', () => {
       const share = await started(f, { passwordless: true, control: true });
       const url = local(share, f.hub.port ?? 0);
       const headers = { origin: origin(url) };
-      expect((await http(url)).body).toContain('data-ask-name="true"');
       const { socket } = await connect(url, headers);
       const other = await connect(url, headers);
       const seen = new Promise<Record<string, unknown>[]>((resolve) => {
@@ -1210,7 +1221,7 @@ describe('a web share', () => {
       for (let attempt = 0; attempt < 40; attempt++)
         views.push(cookieOf(await http(`${url}login`, body('view%20pass'))));
       expect((await http(url, { cookie: control })).body).toContain('data-control="true"');
-      expect((await http(url, { cookie: firstView })).body).toContain('name="password"');
+      expect((await http(url, { cookie: firstView })).body).toContain('name="access"');
       expect((await http(url, { cookie: views.at(-1) })).body).toContain('data-view-only="true"');
     });
 
@@ -1225,7 +1236,7 @@ describe('a web share', () => {
       expect(refused.status).toBe(429);
       expect(refused.headers['set-cookie']).toBeUndefined();
       const another = cookieOf(await http(`${url}login`, body('control%20pass')));
-      expect((await http(url, { cookie: controls[0] })).body).toContain('name="password"');
+      expect((await http(url, { cookie: controls[0] })).body).toContain('name="access"');
       expect((await http(url, { cookie: controls[1] })).body).toContain('data-control="true"');
       expect((await http(url, { cookie: another })).body).toContain('data-control="true"');
     });
@@ -1253,7 +1264,6 @@ describe('a web share', () => {
         control: true,
         viewOnly: false,
         upgrade: false,
-        askName: false,
         platform,
         buttons: BUTTONS[platform],
         rotate: true,
@@ -1428,7 +1438,7 @@ describe('a web share', () => {
       expect(f.hub.list()).toMatchObject([{ slug: 'pokedex' }]);
       const url = local(share, f.hub.port ?? 0);
       const page = await http(url);
-      expect(page.body).toContain('name="password"');
+      expect(page.body).toContain('name="access"');
       expect(page.body).not.toContain('id="screen"');
       expect((await connect(url, { origin: origin(url) })).status).toBe(401);
       expect((await http(`${url}login`, { method: 'POST', body: 'password=wrong' })).status).toBe(401);
@@ -1457,7 +1467,7 @@ describe('a web share', () => {
       const second = await started(f, { slug: 'pokedex' });
       expect(second.url).toBe(first.url);
       const url = local(second, f.hub.port ?? 0);
-      expect((await http(url, { cookie: oldCookie })).body).toContain('name="password"');
+      expect((await http(url, { cookie: oldCookie })).body).toContain('name="access"');
       expect((await connect(url, { origin: origin(url), cookie: oldCookie })).status).toBe(401);
     });
 
@@ -1780,7 +1790,7 @@ describe('a web share', () => {
       expect(first.url.endsWith(`/s/${TOKEN}/`)).toBe(true);
       expect(first.expiresAt).toBe(new Date(expiresAt).toISOString());
       const url = local(first, f.hub.port ?? 0);
-      expect((await http(url)).body).toContain('name="password"');
+      expect((await http(url)).body).toContain('name="access"');
       expect(await login(url, 'saved-password')).toContain('stim_share=');
 
       await f.hub.stop(WORKSPACE);
