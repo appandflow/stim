@@ -70,6 +70,14 @@ const ANDROID_SIGNING_FINGERPRINT_IGNORES: string[] = [
   '!**/src/*/res/**',
 ];
 
+/** What an iOS offload may not send: App Store Connect API keys, certificates and provisioning profiles. */
+const IOS_SIGNING_FINGERPRINT_IGNORES: string[] = [
+  '**/*.p8',
+  '**/*.p12',
+  '**/*.mobileprovision',
+  '**/*.provisionprofile',
+];
+
 /**
  * `react-native bundle` output, ignored only while an ignore pattern matches it: a committed copy can be a native
  * resource, while a Debug build loads JS from Metro and a release cache hit injects the current JS. The match skips
@@ -329,6 +337,7 @@ export async function fingerprintOptions(
       ...bundleOutput,
       ...(ios.ignorePaths ?? []),
       ...(platform === 'android' && !keepSigningFiles ? ANDROID_SIGNING_FINGERPRINT_IGNORES : []),
+      ...(platform === 'ios' && !keepSigningFiles ? IOS_SIGNING_FINGERPRINT_IGNORES : []),
     ],
     silent: true,
   };

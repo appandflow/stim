@@ -1,8 +1,9 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fingerprintProject } from '../cache/build-cache.ts';
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { androidSyncPlan, isSigningKeystore } from '../offload/signing-files.ts';
+import { androidSyncPlan, iosSyncPlan, isSigningKeystore } from '../offload/signing-files.ts';
 
 let root: string;
 
@@ -192,3 +193,60 @@ test('a script generated outside the synced files still keeps the file it names 
   const plan = await androidSyncPlan(root, [path], { release: false, configured: [], projectScripts: [script] });
   expect(plan.omit.size).toBe(0);
 });
+
+test.each([
+  { path: 'apps/app/ios/fastlane/AuthKey_ABC.p8', omitted: true },
+  { path: 'ios/dist.P12', omitted: true },
+  { path: 'ios/App.mobileprovision', omitted: true },
+  { path: 'ios/App.provisionprofile', omitted: true },
+  { path: 'ios/pinned.cer', omitted: false },
+  { path: 'ios/pinned.pem', omitted: false },
+  { path: 'ios/GoogleService-Info.plist', omitted: false },
+  { path: 'ios/.env', omitted: false },
+  { path: 'android/app/release.keystore', omitted: false },
+])('an iOS sync omits $path: $omitted', async ({ path, omitted }) => {
+  const plan = await iosSyncPlan(root, [write(path, 'x'), write('ios/Podfile', 'platform :ios')]);
+  expect(plan.omit.has(path)).toBe(omitted);
+  expect(plan.refusal).toBe(null);
+});
+
+test.each([
+  { file: 'ios/App.xcodeproj/project.pbxproj', text: 'path = "Resources/App.mobileprovision";' },
+  { file: 'ios/Podfile', text: "ENV['KEY'] = File.read('dist.p12')" },
+  { file: 'ios/scripts/sign.sh', text: 'cp AuthKey_ABC.p8 "$DST"' },
+  { file: 'ios/Config.xcconfig', text: 'PROFILE = App.provisionprofile' },
+])('an iOS sync keeps a signing file that $file names', async ({ file, text }) => {
+  const paths = [
+    'ios/Resources/App.mobileprovision',
+    'ios/dist.p12',
+    'ios/fastlane/AuthKey_ABC.p8',
+    'ios/App.provisionprofile',
+  ];
+  for (const path of paths) write(path, 'x');
+  write(file, text);
+  const plan = await iosSyncPlan(root, [...paths, file]);
+  expect(plan.omit.size).toBe(3);
+});
+
+test.each([
+  { path: 'ios/client.p12', platform: 'ios' as const, moves: false },
+  { path: 'ios/fastlane/AuthKey_ABC.p8', platform: 'ios' as const, moves: false },
+  { path: 'ios/App.mobileprovision', platform: 'ios' as const, moves: false },
+  { path: 'ios/App.provisionprofile', platform: 'ios' as const, moves: false },
+  { path: 'ios/pinned.cer', platform: 'ios' as const, moves: true },
+  { path: 'ios/GoogleService-Info.plist', platform: 'ios' as const, moves: true },
+  { path: 'android/app/google-services.json', platform: 'android' as const, moves: true },
+])(
+  'editing $path moves the $platform fingerprint: $moves',
+  async ({ path, platform, moves }) => {
+    write('package.json', '{"name":"app","version":"1.0.0"}');
+    write('android/build.gradle', 'x');
+    write('ios/Podfile', 'x');
+    write(path, 'one');
+    const before = await fingerprintProject(root, { platform });
+    write(path, 'two');
+    const after = await fingerprintProject(root, { platform });
+    expect(after?.hash !== before?.hash).toBe(moves);
+  },
+  60_000,
+);

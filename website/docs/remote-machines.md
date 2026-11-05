@@ -451,6 +451,15 @@ machine synced, including gitignored `.env.production` files. An
 `EXPO_PUBLIC_` variable set only in this shell is not applied; put it in an
 `.env` file.
 
+An iOS offload leaves out `*.p8` (App Store Connect API keys), `*.p12`, `*.mobileprovision`
+and `*.provisionprofile`, wherever they sit in the repository, because a simulator build
+signs ad hoc and never reads them. A file that an Xcode project, xcconfig, Podfile,
+podspec or shell script names by file name is still sent, so the build finds it. The
+rule is by name, so a tracked file with one of these names is left out too. `.env` files,
+`google-services.json`, `GoogleService-Info.plist`, `*.pem`, `*.cer` and every other
+gitignored file are still sent. A device build is signed on this machine and does not
+offload.
+
 A release offload leaves out keystores (`*.keystore`, `*.jks`, `*.p12`, `*.pfx`)
 other than `debug.keystore` and those under an APK's `src/*/assets` or `src/*/res`,
 and `keystore.properties`, and the machine builds with its own private Gradle home,

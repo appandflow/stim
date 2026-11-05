@@ -58,7 +58,7 @@ import type { FingerprintSource } from '@expo/fingerprint';
 import { isReleaseVariant } from '../commands/android/support.ts';
 import { isReleaseConfiguration } from '../commands/ios/support.ts';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
-import type { AndroidSyncPlan } from './signing-files.ts';
+import type { SyncPlan } from './signing-files.ts';
 import { ANDROID_RELEASE_UNSUPPORTED, namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import {
@@ -1332,7 +1332,7 @@ function unsupportedBuild(connection: BuildConnection, request: BuildRequest): s
     : null;
 }
 
-type SyncPlan = (repoRoot: string, paths: readonly string[]) => Promise<AndroidSyncPlan>;
+type SyncPlanner = (repoRoot: string, paths: readonly string[]) => Promise<SyncPlan>;
 
 /** Mirrors the checkout on the machine: the manifest in pages, then every blob it lacks. */
 async function syncSource(
@@ -1342,7 +1342,7 @@ async function syncSource(
   native?: NativeInputSnapshot | GradleTransfer,
   signal?: AbortSignal,
   ignored: readonly string[] = [],
-  syncPlan?: SyncPlan,
+  syncPlan?: SyncPlanner,
 ): Promise<
   { files: number; uploaded: number; uploadedBytes: number; syncMs: number; digest: string } | { failure: string }
 > {
@@ -1595,7 +1595,7 @@ export async function offloadBuild(
     /** The fingerprint sources behind `expectedFingerprint` and the gitignored files they read, as absolute paths. */
     fingerprintInputs?: () => Promise<FingerprintInputs>;
     /** Which of these repository-relative paths stay here, or why none may go, decided before any is uploaded. */
-    syncPlan?: SyncPlan;
+    syncPlan?: SyncPlanner;
     restarts?: number;
   } & (
     | { request: Extract<BuildRequest, { platform: 'macos' }>; expectedFingerprint?: never }

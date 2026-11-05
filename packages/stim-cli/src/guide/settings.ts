@@ -1190,6 +1190,11 @@ Device, --remote, Android CAS compiler builds, builds with the build cache off, 
 and refuse on a cache miss, with a remedy to rerun with --remote-build local or
 auto. An iOS simulator Release or other non-Debug build can: the remote machine
 bundles the JS of the synced checkout into the app.
+An iOS offload leaves out *.p8, *.p12, *.mobileprovision and *.provisionprofile, which a
+simulator build never reads, unless an Xcode project, xcconfig, Podfile, podspec or
+shell script names the file. The rule is by name, so a tracked file is left out too.
+.env files, google-services.json, GoogleService-Info.plist and every other gitignored
+file are still sent.
 An Android release variant can too. A release offload leaves out keystores
 (*.keystore, *.jks, *.p12, *.pfx) other than debug.keystore and those under an APK's
 src/*/assets or src/*/res, and keystore.properties. A release build type signed with

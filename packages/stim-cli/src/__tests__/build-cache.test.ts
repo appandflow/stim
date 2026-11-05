@@ -261,6 +261,46 @@ describe('gitignored fingerprint inputs', () => {
   });
 });
 
+test('gitignored iOS signing files are no fingerprint input by any route, and other ignored files stay', async () => {
+  const write = (path: string) => {
+    mkdirSync(join(root, path, '..'), { recursive: true });
+    writeFileSync(join(root, path), path);
+  };
+  write('package.json');
+  write('.gitignore');
+  writeFileSync(join(root, '.gitignore'), 'apps/app/ios/fastlane/\napps/app/ios/*.p12\ncreds/\n*.plist\n');
+  write('apps/app/ios/Podfile');
+  getExecutor().runFile('git', ['init', '--quiet', root], { timeoutMs: 10_000 });
+  getExecutor().runFile('git', ['-C', root, 'add', '.'], { timeoutMs: 10_000 });
+  write('apps/app/ios/fastlane/AuthKey_ABC.p8');
+  write('apps/app/ios/fastlane/Appfile');
+  write('apps/app/ios/dist.p12');
+  write('apps/app/ios/GoogleService-Info.plist');
+  write('creds/AuthKey_XYZ.p8');
+  write('creds/App.mobileprovision');
+  const real = realpathSync(root);
+  const sources: FingerprintSource[] = [
+    { type: 'dir', filePath: 'apps/app/ios', reasons: ['bareNativeDir'], hash: 'a' },
+    { type: 'file', filePath: 'creds/AuthKey_XYZ.p8', reasons: ['expoConfigExternalFile'], hash: 'b' },
+    { type: 'dir', filePath: 'creds', reasons: ['extraSources'], hash: 'c' },
+  ];
+  expect(
+    await gitignoredFingerprintInputs(
+      real,
+      sources,
+      { platform: 'ios', iosProjectPath: 'apps/app/ios' },
+      { env: { EXPO_NO_DOTENV: '1' } },
+    ),
+  ).toEqual([join(real, 'apps/app/ios/GoogleService-Info.plist'), join(real, 'apps/app/ios/fastlane/Appfile')]);
+  const kept = await gitignoredFingerprintInputs(
+    real,
+    sources,
+    { platform: 'ios', iosProjectPath: 'apps/app/ios', keepSigningFiles: true },
+    { env: { EXPO_NO_DOTENV: '1' } },
+  );
+  expect(kept).toEqual(expect.arrayContaining([join(real, 'apps/app/ios/fastlane/AuthKey_ABC.p8')]));
+});
+
 describe('fingerprints that depend on a local git exclude', () => {
   const git = (dir: string, ...args: string[]) =>
     getExecutor().runFile('git', ['-C', dir, ...args], { timeoutMs: 10_000 });
