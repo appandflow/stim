@@ -69,7 +69,10 @@ struct Sidebar: View {
           if entries.isEmpty { emptyText(options) }
         }
       } header: {
-        SectionLabel(title: options.grouping == .project ? "Projects" : "Workspaces")
+        Text(options.grouping == .project ? "Projects" : "Workspaces")
+          .font(.stim(.caption, weight: .semibold))
+          .foregroundStyle(Palette.secondary)
+          .padding(.top, Space.md)
           .background(PlainSelectionHighlight())
       }
       ForEach(pairedSessions.entries) { entry in
@@ -154,7 +157,7 @@ struct Sidebar: View {
   private func migrateHidden(_ payload: StatusPayload?) {
     let legacyPaths = prefs.hiddenWorkspaces.paths
     migratedHidden = migratedHidden.filter { legacyPaths.contains($0.key) }
-    guard let payload, let connection = ServerSession.shared.localActionConnection, connection.client.hasDesktopAuthority,
+    guard let payload, let connection = ServerSession.shared.statsConnection, connection.client.hasDesktopAuthority,
       connection.home == store.stimHome
     else { return }
     for item in prefs.hiddenWorkspaces.migrations(environments: payload.environments) {
@@ -181,7 +184,7 @@ struct Sidebar: View {
   }
 
   private var pinned: some View {
-    VStack(spacing: Space.xxs) {
+    VStack(spacing: Space.xs) {
       PinnedRow(item: .overview, selection: $selection) {
         SidebarLabel(title: "Overview", icon: "square.grid.2x2", selected: selection == .overview)
       }
@@ -202,7 +205,7 @@ struct Sidebar: View {
       }
     }
     .padding(.horizontal, Space.md)
-    .padding(.bottom, Space.md)
+    .padding(.bottom, Space.lg)
   }
 
   private var brand: some View {
@@ -216,7 +219,8 @@ struct Sidebar: View {
         counts: store.sidebarStatusCounts(prefs.options), title: store.title(of:), isPresented: $showsViewOptions)
     }
     .padding(.horizontal, Space.xl)
-    .padding(.vertical, Space.md)
+    .padding(.top, Space.lg)
+    .padding(.bottom, Space.xl)
   }
 
   @ViewBuilder
@@ -262,9 +266,15 @@ struct SidebarLabel: View {
 
   var body: some View {
     Label {
-      Text(title).lineLimit(1)
+      Text(title)
+        .font(.stim(.callout, weight: selected ? .semibold : .regular))
+        .foregroundStyle(selected ? Palette.primary : Palette.text)
+        .lineLimit(1)
     } icon: {
-      Image(systemName: icon).foregroundStyle(selected ? Palette.primary : Palette.secondary)
+      Image(systemName: icon)
+        .font(.system(size: 14, weight: selected ? .semibold : .regular))
+        .foregroundStyle(selected ? Palette.primary : Palette.secondary)
+        .frame(width: 20)
     }
   }
 }
@@ -278,9 +288,9 @@ private struct PinnedRow<Content: View>: View {
     Button {
       selection = item
     } label: {
-      HStack { content }
-        .padding(.horizontal, Space.md)
-        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+      HStack(spacing: Space.md) { content }
+        .padding(.horizontal, Space.lg)
+        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
     }
     .buttonStyle(.hoverRow(selected: selection == item))
     .accessibilityAddTraits(selection == item ? .isSelected : [])
@@ -299,7 +309,10 @@ struct ProjectRow: View {
       Image(systemName: "folder")
         .foregroundStyle(selected || summary.hasActive ? Palette.primary : Palette.tertiary)
         .accessibilityHidden(true)
-      Text(store.title(of: summary.project)).lineLimit(1).truncationMode(.middle)
+      Text(store.title(of: summary.project))
+        .font(.stim(.callout, weight: .medium))
+        .lineLimit(1)
+        .truncationMode(.middle)
       Spacer()
       if summary.live == 0, summary.settingUp > 0 {
         Text("\(summary.settingUp) new").font(.stim(.caption)).foregroundStyle(Palette.accent).fixedSize()

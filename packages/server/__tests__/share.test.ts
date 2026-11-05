@@ -11,6 +11,7 @@ import { viewerPage } from '../src/share-page.ts';
 import {
   BUTTONS,
   ShareHub,
+  type ShareDeps,
   type ShareLimits,
   type ShareRequest,
   type StartedShare,
@@ -44,6 +45,8 @@ interface Fixture {
   begins: unknown[];
   inputs: unknown[];
   inputResult: { text: string } | { typed: true } | { code: 'action-failed' | 'device-busy'; message: string } | null;
+  /** The simulator keyboard settings the control hub was handed, by control session. */
+  keyboards: { session: string; enabled: boolean }[];
   /** The viewer each input came from, by name. */
   inputBy: string[];
   /** Names of the viewers whose pointer the control hub was told to lift. */
@@ -86,7 +89,7 @@ interface Fixture {
   }[];
 }
 
-function fixture(limits: Partial<ShareLimits> = {}): Fixture {
+function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {}): Fixture {
   const listeners = new Set<StatusListener>();
   let latest = payload();
   const f: Fixture = {
@@ -96,6 +99,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
     begins: [],
     inputs: [],
     inputResult: null,
+    keyboards: [],
     inputBy: [],
     releases: [],
     endFors: [],
@@ -167,6 +171,9 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
       },
       release: (_owner, _session, participant) => {
         f.releases.push(participant.name);
+      },
+      deviceKeyboard: (_owner, session, enabled) => {
+        f.keyboards.push({ session, enabled });
       },
       endFor: (_owner, _reason, message) => {
         f.endFors.push(message);
@@ -247,6 +254,7 @@ function fixture(limits: Partial<ShareLimits> = {}): Fixture {
     },
     limits: { maxFailures: 3, ...limits },
     idle: () => f.idle++,
+    ...deps,
   });
   return f;
 }
@@ -403,8 +411,10 @@ describe('a web share', () => {
     const url = local(share, f.hub.port!);
     const page = await http(url);
     expect(page.status).toBe(200);
-    expect(page.body).toContain('name="password"');
+    expect(page.body).toContain('name="access"');
     expect(page.body).not.toContain('type="password"');
+    expect(page.body).not.toMatch(/password/i);
+    expect(page.body.match(/<input/g)).toHaveLength(1);
     expect(page.headers['cache-control']).toBe('no-store');
     for (let attempt = 0; attempt < 3; attempt++) {
       expect((await http(`${url}login`, { method: 'POST', body: 'password=wrong' })).status).toBe(401);
@@ -412,6 +422,16 @@ describe('a web share', () => {
     const locked = await http(`${url}login`, { method: 'POST', body: `password=${share.password!}` });
     expect(locked.status).toBe(429);
     expect(locked.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('admits the access code field and still the earlier password field a page left open across an update posts', async () => {
+    const share = await started(f);
+    const url = local(share, f.hub.port ?? 0);
+    const named = await http(`${url}login`, { method: 'POST', body: `access=${share.password ?? ''}` });
+    expect(named.status).toBe(303);
+    expect(String(named.headers['set-cookie'])).toContain('stim_share=');
+    const legacy = await http(`${url}login`, { method: 'POST', body: `password=${share.password ?? ''}` });
+    expect(legacy.status).toBe(303);
   });
 
   it('sets an HttpOnly, Secure, SameSite=Strict session cookie scoped to the share and ending with it', async () => {
@@ -555,6 +575,29 @@ describe('a web share', () => {
     video(unit(false, 4));
     await vi.waitFor(() => expect(received).toHaveLength(3));
     expect(received.slice(1).map((packet) => accessUnitOf(packet))).toEqual([unit(true, 3), unit(false, 4)]);
+    expect(f.inputs).toEqual([]);
+  });
+
+  it('ignores the WebRTC messages a page loaded before the upgrade sends, keeping its socket and video', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(
+      url,
+      { origin: origin(url), cookie: await login(url, share.password ?? '') },
+      '?codec=h264',
+    );
+    const received = binaryMessages(socket);
+    let closed = false;
+    socket.on('close', () => (closed = true));
+    socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp', attempt: 1 }));
+    socket.send(JSON.stringify({ type: 'transport', via: 'webrtc', attempt: 1 }));
+    socket.send(JSON.stringify({ type: 'transport', via: 'ws' }));
+    const listener = f.subscribed[0]?.listener;
+    if (!listener) throw new Error('the viewer was not subscribed');
+    const video = videoOf(listener);
+    video(unit(true, 1));
+    await vi.waitFor(() => expect(received).toHaveLength(1));
+    expect(closed).toBe(false);
     expect(f.inputs).toEqual([]);
   });
 
@@ -722,6 +765,39 @@ describe('a web share', () => {
       ['left', 'escape', 'tab', 'a'].map((key) => ({ session: 'c1', command: { input: 'key', key, modifiers: [] } })),
     );
     socket.close();
+  });
+
+  it('with --control, keeps the simulator keyboard setting for the share: every viewer sees it, a later one gets it, and each new control session is handed it', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const headers = { origin: origin(url), cookie: await login(url, share.password ?? '') };
+    const first = await connect(url, headers);
+    await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+    expect(f.keyboards).toEqual([]);
+    await vi.waitFor(() =>
+      expect(first.messages).toContainEqual({ type: 'deviceKeyboard', available: true, on: false }),
+    );
+
+    first.socket.send(JSON.stringify({ type: 'device-keyboard', on: true }));
+    await vi.waitFor(() => expect(f.keyboards.at(-1)).toEqual({ session: 'c1', enabled: true }));
+    const second = await connect(url, headers);
+    await vi.waitFor(() =>
+      expect(second.messages).toContainEqual({ type: 'deviceKeyboard', available: true, on: true }),
+    );
+    expect(first.messages.findLast((m) => m.type === 'deviceKeyboard')).toEqual({
+      type: 'deviceKeyboard',
+      available: true,
+      on: true,
+    });
+
+    f.owner?.send({ event: 'control-ended', session: 'c1', reason: 'failed', message: 'stim-frames exited.' });
+    first.socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+    await vi.waitFor(() => expect(f.keyboards.at(-1)).toEqual({ session: 'c2', enabled: true }));
+
+    second.socket.send(JSON.stringify({ type: 'device-keyboard', on: false }));
+    await vi.waitFor(() => expect(f.keyboards.at(-1)).toEqual({ session: 'c2', enabled: false }));
+    first.socket.close();
+    second.socket.close();
   });
 
   it('with --control, sets and pastes clipboard text, and drops what the clipboard parser refuses', async () => {
@@ -989,6 +1065,25 @@ describe('a web share', () => {
       expect(driving).toContain('data-upgrade="false"');
     });
 
+    it('offers the simulator keyboard setting only to a control session, and ignores it from a view session', async () => {
+      const { url, headers } = await signed();
+      const watcher = await connect(url, { ...headers, cookie: await login(url, 'view%20password') });
+      const driver = await connect(url, { ...headers, cookie: await login(url, 'control%20pass') });
+      await vi.waitFor(() =>
+        expect(driver.messages).toContainEqual({ type: 'deviceKeyboard', available: true, on: false }),
+      );
+      watcher.socket.send(JSON.stringify({ type: 'device-keyboard', on: true }));
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(watcher.messages.map((m) => m.type)).not.toContain('deviceKeyboard');
+      expect(driver.messages.filter((m) => m.type === 'deviceKeyboard')).toEqual([
+        { type: 'deviceKeyboard', available: true, on: false },
+      ]);
+      expect(f.keyboards.filter((entry) => entry.enabled)).toEqual([]);
+      watcher.socket.close();
+      driver.socket.close();
+    });
+
     it('raises a view session to control on the control password, keeps it view on a wrong one, and never lowers one', async () => {
       const { url, headers } = await signed();
       const cookie = await login(url, 'view%20password');
@@ -1089,7 +1184,6 @@ describe('a web share', () => {
       const share = await started(f, { passwordless: true, control: true });
       const url = local(share, f.hub.port ?? 0);
       const headers = { origin: origin(url) };
-      expect((await http(url)).body).toContain('data-ask-name="true"');
       const { socket } = await connect(url, headers);
       const other = await connect(url, headers);
       const seen = new Promise<Record<string, unknown>[]>((resolve) => {
@@ -1206,7 +1300,7 @@ describe('a web share', () => {
       for (let attempt = 0; attempt < 40; attempt++)
         views.push(cookieOf(await http(`${url}login`, body('view%20pass'))));
       expect((await http(url, { cookie: control })).body).toContain('data-control="true"');
-      expect((await http(url, { cookie: firstView })).body).toContain('name="password"');
+      expect((await http(url, { cookie: firstView })).body).toContain('name="access"');
       expect((await http(url, { cookie: views.at(-1) })).body).toContain('data-view-only="true"');
     });
 
@@ -1221,7 +1315,7 @@ describe('a web share', () => {
       expect(refused.status).toBe(429);
       expect(refused.headers['set-cookie']).toBeUndefined();
       const another = cookieOf(await http(`${url}login`, body('control%20pass')));
-      expect((await http(url, { cookie: controls[0] })).body).toContain('name="password"');
+      expect((await http(url, { cookie: controls[0] })).body).toContain('name="access"');
       expect((await http(url, { cookie: controls[1] })).body).toContain('data-control="true"');
       expect((await http(url, { cookie: another })).body).toContain('data-control="true"');
     });
@@ -1249,7 +1343,6 @@ describe('a web share', () => {
         control: true,
         viewOnly: false,
         upgrade: false,
-        askName: false,
         platform,
         buttons: BUTTONS[platform],
         rotate: true,
@@ -1422,7 +1515,7 @@ describe('a web share', () => {
       expect(f.hub.list()).toMatchObject([{ slug: 'pokedex' }]);
       const url = local(share, f.hub.port ?? 0);
       const page = await http(url);
-      expect(page.body).toContain('name="password"');
+      expect(page.body).toContain('name="access"');
       expect(page.body).not.toContain('id="screen"');
       expect((await connect(url, { origin: origin(url) })).status).toBe(401);
       expect((await http(`${url}login`, { method: 'POST', body: 'password=wrong' })).status).toBe(401);
@@ -1451,7 +1544,7 @@ describe('a web share', () => {
       const second = await started(f, { slug: 'pokedex' });
       expect(second.url).toBe(first.url);
       const url = local(second, f.hub.port ?? 0);
-      expect((await http(url, { cookie: oldCookie })).body).toContain('name="password"');
+      expect((await http(url, { cookie: oldCookie })).body).toContain('name="access"');
       expect((await connect(url, { origin: origin(url), cookie: oldCookie })).status).toBe(401);
     });
 
@@ -1840,7 +1933,7 @@ describe('a web share', () => {
       expect(first.url.endsWith(`/s/${TOKEN}/`)).toBe(true);
       expect(first.expiresAt).toBe(new Date(expiresAt).toISOString());
       const url = local(first, f.hub.port ?? 0);
-      expect((await http(url)).body).toContain('name="password"');
+      expect((await http(url)).body).toContain('name="access"');
       expect(await login(url, 'saved-password')).toContain('stim_share=');
 
       await f.hub.stop(WORKSPACE);
@@ -2035,5 +2128,93 @@ describe('a web share', () => {
       expect((await http(url, { cookie })).status).toBe(200);
       socket.close();
     });
+  });
+});
+
+describe("a web share starting while the workspace's devices may be shut down", () => {
+  function claim() {
+    const events: string[] = [];
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let refusal: { code: 'action-failed'; message: string } | null = null;
+    const holdWorkspace: ShareDeps['holdWorkspace'] = async (workspace) => {
+      events.push(`hold ${workspace}`);
+      await gate;
+      if (refusal) return refusal;
+      return { release: () => events.push('release') };
+    };
+    return {
+      events,
+      open,
+      holdWorkspace,
+      refuse: (message: string) => {
+        refusal = { code: 'action-failed', message };
+      },
+    };
+  }
+
+  it('reads the device only after a shutdown that held the claim has finished', async () => {
+    const held = claim();
+    const f = fixture({}, { holdWorkspace: held.holdWorkspace });
+    const starting = f.hub.start(shareRequest());
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.hub.list()).toEqual([]);
+    f.status(payload('Shutdown'));
+    held.open();
+    expect(await starting).toMatchObject({ code: 'action-failed' });
+    expect(f.hub.list()).toEqual([]);
+    expect(f.routeOpens).toEqual([]);
+    expect(held.events).toEqual([`hold ${WORKSPACE}`, 'release']);
+  });
+
+  it('counts every start as in flight until it answers', async () => {
+    const held = claim();
+    const f = fixture({}, { holdWorkspace: held.holdWorkspace });
+    expect(f.hub.startsInFlight).toBe(0);
+    const starting = f.hub.start(shareRequest());
+    expect(f.hub.startsInFlight).toBe(1);
+    const second = f.hub.start(shareRequest({ platform: 'android' }));
+    expect(f.hub.startsInFlight).toBe(2);
+    held.refuse('`stim ios` holds the native-run claim');
+    held.open();
+    await Promise.all([starting, second]);
+    expect(f.hub.startsInFlight).toBe(0);
+  });
+
+  it('is refused with the claim holder named, and registers nothing, when the claim cannot be taken', async () => {
+    const held = claim();
+    held.refuse('`stim ios` holds the native-run claim');
+    const f = fixture({}, { holdWorkspace: held.holdWorkspace });
+    const starting = f.hub.start(shareRequest());
+    held.open();
+    expect(await starting).toEqual({ code: 'action-failed', message: '`stim ios` holds the native-run claim' });
+    expect(f.hub.list()).toEqual([]);
+    expect(f.routeOpens).toEqual([]);
+    expect(held.events).toEqual([`hold ${WORKSPACE}`]);
+  });
+
+  it('keeps the claim until the share is registered', async () => {
+    const held = claim();
+    held.open();
+    const registeredAtRelease: number[] = [];
+    const f: Fixture = fixture(
+      {},
+      {
+        holdWorkspace: async (workspace, stop) => {
+          const hold = await held.holdWorkspace!(workspace, stop);
+          if ('code' in hold) return hold;
+          return {
+            release: () => {
+              registeredAtRelease.push(f.hub.list().length);
+              hold.release();
+            },
+          };
+        },
+      },
+    );
+    await f.hub.start(shareRequest());
+    expect(registeredAtRelease).toEqual([1]);
   });
 });

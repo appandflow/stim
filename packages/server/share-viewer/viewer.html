@@ -15,7 +15,6 @@
     data-control="{{control}}"
     data-view-only="{{viewOnly}}"
     data-upgrade="{{upgrade}}"
-    data-ask-name="{{askName}}"
     data-platform="{{platform}}"
     data-buttons="{{buttons}}"
     data-can-rotate="{{rotate}}"
@@ -45,12 +44,12 @@
         </div>
       </div>
       <form class="upgrade" id="upgrade" method="post" action="login" hidden>
-        <button class="link" id="upgrade-open" type="button">Have the control password?</button>
+        <button class="link" id="upgrade-open" type="button">Have the control access code?</button>
         <span class="upgrade-fields" id="upgrade-fields" hidden>
           <input
             class="field secret"
             type="text"
-            name="password"
+            name="access"
             autocomplete="off"
             autocapitalize="off"
             autocorrect="off"
@@ -61,8 +60,8 @@
             data-form-type="other"
             required
             maxlength="128"
-            placeholder="Control password"
-            aria-label="Control password"
+            placeholder="Control access code"
+            aria-label="Control access code"
           />
           <button class="primary small" type="submit">Control</button>
         </span>
@@ -104,6 +103,16 @@
             hidden
             aria-label="Device clipboard text"
           ></textarea>
+          <div class="options-group" id="keyboard-group" hidden>
+            <label class="switch-row" for="device-keyboard">
+              <span class="switch-label">Device keyboard</span>
+              <input class="switch" id="device-keyboard" type="checkbox" role="switch" />
+            </label>
+            <p class="options-help">
+              Shows the simulator's own on-screen keyboard, for everyone viewing this share. Typing on this browser's
+              keyboard still reaches the device.
+            </p>
+          </div>
         </div>
       </div>
       <button type="button" class="iconbtn" id="full" title="Fullscreen" aria-label="Fullscreen">
@@ -126,7 +135,7 @@
       </div>
       <form class="name-card" id="name-form" hidden>
         <label for="name-input">Your name <span class="optional">(optional)</span></label>
-        <input class="field" id="name-input" maxlength="24" autocomplete="nickname" />
+        <input class="field" id="name-input" maxlength="24" autocomplete="nickname" placeholder="Your name" />
         <button class="primary small" type="submit">Join</button>
         <button class="link" id="name-skip" type="button">Skip</button>
       </form>
@@ -152,6 +161,14 @@
           </svg>
         </button>
       </div>
+      <div class="group" data-group="keyboard">
+        <button type="button" id="keyboard-button" title="Keyboard" aria-label="Keyboard" aria-pressed="false" hidden>
+          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3" y="6.5" width="18" height="11" rx="2.5" />
+            <path d="M7 10h.01M10 10h.01M14 10h.01M17 10h.01M8 14h8" />
+          </svg>
+        </button>
+      </div>
       <div class="group" data-group="rotate">
         <button type="button" data-rotate="left" title="Rotate left" aria-label="Rotate left">
           <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
@@ -167,6 +184,28 @@
         </button>
       </div>
     </nav>
+    <div class="typebar" id="typebar" hidden>
+      <span class="typewrap">
+        <input
+          class="typefield"
+          id="type-field"
+          type="text"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          enterkeyhint="send"
+          maxlength="100"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
+          data-form-type="other"
+          aria-label="Type on the device"
+        />
+        <span class="typehint" id="type-hint" aria-hidden="true">Type on the device</span>
+      </span>
+      <button class="typedone" id="type-done" type="button">Done</button>
+    </div>
     <footer>
       <p class="credit">
         Shared with <a href="https://stim.appandflow.com" target="_blank" rel="noopener noreferrer">Stim</a> by
@@ -184,6 +223,7 @@
     <script src="/s/assets/gestures.js"></script>
     <script src="/s/assets/keys.js"></script>
     <script src="/s/assets/people.js"></script>
+    <script src="/s/assets/stats.js"></script>
     <script src="/s/assets/reconnect.js"></script>
     <script src="/s/assets/viewer.js"></script>
   </body>

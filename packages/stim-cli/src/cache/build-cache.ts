@@ -58,6 +58,26 @@ export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
   '**/.expo/**',
 ];
 
+/** What an Android offload may not send, so both machines leave it out of the fingerprint. An APK's own assets stay in. */
+const ANDROID_SIGNING_FINGERPRINT_IGNORES: string[] = [
+  '**/*.keystore',
+  '**/*.jks',
+  '**/*.p12',
+  '**/*.pfx',
+  '**/keystore.properties',
+  '!**/debug.keystore',
+  '!**/src/*/assets/**',
+  '!**/src/*/res/**',
+];
+
+/** What an iOS offload may not send: App Store Connect API keys, certificates and provisioning profiles. */
+const IOS_SIGNING_FINGERPRINT_IGNORES: string[] = [
+  '**/*.p8',
+  '**/*.p12',
+  '**/*.mobileprovision',
+  '**/*.provisionprofile',
+];
+
 /**
  * `react-native bundle` output, ignored only while an ignore pattern matches it: a committed copy can be a native
  * resource, while a Debug build loads JS from Metro and a release cache hit injects the current JS. The match skips
@@ -231,6 +251,8 @@ export interface FingerprintTarget {
   androidLayout?: AndroidLayout | null;
   ignoredPaths?: readonly string[];
   trackedPaths?: readonly string[];
+  /** Lists Android and iOS signing files as inputs, for the sync's own decision about them; they still hash to nothing. */
+  keepSigningFiles?: boolean;
 }
 
 /**
@@ -270,6 +292,7 @@ export async function fingerprintOptions(
     androidLayout = null,
     ignoredPaths = [],
     trackedPaths = [],
+    keepSigningFiles = false,
   }: FingerprintTarget,
 ): Promise<FingerprintOptions> {
   const ignoredHere = (names: readonly string[], noIndex = false) =>
@@ -309,7 +332,13 @@ export async function fingerprintOptions(
     ...platforms,
     ...(fileHookTransform ? { fileHookTransform } : {}),
     ...(ios.extraSources ? { extraSources: ios.extraSources } : {}),
-    ignorePaths: [...DEFAULT_FINGERPRINT_IGNORES, ...bundleOutput, ...(ios.ignorePaths ?? [])],
+    ignorePaths: [
+      ...DEFAULT_FINGERPRINT_IGNORES,
+      ...bundleOutput,
+      ...(ios.ignorePaths ?? []),
+      ...(platform === 'android' && !keepSigningFiles ? ANDROID_SIGNING_FINGERPRINT_IGNORES : []),
+      ...(platform === 'ios' && !keepSigningFiles ? IOS_SIGNING_FINGERPRINT_IGNORES : []),
+    ],
     silent: true,
   };
 }

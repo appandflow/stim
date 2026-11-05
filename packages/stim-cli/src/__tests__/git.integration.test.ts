@@ -11,7 +11,7 @@ import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { testContext } from './_context.ts';
 import { childEnvironment } from '../workspace/git-read.ts';
-import { pullRequestLookupAsync, pullRequestLookups } from '../workspace/pull-request.ts';
+import { pullRequestLookups } from '../workspace/pull-request.ts';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { maintenancePinnedAsync } from '../maintenance/protect.ts';
 import { collectArtifactsAsync } from '../maintenance/artifacts.ts';
@@ -44,7 +44,6 @@ test.each([
   'repository metadata',
   'operation',
   'PR lookup',
-  'bulk PR lookup',
   'maintenance pin',
   'maintenance artifacts',
   'maintenance activity',
@@ -156,8 +155,7 @@ test.each([
               context.signal,
             );
           if (kind === 'maintenance preview') return previewMaintenance({ operation: context });
-          if (kind === 'PR lookup') return pullRequestLookupAsync(context)(dir, 'feature', '1'.repeat(40));
-          if (kind === 'bulk PR lookup')
+          if (kind === 'PR lookup')
             return pullRequestLookups({ operation: context })(dir, [
               { cwd: dir, branch: 'feature', head: '1'.repeat(40) },
             ]);

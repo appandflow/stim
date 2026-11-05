@@ -112,20 +112,20 @@
   "packages/server": {
     "src": {
       "as": 308,
-      "nonNull": 119
+      "nonNull": 118
     },
     "test": {
-      "as": 294,
-      "nonNull": 419
+      "as": 293,
+      "nonNull": 420
     }
   },
   "packages/stim-cli": {
     "src": {
-      "as": 830,
-      "nonNull": 339
+      "as": 828,
+      "nonNull": 338
     },
     "test": {
-      "as": 437,
+      "as": 444,
       "nonNull": 612
     }
   },

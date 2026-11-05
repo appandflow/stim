@@ -30,6 +30,7 @@ import {
 } from '../workspace/config.ts';
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
+import { brokenPodLinks } from '../diagnostics/doctor.ts';
 import { relocatePods } from '../workspace/pods-relocate.ts';
 import { detectIsExpo, isMobileProject, findProjectRoot } from '../workspace/project.ts';
 import { nativeDirCarry, recordPrebuildAsync } from '../engine/prebuild.ts';
@@ -84,7 +85,8 @@ import {
 } from '../workspace/worktree.ts';
 import type { WorktreeEntry } from '../workspace/worktree.ts';
 import { disposeTrash, moveIgnoredTreesToTrash, restoreTrashedTrees } from '../workspace/worktree-trash.ts';
-import { endedPullRequest, pullRequestLookupAsync } from '../workspace/pull-request.ts';
+import { refreshPullRequests } from '../pull-request-state.ts';
+import { endedPullRequest } from '../workspace/pull-request.ts';
 import { discoverXcodeProject } from '../integrations/react-native-build.ts';
 
 interface WorktreeSettings {
@@ -110,11 +112,29 @@ function cloneReplacementNote(target: string, dirs: string[]): string {
     : '';
 }
 
-function relocateCarriedPods(root: string, target: string, copied: string[], out: (line: string) => void): void {
+async function relocateCarriedPods(
+  root: string,
+  target: string,
+  copied: string[],
+  out: (line: string) => void,
+): Promise<void> {
   const canRelocate = depsOutOfSync(root, target, copied).length === 0;
   for (const rel of copied) {
     if (rel !== 'Pods' && !rel.endsWith('/Pods')) continue;
     const iosDir = rel === 'Pods' ? '' : rel.slice(0, -'/Pods'.length);
+    const broken = await brokenPodLinks(join(target, rel));
+    if (broken.length > 0) {
+      rmSync(join(target, rel, 'Manifest.lock'), { force: true });
+      out(
+        chalk.yellow(
+          phaseLine(
+            'carry',
+            `carried ${rel} has ${broken.length} broken link${broken.length === 1 ? '' : 's'}, such as ${relative(target, broken[0] ?? '')}; removed ${rel}/Manifest.lock so pod install runs. To fix the source checkout, run ${podInstallCommand(root, join(root, iosDir), '--clean-install')} in ${join(root, iosDir)}`,
+          ),
+        ),
+      );
+      continue;
+    }
     try {
       const result = relocatePods({
         podsDir: join(target, rel),
@@ -422,7 +442,7 @@ export async function warmWorktreeTarget(opts: {
             }
             if (result.copied.length) {
               out(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
-              relocateCarriedPods(root, target, result.copied, out);
+              await relocateCarriedPods(root, target, result.copied, out);
               reportCarriedStateHealth(root, target, result.copied, iosConfigurationSetting(settings) ?? 'Debug', out);
             }
             out(
@@ -733,10 +753,12 @@ async function reclaimAll(
   keys: readonly string[] = reclaimKeys(rootPath),
   {
     preserveRootProject = false,
+    preserveAllProjects = false,
     removedBy,
     operation,
   }: {
     preserveRootProject?: boolean;
+    preserveAllProjects?: boolean;
     removedBy?: 'worktree-remove' | 'gc' | 'maintenance';
     operation?: StimContext;
   } = {},
@@ -768,7 +790,7 @@ async function reclaimAll(
         archive: removedBy ? { removedBy } : undefined,
         deleteOwnedDevices: true,
         parkOwnedDevices: pressure === 'normal',
-        preserveProjectRecord: preserveRootProject && key === rootPath,
+        preserveProjectRecord: preserveAllProjects || (preserveRootProject && key === rootPath),
         stopRequester: { by: 'stim worktree remove' },
         operation,
       });
@@ -1420,7 +1442,10 @@ async function removeOrRefuse(
     !inspection.dirtyLines.length
   ) {
     const head = await resolveFullRefAsync(path, 'HEAD', options);
-    const pr = head ? endedPullRequest(await pullRequestLookupAsync(opts.operation)(path, branch, head)) : null;
+    const [lookup] = head
+      ? await refreshPullRequests({ maxAgeMs: 0, operation: opts.operation })(path, [{ path, cwd: path, branch, head }])
+      : [];
+    const pr = endedPullRequest(lookup);
     if (head && pr?.state === 'merged') {
       mergedHead = head;
       inspection = await inspectRemoval(path, mergedHead, opts.operation);
@@ -1477,7 +1502,7 @@ async function removeOrRefuse(
             if (archive) await discardWorktreeArchive(archive);
           };
           const result = await reclaimAll(path, lockedKeys, {
-            preserveRootProject: true,
+            preserveAllProjects: true,
             removedBy: opts.removedBy ?? 'worktree-remove',
             operation: opts.operation,
           });
@@ -1592,6 +1617,15 @@ async function removeOrRefuse(
           }
           onRemoved();
           try {
+            for (const key of result.reclaimedKeys) {
+              if (key === path) continue;
+              try {
+                await withConfigLockAsync(() => removeProject(key));
+              } catch (error) {
+                output.error(chalk.yellow(`Could not remove the project record of ${key}: ${String(error)}`));
+                output.fail();
+              }
+            }
             forgetStatusMeasures(path, result.reclaimedKeys);
             const finish = (): void => {
               printRemovalCleanup(result, false, output);

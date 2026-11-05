@@ -711,8 +711,16 @@ and recordings keep their existing capture. Turn the frame off to use replay.
 With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as
 driven. Touches on the frame go to the device as a touch that follows your
-finger: a tap, a drag or swipe, or a long press. The toolbar under the screen
-is a compact icon bar that scrolls sideways when needed in either orientation.
+finger: a tap, a drag or swipe, or a long press. On an iOS simulator, an Android
+emulator or an Android phone, two fingers pinch or pan together: the phone sends
+both as one `input.touch` gesture with a second point (`x2`, `y2`) on every
+phase. The first finger waits 40 ms for a second one, so a tap on these devices
+reaches the device that much later, and a second finger that lands later lifts
+the first and presses both. Once either finger lifts, the gesture ends and the
+other finger is ignored until every finger is up. A macOS app, a web page and an
+iPhone Duo take one finger. A server older than this field turns a two-finger
+gesture into one finger, and an older hosted worker refuses it. The toolbar under the
+screen is a compact icon bar that scrolls sideways when needed in either orientation.
 Each button has a spoken label and a 44-point touch target. It has **Keyboard**,
 which opens the phone's keyboard and types what you type (printable ASCII;
 Return and Delete included), **Home**, **Lock**, and on Android **Back** and
@@ -748,11 +756,15 @@ did not apply.
 
 When status reports the device driven by something else, such as
 agent-device, a `stim device lock`, or another phone, a small chip with a
-cursor icon next to the model names it. **Control** takes over immediately on that explicit tap; the machine records the takeover in its
-action log. The chip stays while you have control, because that driver can
-still send input to the device. When the server refuses
-Control because of a driver that status did not show yet, a banner gives its reason
-with **Take Over**, which also starts control immediately when tapped.
+cursor icon next to the model names it. On a server with `shared-control`,
+**Control** starts at once while others drive the device: the phone, Stim
+Desktop, web share viewers and agents all send input to it together. The chip
+stays while you have control, because that driver still sends input too. The
+server still refuses Control while another workspace holds the device's lease,
+and an older server also refuses it while someone else drives the device. The
+banner then gives its reason with **Take Over**, which starts control
+immediately when tapped: without the other workspace's lease, or by taking the
+device from whoever drove it on an older server.
 
 ## Actions
 
@@ -828,8 +840,8 @@ AppDelegate.swift:71`), or with the same error code, such as an app that
 - **Machine in trouble**: disk below Stim's floor, critical memory pressure,
   or a machine that went offline or refuses the pairing. It opens the machine
   sheet.
-- **Someone takes over your device**: another phone took over a device you
-  control, or an agent started driving it. It opens the device viewer.
+- **Someone else drives your device**: an agent started driving a device you
+  control, or, on a server without `shared-control`, another phone took it over. It opens the device viewer.
 - **Needs you**: something only a person can fix, such as a port held by
   another app, a supervisor or browser Stim cannot verify, a signing or
   provisioning failure, an expired device lease or a billable EAS session left
@@ -1641,10 +1653,23 @@ or prefix each command with `npx`).
 - A `mobile-v<version>` tag on `main` always builds and distributes. The version
   must equal `version` in `app.config.ts`, so raise it first.
 
-Every mode except `rollback` and `republish` runs the unit tests, the boot test
-included, before the step that loads `EXPO_TOKEN`. A failing test stops the run
-before anything is published or built. `rollback` and `republish` skip them
-because they must still work when `main` is broken.
+The workflow runs three jobs in order. `verify` checks that the commit is on
+`main`, that a tag matches `version` in `app.config.ts`, and, in every mode
+except `rollback` and `republish`, runs the unit tests, the boot test included.
+It runs in no environment and loads no secret. `demo-server` then deploys the
+App Review demo server with `.github/workflows/demo-server-deploy.yml` and
+smoke tests it, on a tag and in every mode except `rollback` and `republish`,
+so App Review never gets a build or update whose demo server is not live.
+`release` publishes, builds, rolls back or republishes. A failure in `verify`,
+the deploy or the smoke test stops the run before anything is published or
+built; a failing check in `verify` never deploys the demo server. The demo
+deploy runs before the `release` environment approval. Rejecting that approval
+does not roll back the deployed demo server.
+On a tag, missing Cloudflare secrets or `DEMO_TOKEN` fail the deploy. On a
+dispatched release, missing Cloudflare secrets skip deployment; a missing
+`DEMO_TOKEN` skips only the smoke test, with a notice. `rollback` and
+`republish` skip the tests and the deploy because they must still work when
+`main` is broken. See [Deploy](../demo-server/README.md#deploy).
 
 `eas build` records as the build's runtime the fingerprint computed on the
 machine that starts it, so a build from this workflow and the fingerprint

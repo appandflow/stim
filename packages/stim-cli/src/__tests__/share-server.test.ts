@@ -104,6 +104,39 @@ describe('starting a stim-server for a share', () => {
     await server.close();
   });
 
+  it('leaves a server with a share start in flight running, and names the pid and the count', async () => {
+    const server = await serveShareList(() => ({ shares: [], starting: 2 }));
+    const claim = tryAcquireClaim({
+      root: join(configDir(), 'server', 'share-server'),
+      mode: 'exclusive',
+      details: { port: 1 },
+    });
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    expect(await stopIdleShareServer('1.0.0')).toEqual({ pid: process.pid, starting: 2 });
+    expect(kill).not.toHaveBeenCalled();
+    releaseClaim(claim.acquired);
+    await server.close();
+  });
+
+  it('stops a server that reports no starting count, as one before share-starting does', async () => {
+    const server = await serveShareList(() => ({ shares: [] }));
+    const claim = tryAcquireClaim({
+      root: join(configDir(), 'server', 'share-server'),
+      mode: 'exclusive',
+      details: { port: 1 },
+    });
+    let exited = false;
+    const kill = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+      if (signal === 0 && exited) throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
+      if (signal === 'SIGTERM') exited = true;
+      return true;
+    });
+    expect(await stopIdleShareServer('1.0.0')).toEqual({ pid: process.pid, exited: true });
+    expect(kill).toHaveBeenCalledWith(process.pid, 'SIGTERM');
+    releaseClaim(claim.acquired);
+    await server.close();
+  });
+
   it('says the server has not exited when it is still there after 15 s', async () => {
     const server = await serveShareList(() => ({ shares: [] }));
     const claim = tryAcquireClaim({

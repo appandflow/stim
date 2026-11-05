@@ -299,6 +299,40 @@ describe('stim share', () => {
       expect(links().android.token).toBe(TOKEN.replace('abc', 'xyz'));
     });
 
+    it('leaves the file to a server that saved the share, and does not print its saved flag', async () => {
+      const deps = fake([started({ saved: true }), started({ saved: true, expiresAt: FUTURE })]);
+      const first = await runShare('android', { json: true }, deps, '1.0.0');
+      expect(first).toMatchObject({ ok: true });
+      expect(first.ok && first.output).not.toHaveProperty('saved');
+      expect(existsSync(workspaceShareLinksFile('/work/app'))).toBe(false);
+      mkdirSync(dirname(workspaceShareLinksFile('/work/app')), { recursive: true });
+      writeFileSync(
+        workspaceShareLinksFile('/work/app'),
+        JSON.stringify({
+          version: 1,
+          links: {
+            android: {
+              platform: 'android',
+              slot: 'default',
+              physical: false,
+              token: TOKEN,
+              control: false,
+              password: 'generated-pw-1',
+              auth: 'generated',
+              viewAuth: null,
+              state: 'stopped',
+              createdAt: FUTURE,
+              expiresAt: FUTURE,
+            },
+          },
+        }),
+      );
+      const reused = await runShare('android', { reuse: true, json: true }, deps, '1.0.0');
+      expect(reused).toMatchObject({ ok: true, output: { reused: true } });
+      expect(reused.ok && reused.output).not.toHaveProperty('saved');
+      expect(links().android.state).toBe('stopped');
+    });
+
     it('keeps one link per platform, slot and physical device, with the password the person set and none for an open share', async () => {
       const deps = fake([
         started({ auth: 'set', password: undefined }),
@@ -487,6 +521,18 @@ describe('stim share', () => {
         output: { stoppedServer: 4242, stillStopping: true },
         text: expect.stringContaining('has not exited yet'),
       });
+    });
+
+    it('says the stim-server was left running when a share start is in flight', async () => {
+      const deps = fake([() => ({ result: { stopped: [] } })]);
+      deps.stopServer = async () => ({ pid: 4242, starting: 1 });
+      const result = await runShare('stop', {}, deps, '1.0.0');
+      expect(result).toMatchObject({
+        ok: true,
+        output: { keptServer: 4242, startingShares: 1 },
+        text: expect.stringContaining('Left the stim-server stim share started (pid 4242) running'),
+      });
+      expect(JSON.stringify(result)).not.toContain('stoppedServer');
     });
 
     it('tells the person to update an older stim-server that does not take a saved link', async () => {

@@ -4,6 +4,7 @@ import {
   buildCacheKey,
   changedDuringBuildLine,
   configInputsChanged,
+  expoProductionEnvFiles,
   filesystemBuildCapability,
   fingerprintDiffRecord,
   fingerprintProject,
@@ -22,7 +23,7 @@ import { explainBuildMiss, fingerprintErrorMissReason } from '../cache/miss-reas
 import { formatDuration, shortHash } from '../command-output.ts';
 import { androidMetroRuntime, androidProcessRuntime } from '../commands/android/launch.ts';
 import { existsSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { join, relative, resolve as resolvePath, sep } from 'node:path';
 import { androidHome } from '../devices/android.ts';
 import { androidSdkRefusal } from '../engine/gradle.ts';
 import {
@@ -33,11 +34,12 @@ import {
   dumpApkManifest,
   NO_FINGERPRINT,
 } from '../commands/android/support.ts';
-import { resolveKeystore, swapApkBundle } from '../engine/apk-swap.ts';
+import { resolveKeystore, swapApkBundle, zipalignAndSignApk } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import { resolveCcache } from '../engine/ccache.ts';
 import { planPrebuild, runPrebuild, staleNativeDirRefusal, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { loadProjectProvider } from '../engine/remote-cache.ts';
+import { androidSyncPlan } from '../offload/signing-files.ts';
 import { androidRequirements, androidToolchainAsync } from '../offload/toolchain.ts';
 import { detectAndroidPackage, detectAppIds } from '../workspace/app-id.ts';
 import { detectIsExpo } from '../workspace/project-files.ts';
@@ -75,6 +77,7 @@ export interface ReactNativeAndroidDependencies {
   build?: typeof buildAndroid;
   ccacheFor?: typeof resolveCcache;
   swapApk?: typeof swapApkBundle;
+  signApk?: typeof zipalignAndSignApk;
   readState?: typeof readWorkspaceState;
   platform?: NodeJS.Platform;
 }
@@ -163,6 +166,7 @@ function reactNativeAndroidArtifact(
     build = buildAndroid,
     ccacheFor = resolveCcache,
     swapApk = swapApkBundle,
+    signApk = zipalignAndSignApk,
     readState = readWorkspaceState,
   }: ReactNativeAndroidDependencies,
 ): AndroidArtifactRecipe {
@@ -182,13 +186,27 @@ function reactNativeAndroidArtifact(
   let fingerprintCheck: FingerprintCheck | null = null;
   const identity = () => ({ hash, key: buildCacheKey('android', hash, runOptions) });
 
+  const releaseKeystore = () => {
+    const committed = settingOriginScope(settingsLayers(context), 'android.keystore') === 'committed';
+    return resolveKeystore(root, settings, layout, committed ? (context.repoRoot ?? root) : null);
+  };
+
   const materialize: AndroidArtifactRecipe['materialize'] = async (key, cachedPath) => {
     if (!release) return { apkPath: cachedPath, directory: null };
+    const assets = storedAssets('android', key);
+    if (!assets) {
+      phase(
+        'swap',
+        chalk.yellow(
+          `no asset list beside this cached ${variant} APK, because another machine built it or it predates asset tracking, so its JS cannot be replaced -- building fresh instead`,
+        ),
+      );
+      return null;
+    }
     phase('swap', `regenerating this workspace's JS for the cached ${variant} APK`);
     let keystore;
     try {
-      const committed = settingOriginScope(settingsLayers(context), 'android.keystore') === 'committed';
-      keystore = resolveKeystore(root, settings, layout, committed ? (context.repoRoot ?? root) : null);
+      keystore = releaseKeystore();
     } catch (error) {
       phase('swap', chalk.yellow(`${(error as Error).message} -- building fresh instead`));
       return null;
@@ -202,7 +220,7 @@ function reactNativeAndroidArtifact(
       keystore,
       layout,
       logWriter: writer,
-      storedAssets: storedAssets('android', key),
+      storedAssets: assets,
     });
     if (swap?.ok && swap.apkPath) {
       if (swap.note) phase('swap', chalk.yellow(swap.note));
@@ -234,6 +252,7 @@ function reactNativeAndroidArtifact(
   };
 
   return {
+    embedsJs: release,
     fingerprintCheck: () => fingerprintCheck,
     async identity() {
       let computed;
@@ -417,13 +436,7 @@ function reactNativeAndroidArtifact(
             runOptions: Object.keys(runOptions).length ? runOptions : null,
           },
     offload: {
-      unsupported: release
-        ? `${variant} builds build here`
-        : cas
-          ? 'Apple Clang CAS builds build here'
-          : !buildPlan.cache.write
-            ? 'the build cache is off'
-            : null,
+      unsupported: cas ? 'Apple Clang CAS builds build here' : !buildPlan.cache.write ? 'the build cache is off' : null,
       target: async () => ({
         platform: 'android',
         local: await androidToolchainAsync(operation?.env),
@@ -431,7 +444,7 @@ function reactNativeAndroidArtifact(
       }),
       request: {
         platform: 'android',
-        cacheArtifact: buildPlan.cache.write && buildPlan.cache.remote,
+        cacheArtifact: !release && buildPlan.cache.write && buildPlan.cache.remote,
         isExpo,
         android: {
           variant,
@@ -444,13 +457,60 @@ function reactNativeAndroidArtifact(
       },
       fingerprintInputs: async () => ({
         sources,
-        ignored: await gitignoredFingerprintInputs(
-          root,
-          sources,
-          { platform: 'android', androidLayout: layout },
-          { env: operation?.env },
-        ),
+        ignored: [
+          ...(await gitignoredFingerprintInputs(
+            root,
+            sources,
+            { platform: 'android', androidLayout: layout, keepSigningFiles: true },
+            { env: operation?.env },
+          )),
+          ...(release && isExpo
+            ? expoProductionEnvFiles(operation?.env)
+                .map((name) => join(root, name))
+                .filter((path) => existsSync(path))
+            : []),
+        ],
       }),
+      syncPlan: async (repoRoot: string, paths: readonly string[]) => {
+        const keystore = resolveKeystore(root, settings, layout);
+        return androidSyncPlan(repoRoot, paths, {
+          release,
+          configured: [
+            keystore.path,
+            ...(keystore.pass.startsWith('file:') ? [resolvePath(root, keystore.pass.slice('file:'.length))] : []),
+          ],
+          projectScripts: [layout.gradleRoot, layout.moduleDir].flatMap((dir) => [
+            join(dir, 'build.gradle'),
+            join(dir, 'build.gradle.kts'),
+          ]),
+        });
+      },
+      ...(release
+        ? {
+            signUnsigned: async (unsignedPath: string) => {
+              let keystore;
+              try {
+                keystore = releaseKeystore();
+              } catch (error) {
+                return { failure: `could not sign the unsigned ${variant} APK here: ${String(error)}` };
+              }
+              if (!existsSync(keystore.path))
+                return {
+                  failure: `could not sign the unsigned ${variant} APK here: no keystore at ${displayPath(root, keystore.path)}`,
+                };
+              const signedPath = unsignedPath.replace(/-unsigned\.apk$/, '.apk');
+              const failed = await signApk({
+                context: operation,
+                input: unsignedPath,
+                output: signedPath,
+                keystore,
+              });
+              return failed
+                ? { failure: `could not sign the unsigned ${variant} APK here: ${failed.reason}` }
+                : { apkPath: signedPath };
+            },
+          }
+        : {}),
       unchanged: async () => {
         const after = await refingerprintAfterMutation({
           projectRoot: root,

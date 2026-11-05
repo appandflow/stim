@@ -7,8 +7,10 @@ If Stim is not installed globally, replace stim with npx stim.
 AGENT-DEVICE WORKSPACE STATE
 
 stim agent-device <args> runs agent-device in this workspace's state
-directory, on its device (a hosted session keeps agent-device's own) (guide agent, DRIVING THE DEVICE). Its actions appear
-in stim logs --source agent. When you run agent-device directly instead, opt in
+directory, on its device (guide agent, DRIVING THE DEVICE). Its actions appear
+in stim logs --source agent. For a hosted iOS or Android session, the wrapper
+records the command name and result locally. The host keeps the detailed action
+records. When you run agent-device directly on this machine instead, opt in
 to the workspace's state directory reported as agentDevice.stateDir in the
 stim ios, android and macos output and in status. Read it once from status,
 run from the app root:
@@ -592,9 +594,10 @@ WHAT WRITES WHAT
   archive rather than a stream. Streaming with full fidelity needs
   libimobiledevice or pymobiledevice3, which are third-party installs Stim
   does not require. See appandflow/stim#179.
-  agent                agent input on the owned Chrome page is in
-                       web.ndjson (\`guide web\`). For simulators and
-                       emulators, no file: each query reads agent-device's
+  agent                hosted iOS and Android command summaries are in
+                       hosted-agent.ndjson. Agent input on the owned Chrome
+                       page is in web.ndjson (\`guide web\`). For local
+                       devices, each query reads agent-device's
                        session records (~/.agent-device/sessions, or
                        AGENT_DEVICE_STATE_DIR, plus existing workspace
                        agent-device directories) for this workspace's owned

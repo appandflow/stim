@@ -17,6 +17,7 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { runIdleStop } from '../commands/stop.ts';
 import { isStimOwnedAvd, isStimOwnedSim } from '../devices/device-ownership.ts';
+import { holdsDeferredShutdown } from '../devices/deferred-shutdown.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
@@ -116,6 +117,9 @@ async function candidate(path: string, project: ProjectRecord, input: IdlePassIn
   if (input.unsupervised && serving) return { runs: false };
   if (ownsIos && input.sims === null)
     return { runs: true, kept: `its simulators cannot be listed (${input.simsError ?? 'unknown error'})` };
+  const deferredHere = (device: OwnedDeviceActivity) =>
+    device.kind === 'ios' && holdsDeferredShutdown(state, device.slot, device.id, input.now);
+  if (!serving && booted.length > 0 && booted.every(deferredHere)) return { runs: false };
   if (!serving && booted.length === 0) {
     const foreign = input.devices.filter((device) => device.project === path && !ownedHere(device));
     if (!foreign.length) return { runs: false };

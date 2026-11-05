@@ -164,6 +164,26 @@ test('measures stale folders and pull requests in the background, then status re
   expect(calls.filter((call) => call.file === 'gh')).toHaveLength(1);
 });
 
+test('status reports node_modules only while its install is the one that was measured, as gc and the daemon do', async () => {
+  const state = environment();
+  createStatusMeasurer({ updated: () => {}, now: () => clock }).schedule([state], []);
+  await vi.waitFor(() => expect(readDiskUsage(join(app, 'node_modules'))?.signature).toBeDefined());
+  await vi.waitFor(() => expect(readDiskUsage(app)).not.toBeNull());
+
+  const measured = environment();
+  applyStatusMeasures([measured], []);
+  expect(measured.disk).toMatchObject({ worktreeBytes: 1000 * 1024, nodeModulesBytes: 400 * 1024 });
+
+  writeFileSync(join(app, 'node_modules', '.modules.yaml'), 'layoutVersion: 5\n');
+  const reinstalled = environment();
+  applyStatusMeasures([reinstalled], []);
+  expect(reinstalled.disk).toMatchObject({
+    worktreeBytes: 1000 * 1024,
+    nodeModulesBytes: null,
+    nodeModulesPrivateBytes: null,
+  });
+});
+
 test('a checkout is measured without the linked worktrees nested under it', async () => {
   kilobytes = {};
   const common = join(app, '.git');
@@ -248,11 +268,12 @@ test('watchers in separate processes share one walk and one failure', async () =
   calls = [];
   clock += 5 * 60_000;
   first.schedule([state], []);
-  await vi.waitFor(() => expect(duWalks()).toHaveLength(4));
+  await vi.waitFor(() => expect(duWalks()).toHaveLength(3));
   await new Promise((resolve) => setTimeout(resolve, 20));
   second.schedule([state], []);
   await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(duWalks()).toHaveLength(4);
+  expect(duWalks()).toHaveLength(3);
+  expect(duWalks().flat()).not.toContain(join(app, 'node_modules'));
 
   clock += 5 * 60_000;
   duFails = false;

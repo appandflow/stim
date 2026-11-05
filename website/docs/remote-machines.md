@@ -8,175 +8,61 @@ import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
-A **remote machine** is another machine on your tailnet, or on your local
-network (see [Local network, without Tailscale](#local-network-without-tailscale)),
-that Stim can use in two ways.
-It can compile your app and return the artifact; the app still runs on this
-machine's device unless you select a remote target. It can also host an owned
-simulator or emulator and run your app there. One list, `remote.machines`,
-names the machines. Each use needs its own approval from a person on that machine, so a
-listed machine that has not granted one is not used for it, and `stim doctor`
-reports it.
+Use a remote machine to build your app or run a simulator when this machine is busy. Macs can build and host devices. Linux and Windows workers handle Android builds. Building and hosting require separate approvals on the worker.
 
-The server command comes from `@stim-cli/server`; its npx form is
-`npx --yes --package @stim-cli/server@1.21.0 stim-server`.
+[Set up in Desktop](#use-the-desktop-wizard) · [Set up from the CLI](#cli-equivalent) · [Check requirements](#requirements) · [Troubleshoot](#troubleshooting)
+
+The server command ships in `@stim-cli/server`. See [CLI setup](#cli-equivalent) for global and npx invocations.
+
+## Use the Desktop wizard
+
+1. Open **Settings > Connections > This machine uses > Add… > Build or Run Simulators There…**.
+2. Choose an online Tailscale peer. Select **Builds**, **Hosted simulators**, or both. For Linux and Windows, select **Builds**.
+3. Copy the setup command. A person at the worker runs it in Terminal and approves each requested capability. On a Mac running Desktop's own server, you can also [approve in Desktop](#approve-in-stim-desktop-on-the-worker).
+4. Review **Tools**, choose where new builds and devices should run, then try a build if you requested **Builds**. See [Test build](#test-build).
+
+If the wizard shows a key that needs confirmation, compare it with the key printed on the worker before accepting. If it reports a Stim version mismatch, see [Stim versions](#stim-versions).
+
+## Approve in Stim Desktop on the worker
+
+On the worker Mac, choose **Settings > Connections > Using this machine > Add… > Machine to Build or Run Simulators Here**. Paste the copied setup command and choose **Allow** for each expected grant. Keep the window open until the requester connects.
+
+This works with the server that the worker's Desktop started. For a standalone service or a command with custom options such as `--port` or `--yes`, run the setup command in the worker's Terminal.
 
 ## Pause incoming work
 
-On the worker machine, pause new builds and hosted sessions independently:
+Run on the worker. These switches pause new requests and let existing builds and sessions continue. Set either back to `false` to resume.
 
 <StimTabs code={`stim settings set server.buildsPaused true
 stim settings set server.devicesPaused true`} />
 
-The running server reads these machine settings without a restart. A pause
-rejects new work even when a client received an offer before the setting changed.
-Running builds and existing hosted sessions continue; clients can still attach,
-fetch completed artifacts, and stop their sessions. Hosted sessions include iOS,
-Android and macOS. Client approvals are preserved, and local CLI builds and devices
-remain available. These worker settings apply to every requesting machine, including
-explicitly selected workers; Desktop's pool switches only affect that requester's
-automatic placement.
-
-Resume either capability when the machine is available again:
-
-<StimTabs code={`stim settings set server.buildsPaused false
-stim settings set server.devicesPaused false`} />
-
-Both settings default to `false`. Pausing does not make the machine idle: let
-existing work finish or stop the relevant sessions before timing benchmarks.
-
 ## Keep the worker awake
 
-A worker that sleeps stops answering the machines that build or host simulators on it, paired phones and share links. On the worker machine, turn on:
+On a plugged-in Mac worker, prevent sleep while the server is serving other devices.
 
-<StimTabs code={`stim settings set server.keepAwake true`} />
-
-In Stim Desktop on the worker, the same switch is **Keep this machine awake** in **Settings > Connections > Using this machine**.
-
-The setting defaults to `false`. While it is true on a Mac, stim-server prevents idle system sleep (the same as `caffeinate -s`), so the Mac stays reachable while plugged in; on battery it can still sleep, and the display may still sleep. stim-server holds this only while it accepts connections from other machines: its Tailscale or `server.lanAddresses` listener is up and it is not a `--loopback-only` server. It lets go when the setting turns off, when those listeners go away, and when the server stops, and it reads the setting without a restart.
-
-`stim-server service status` prints a `keep awake:` line, and the local `/health` answer carries `keepAwake`, saying whether the assertion is held. If `caffeinate` cannot start or stops, the status reads `failed` and stim-server does not retry by itself: restart stim-server. Turning the setting off and on also retries, but stim-server polls the setting every 5 seconds, so wait more than 5 seconds between the two and confirm with `stim-server service status`. On Linux and Windows workers the setting has no effect and the status line says so.
+<StimTabs code="stim settings set server.keepAwake true" />
 
 ## Choose where to build and run
 
-`remote.machines` names your remote machines; a build needs the machine's build approval.
-Entries use tailnet names, optionally with an HTTPS route port, such as `janics-mac-mini:7444` (default 7443).
-The order of `remote.machines` is the priority order for every workload. A build,
-simulator, emulator or macOS app goes to the first listed machine that has the
-approval, a free slot and a 5-minute load per core under that machine's own
-`server.maxLoadPerCore`. A machine at its caps, over its load limit, unreachable
-or without approval is skipped and the next one in order is tried; load does not
-rank the machines that qualify, so the first machine fills before the next gets
-work. Put the fastest machine first:
-
-<StimTabs code={`stim settings set remote.machines '["fast-mini","slow-mini"]'
-stim doctor`} />
-
-`stim doctor` prints the order as `placement order` and its JSON gives each
-machine a `priority`. Desktop's **Settings > Remote Macs** list shows the order
-and moves a machine up or down.
-
-Every workload takes the same placement words:
-
-| Word           | Meaning                                                                                                                             |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `local`        | This machine only.                                                                                                                  |
-| `auto`         | This machine first, a remote machine when this one is full or busy.                                                                 |
-| `remote`       | Remote machines first, in order; this machine only when none takes the run.                                                         |
-| `remote-only`  | Remote machines in order, never this machine; a build refuses when none takes it, a device or macOS app waits for a host with room. |
-| a machine name | Exactly that machine, with no fallback.                                                                                             |
-
-`remote.build` (builds), `ios.remote` and `android.remote` (simulators and
-emulators, which also take `eas` and `proxy`) and `macos.remote` (macOS apps) hold
-these words, and `--remote-build` and `--remote` override them for one run.
-`remote.build` defaults to `auto`, and the other three run on this machine when
-unset. For instance, a MacBook that should hand everything to its minis and never
-launch a macOS app itself sets `remote.build`, `ios.remote` and `android.remote`
-to `remote` and `macos.remote` to `remote-only`.
-
-Automatic selection considers enabled pool members and falls back locally only when local remains enabled.
-`--remote-build <local|auto|remote|remote-only|name>` overrides `STIM_REMOTE_BUILD`, which
-also overrides `remote.build`. A named worker ignores local capacity;
-it refuses with `STIM_OFFLOAD_REFUSED` instead of trying another worker or
-building locally, and so does `remote-only` when no worker accepts the build. For a configured, paired worker, a cache hit needs no
-compilation and contacts no worker.
-For native Xcode simulator builds, a local and configured-provider cache miss
-also checks enabled paired workers for an exact completed artifact. A hit skips
-source upload and compilation, even if the worker's build slots are full or this
-machine is idle. The fingerprint and full cache key must match; the key includes
-Xcode, SDK, architecture and target options. Missing or corrupt archives follow
-the normal build placement rules. `--remote-build local` keeps this flow local. Workers that lack the
-`build-artifact-cache` feature continue to use normal build placement.
-Native Gradle builds also query completed worker APKs when both source transfer
-and artifact inputs are declared complete. The worker checks its current private
-inputs against its saved receipt for the requested source, resolved variant, ABI
-and build options, then rechecks before download. Its opaque identity stays
-worker-scoped; the returned caller fingerprint remains `null`. This requires
-`native-gradle-peer-cache`. With a known local JDK, lookup also requires
-`native-gradle-peer-jdk` and uses that exact installed JDK major; older workers
-use normal build placement.
-React Native and Expo development builds also check enabled paired workers after
-local and configured-provider misses. Exact post-mutation fingerprints, native
-build options and compatible toolchains must match. A worker keeps its completed
-archive after changing or removing its checkout; a hit downloads it without
-source upload or a build slot. This requires `react-native-peer-cache` and remote
-artifact reads. Release and physical-device builds keep their existing paths.
-SwiftPM, compiler and dependency caches keep their existing paths.
-
-`--no-build-cache` skips artifact lookup and still stores the fresh build;
-it can be used to test a named worker.
+**Builds and devices can go to different machines.** Use `--remote-build` to choose where to compile and `--remote` to choose where to run. A cache hit can skip compilation altogether.
 
 <StimTabs
-code={`stim ios --remote-build janics-mac-mini --no-build-cache
-stim ios --remote-build local`}
+code={`stim ios --remote-build build-mini
+stim ios --remote run-mini
+stim ios --remote-build run-mini --remote run-mini`}
 />
 
-Hosting needs the Mac's device-host approval. For a hosted
-iOS simulator, use the machine name as the remote target:
+| Value          | Placement                                                         |
+| -------------- | ----------------------------------------------------------------- |
+| `local`        | This machine only.                                                |
+| `auto`         | This machine first. Try remote machines when it is full or busy.  |
+| `remote`       | Remote machines first. Fall back here if enabled.                 |
+| `remote-only`  | Remote machines only. A device run can wait for a host with room. |
+| A machine name | Exactly that machine.                                             |
 
-<StimTabs code={`stim ios --remote janics-mac-mini`} />
+Automatic placement follows `remote.machines` order among eligible workers. For a device run, an eligible host named for the build takes priority. Builds default to `remote.build=auto`. Devices and macOS apps default to running here. Set `ios.remote`, `android.remote` or `macos.remote` to change the default. `STIM_REMOTE_BUILD` overrides the build setting, and the CLI flags override both. Stop a running device before switching its host.
 
-The host's own owned devices count toward `concurrency.maxDevices` and the platform's `concurrency.maxIosDevices` or `concurrency.maxAndroidDevices`. Hosted macOS app sessions count against `concurrency.maxDevices` separately from simulators and emulators, and against `concurrency.maxMacosApps`. A refusal names the full limit with its hosted and local counts.
-
-On the host, `stim-server devices` shows **Hosted here** rows with the client,
-platform, device, installed app, state and time; `--json` includes
-`hostedSessions`. Parked and unresolved sessions remain visible, while plain
-stopped sessions are omitted. The person on that machine can list and stop any
-client's session through loopback `device-host.sessions` and
-`device-host.sessions.stop` (`{ session }`). Both require an authenticated local
-Desktop control connection. Stop uses the existing cleanup path; remote
-clients keep their own-session-only `device-host.stop` access.
-
-The host boots its owned simulator headless and mutes it, as a local boot does,
-so the host Mac stays quiet. The mute is best effort and a failure is not
-reported to the client. An Android emulator's media volume is set to zero
-the same way; neither changes the host's own volume. Debug keeps Metro on this machine
-and carries it over connections this machine opens to the host, so the host
-never needs to reach this machine; no `stim start --remote` is needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.
-`--remote-build` independently selects a compatible worker for a cache
-miss. Named hosting has no local fallback. Stop the slot with `stim stop` before
-moving it between local and hosted devices or between hosts.
-
-Native Xcode apps build on this machine and run on the host without Metro; the host
-reports live process readiness. That needs a host that advertises
-`hosted-ios-process`. An older host refuses before reservation or upload; update
-stim-server on it, or use `--remote auto`, which skips it. See
-[native Xcode apps](./commands.md) for the build limits.
-
-A host advertising `hosted-app-state` checks the current installed app attempt's
-process when a Debug launch verifies its bundle. Release and native process
-launches wait three seconds before requiring a live process. Older hosts print
-an update hint and their release/process result stays `unverified`. A failed
-process query is unknown; it does not establish a crash.
-
-`--remote` also accepts two backend names: `eas` creates an EAS Simulator
-session; `proxy` uses an existing agent-device daemon configured with
-`AGENT_DEVICE_DAEMON_BASE_URL` and `AGENT_DEVICE_DAEMON_AUTH_TOKEN`, without
-creating a session. Those targets prepare remote Metro exposure, as
-`stim start --remote` does, and compile locally. They do not select a machine in
-`remote.machines`. See [remote devices and Metro](./owned-devices.md#remote-devices).
-`--remote auto`, `remote` and `remote-only` place iOS or Android on an approved Mac; see [automatic device placement](#automatic-device-placement).
-Android also accepts these backends. The [macOS prototype](./macos.md) takes the same placement words.
+Use `stim doctor` for compatibility and `stim logs --source placement` for the last decision. [Build cache behavior](./build-caches.md) · [Automatic device placement](#automatic-device-placement)
 
 ## Automatic machine pools
 
@@ -242,188 +128,25 @@ For Appduct, set `advertisedIp` in `~/.appduct/config.json` to `127.0.0.1`, run 
 
 ## Hosted parking and restart
 
-On stop, the host parks healthy iOS simulators and Android emulators of approved
-clients up to its `pool.iosParkedMax` and `pool.androidParkedMax`. The host reads
-these settings from its own Stim home, with `STIM_POOL_IOS_PARKED_MAX` and
-`STIM_POOL_ANDROID_PARKED_MAX` overrides. Each platform's hosted limit applies
-across all clients, separately from the local parked pool. `0` disables parking;
-with `STIM_HOME` set, the corresponding environment override is required.
+A host can park a healthy simulator or emulator after `stim stop` and reuse it for the same client. Adoption clears app data. The host's `pool.iosParkedMax` and `pool.androidParkedMax` set limits across clients, separate from the local device pool. Set a limit to `0` to disable parking.
 
-A parked device stays ledger-owned in its session's private home and reports
-`stopped` to the client. A later reserve by the same client adopts the oldest
-compatible device: the resolved model, runtime and architecture match for iOS;
-the system image, device profile and architecture match for Android. Adoption
-clears app data by uninstalling every third-party app, and resets iOS privacy and
-keychain. Another client never adopts it. Parking and adoption remove session
-app copies but keep the content-addressed upload store, so the first run after
-adoption uploads only changed files.
-
-The oldest parked devices beyond the host's platform limit are deleted, also
-after a limit decrease. Adoption-time reconciliation retires unusable devices;
-revocation retires that client's parked devices. All deletion rechecks ownership
-and uses centralized teardown. If GC removes a ledger-owned device, the next
-reconciliation clears its parked marker.
-
-On the hosting Mac, `stim gc` lists parked hosted iOS and Android devices with
-their session, client id, device label, parked time and session-home ledger
-ownership. `stim gc --delete` deletes them through the packaged stop worker in
-each session home while holding its claim. Held claims, changed sessions and
-unverified ownership keep the device; an unreadable journal keeps all hosted
-devices. Android deletion also requires visibility from this shell's Android
-environment; otherwise run gc with the server's `ANDROID_AVD_HOME`/`HOME`.
-Records no longer listed in their session ledger are already removed and skipped.
-`--older-than` filters by parked time; cache scopes omit hosted sessions.
-The CLI leaves the journal unchanged, and the server clears the parked marker
-when it reconciles the empty ledger.
-
-A `stim-server` restart leaves ready iOS and Android sessions running, and the
-restarted server resumes them once their ownership claim is provably free,
-verified against the session's private ledger. A device that cannot be verified
-is stopped. Parked devices persist across restart and can be adopted by the next
-reserve. A running session whose owner is still held by a live process stays
-`unknown` until an explicit `stim stop` reconciles it, and a resumed session is
-stopped after its client has been gone for
-[`maintenance.idleStopHours`](./dev-server-and-logs.md#idle-workspace-stop) and the
-server proves the session's ownership claim is free.
+Verified sessions can survive a server restart. If the server cannot confirm the device's state, run `stim stop` again when the host answers. On the host, `stim gc` lists parked hosted devices and `stim gc --delete` can remove them.
 
 ### Hosted sessions stop when they are idle
 
-Hosted sessions are not kept forever. `maintenance.idleStopHours` (6 hours by
-default, `0` never) applies on both Macs, each from its own settings:
-
-- On the client, the idle workspace stop also stops a workspace whose iOS,
-  Android or macOS device is hosted on a remote Mac, once the host confirms the
-  session is `ready`. It is `stim stop`: the host's stop call ends the session
-  and the host parks or deletes the device as it does for any stop. A host that
-  does not answer, cannot confirm the session (`unknown`) or a placement Stim
-  cannot read keeps the workspace.
-- On the host, stim-server stops a `ready` session whose client has had no
-  connection, no live view or control and no Metro link, and sent no agent-device
-  request, for the host's own machine-scope `maintenance.idleStopHours`, and only while the host's
-  `daemon.mode` is `on`; a project value or `maintenance.keep` on the client does not reach it. This covers a client
-  that vanished without stopping: a closed laptop, a crash, a lost network. Time
-  the server was not running is not counted, and the count survives a restart.
-  The server stops the session the way a person's stop on the host does, never
-  touches a session whose journal state is preparing, stopping or `unknown`, or one with a native
-  operation or an ownership claim it cannot prove free, and records the reason in
-  its log and in the session journal. The count is per client: a client that is
-  still connected for another workspace keeps all of its sessions, and the client
-  side stops the idle ones.
+The client and host each apply their own `maintenance.idleStopHours` (six hours by default, `0` to disable). The client stops a confirmed idle workspace. The host can stop a session after its client has gone away and no viewer, Metro link or agent is using it. The host uses its machine setting. [Idle workspace stop](./dev-server-and-logs.md#idle-workspace-stop)
 
 ## Run Android on a hosting Mac
 
-Use the same device-host approval and name from `remote.machines`:
-
-<StimTabs code={`stim android --remote janics-mac-mini --device-profile pixel_7
+<StimTabs
+code={`stim android --remote janics-mac-mini --device-profile pixel_7
 stim reload android
-stim stop`} />
+stim stop`}
+/>
 
-`android.remote` sets the default (machine scope for every app on this machine; a workspace, repo or committed value overrides it). `--system-image` and
-`--device-profile` select choices installed on the host; the build targets
-its offered ABI. When the host has no matching system image and its machine
-`android.installImages` is `auto`, stim-server installs one with the host's own
-SDK before it creates the emulator, and the client prints
-`image  installing <package> on <mac>` while it waits. The host's licenses must
-already be accepted there; otherwise the run refuses with the command to run on
-the host. `--remote-build` remains independent. Named hosting is strict:
-refusal or an unreachable host fails with `STIM_HOSTING_REFUSED`. Stop before
-changing hosts or moving between local and hosted devices. `--device` with
-`--remote <machine>`, a running local emulator in that slot, and
-`--no-metro-check` for hosted Debug refuse.
+Use the worker's installed device profiles and system images. A worker with `android.installImages=auto` can install a missing image if its SDK licenses are accepted. For Debug, Metro stays on this machine and Stim connects it to the emulator. Release and native Gradle apps run without Metro. Stop before switching hosts or moving the slot back here.
 
-Native Gradle apps run on a hosted emulator too, without Metro; the host reports
-live process readiness. That needs a host that advertises `hosted-android-process`.
-An older host refuses before reservation or upload; update stim-server on it, or
-use `--remote auto`, which skips it. Hosted Android uses the same
-`hosted-app-state` liveness check and three-second release/process wait as hosted
-iOS. Update older hosts to verify process state; an unknown query does not
-establish a crash.
-
-The owned emulator boots headless and is parked on stop within the host's
-`pool.androidParkedMax` limit, or deleted when ineligible. Debug keeps Metro
-here over connections this machine opens to the host; `metro.publicUrl`, `metro.tunnel` and
-`androidEmulatorApp` are ignored. Each run and reload restores the host's adb
-reverse, including after an adb server restart. Release variants skip Metro.
-Status reports `android.host` per slot with a profile and API name, keeping the
-host serial and AVD name private. Unreachable cleanup retains the placement;
-retry stop when the host answers.
-
-Set `hosting.agentDriver` to `agent-device` on the hosting Mac and install
-agent-device 0.21.30 or later on both machines. `android.host.agent` in
-`stim status --json` reports a private remote-config file per slot, which
-[`stim agent-device`](./commands.md#agent-device) passes for you:
-
-```sh
-stim agent-device open <packageId>
-stim agent-device snapshot
-stim agent-device click <ref>
-```
-
-The config keeps the host serial on the host. One daemon per
-session pins the exact owned emulator serial; its inventory lists only that
-emulator. It allows the same commands as a [hosted simulator](./owned-devices.md#run-ios-on-another-mac),
-including `telephony` for incoming calls and SMS, and refuses other devices and
-host paths. Stim installs the app. An unavailable or older
-driver reports `none` with the host's reason. Stop closes the matching agent
-connection and stops the daemon and its helpers before parking or deleting the emulator.
-An unresolved daemon claim blocks replacement and deletion.
-
-`agent-device record start [path] --remote-config <file>` records the emulator, and
-`record stop` downloads the video to that path, or `./recording-<time>.mp4`, on
-your machine. The hosting Mac writes the recording only in a private directory
-for the session in its temporary directory and deletes the files after the download, on `stim stop` or
-session teardown and when the session's daemon restarts. One recording runs per
-session; a second `record start`, a host output path, `record` inside `batch` and
-a `record stop` from another agent-device session are refused. The host stops a
-recording after 10 minutes; a `record stop` within the next 15 minutes downloads
-it.
-A finished recording over 512 MiB is deleted instead. A hosting Mac whose Stim
-predates hosted recording refuses `record` as a command outside its allowed list.
-
-Copy this prompt to try it: "Run this app with `stim android --remote <machine>`.
-Read `android.host.agent` from `stim status --json`, open the installed package
-with its remote config, and verify the first screen with agent-device."
-
-Desktop uses placement set by config or agents, for example
-`stim settings set android.remote auto --scope machine` (or `ios.remote`; a
-workspace, repo or committed value overrides the machine default),
-or per run `stim android --remote auto` / `stim android --remote <machine>`.
-New runs pass no `--remote` flag; recorded hosted sessions keep their machine
-until `stim stop`. When a device is not on this Mac, Desktop shows
-the machine's name on its tile, workspace page, viewer toolbar and sidebar row,
-with the placement reason as hover text. Local devices show no placement label.
-
-Stim Desktop shows the machine's name and the phone app an **on &lt;machine&gt;** label; both view and control
-hosted Android through the client machine's local stim-server relay. Turn on
-**Allow connections** in Desktop and pair the phone with the client machine. Named
-slots stream independently. Touch, text and hardware buttons reach the exact
-hosted emulator through the host's compiled `stim-frames` helper and scrcpy jar;
-its temporary jar and adb forward are removed when capture stops. Desktop
-hides local emulator actions. Rotation, posture, replay (`at`/`rate`), Duo
-frames and physical hosted targets are unavailable. Tiles report connecting,
-unavailable and stopped sessions; stopped sessions offer the rerun command.
-
-Reruns upload only missing manifest and APK content from a session-scoped store,
-verified by digest; each new attempt still installs the APK. If the build ran on
-this hosting Mac's own stim-server, Stim hands over only the single `App.apk` matching
-the client's manifest. Both build and hosting approvals must belong to the same
-client key. Any handoff failure falls back to upload.
-
-`stim logs --errors` and `stim logs --json` pull app-filtered native logcat records
-as `src: device`; JavaScript logs still arrive through local Metro. The host verifies
-the exact ledger-owned serial, resolves the app's PID on each query and drains its
-last observed PID after a crash or restart. A successful drain retires the exited
-PID. A failed PID lookup preserves the checkpoint without querying logcat, so the
-next collection can retry. A crash before any PID was observed,
-evicted logcat entries and entries persisted beyond the five-second overlap may
-be unavailable. Collection has a bounded output and time budget; an oversized
-query retries the recent tail and records any dropped interval. Stop copies logs
-once, after the host's final collection, and retains them locally after
-emulator parking or deletion. Older hosts without `hosted-android-data` get an update note,
-use uploads and show logs already copied here.
-
-Try this with your agent: "Run this app with `stim android --remote mini`, inspect
-`stim logs --errors`, fix any native or bundle error, then run `stim stop`."
+For agent control, set `hosting.agentDriver=agent-device` on the host and install agent-device 0.21.30 or later on both machines. Use [`stim agent-device`](./commands.md#agent-device) from the workspace to target its hosted emulator.
 
 ## Requirements
 
@@ -432,75 +155,26 @@ Install the client CLI globally or run it with npx:
 <StimInstallTabs />
 
 A remote machine can compile iOS simulator Debug and Release apps, Android
-emulator debug and macOS SwiftPM Debug apps. An iOS Release app built there
+emulator debug and release apps, and macOS SwiftPM Debug apps. An iOS Release app built there
 carries the JavaScript of the checkout this machine synced, including gitignored
 `.env.production` files, so a machine without Xcode, such as Linux, can run
 `stim ios --configuration Release --remote-build <mac>`. The worker bundles it
 in its own environment: an `EXPO_PUBLIC_` variable set only in this shell is not
 applied; put it in an `.env` file.
 Android builds on a
-worker machine need Java and the Android SDK. Device builds, Android release variants,
+worker machine need Java and the Android SDK. Device builds,
 EAS/proxy runs, Android CAS compiler-cache builds, and iOS/Android runs with
 artifact caching disabled in settings do not offload.
 
-Both machines need Node 22.12.0 or later, and either Tailscale running on the
-same tailnet or a shared local network (see
-[Local network, without Tailscale](#local-network-without-tailscale)). Sign in to a GUI login session on a worker Mac to run setup and
-answer its permission prompts. A reused server must speak protocol 2 (stim-server 1.21.0 or later).
-Setup refuses an older Desktop-run server with an update remedy and never
-downgrades a newer server.
+### Android release variants
 
-For iOS builds, Xcode and the simulator SDK must match. A client with no Xcode
-and no simulator SDK, such as a Linux or Windows machine, has nothing to match:
-the worker's Xcode, simulator SDK and CocoaPods are the build's toolchain, the
-client skips `pod install` and leaves it to the worker, and
-`stim ios --remote <mac> --remote-build <mac>` runs the app on a simulator that
-Mac hosts while Metro stays on the client. When the worker's `pod install`, or
-a file it generates there such as the `.xcworkspace`, changes only
-fingerprint sources in the iOS project, the worker fingerprints again and builds
-and stores the app under its own fingerprint after `pod install`, and the client
-stores it under that key too. The client's own fingerprint does not compute
-that key, so each run offloads and runs `pod install` on the worker again; unless
-`--no-build-cache` is passed, the worker then reuses the app it built under that
-key instead of compiling. A stale `Podfile.lock` is worth regenerating on a Mac
-and committing. Any other difference, such as the
-app config, still fails with `fingerprint-mismatch`. A client with Xcode runs
-`pod install` itself, so there a change on the worker fails with
-`fingerprint-mismatch`. Native Xcode apps without React Native still need Xcode
-on the client. When the worker has no
-usable Xcode, `stim doctor` and the Tools step say why and give the command to
-run on the worker: `sudo xcode-select -s /Applications/<Xcode>.app/Contents/Developer`
-when an Xcode is installed but the Command Line Tools (which Homebrew selects)
-or another Xcode is selected (it prefers the Xcode of this machine's version,
-else the newest), `sudo xcodebuild -license accept` and `sudo xcodebuild -runFirstLaunch`
-when those checks fail, or `xcodes install <version>` when no Xcode is installed.
-A missing simulator runtime on a working Xcode gets
-`xcodebuild -downloadPlatform iOS -buildVersion <version>`; when the cause is
-`xcode-select`, the runtime row says it follows from the Xcode row. The worker
-also needs
-an iPhone simulator on the target runtime. The Stim build compatibility version
-must match (see [Stim versions](#stim-versions)), and so must the CPU architecture for iOS and macOS builds (macOS builds that run on the same worker excepted). A global CocoaPods that is missing or another version keeps `auto`, `remote` and `remote-only` placement from choosing the machine but never refuses a named one; see
-[CocoaPods on the worker](#cocoapods-on-the-worker). When the project's `Gemfile.lock`, in `ios/` or the project root, pins CocoaPods,
-the worker needs Bundler and both machines use the pinned version. For macOS, Xcode and the macOS SDK must match, except when `stim macos --remote <machine> --remote-build <machine>` builds and runs the app on the same Mac; then only the Stim build compatibility version must match (see [Run it on another Mac](./macos.md#run-it-on-another-mac)). For Android, JDK major
-versions must match: the worker builds on an installed JDK of this machine's major
-when its default JDK is another one, so no restart is needed, and the fix for a
-missing major is the install command for the worker's OS (for example
-`brew install --cask zulu@17`). Gradle, AGP and Kotlin support only some JDK
-majors and the build cache and artifacts assume one JDK, so a nearby major does
-not count. A client with no JDK has no major to match: the worker's default JDK
-is the build's JDK, and `stim doctor` notes which one. A client with no JDK and
-no Android SDK runs the app on an emulator that machine hosts with
-`stim android --remote <machine> --remote-build <machine>`, while Metro stays
-on the client. The worker also needs the package manager of the project's lockfile
-(`pnpm`, `yarn` or `npm`) on the `PATH` of its stim-server service. Also, the
-worker needs the project's NDK, build-tools and
-compile SDK, or the Android SDK licenses accepted so Gradle downloads what is
-missing on the first build there (the NDK is about 1-2 GB). The project can
-turn that download off with `android.builder.sdkDownload=false` in
-the `gradle.properties` of the Android project. An Android worker can have another CPU architecture, and it can
-be an x86_64 Linux or Windows machine; see [Linux worker](#linux-worker) and
-[Windows worker](#windows-worker). See [machine settings](./settings.md#machine-settings) for the
-full toolchain and placement rules.
+Use `stim android --variant release --remote-build <machine>`. The worker bundles JavaScript from the synced checkout, including eligible ignored `.env.production` files. Shell-only `EXPO_PUBLIC_` values do not travel with it.
+
+- Template releases that use the debug keystore are signed on the worker.
+- Custom signing normally builds an unsigned APK there, then aligns and signs it here. The client needs Android SDK build-tools and the local keystore.
+- Release offload skips recognized signing files and refuses known configurations that would send signing credentials. Review the transfer rules before using a checkout with secrets. Guard Gradle configuration reads for missing keys or build locally. [Security model](#security-model)
+
+Use a worker with Java, the Android SDK and accepted SDK licenses. JDK major versions must match when the client has a JDK. On iOS and macOS, Stim checks Xcode and SDK compatibility when required. Check both machines with `stim doctor` or open **Tools** in the Desktop wizard. [Machine settings](./settings.md#machine-settings)
 
 ### CocoaPods on the worker
 
@@ -545,7 +219,7 @@ project's `.xcode.env.local`, replacing any `export NODE_BINARY=` line already
 there. Offloaded React Native and Expo Android builds keep a separate Gradle
 home for each selected Node executable and version. Changing Node starts a cold
 Gradle dependency cache and can retain another warm daemon; switching back reuses
-that Node's cache. These caches stay until the client is removed. Native Gradle
+that Node's cache. These caches go with their repository area, see [Worker disk](#worker-disk). Native Gradle
 projects keep their existing home. A pin naming a version the
 worker does not have, such as `22.22.0`, uses the newest installed Node of that
 major that is not older than the pin, such as Homebrew's `node@22` at 22.23.2.
@@ -553,6 +227,34 @@ Without one, the steps run on the worker's own `node`, and a failed install or
 prebuild names the pin and that Node's version. Install a matching Node on the
 worker, for example `brew install node@22`. When the pinned Node's major
 changes, the worker reinstalls dependencies so native modules match it.
+
+### Worker disk
+
+Each source checkout a client builds from, including each worktree, gets its own
+repository area on the worker with its checkout, dependencies, build outputs and
+Gradle home. The worker removes these areas by itself:
+
+- An area with no build or cached artifact fetch for
+  `server.workerAreaMaxAgeDays` days (default 7, `0` turns this off).
+- While the volume of `server.workerRoot` has less than 50 GB free, the least
+  recently used areas until it has that much again, sparing areas used in the
+  last 3 hours. If only those are left, they stay, the log says so once, and
+  builds keep running.
+- Under 10 GB free the worker declines builds, so those recent areas can go too,
+  until the volume is back over 10 GB.
+
+It always keeps each client's most recently used area. It retains an area with a
+running or unfetched build, a bundle a hosted session can still take, an open
+connection sending it a manifest, a running Gradle daemon, or an ownership claim
+that is held or unresolved. The stim-server log has one line for each removal and
+one for each area it retains, with the reason. If a delete fails, the log says so
+once and a later pass finishes it. The next build of a removed
+checkout uploads what it needs again and starts cold. A client's shared blobs and
+CocoaPods, pnpm and SwiftPM caches stay until the client is removed.
+
+`stim-server service status` prints a `worker root:` line with the root's size as
+last measured, about every 6 hours, and the local `/health` answer carries it as
+`workerRoot`. Windows workers do not measure it.
 
 ### Stim versions
 
@@ -575,138 +277,6 @@ fix is **Check for Updates** in Stim Desktop, or updating Stim here), this Mac
 runs a build from a checkout and the worker has `server.acceptClientBuilds` off,
 the worker's stim-server cannot update itself, or it did not answer. **Keep
 remote machines on this Mac's Stim version** never installs on such a worker.
-
-## Use the Desktop wizard
-
-Open **Stim > Settings > Connections > This machine uses** on your main machine. It lists your
-remote machines, each with a status (**Approved**, **Waiting for approval**, **Key not confirmed**, **Server is outdated**,
-the layer that stopped an unreachable machine (such as **Server not ready** or **Machine is offline**), **Needs update** or the reason it is not offloading, with the reason and a fix under it), its access (**Build**, **Run devices**) and **Remove...**. A machine this one also paired with to view or control its work shares its row when both pinned the same stim-server key. Readiness covers every platform of the app: a Linux machine that matches for Android shows as approved even though it cannot build iOS, and a Mac without an Android SDK shows that reason for an app with Android. Choose **Add... > Build or Run Simulators There...** to start the wizard,
-which finds the Macs, Linux and Windows machines on your tailnet itself. **Remove** takes the machine out of
-`remote.machines` and shows the commands to run on that machine, since removing it here never revokes this machine there: `stim-server devices revoke <id>` for each
-request and `stim-server service uninstall`.
-
-The wizard has five steps. It refreshes in the background every few seconds,
-so there is no Check again button:
-
-1. **Pick a Machine.** The wizard first checks that Tailscale runs on this machine and
-   shows Checking Tailscale until it has an answer. If
-   the Tailscale app is off, turn it on from its menu bar item. With only the
-   CLI installed, run `tailscale up`. Without Tailscale, the step links to the
-   download. Then select an online macOS, Linux or Windows peer from your
-   tailnet; a Linux or Windows peer is marked **Linux · Android builds only** or
-   **Windows · Android builds only**. Other peers are not listed. When no such
-   peer is on the tailnet, the step says so and links to the Tailscale downloads
-   for a Mac, for Linux and for Windows; the list
-   appears by itself when that machine joins. When every listed machine is
-   offline, a line under the list tells you to turn on Tailscale on it.
-   A machine you already added is marked **Added** and shows the same status as
-   the Connections list (**Approved**, **Unreachable**, a Tailscale or
-   stim-server problem and what to do about it) instead of Tailscale's
-   online flag. Choosing it does not start setup again; it says the machine is
-   already added and offers to close the wizard so you can use its row in
-   Connections.
-   `stim-server setup` on the worker Mac gives the same three answers when it
-   cannot read Tailscale: install it from `https://tailscale.com/download/mac`,
-   turn the app on from its menu bar icon, or run `tailscale up`.
-2. **What it does.** The step is titled with the machine you picked. Choose **Builds**, **Hosted simulators**, or both. The
-   preview shows what setup will do. With neither chosen, **Next** stays
-   disabled. A Linux or Windows machine offers **Builds** only: it takes Android Debug
-   builds, and **Hosted simulators** is unavailable because it needs a Mac.
-3. **Set it up.** Copy the generated command and run it in Terminal while
-   signed in at the worker Mac. It needs Node 22.12 or later there. Answer Y/n
-   for each new capability grant there; Yes is the default, so Enter lets the
-   client machine build here, or run its app code in hosted simulators here. After
-   the last answer, setup prints "Waiting for the requesting machine to connect.
-   Stim Desktop sends this automatically." and confirms each approval when
-   Desktop's request arrives; you do not press anything in Desktop. Desktop
-   mirrors setup progress live and sends the requests by itself until the
-   command's ticket expires. Already approved capabilities are omitted from the
-   command. When every chosen capability is approved and setup finished, Desktop moves to Tools by itself.
-   When Stim Desktop runs on the worker Mac, you can paste the command there instead of
-   Terminal and answer each grant in Desktop; see
-   [Approve in Stim Desktop on the worker](#approve-in-stim-desktop-on-the-worker).
-   A skipped permission keeps this step open and shows its fix. There is no SSH option.
-   For a Linux machine the command first runs `sudo tailscale set --operator=$USER`
-   and `sudo loginctl enable-linger $USER` (see [Linux worker](#linux-worker)),
-   and setup installs a systemd user service instead of a LaunchAgent and Stim
-   Host. It needs JDK 17 and the Android SDK there as well.
-   For a Windows machine the command is for PowerShell (it runs `npx.cmd`, so
-   the script execution policy does not matter), needs no administrator
-   rights, and setup installs a per-user scheduled task. It needs JDK 17 and the
-   Android SDK there; if the first `node.exe` on `PATH` is a version manager's
-   shim, such as pnpm's, add `--path-prepend` with the real Node's folder.
-4. **Tools.** Compare the worker's tools with this machine, including the Android
-   tools when **Builds** is chosen. A problem that stops the chosen
-   capability is shown in red and never disables **Next**; the machine stays added,
-   builds that cannot run there stay on this machine, and the machine's page in
-   Settings > Connections lists every problem and note by platform. Red problems are an incompatible Stim build
-   or no Xcode for Builds, and no iOS simulator runtime for Hosted simulators. **Install This Mac's Build**
-   fixes an incompatible Stim build. A Linux or Windows machine shows only the Stim build and
-   Android rows, and a missing Android SDK or any JDK difference is red
-   there, since no build could offload. The other problems are warnings that name what
-   they cost:
-   - A different Xcode or runtime version.
-   - Missing Android tools (NDK, build-tools or compile SDK): a note when the
-     worker's SDK licenses are accepted, since Gradle downloads the package on
-     the first build there. Otherwise Android builds stay on this machine, and
-     the machine's page shows the `sdkmanager` commands to run on the worker, each with a
-     **Copy** button; `sdkmanager --licenses` accepts the licenses. A note shows the
-     command that installs the package ahead of the first build.
-   - A missing or different global CocoaPods: `auto` builds skip the machine,
-     and the Test Build, which names it, still goes there. With no CocoaPods the
-     machine's page shows `brew install cocoapods` to run on the worker. Projects whose `Gemfile.lock` pins CocoaPods run that
-     version through Bundler on both machines and need Bundler there.
-5. **Done.** Copy the **Try it** agent prompt, or run
-   `stim ios --remote-build <machine>` yourself (`stim android` for a Linux or Windows machine).
-   - **Builds** sets `remote.build`: **Auto**, **Remote first** or **This Mac**
-     (`auto`, `remote` or `local`). It is Auto when this wizard added the first
-     remote machine. Otherwise it keeps your choice, and a value naming one machine
-     stays until you pick another.
-   - When Hosted simulators was chosen, **Simulators** sets `ios.remote` and
-     `android.remote` at machine scope. **This Mac** unsets them, **Auto** sets
-     `auto` (run there when this machine is full) and **Always** names the Mac's
-     `remote.machines` entry. A current value the
-     wizard does not offer, such as `eas`, is kept unless you choose another.
-   - **Run a Test Build with a Sample App** builds a sample through the worker
-     (iOS, or Android on a Linux or Windows machine).
-
-Desktop adds entries when it finds the setup journal and connects with that
-command's ticket. When adding the first remote machine
-with the default choice, it temporarily sets `remote.build` to `local` during
-setup. Closing the wizard before Done puts the previous value back. An expired ticket needs **New Command**.
-
-Agents never run `stim-server setup`, edit `remote.*`, `server.*` or `hosting.*` for you,
-or approve requests; use Desktop or perform the setup yourself.
-
-## Approve in Stim Desktop on the worker
-
-A person at the worker Mac can approve a request in Stim Desktop instead of a terminal:
-
-1. On the requesting machine, start **Settings > Connections > This machine uses > Add... >
-   Build or Run Simulators There** and pick the worker, or run `stim remote add <worker>`. Copy
-   the `stim-server setup` command it shows.
-2. On the worker, open **Settings > Connections > Using this machine > Add... > Machine to Build
-   or Run Simulators Here** and paste the command. Desktop shows what it asks for and when its
-   ticket expires.
-3. Choose **Continue**. Desktop asks about each grant, as setup asks Y/n in a terminal:
-   **Allow** or **Don't Allow** for builds, then for hosted simulators. Nothing is approved
-   before you answer.
-4. Keep the window open until the requesting machine connects. Stim Desktop there connects by
-   itself; after `stim remote add`, run `stim remote list` there. Closing the window withdraws
-   the request.
-5. The last screen names the machine, the direction (**Using this machine**), its access
-   (**Build**, **Run devices**) and the `stim-server devices revoke` commands that end it.
-   **Revoke Access** in the Connections list does the same.
-
-The same setup runs with the same rules: one ticket, one expiry at most two hours ahead, one
-record per approved capability for the key that spends the ticket, and one setup at a time on
-the worker. Desktop takes only `--expires`, `--build` and `--device-host`; a command with any
-other option, such as `--yes`, `--port` or `--label`, runs only in a terminal. Desktop never
-installs or changes a service, Stim Host or a route: on a worker with a `stim-server service`,
-or where Desktop uses a server it did not start, run the command in a terminal instead. Only the
-Stim Desktop that started the worker's server can use this approval; another machine, a paired
-phone, an SSH session and any other program on the worker are refused. Running the command in a
-terminal on the worker still approves as before.
 
 ## CLI equivalent
 
@@ -821,6 +391,9 @@ stim remote remove janics-mac-mini
 placement order and asks nothing new. `stim remote remove` drops the entry and
 forgets this machine's credentials for it; the worker keeps its approval until
 a person there runs the `stim-server devices revoke <id>` command it prints.
+If the hosting credentials file is unreadable, `stim remote remove` keeps the
+entry and credentials and names the file. Use a compatible Stim version,
+restore read access, or restore the file from a trusted backup, then retry.
 With `--json`, each machine also carries its server key fingerprint, its
 reachability in this run and those revoke commands.
 `stim settings set remote.machines` replaces the whole list; use it to reorder
@@ -1174,26 +747,9 @@ running there) shows the worker's reason.
 
 ## Test build
 
-Desktop creates a pinned Expo blank SDK 58 sample under
-`~/Library/Application Support/Stim Desktop/Onboarding/sample-sdk58`.
-Preparation downloads the template and installs its dependencies, so it needs
-network access. Desktop uses the sample for setup requests when no workspace
-is listed. It is optional: start it with **Run a Test Build with a Sample App**
-on the wizard's last step. It tests iOS builds.
+When you request build access, choose **Run a Test Build with a Sample App** on the wizard's last step. The sample needs network access to install. It tests an iOS build on a Mac worker or an Android build on Linux and Windows. Desktop shows upload, build and download timings. The first build may take longer while the worker's caches are cold.
 
-The test runs `stim ios --remote-build <name> --no-build-cache --json` once.
-It must report the selected `offloadedTo` and a launch state of `true` or
-`bundling`. Desktop reads the `offload_done` log's offer, sync, worker and fetch
-timings and shows them as Upload / sync, Build, Download / fetch and Total. It
-runs no local build. The first build on a new machine is cold, with no DerivedData
-and no compiler cache, so later builds are faster. The test does not
-deliberately disconnect the worker to trigger automatic fallback.
-
-The sample stops when the test ends. **Run again** reuses the folder. When the
-sheet closes, Desktop removes the sample's Stim workspace and folder and releases
-its owned simulator (parked for reuse within the parked-simulator limit, deleted
-otherwise). This cleanup is best effort and silent; if it fails, the leftover sample stays
-until the next wizard reuses it or its removal succeeds.
+The sample stops when the test ends. **Run again** reuses it. Closing the wizard starts cleanup of the sample workspace and its device.
 
 ## Undo
 
@@ -1227,6 +783,15 @@ secrets: Stim assumes every paired Mac belongs to the same person. Nothing under
 `node_modules` is sent, since the build Mac installs dependencies itself, and
 neither is build output the fingerprint ignores, such as `ios/Pods` or
 `android/build`.
+
+An iOS offload leaves out `*.p8` (App Store Connect API keys), `*.p12`, `*.mobileprovision`
+and `*.provisionprofile`, wherever they sit in the repository, because a simulator build
+signs ad hoc and never reads them. A file that an Xcode project, xcconfig, Podfile,
+podspec or shell script names by file name is still sent, so the build finds it. The
+rule is by name, so a tracked file with one of these names is left out too. `.env` files,
+`google-services.json`, `GoogleService-Info.plist`, `*.pem`, `*.cer` and every other
+gitignored file are still sent. A device build is signed on this machine and does not
+offload.
 
 A worker on the local network listens only on the private addresses
 `server.lanAddresses` names. Before a client authenticates, it answers only the
@@ -1268,62 +833,20 @@ temporarily; it cannot authenticate.
 
 ### A remote machine is unreachable
 
-`stim doctor` stops at the first layer that fails and names it. Stim Desktop
-shows it as the pill of the machine's row, with what failed and what to do
-under the name. `stim doctor --json` carries it as `diagnosis` (`layer`, `code`, `title`,
-`message`, `remedy`) under `remoteMachines` and `deviceHosts`. The `state` stays
-`unreachable`, `tailscale-off` or `not-on-tailnet`, so an older Desktop or phone
-app still shows its short label.
-
-Stim records the tailnet this machine is signed in to (`tailnet`: `name`, `suffix`, `id`) when it first asks a machine
-for access, in the machine's entry in `build-machines.json` and `device-host-machines.json`. A machine that is
-missing from the tailnet this machine is signed in to now, and recorded another one, gets `peer-wrong-tailnet`,
-which names both. A pairing from before Stim kept the field gets it the next time the machine answers
-`stim doctor`; until then the generic `peer-not-found` message applies. A node shared in from another tailnet
-stays reachable wherever it is shared, since the check runs only when the peer is missing.
-
-| Layer                     | Code                                | What it means                                                                                                                                                                                                                      | What to do                                                                                                                                                              |
-| ------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tailscale on this machine | `tailscale-stopped`                 | Tailscale is turned off.                                                                                                                                                                                                           | Turn it on in the menu bar app, or run `tailscale up`.                                                                                                                  |
-|                           | `tailscale-logged-out`              | Tailscale is signed out.                                                                                                                                                                                                           | Sign in, then run `stim doctor` again.                                                                                                                                  |
-|                           | `tailscale-unavailable`             | No Tailscale answered: it is not running or not installed.                                                                                                                                                                         | Install or open Tailscale and sign in.                                                                                                                                  |
-| The peer                  | `peer-not-found` / `peer-ambiguous` | No peer, or several, match the `remote.machines` name.                                                                                                                                                                             | Check the name with `tailscale status`, or use the full MagicDNS name.                                                                                                  |
-|                           | `peer-wrong-tailnet`                | No peer is named so, and this machine is signed in to another Tailscale account than the one it was on when it asked the remote machine for access. The message names both tailnets.                                               | Switch Tailscale on this machine to the tailnet the message names, then run `stim doctor` again.                                                                        |
-|                           | `peer-offline`                      | Tailscale lists the machine as offline and nothing answered; the message says when it was last seen.                                                                                                                               | Wake it, check its network, and check that Tailscale runs there.                                                                                                        |
-|                           | `peer-no-answer`                    | The connection got no reply and `tailscale ping` does not reach the machine either.                                                                                                                                                | Check that it is awake and its network is up; run `tailscale ping <name>` here.                                                                                         |
-| The serve route           | `route-missing`                     | The machine answers, but nothing accepts connections on the serve port.                                                                                                                                                            | On that machine, run `stim-server service status`; `stim-server service install --serve` creates the route.                                                             |
-|                           | `route-tls`                         | The route's certificate was not accepted.                                                                                                                                                                                          | On that machine, run `tailscale serve status`, then `stim-server service install --serve`.                                                                              |
-|                           | `route-http-error`                  | The route answered an HTTP status stim-server never sends (not 502 or 503).                                                                                                                                                        | On that machine, run `tailscale serve status` and check what the port points to.                                                                                        |
-| stim-server               | `server-not-running`                | The route answers 502: nothing listens behind it.                                                                                                                                                                                  | On that machine, run `stim-server service status`; `stim-server service install --serve` starts it.                                                                     |
-|                           | `server-not-ready`                  | The route answers 503, or stim-server refuses with `home-unavailable`: it runs but does not serve. The message gives the cause when the server reports one, such as a Stim home it cannot read because its disk stopped answering. | Check the disk that holds the Stim home on that machine; stim-server serves again by itself once it answers. `stim-server service status` there shows the exact reason. |
-|                           | `server-no-answer`                  | `tailscale ping` reaches the machine, but the serve route and stim-server sent no reply in time: stim-server may be starting, stalled or restarting.                                                                               | On that machine, run `stim-server service status`; it reports a restart loop or a Stim home it is still reading, and the log file to read.                              |
-|                           | `connect-failed`                    | The connection failed in a way none of the other codes names.                                                                                                                                                                      | On that machine, run `stim-server service status`.                                                                                                                      |
-| Local network             | `lan-not-listening`                 | The worker answers, but nothing accepts connections on its stim-server port.                                                                                                                                                       | On that machine, run `stim-server service status` and check `server.lanAddresses`; the server log names each entry it cannot use.                                       |
-|                           | `lan-no-answer`                     | Nothing answered the connection.                                                                                                                                                                                                   | Check that the machine is awake and on this network, and that its firewall allows stim-server's `node`.                                                                 |
-| Compatibility             | `server-outdated`                   | stim-server speaks an older protocol.                                                                                                                                                                                              | Run the update command the finding prints.                                                                                                                              |
-
-`stim ios|android|macos --remote` prints the same message and remedy when the
-machine does not connect, for example `mini is offline on Tailscale (last seen
-18 h ago)`. It reads `tailscale status` only after the connection failed, and
-skips doctor's `tailscale ping`, so a silent connection reads `peer-offline` or
-`peer-no-answer` and never `server-no-answer`.
-
-A machine that answers outranks Tailscale's own online flag, which can lag a
-reachable Mac. Approval states (`pending`, `revoked`, `lapsed`, `key-changed`)
-mean the machine answered; they have their own findings and remedies.
+Run `stim doctor` or open the machine's details in Desktop. The result shows where the connection failed, from Tailscale or LAN discovery to the HTTPS route, server or approval. Check that the worker is awake and serving on the expected network. Confirm a changed key on the worker before trusting it.
 
 ### Find out why a remote machine was slow or refused
 
-Every placement decision is a record: `stim logs --source placement` lists the
-machines checked with a reason code each, and a failed request to a machine (for
-example one that did not answer hello in time) is a `remote_connect_failed` or
-`remote_request_failed` record in `stim logs --source build`. On the machine that
-serves the request, stim-server writes request errors to its service log
-(`~/Library/Logs/Stim/<label>.log`) with the client's device id and the run id
-of the `stim` command that sent it. To see every request with its duration and
-slow steps, run `stim settings set debug.logs true --scope machine` on that machine,
-or set `STIM_DEBUG=1` for its stim-server. Nothing is sent anywhere, and no
-token or ticket is logged.
+<StimTabs
+code={`stim logs --source placement
+stim logs --source build`}
+/>
+
+Placement logs show why each machine was selected or skipped. For request timings, set `debug.logs` on the worker and read its stim-server service log.
+
+### Check this machine's stim-server setup
+
+Run `stim doctor` on the worker. It reports competing servers, version or home mismatches, route problems, missing permissions and service startup failures, with suggested fixes. Use `stim-server service status` for the installed service.
 
 ## Ask your agent
 

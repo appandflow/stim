@@ -57,7 +57,7 @@ import {
   readSetupJournal,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
-import { ShareHub } from '../src/share.ts';
+import { ShareHub, type StartedShare } from '../src/share.ts';
 import * as stim from 'stim';
 import { BuildHost } from '../src/build.ts';
 import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
@@ -169,7 +169,7 @@ setInterval(() => {
 `;
 
 const FAKE_STIM = `
-import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, statSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 const args = process.argv.slice(2);
 const env = process.env;
@@ -1061,7 +1061,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       result: { remote: null, unreachable: expect.stringContaining('has not approved this machine'), upload: null },
     });
     expect(await local.request('route.setup')).toMatchObject({ result: { state: 'routed' } });
-    expect(await local.request('share.list')).toEqual(expect.objectContaining({ result: { shares: [] } }));
+    expect(await local.request('share.list')).toEqual(expect.objectContaining({ result: { shares: [], starting: 0 } }));
     expect(await local.request('share.stop', { workspace: root })).toEqual(
       expect.objectContaining({ result: { stopped: [] } }),
     );
@@ -1155,11 +1155,108 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       restore: true,
     });
 
+    expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links).toEqual(
+      Object.fromEntries(Object.entries(entries).map(([key, entry]) => [key, expect.objectContaining(entry)])),
+    );
+
     await client.request('share.stop', { workspace, slot: 'tablet' });
     expect(savedStates()).toEqual({ ios: 'live', 'ios@tablet': 'stopped', android: 'stopped' });
     await client.request('share.stop', { workspace });
     expect(savedStates()).toEqual({ ios: 'stopped', 'ios@tablet': 'stopped', android: 'stopped' });
     expect(order[0]).toBe('stop saw {"ios":"live","ios@tablet":"stopped","android":"stopped"}');
+  });
+
+  it("saves a share started over share.start, keeps the first start's password kind on a start under the same link, and share.stop pauses it", async () => {
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+    const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+    mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
+    writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
+    const started = (over: Partial<StartedShare>): StartedShare => ({
+      id: 'w1',
+      workspace,
+      platform: 'ios',
+      slot: 'default',
+      physical: false,
+      control: false,
+      viewers: 0,
+      state: 'live',
+      auth: 'generated',
+      viewAuth: null,
+      url: `https://x.test/s/${TOKEN}/`,
+      expiresAt,
+      ...over,
+    });
+    const hub = vi.spyOn(ShareHub.prototype, 'start');
+    hub.mockImplementationOnce(async () => started({ password: 'generated-pw-1' }));
+    vi.spyOn(ShareHub.prototype, 'list').mockReturnValue([started({})]);
+    vi.spyOn(ShareHub.prototype, 'stop').mockResolvedValue([]);
+    await routeServer();
+    const client = await desktop();
+    const file = () => JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links;
+
+    expect(await client.request('share.start', { workspace, platform: 'ios' })).toMatchObject({
+      result: { saved: true, password: 'generated-pw-1' },
+    });
+    const first = file().ios;
+    expect(first).toMatchObject({
+      platform: 'ios',
+      slot: 'default',
+      physical: false,
+      token: TOKEN,
+      origin: 'https://x.test/s/',
+      control: false,
+      password: 'generated-pw-1',
+      auth: 'generated',
+      viewAuth: null,
+      state: 'live',
+      expiresAt,
+    });
+    expect(statSync(workspaceShareLinksFile(workspace)).mode & 0o777).toBe(0o600);
+
+    const later = new Date(Date.now() + 7_200_000).toISOString();
+    hub.mockImplementationOnce(async () => started({ auth: 'set', expiresAt: later }));
+    await client.request('share.start', {
+      workspace,
+      platform: 'ios',
+      token: TOKEN,
+      password: 'generated-pw-1',
+      expiresAt: later,
+    });
+    expect(file().ios).toMatchObject({
+      auth: 'generated',
+      createdAt: first.createdAt,
+      expiresAt: later,
+      state: 'live',
+    });
+
+    await client.request('share.stop', { workspace });
+    expect(file().ios.state).toBe('stopped');
+  });
+
+  it('marks a share stopped when it ended while its entry was being saved', async () => {
+    const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+    mkdirSync(dirname(workspaceMetadataFile(workspace)), { recursive: true });
+    writeFileSync(workspaceMetadataFile(workspace), JSON.stringify({ projectRoot: workspace }));
+    vi.spyOn(ShareHub.prototype, 'start').mockImplementation(async () => ({
+      id: 'w1',
+      workspace,
+      platform: 'ios',
+      slot: 'default',
+      physical: false,
+      control: false,
+      viewers: 0,
+      state: 'live',
+      auth: 'generated',
+      viewAuth: null,
+      url: `https://x.test/s/${TOKEN}/`,
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      password: 'generated-pw-1',
+    }));
+    vi.spyOn(ShareHub.prototype, 'list').mockReturnValue([]);
+    await routeServer();
+    const client = await desktop();
+    await client.request('share.start', { workspace, platform: 'ios' });
+    expect(JSON.parse(readFileSync(workspaceShareLinksFile(workspace), 'utf8')).links.ios.state).toBe('stopped');
   });
 
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {
@@ -1255,29 +1352,56 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     ).toHaveProperty('result.authorized', true);
   });
 
-  it('a server Desktop did not start offers no challenge and keeps the local socket permissions it had', async () => {
+  it('a server Desktop did not start offers no challenge and grants its local socket, not its network clients, the Desktop methods', async () => {
     await start({ desktopBootstrap: null });
     const client = await localConnect(server!.localSocket!);
     const hello = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
     expect(hello).toMatchObject({ result: { capabilities: ['read', 'control'] } });
     expect(hello).not.toHaveProperty('result.desktopBootstrap');
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-device-tools']) } });
-    expect(
-      await client.request('desktop.remedy.subscribe', {
-        cwd: workspace,
-        action: 'device-tool',
-        request: { tool: 'location', platform: 'ios', clear: true },
-      }),
-    ).toHaveProperty('error.code', 'forbidden');
+    expect(hello).toMatchObject({
+      result: { features: expect.arrayContaining(['desktop-settings-write', 'desktop-gc', 'desktop-local-authority']) },
+    });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-setup']) } });
+    for (const method of ['desktop.gc.subscribe', 'desktop.start.subscribe', 'desktop.worktree.remove.subscribe'])
+      expect(await client.request(method, {})).toHaveProperty('error.code', 'bad-request');
+    const write = { cwd: root, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
+    expect(await client.request('desktop.settings.write', write)).toHaveProperty('result.changed', true);
+    expect(loadConfig()?.concurrency?.maxBuilds).toBe(3);
+    expect(await client.request('device-host.sessions')).toHaveProperty('result');
     expect(await client.request('desktop.authenticate', { proof: DESKTOP_KEY })).toHaveProperty(
       'error.code',
       'forbidden',
     );
-    expect(await client.request('device-host.sessions')).toHaveProperty('result');
+
     const port = server!.addresses[0]!.port;
     const { keyPair } = await pair(port, undefined, true);
-    const network = await returning(port, keyPair);
+    const network = await connect(port, undefined, { keyPair });
+    expect(await network.request('hello', { client: CLIENT })).toMatchObject({
+      result: {
+        features: expect.not.arrayContaining(['desktop-settings-write', 'desktop-gc', 'desktop-local-authority']),
+      },
+    });
     expect(await network.request('device-host.sessions')).toHaveProperty('error.code', 'forbidden');
+    expect(await network.request('desktop.settings.write', { ...write, value: '5' })).toHaveProperty(
+      'error.code',
+      'forbidden',
+    );
+    expect(loadConfig()?.concurrency?.maxBuilds).toBe(3);
+  });
+
+  it('keeps a Desktop-started server closed to a local client that does not prove its key', async () => {
+    await start();
+    const { client, hello } = await asking();
+    expect(hello.features).toContain('desktop-settings-write');
+    expect(hello.features).not.toContain('desktop-local-authority');
+    const write = { cwd: root, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
+    expect(await client.request('desktop.settings.write', write)).toHaveProperty('error.code', 'forbidden');
+    assert(server?.localSocket);
+    const plain = await localConnect(server.localSocket);
+    const unproved = await plain.request('hello', { client: CLIENT });
+    expect(unproved).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings-write']) } });
+    expect(await plain.request('desktop.settings.write', write)).toHaveProperty('error.code', 'forbidden');
+    expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
   });
 
   it('tells a local client the TCP port of the server behind the socket, and network clients nothing', async () => {
@@ -1479,6 +1603,7 @@ describe('pairing', () => {
           'server-update',
           'build-compat',
           'build-jdk',
+          'build-android-release',
           'build-reuse-artifact',
           'share-stop-id',
           'presence',
@@ -1489,6 +1614,8 @@ describe('pairing', () => {
           'hosted-presence',
           'share-slug',
           'share-reuse',
+          'share-starting',
+          'shared-control',
         ],
         actions: [],
         device: { name: 'Test phone' },
@@ -3242,7 +3369,7 @@ describe('hosted device sessions', () => {
           ['device-host.sessions.stop', { session: id }],
         ] as const) {
           expect(await client.request(method, requestParams)).toMatchObject({
-            error: { code: 'forbidden', message: expect.stringContaining('the Stim Desktop that started this server') },
+            error: { code: 'forbidden', message: expect.stringContaining('local Unix socket') },
           });
         }
       }
@@ -4670,6 +4797,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       tailscale: { state: 'not-running', backendState: 'Stopped' },
       nativeViewerOpened: false,
       keepAwake: { setting: false, held: false, reason: 'off' },
+      workerRoot: null,
     });
     const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
     expect(forwarded.status).toBe(200);
@@ -7206,7 +7334,7 @@ describe('build.plan', () => {
       assert(server?.localSocket);
       const plain = await localConnect(server.localSocket);
       const hello = await plain.request('hello', { client: CLIENT });
-      expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-plan']) } });
+      expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-plan']) } });
       for (const client of [phone, plain])
         expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
           'error.code',
@@ -7265,23 +7393,6 @@ describe('build.plan', () => {
       expect(stimCalls()).toEqual([]);
     });
   });
-
-  test.skipIf(process.platform === 'win32')(
-    'does not advertise or grant private selected-folder plans on an adopted server',
-    async () => {
-      await start({ desktopBootstrap: null });
-      assert(server?.localSocket);
-      const client = await localConnect(server.localSocket);
-      const hello = await client.request('hello', { client: CLIENT });
-      const result: unknown = 'result' in hello ? hello.result : null;
-      assert(isJsonObject(result));
-      expect(result.features).not.toContain('desktop-plan');
-      expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
-        'error.code',
-        'forbidden',
-      );
-    },
-  );
 
   it('reports a real planner refusal with its code, message and remedy without a CLI', async () => {
     writeFileSync(join(workspace, 'package.json'), '{}');
@@ -7346,7 +7457,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.arrayContaining(['desktop-settings-write']) },
+      result: { features: expect.not.arrayContaining(['desktop-settings-write']) },
     });
     const request = { cwd: workspace, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     for (const client of [remote, plain]) {
@@ -7399,24 +7510,6 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
     ).toMatchObject({ result: { code: 'STIM_BAD_ARG', message: expect.any(String) } });
     expect(loadConfig()?.concurrency?.maxBuilds).toBe(3);
   });
-  it('does not advertise or grant writes on a server Desktop did not start', async () => {
-    await start({ desktopBootstrap: null });
-    assert(server?.localSocket);
-    const client = await localConnect(server.localSocket);
-    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-settings-write']) },
-    });
-    expect(
-      await client.request('desktop.settings.write', {
-        cwd: root,
-        action: 'set',
-        key: 'concurrency.maxBuilds',
-        value: '3',
-      }),
-    ).toHaveProperty('error.code', 'forbidden');
-    expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
-  });
-
   it('keeps a canonical folder busy while yielding and cancels a timed-out pending write', async () => {
     await start({ actionLimits: { timeoutMs: 1000 } });
     const client = await desktop();
@@ -8146,21 +8239,6 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     expect(readWorkspaceState(workspace)?.supervisor).toBeUndefined();
   });
 
-  it('does not offer startup on an adopted server or grant it to local control', async () => {
-    await start({ desktopBootstrap: null });
-    assert(server?.localSocket);
-    const client = await localConnect(server.localSocket);
-    const hello = await client.request('hello', { client: CLIENT });
-    const result: unknown = 'result' in hello ? hello.result : undefined;
-    assert(isJsonObject(result));
-    expect(result.features).not.toContain('desktop-start');
-    expect(await client.request('desktop.start.subscribe', { cwd: workspace })).toHaveProperty(
-      'error.code',
-      'forbidden',
-    );
-    expect(stimCalls()).toEqual([]);
-  });
-
   it.each(['unsubscribe', 'disconnect', 'deadline', 'server close'])(
     'reserves the resolved app and drains %s while its metadata lock is held',
     async (mode) => {
@@ -8302,7 +8380,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     const hello = await plain.request('hello', { client: CLIENT });
-    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-reload']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reload']) } });
     for (const client of [remote, plain])
       expect(await client.request('desktop.reload.subscribe', { cwd: workspace })).toHaveProperty(
         'error.code',
@@ -8321,21 +8399,6 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
     ])
       expect(await client.request('desktop.reload.subscribe', params)).toHaveProperty('error.code', 'bad-request');
     expect(browser.methods).toEqual([]);
-  });
-
-  it('does not offer private reload on an adopted server or grant it to local control', async () => {
-    await start({ desktopBootstrap: null });
-    assert(server?.localSocket);
-    const client = await localConnect(server.localSocket);
-    const hello = await client.request('hello', { client: CLIENT });
-    const result: unknown = 'result' in hello ? hello.result : undefined;
-    assert(isJsonObject(result));
-    expect(result.features).not.toContain('desktop-reload');
-    expect(await client.request('desktop.reload.subscribe', { cwd: workspace })).toHaveProperty(
-      'error.code',
-      'forbidden',
-    );
-    expect(stimCalls()).toEqual([]);
   });
 
   it('reserves the actual workspace for stop, settings and phone actions when selected from a child directory', async () => {
@@ -9855,10 +9918,13 @@ describe('frames.subscribe', () => {
         await first.request('device-host.input.touch', { session: controlSession, phase: 'up', x: 0, y: 1 }),
       ).toHaveProperty('result');
       const sameClient = await open();
-      expect(await sameClient.request('device-host.control.begin', { session })).toHaveProperty(
-        'error.code',
-        'device-busy',
+      const joined = await sameClient.request('device-host.control.begin', { session });
+      assert(
+        'result' in joined && joined.result && 'session' in joined.result && typeof joined.result.session === 'string',
       );
+      const joinedSession = joined.result.session;
+      expect(joinedSession).not.toBe(controlSession);
+      expect(await sameClient.request('device-host.control.end', { session: joinedSession })).toHaveProperty('result');
       expect(
         await sameClient.request('device-host.input.touch', { session: controlSession, phase: 'down', x: 1, y: 0 }),
       ).toHaveProperty('error.code', 'unknown-session');
@@ -9939,6 +10005,7 @@ describe('frames.subscribe', () => {
         { fps: 2, maxEdge: 480, jpegFps: 2, ...jpegOnly },
         { fps: 20, maxEdge: 960, jpegFps: 20, ...jpegOnly },
         { fps: 2, maxEdge: 480, jpegFps: 2, ...jpegOnly },
+        { fps: 0, maxEdge: 480, jpeg: false, video: false, bitrate: 3_000_000 },
       ]);
       await until(() => !alive(run!.pid));
       expect(toolRuns().filter((entry) => entry.tool === 'xcrun')).toEqual([]);
@@ -10067,10 +10134,13 @@ describe('frames.subscribe', () => {
       expect(begun).toMatchObject({ result: { platform: 'macos', lease: null, postures: [] } });
       const { session } = (begun as { result: { session: string } }).result;
       const other = await authed(port, true);
-      expect(await other.request('control.begin', { workspace, platform: 'macos' })).toHaveProperty(
-        'error.code',
-        'device-busy',
+      const joined = await other.request('control.begin', { workspace, platform: 'macos' });
+      assert(
+        'result' in joined && joined.result && 'session' in joined.result && typeof joined.result.session === 'string',
       );
+      expect(joined).toHaveProperty('result.platform', 'macos');
+      const joinedSession = joined.result.session;
+      expect(await other.request('control.end', { session: joinedSession })).toHaveProperty('result');
       expect(await other.request('input.text', { session, text: 'wrong connection' })).toHaveProperty(
         'error.code',
         'unknown-session',
@@ -10123,7 +10193,7 @@ describe('frames.subscribe', () => {
       const active = sent.find((entry) => entry.control && (entry.control as { enabled: boolean }).enabled)!
         .control as { session: string };
       expect(sent.filter((entry) => entry.input).map((entry) => entry.controlSession)).toEqual(
-        Array(9).fill(active.session),
+        Array(10).fill(active.session),
       );
       expect(sent.filter((entry) => entry.input === 'window')).toEqual([
         { input: 'window', window: 12, controlSession: active.session },
@@ -10417,7 +10487,10 @@ describe('frames.subscribe', () => {
       const pid = Number(started()[0]);
       expect(alive(pid)).toBe(true);
       await until(() => !alive(pid));
-      expect(helperRuns()[0]!.configs).toHaveLength(1);
+      const configs = helperRuns()[0]!.configs;
+      expect(configs.map((config) => config.fps === 0)).toEqual([false, true, false, true, false, true]);
+      expect(configs.at(-1)).toMatchObject({ jpeg: false, video: false });
+      expect(configs.at(-1)).not.toHaveProperty('record');
       await oneFrame();
       expect(started()).toHaveLength(2);
     },
@@ -10670,6 +10743,7 @@ describe('frames.subscribe', () => {
       await until(() => commands().some((command) => command.input === 'duo-release'));
       expect(commands()).toEqual([
         { input: 'touch', phase: 'down', x: 0.25, y: 0.75, duoRevision: revision },
+        { input: 'touch', phase: 'up', x: 0.25, y: 0.75, duoRevision: revision },
         { input: 'duo-release' },
       ]);
       expect(alive(await readPid(`${toolCalls}.started`))).toBe(true);
@@ -10856,6 +10930,7 @@ describe('frames.subscribe', () => {
         { input: 'text', text: 'Hi!\n' },
         { input: 'button', button: 'home' },
         { input: 'rotate', direction: 'left' },
+        { input: 'touch', phase: 'up', x: 0.25, y: 0.75, display: 0 },
       ]);
       await until(() => !existsSync(leaseFile.path));
       expect(existsSync(samePlatform.path)).toBe(false);
@@ -11098,13 +11173,14 @@ describe('frames.subscribe', () => {
         { input: 'touch', phase: 'down', x: 0.5, y: 0.5, display: 0 },
         { input: 'text', text: 'hi\n' },
         { input: 'button', button: 'back' },
+        { input: 'touch', phase: 'up', x: 0.5, y: 0.5, display: 0 },
       ]);
       expect(lockCalls()).toEqual([]);
     },
     10_000,
   );
 
-  test.skipIf(!fakeTailscale)('refuses a page that another DevTools client drives, unless taken over', async () => {
+  test.skipIf(!fakeTailscale)('controls a page that another DevTools client drives', async () => {
     const driven = {
       ...OWNED_WEB,
       activity: { state: 'driven', driver: { tool: 'playwright', pid: 77, since: null }, basis: ['cdp-client'] },
@@ -11112,9 +11188,6 @@ describe('frames.subscribe', () => {
     const port = await startControl({ FAKE_STIM_PAYLOADS: statusWith({ web: driven }) });
     const client = await authed(port, true);
     expect(await client.request('control.begin', { workspace, platform: 'web' })).toMatchObject({
-      error: { code: 'device-busy', message: expect.stringContaining('playwright') },
-    });
-    expect(await client.request('control.begin', { workspace, platform: 'web', takeOver: true })).toMatchObject({
       result: { platform: 'web' },
     });
   });
@@ -11253,7 +11326,7 @@ describe('frames.subscribe', () => {
   );
 
   test.skipIf(!fakeTailscale)(
-    'refuses a device an agent drives, and takes it over only when asked, keeping the agent lease',
+    'controls a device an agent drives, keeping the agent lease',
     async () => {
       const since = '2026-09-25T12:00:00.000Z';
       const port = await startControl({
@@ -11266,16 +11339,12 @@ describe('frames.subscribe', () => {
         FAKE_STIM_LOCK_GRANTED: since,
       });
       const client = await authed(port, true);
-      expect(await client.request('control.begin', { workspace, platform: 'ios' })).toMatchObject({
-        error: { code: 'device-busy', message: expect.stringContaining('agent-device') },
-      });
-      const taken = await client.request('control.begin', { workspace, platform: 'ios', takeOver: true });
-      const { session } = (taken as { result: { session: string } }).result;
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+      const { session } = (begun as { result: { session: string } }).result;
       await client.request('control.end', { session });
-      await until(() => readAudit().length === 3);
+      await until(() => readAudit().length === 2);
       expect(readAudit().map((record) => [record.action, record.ok])).toEqual([
-        ['control.begin', false],
-        ['control.take-over', true],
+        ['control.begin', true],
         ['control.end', true],
       ]);
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -11285,7 +11354,7 @@ describe('frames.subscribe', () => {
   );
 
   test.skipIf(!fakeTailscale)(
-    'lets one client control a device at a time, and ends the session another takes over',
+    'lets two clients control a device at once, holding its lease until the last one ends',
     async () => {
       const lease = controlLease(workspace, 'SIM-2', 'ios', 'tablet');
       const kept = controlLease(workspace, 'SIM-1');
@@ -11299,27 +11368,44 @@ describe('frames.subscribe', () => {
       const target = { workspace, platform: 'ios', slot: 'tablet' };
       const begun = await first.request('control.begin', target);
       const { session } = (begun as { result: { session: string } }).result;
-      expect(await second.request('control.begin', target)).toMatchObject({
-        error: { code: 'device-busy', message: expect.stringContaining('Test phone') },
-      });
-      expect(await second.request('control.begin', { ...target, takeOver: true })).toMatchObject({
-        result: { session: expect.any(String) },
-      });
-      expect(await first.next()).toMatchObject({ event: 'control-ended', session, reason: 'taken-over' });
-      expect(await first.request('input.touch', { session, phase: 'down', x: 0, y: 0 })).toMatchObject({
-        error: { code: 'unknown-session' },
-      });
+      const joined = await second.request('control.begin', target);
+      assert(
+        'result' in joined && joined.result && 'session' in joined.result && typeof joined.result.session === 'string',
+      );
+      const other = joined.result.session;
+      expect(other).not.toBe(session);
+      expect(await first.request('input.text', { session, text: 'a' })).toMatchObject({ result: {} });
+      expect(await second.request('input.text', { session: other, text: 'b' })).toMatchObject({ result: {} });
+      first.socket.close();
+      expect(await second.request('input.text', { session: other, text: 'c' })).toMatchObject({ result: {} });
       expect(existsSync(lease.path)).toBe(true);
       second.socket.close();
       await until(() => !existsSync(lease.path));
       expect(existsSync(kept.path)).toBe(true);
+      expect(lockCalls().filter((args) => args.startsWith('device lock'))).toHaveLength(1);
       expect(lockCalls().every((args) => args.startsWith('device lock'))).toBe(true);
     },
     10_000,
   );
 
   test.skipIf(!fakeTailscale)(
-    'pushes a take-over to the phone that lost the device when it registered for control',
+    'refuses a client without takeOver while another workspace leases the device, though another client took it over',
+    async () => {
+      const port = await startControl({ FAKE_STIM_LOCK_BUSY: '1' });
+      const first = await authed(port, true);
+      const second = await authed(port, true);
+      const target = { workspace, platform: 'ios' };
+      expect(await first.request('control.begin', target)).toMatchObject({ error: { code: 'device-busy' } });
+      expect(await first.request('control.begin', { ...target, takeOver: true })).toHaveProperty('result.lease', null);
+      expect(await second.request('control.begin', target)).toMatchObject({
+        error: { code: 'device-busy', message: expect.stringContaining('Another workspace leases this device') },
+      });
+      expect(await second.request('control.begin', { ...target, takeOver: true })).toHaveProperty('result.session');
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'pushes to the phone that controls a device when an agent starts driving it',
     async () => {
       const bodies: { to: string; body: string; data: unknown }[] = [];
       const expo = createHttpServer((request, response) => {
@@ -11335,25 +11421,35 @@ describe('frames.subscribe', () => {
       await new Promise<void>((resolve) => expo.listen(0, '127.0.0.1', resolve));
       try {
         const address = expo.address() as { port: number };
-        const port = await startControl({}, undefined, `http://127.0.0.1:${address.port}/push`);
+        const statusFile = join(root, 'status.json');
+        writeFileSync(statusFile, JSON.stringify(statusPayload({ ios: OWNED_SIM })));
+        const port = await startControl(
+          { FAKE_STIM_STATUS_FILE: statusFile },
+          undefined,
+          `http://127.0.0.1:${address.port}/push`,
+        );
         const first = await authed(port, true);
         const second = await authed(port, true);
         const token = 'ExponentPushToken[first]';
         await first.request('push.register', { token, events: ['control'], ref: 'mac-1' });
         const listed = await first.request('notifications.list');
         expect(listed).toMatchObject({ result: { cursor: 0, notifications: [] } });
-        const { log } = (listed as { result: { log: string } }).result;
         await second.request('notifications.list', { since: 0 });
         await first.request('control.begin', { workspace, platform: 'ios' });
-        await second.request('control.begin', { workspace, platform: 'ios', takeOver: true });
-        await until(() => bodies.length > 0);
-        expect(bodies).toEqual([
+        const driven = {
+          ...OWNED_SIM,
+          activity: { state: 'driven', driver: { tool: 'agent-device', pid: 42, since: null }, basis: [] },
+        };
+        writeFileSync(`${statusFile}.next`, JSON.stringify(statusPayload({ ios: driven })));
+        renameSync(`${statusFile}.next`, statusFile);
+        const body = 'agent-device started driving the iOS device you are controlling';
+        await until(() => bodies.some((sent) => sent.body === body));
+        expect(bodies.filter((sent) => sent.body === body)).toEqual([
           expect.objectContaining({
             to: token,
-            body: 'Test phone took over the iOS device you were controlling',
             data: {
               ref: 'mac-1',
-              notification: 1,
+              notification: expect.any(Number),
               target: 'device',
               path: workspace,
               platform: 'ios',
@@ -11362,20 +11458,21 @@ describe('frames.subscribe', () => {
           }),
         ]);
         const entry = {
-          seq: 1,
           id: `control:${workspace}:ios:default`,
           category: 'control',
-          body: 'Test phone took over the iOS device you were controlling',
+          body,
           target: { kind: 'device', path: workspace, platform: 'ios', slot: 'default' },
         };
-        const events = [await first.next(), await first.next()];
-        expect(events).toContainEqual({ event: 'notification', log, notification: expect.objectContaining(entry) });
-        expect(await first.request('notifications.list', { since: 0 })).toMatchObject({
-          result: { log, cursor: 1, notifications: [expect.objectContaining(entry)] },
-        });
-        expect(await second.request('notifications.list', { since: 0 })).toMatchObject({
-          result: { log, cursor: 1, notifications: [] },
-        });
+        const controls = (reply: unknown) => {
+          assert(isJsonObject(reply) && isJsonObject(reply.result) && Array.isArray(reply.result.notifications));
+          return reply.result.notifications.filter(
+            (notification) => isJsonObject(notification) && notification.category === 'control',
+          );
+        };
+        expect(controls(await first.request('notifications.list', { since: 0 }))).toEqual([
+          expect.objectContaining(entry),
+        ]);
+        expect(controls(await second.request('notifications.list', { since: 0 }))).toEqual([]);
         expect(await second.request('notifications.list', { since: -1 })).toMatchObject({
           error: { code: 'bad-request' },
         });
@@ -11617,6 +11714,7 @@ describe('frames.subscribe', () => {
       expect(run?.configs.slice(1)).toEqual([
         { input: 'touch', phase: 'down', x: 0.5, y: 0.5, display: 0 },
         { input: 'text', text: 'hi\n' },
+        { input: 'touch', phase: 'up', x: 0.5, y: 0.5, display: 0 },
       ]);
     },
   );
@@ -12585,18 +12683,6 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
     expect(stimCalls()).toEqual([]);
   });
 
-  it('does not advertise or grant the operation on an adopted local server', async () => {
-    await start({ desktopBootstrap: null });
-    assert(server?.localSocket);
-    const client = await localConnect(server.localSocket);
-    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining([`desktop-${kind}`]) },
-    });
-    expect(
-      await client.request(`desktop.${kind}.subscribe`, { cwd: workspace, options: { platform: 'ios' } }),
-    ).toHaveProperty('error.code', 'forbidden');
-  });
-
   it.each(
     kind === 'run'
       ? [{ platform: 'ios' }, { platform: 'macos', remote: 'eas' }]
@@ -12782,18 +12868,16 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
     expect(stimCalls()).toEqual([]);
   });
 
-  it.each(['plain local', 'phone control', 'adopted local'])('denies warming from %s', async (mode) => {
-    const port = await start(mode === 'adopted local' ? { desktopBootstrap: null } : {});
+  it.each(['plain local', 'phone control'])('denies warming from %s', async (mode) => {
+    const port = await start();
     assert(server?.localSocket);
     const client =
       mode === 'phone control'
         ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
         : await localConnect(server.localSocket);
-    const hello = await client.request('hello', { client: CLIENT });
-    const offered = expect.arrayContaining(['desktop-worktree-warm']);
-    const hidden = expect.not.arrayContaining(['desktop-worktree-warm']);
-    const features = mode === 'plain local' ? offered : hidden;
-    expect(hello).toMatchObject({ result: { features } });
+    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-worktree-warm']) },
+    });
     expect(await client.request('desktop.worktree.warm.subscribe', { cwd: workspace })).toHaveProperty(
       'error.code',
       'forbidden',
@@ -13169,24 +13253,21 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
     expect(stimCalls()).toEqual([]);
   });
 
-  it.each(['plain local', 'phone control', 'adopted local'])(
-    'denies removal from %s without deleting the target',
-    async (mode) => {
-      const fixture = removalFixture();
-      const port = await start({ env: fixture.env, ...(mode === 'adopted local' ? { desktopBootstrap: null } : {}) });
-      assert(server?.localSocket);
-      const client =
-        mode === 'phone control'
-          ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
-          : await localConnect(server.localSocket);
-      await client.request('hello', { client: CLIENT });
-      expect(
-        await client.request('desktop.worktree.remove.subscribe', { cwd: workspace, target: fixture.linked }),
-      ).toHaveProperty('error.code', 'forbidden');
-      expect(existsSync(fixture.linked)).toBe(true);
-      expect(stimCalls()).toEqual([]);
-    },
-  );
+  it.each(['plain local', 'phone control'])('denies removal from %s without deleting the target', async (mode) => {
+    const fixture = removalFixture();
+    const port = await start({ env: fixture.env });
+    assert(server?.localSocket);
+    const client =
+      mode === 'phone control'
+        ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
+        : await localConnect(server.localSocket);
+    await client.request('hello', { client: CLIENT });
+    expect(
+      await client.request('desktop.worktree.remove.subscribe', { cwd: workspace, target: fixture.linked }),
+    ).toHaveProperty('error.code', 'forbidden');
+    expect(existsSync(fixture.linked)).toBe(true);
+    expect(stimCalls()).toEqual([]);
+  });
 
   it('rejects malformed effects before removing a worktree', async () => {
     const fixture = removalFixture();
@@ -13278,7 +13359,7 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.arrayContaining(['desktop-gc']) },
+      result: { features: expect.not.arrayContaining(['desktop-gc']) },
     });
     expect(await peer.request('hello', { client: CLIENT })).toMatchObject({
       result: { features: expect.not.arrayContaining(['desktop-gc']) },
@@ -13303,20 +13384,6 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
       expect(await client.request('desktop.gc.subscribe', params)).toHaveProperty('error.code', 'bad-request');
     expect(readFileSync(fixture.artifact, 'utf8')).toBe('keep until requested cleanup');
     expect(stimCalls()).toEqual([]);
-  });
-
-  it('denies GC on an adopted server without the private Desktop bootstrap', async () => {
-    const fixture = cacheFixture();
-    await start({ env: fixture.env, desktopBootstrap: null });
-    assert(server?.localSocket);
-    const client = await localConnect(server.localSocket);
-    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-gc']) },
-    });
-    expect(
-      await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
-    ).toHaveProperty('error.code', 'forbidden');
-    expect(existsSync(fixture.artifact)).toBe(true);
   });
 
   it.each(['unsubscribe', 'disconnect', 'shutdown', 'timeout'] as const)(
@@ -13470,21 +13537,16 @@ describe.skipIf(process.platform === 'win32')('Desktop machine access requests',
     expect(stimCalls()).toEqual([]);
   });
 
-  it.each(['plain local', 'phone control', 'adopted local'])('denies access requests from %s', async (mode) => {
-    const port = await start(mode === 'adopted local' ? { desktopBootstrap: null } : {});
+  it.each(['plain local', 'phone control'])('denies access requests from %s', async (mode) => {
+    const port = await start();
     assert(server?.localSocket);
     const client =
       mode === 'phone control'
         ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
         : await localConnect(server.localSocket);
-    const hello = await client.request('hello', { client: CLIENT });
-    assert(
-      'result' in hello &&
-        isJsonObject(hello.result) &&
-        'features' in hello.result &&
-        Array.isArray(hello.result.features),
-    );
-    expect(hello.result.features.includes('desktop-machine-access')).toBe(mode === 'plain local');
+    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-machine-access']) },
+    });
     expect(await client.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
       'error.code',
       'forbidden',

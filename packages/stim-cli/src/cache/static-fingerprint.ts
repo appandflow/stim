@@ -43,7 +43,13 @@ const ROOT_FILES = [
   'expo-module.config.json',
 ];
 const ROOT_DIRS = ['patches', 'cng-patches'];
-const LOCKFILES = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json', 'bun.lock', 'bun.lockb'];
+export const LOCKFILES: readonly string[] = [
+  'pnpm-lock.yaml',
+  'yarn.lock',
+  'package-lock.json',
+  'bun.lock',
+  'bun.lockb',
+];
 const NATIVE_MARKERS = ['expo-module.config.json', ...RN_CONFIGS];
 const RISKY_IMPORTS = new Set([
   'fs',

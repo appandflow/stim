@@ -1,26 +1,18 @@
 ---
 title: 'Worktree isolation'
 sidebar_position: 2
-description: 'Parallel worktrees that share expensive build caches'
+description: 'Run parallel worktrees with separate devices and shared build caches.'
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
 
-:::note[Command examples]
+Give each task a linked Git worktree. Stim gives each workspace its own Metro port and device while sharing build caches.
 
-Commands use `stim`. If it is not installed globally, replace `stim` with
-`npx stim`.
-
-:::
+If Stim is not installed globally, use `npx stim`.
 
 ## Create with Git
 
-Use Git to choose the branch, path, and starting commit. Prefer a sibling
-worktree directory: nested worktrees can confuse Metro, TypeScript, and other
-filesystem scanners even when Git ignores them. When worktrees do live inside
-the checkout, such as under `.worktrees/`, `stim doctor` reports that a
-Watchman root at the checkout would crawl them, and `stim doctor --fix` adds
-them to the checkout's `.watchmanconfig` `ignore_dirs`.
+Create a sibling directory so Metro and Watchman stay out of your other checkouts. If your agent already created the worktree, run just the last line from it.
 
 <StimTabs
 code={`git worktree add -b feature-x ../feature-x HEAD
@@ -28,383 +20,46 @@ cd ../feature-x
 stim worktree warm`}
 />
 
-If a harness already created the linked worktree, skip Git creation and run
-`stim worktree warm` there.
-
 ## Warm ignored state
 
-Warm copies from the repository's source checkout, regardless of either
-branch's `HEAD`. That checkout must still be available. In a bare-repository
-layout, where every checkout is a linked worktree beside a bare `.git`, the
-source checkout is the worktree on the branch the bare repository's `HEAD`
-names; warm refuses with the exact Git command to run when that branch has no
-worktree or `HEAD` is detached. It copies missing
-ignored entries, including installed dependencies, Pods, native build output,
-`.env`, and local configuration files. APFS clones keep copies space-efficient
-where supported; a normal byte copy is used when cloning is unavailable. On
-macOS with the Command Line Tools, an ignored directory such as `node_modules`
-or `ios/Pods` on the same APFS volume is cloned in one step, so even a large
-one takes seconds instead of minutes.
-Copies go directly to the destination with no intermediate staging. Keep the
-source checkout and the linked worktree on the same volume to benefit from CoW;
-`STIM_TMPDIR` and `tempDir` do not affect warming.
+Warm copies missing Git-ignored entries from the source checkout, such as `node_modules`, Pods and `.env`. It preserves tracked files and existing entries, including entire directories. On the same APFS volume it can clone files to save disk space. Wait for warm to finish before editing, installing or building in the worktree.
 
-Warm preserves the current branch, tracked files, and every existing
-destination entry, including dangling symlinks. An existing ignored directory
-such as `node_modules` is skipped whole; warm does not fill missing children.
-Untracked files that Git does not ignore are not copied.
+- **Dependencies missing or stale?** Run the project's install command when warm reports a lockfile mismatch or has nothing to copy. Warm itself does not install packages.
+- **Expo generated native directories?** Warm copies ignored `ios/` and `android/` only when Stim recorded a current prebuild. Run `stim doctor --fix` in the source checkout to prepare them, or let the first run generate them in the worktree. [Doctor](./commands.md#doctor)
+- **Need to leave files out?** Add patterns to the source checkout's `.worktreeexclude` or set `worktree.exclude`. Patterns match whole entries Git reports. If Git lists an ignored directory as one entry, a pattern for a file inside it has no effect.
 
-A copied `ios/Pods` names the source checkout's path in its generated files and
-in the checksum of any podspec that embeds that path, such as the precompiled
-ExpoModulesCore. When `ios/Podfile.lock` and the copied `Pods/Manifest.lock`
-differ only by those checksums, warm rewrites the source path to the
-worktree's path and makes `Manifest.lock` match `Podfile.lock`, so the first
-`stim ios` skips `pod install`. Any other difference, a Pods file that still names the source path, or
-carried `node_modules` that do not match the worktree's lockfile leaves Pods as
-copied and `pod install` runs. Warm does not edit `Podfile.lock`.
-
-When `pod install` does run, the new `Podfile.lock` holds the checksum of a podspec
-that embeds the checkout path, so it differs per worktree. The build fingerprint
-counts that checksum as the checksum of the podspec with the path left out, as long
-as it equals the sha1 of the pod's file in `ios/Pods/Local Podspecs`. Worktrees of
-one commit that each ran `pod install` therefore share one cache key, and a change
-to the podspec itself, or to anything else in `Podfile.lock`, still changes it.
-
-Clones of `ios/Pods` share disk only while the worktree builds the configuration
-the source checkout last built. React Native swaps its prebuilt core, Hermes and
-dependency frameworks when `.last_build_configuration` differs from the
-configuration being built, and the extracted files are unshared, about 1 GB per
-worktree. When the source checkout's marker is Debug or Release and the
-worktree builds the other, warm prints one line on stderr and `stim doctor`
-reports the same note. Build the source checkout once in that configuration with
-`stim ios` before warming more worktrees.
-
-When the two locks already match but the copied Pods still name the source
-path, warm applies the same rewrite and scan, so builds do not read the source
-checkout's files (entitlements, `Podfile.properties.json`). If it cannot, warm
-deletes `ios/Pods/Manifest.lock` so `stim ios` runs `pod install`.
-
-In an Expo project whose `ios/` or `android/` Git ignores (Continuous Native
-Generation), warm copies that directory only when the source checkout's last
-Stim prebuild of it ran on the app's current native fingerprint. It then records
-the same prebuild in the worktree, so the first `stim ios` or `stim android`
-there does not run `expo prebuild` when the worktree's fingerprint is the same.
-Otherwise warm leaves the directory out, with its Pods and build output, and
-prints why on stderr:
-
-```text
-carry       left out example/ios: Stim has no record of generating the source's ios/, so it cannot show the directory is current; stim ios generates ios/ fresh here and installs its Pods there, a private copy instead of a clone
-```
-
-A directory generated outside Stim, for example by `npx expo prebuild` or
-`npx expo run:ios`, has no record, so warm leaves it out. To make it eligible,
-delete it in the source checkout and run `stim ios` or `stim android` there,
-so Stim generates it fresh and records that. Running Stim over the existing
-directory instead updates it in place and records it as current even when it
-came from an older template. Leaving out a directory Stim cannot vouch for
-keeps an older Expo or React Native template out of every worktree: Stim runs
-`expo prebuild` without `--clean` over an existing directory, which keeps
-template files such as the Podfile. Checking a recorded directory costs one
-native fingerprint per platform, about a second.
-
-`stim doctor` reports a source checkout with no current record, and
-`stim doctor --fix` in a terminal runs the prebuild and, on iOS, the pod install
-in the source checkout, without compiling, and records it, after asking. The same
-`--fix` reinstalls a stale dependency tree and repairs broken `ios/Pods` links or a
-conflict with a gitignored `Podfile.lock`; see [`doctor`](./commands.md#doctor).
-
-Wait for warm to exit successfully before editing, installing dependencies,
-starting Metro/builds in that worktree. Concurrent warms into the same target
-wait on its exclusive copy claim. **Other concurrent writes to the destination
-are unsafe:** existing entries are checked before copying, not during it.
-Concurrent files can be overwritten or removed.
-
-Stim excludes:
-
-- Nested registered Git worktrees, including ignored parents containing them.
-- Ignored entries named `.DS_Store`, `.DerivedData`, `.idea`, `.jj`, or `.pnpm-store`, `android/build/generated/autolinking`, and `.expo/types`.
-- From a copied directory, these known paths: `.pnpm-store` in `node_modules` (a project-local pnpm store duplicates the global one, and pnpm refills it when it needs to), `android/build/generated/autolinking` under a copied `android`, `android/build`, or `android/build/generated` (Gradle regenerates it for the new checkout), `types` in a copied `.expo` (Expo Router's typed routes, which the source checkout may have generated from older routes; Expo regenerates them on the worktree's first `expo start`), and `expo-modules-jsi/apple/.DerivedData` in `node_modules`, hoisted or in the pnpm virtual store (Xcode build state that records the source checkout's paths). Warm renames these paths into `$STIM_HOME/trash` and a detached, low-priority `rm` deletes them after the command returns (through the [programmatic API](./programmatic-api.md), before the call resolves); on Windows, or when `$STIM_HOME` is on another volume than the worktree, warm deletes them before it returns. Stim does not walk copied directories, so a `.DS_Store` or `.idea` inside one stays, and so do these paths inside an ignored directory that Git reports above those names, such as an app directory with no tracked files.
-- Paths matched by the source checkout's nonempty `.worktreeexclude`, or its
-  resolved `worktree.exclude` setting when that file is absent or empty.
-- Destination paths that overlap a registered nested worktree or have symlink
-  ancestors.
-
-Tracked `.idea` settings come from Git and stay untouched by warm.
-
-Other generated state stays eligible: `.gradle`, `.cxx`, `*.tsbuildinfo`,
-`build` directories, and embedded JavaScript need project-specific decisions
-about regeneration. Native intermediates can record the source checkout's
-paths; warm does not relocate them. Excluding the whole `.expo` directory can
-drop generated TypeScript inputs.
-
-Choose exclusions against the entries Git lists from the source checkout's
-repository root:
-
-```sh
-git ls-files --others --ignored --exclude-standard --directory --no-empty-directory
-```
-
-Patterns match these entries with the trailing `/` removed; they do not prune
-children of a whole ignored directory. If Git lists
-`android/app/src/main/assets/`, excluding its `bundle.jsbundle` child has no
-effect. Exclude `android/app/src/main/assets` only when the project regenerates
-everything inside it. Existing destination entries are always preserved.
-
-Warm writes only to stderr: copied, kept, and failed entry counts, plus any
-lockfile remedies. A failure exits 1; completed entries remain. After its child
-drains, warm removes its own failed partial entry so a retry can copy it again.
-Unverifiable cleanup leaves the partial entry and its ownership claims in place
-with recovery instructions. A completed copy does not prove dependencies are installed or
-match the current branch. When the carried `node_modules` records the lockfile
-it was installed from (npm `node_modules/.package-lock.json`, pnpm
-`node_modules/.pnpm/lock.yaml`, Yarn `node_modules/.yarn-integrity` or
-`node_modules/.yarn-state.yml`), warm compares it with this worktree's lockfile,
-the nearest one at or above that `node_modules` within the worktree,
-and prints the install command when they differ. A pnpm install run with
-`--filter` or `--prod` records only part of the lockfile and also reads as a
-difference. For an npm lockfile that
-command is `npm ci`, which deletes `node_modules` first, so it replaces the
-clone, which costs no disk, with a private copy of every package; warm says
-so on the same line. Otherwise it compares the source checkout's lockfile with
-this one. Warm never installs. Install missing dependencies with the project's
-package manager when the source checkout has none to copy.
-
-In every workspace, `node_modules`, `ios/Pods`, Xcode DerivedData and the build
-directories (`android/app/build`, `android/build`, `android/.gradle`, `.build`,
-`android/.cxx`, `android/<module>/.cxx` and a `.dd` directory laid out as DerivedData)
-are disposable. The `stim-daemon` deletes a workspace's build outputs when it
-goes idle, and the `node_modules` and Pods of idle linked worktrees under
-critical disk pressure; the next `stim start`, `stim ios` or `stim android`
-restores them from the build cache or with `stim worktree warm`. Never fix a
-dependency by editing files inside them, because the change is lost. Put
-dependency changes in the project's own patch mechanism, such as
-patch-package, `pnpm patch`, `yarn patch` or a Podfile `post_install` hook, and
-commit them.
+<StimTabs code="stim guide lifecycle" />
 
 ## Refresh the source checkout first
 
-Every worktree is a copy of the source checkout, so a stale one seeds stale
-worktrees. `stim worktree warm --refresh` updates it before the copy:
+<StimTabs code="stim worktree warm --refresh" />
 
-<StimTabs
-code={`stim worktree warm --refresh`}
-/>
-
-It checks the branch's upstream, fetches changes when needed, and fast-forwards
-**whatever branch the source checkout has** to its `@{upstream}`, and then installs only what the new commits
-moved: the lockfile's own install command where the lockfile lives (the
-repository root in a monorepo, and the app too when it has a lockfile of its
-own; a root that was never installed is left alone), and `pod install` for the app. The app is the one you ran the command
-from or, from the monorepo root, the one app registered in the source checkout or in the worktree.
-With no such app, a refresh from the root updates only the repository root and says so.
-In an npm project a change to `patches/` counts as a dependency change. When npm's config sets
-`ignore-scripts` and the project's `package.json` defines `postinstall`
-(patch-package, usually), the refresh runs `npm run postinstall` after `npm ci`;
-dependencies' own install scripts stay blocked. Each dependency and Pods step
-names its source directory and prints what it did or why it skipped.
-
-The flag is opt-in because it writes to a checkout you are not standing in. It
-refuses one it cannot move -- uncommitted changes to tracked files or a rebase
-or merge in progress (`STIM_MAIN_DIRTY`), a detached `HEAD`
-(`STIM_MAIN_DETACHED`), or a branch both ahead of and behind its upstream
-(`STIM_MAIN_DIVERGED`) -- and names the git command that clears it. Untracked
-files are not a reason to refuse, a branch with no upstream is left alone, and a
-fetch that fails is reported as a fact while the run continues on local state.
-It never switches branches, merges, or resets. When the source checkout is not
-on the default branch it warns and continues, because the copy then carries that
-branch's dependencies; set `worktree.defaultBranch` in the repository-root
-`.stim.json` when `origin/HEAD` is missing or wrong.
-
-An install that fails is remembered, and a plain warm reads that before it
-copies. The refresh records the install it completed for each lockfile it read,
-the repository root's and the app's own; when the last install of a lockfile as it stands now did not finish, a plain
-warm refuses with `STIM_DEPS_INCOMPLETE` and copies nothing, because the
-dependencies in the source checkout are partial and only the refresh's own
-terminal ever said so. Run `stim worktree warm --refresh`, which reinstalls for
-the same reason. A record of a different lockfile does not block a copy, and a
-repository with no record copies exactly as it did before.
-
-One lock per repository protects this, with or without the flag. A refresh
-first checks under a shared claim: `git ls-remote` confirms the upstream commit
-without changing local Git refs. If the checkout, dependencies and Pods are
-current, it reports `acquired shared (seed current)` and copies alongside other
-warms. It takes an exclusive claim only when it needs to fetch changes,
-fast-forward or install, or cannot confirm the upstream. After waiting, it
-checks the checkout again before writing. Every copy holds shared, so no copy
-reads a `node_modules` a refresh is rewriting. Each copy also holds an exclusive
-claim on its target, so concurrent warms cannot race writes into the same linked
-worktree. A holder that dies frees the lock.
-A refresh whose install runs in a
-spawned process group holds the lock while any member of that group lives, so a
-package manager's postinstall writer cannot outlive the protection.
-
-Both plain warm and `--refresh` refuse before copying when they cannot record a
-claim. Missing process identity, denied write access or read-only claim storage
-report `STIM_CLAIM_UNAVAILABLE` with recovery instructions. Restore access to the
-same claim store before retrying; a different `STIM_HOME` would hide concurrent
-warm operations. A non-directory claim path reports `STIM_CLAIM_REFUSED`, names
-the blocking file and prints a move-aside command that preserves its contents.
-Inspect that file first, and preserve any existing backup when prompted.
+This can fast-forward the **source checkout's current branch** to its upstream and update its dependencies and Pods before copying. It refuses a dirty tracked tree, detached HEAD, divergent branch or in-progress merge or rebase. If a refresh failed during installation, rerun it before warming from that checkout.
 
 ## Parallel environments
 
-Each workspace receives a unique Metro port, state directory, and owned
-device when Stim starts and runs the app. Build and Metro caches remain shared.
-Several agents can work in parallel without sharing live resources.
+Run these from each app's directory. Each worktree gets its own workspace, so you can stop one without stopping the others.
 
-`stim status` shows linked worktrees with their environment state, including
-those with no Stim environment yet. It covers every repository with a
-registered environment, plus the repository you run it from. A worktree whose
-app lives in a subdirectory, such as `apps/mobile`, counts as having an
-environment once that app is registered.
-`stim status --json` lists the others under `unprovisionedWorktrees`, each
-with its `path`, `branch`, and `repository`.
+<StimTabs
+code={`stim start
+stim ios        # or: stim android
+stim status`}
+/>
 
-`worktree warm` registers the app it prepares, so the workspace shows in
-`stim status`, Stim Desktop and the phone app from the moment warm starts.
-That app is the nearest React Native or Expo app where warm runs when it is
-below the worktree root. Otherwise it is the one app the source checkout has
-registered, at the same path in the worktree, or else the worktree root when
-that is the app. From a monorepo's worktree root, warm finds `apps/mobile`
-this way when the source checkout's `apps/mobile` is registered, even if the
-root `package.json` also lists `react-native`. Status reports each
-environment's `phase`:
-
-- `warming` while warm runs, with `warmStep` `refresh` or `copy`.
-- `ready` after it succeeds, until the first `start`, `ios`, `android`, `web`
-  or `reload` there, or for 2 hours.
-- `live` when Metro, a device, Chrome or a remote session runs; the workspace
-  is active.
-- `idle` otherwise.
-
-`phaseSince` is when the warm started or finished. A warm that fails or is
-killed reads as `idle`, never as `warming`. Plain `stim status` marks the
-workspace `[warming: copy]` or `[ready]`. A warm that finds no app
-registers nothing, and the worktree stays in `unprovisionedWorktrees` until
-`start`, `ios`, `android`, or `doctor` registers it.
-
-A registered workspace whose folder was deleted outside Stim reads as `idle`
-with `pathMissing: true` in `stim status --json` and the marker
-`[folder missing]`; `stim worktree remove <path>` or `stim gc --delete` removes
-the entry.
-
-Each worktree also reports its git state: the number of changed and untracked
-files, its upstream with commits ahead and behind, and whether its branch is
-merged into the default branch. In `--json` that is the `git` object on each
-`unprovisionedWorktrees` entry and on each environment's `worktree`, with
-`changed`, `untracked`, `upstream`, `ahead`, `behind`, and `mergedInto`. The
-merge check is the one `stim gc` uses, applied to the refs already fetched;
-status never fetches. `git` is `null` when git fails or does not answer within
-3 seconds. One-shot `stim status` reads git only for the worktrees of live
-environments, at most six `git` calls at a time, so `git` is also `null` for the
-worktree of an environment that is not live and for every unprovisioned worktree;
-`stim status --watch` reads all of them.
-`stim status --watch` rereads a worktree's git state when a commit, checkout,
-staging change, push or fetch touches its git files, and at least once a
-minute, so a file edit, creation or deletion that is not staged can take up
-to a minute to show.
-
-Each worktree also reports the GitHub pull request of its branch, once
-`stim status --watch` has looked it up. In `--json` that is `pullRequest` next
-to `git`: `{ number, url, title, state, checks, reviewDecision, checkedAt }`,
-where `state` is `open`, `draft`, `merged` or `closed`, and `checks` counts the
-head commit's `passing`, `failing` and `pending` checks. It is `null` when the
-branch has no pull request, and absent when it was never looked up: `gh` is
-missing or signed out, the repository has no GitHub remote, or status could not
-read the worktree's git. A later `gh` failure keeps the last answer. The watcher
-uses the same `gh` lookup as `stim gc`, off its refresh path, once per
-repository for worktrees whose answer is over 5 minutes old or whose HEAD
-moved; one-shot `stim status` only reads the cached answers.
-
-Status reads the worktree list from git's records in the repository. It runs
-`git status` only in worktrees outside macOS-protected folders, or in ones with
-a registered environment, so a worktree under `~/Documents` or `~/Desktop` is
-listed without triggering a privacy prompt, with `git` set to `null`.
+Look in Stim Desktop or run `stim status --watch` to see builds, devices and Git status. Warming from the app directory also registers it, so it appears while warm is running.
 
 ## Remove a worktree
+
+Run from the linked worktree root.
 
 <StimTabs
 code={`stim stop
 stim worktree remove`}
 />
 
-Removal works with any linked worktree, warmed or not. Git registration
-identifies the worktree; no Stim registry entry is required. The command
-reclaims any owned resources before removing the linked checkout. It parks
-eligible owned iOS simulators and Android emulators when parking is enabled;
-see [devices and cleanup](/docs/owned-devices) for reuse and eviction rules.
-It refuses uncommitted, untracked, or unpushed work and initialized submodules
-unless you pass `--force`. It refuses a worktree locked with `git worktree lock`
-even with `--force`; unlock it first. Both checks run before any resource is
-reclaimed. Untracked `.watchman-cookie-*` files, which watchman writes into the
-roots it watches, do not count as work; removal deletes them.
+Stim reclaims owned resources and removes the linked checkout. It refuses uncommitted, untracked or unpushed work and initialized submodules unless you pass `--force`. A Git-locked worktree, a worktree containing another worktree, or one providing your running CLI or server is protected even with `--force`. Git-created branches stay.
 
-Deleting `node_modules`, `ios/Pods` and build outputs can take most of a
-removal. Before git removes the worktree, Stim renames its ignored directories
-into `$STIM_HOME/trash`, which takes no time on the same volume, and a
-detached, low-priority `rm` deletes them after the command returns, so disk is
-freed a little later. Through the [programmatic API](./programmatic-api.md),
-the trash is deleted before `removeWorktree` resolves. When git refuses the
-removal, the directories are moved back. On Windows, or when `$STIM_HOME` is on another volume than the worktree,
-git deletes them as before. `stim gc` reports what is left in the trash, and
-`stim gc --delete` deletes the entries Stim wrote there (a `remove-*` directory
-with a `trash.json`) whose worktree is gone, including those of an interrupted
-removal, and keeps anything else. An entry whose worktree still exists, because
-the removal was killed before git ran, stays until you run `stim worktree
-remove` on that worktree again.
-
-Git-created branches stay. An existing Stim ownership record permits deleting
-a branch only when it has no unique commits.
-
-Removal also stops the agent-device daemon in the workspace's
-`agentDevice.stateDir` and removes its sessions and logs. If agent-device is
-missing or the stop fails, Stim keeps the workspace directory and prints the
-`agent-device daemon stop --state-dir <dir> --clean` command to retry. A
-`daemon.json` whose process is gone is stale and does not block removal.
-See [agent-device workspace state](./dev-server-and-logs.md#agent-device-actions).
-
-On the source checkout, `worktree remove` only reclaims the Stim environment.
-It does not remove that checkout. Run from the checkout root, it reclaims every
-registered project under it. Run from a subfolder such as `apps/mobile`, it
-reclaims only the project at or above that folder, with the projects nested under it.
-
-In a linked worktree, `worktree remove` removes the worktree only when it runs
-from the worktree root or you pass the root path. Run from a subfolder, or given
-a subfolder path, it reclaims only the project at or above that folder, with the
-projects nested under it, leaves the tree and the other projects alone, and
-refuses with exit 1 when no project is registered at or above it. Run it from
-the worktree root, or pass the root, to remove the whole worktree.
-
-A worktree deleted outside Stim, with `git worktree remove` or `rm -rf`, stays
-registered and shows as `[folder missing]` in `stim status`. Pass its path to
-`worktree remove` to drop the record of that path and of the projects registered
-under it, with their owned devices, leases and workspace directory. This works
-only when the folder is gone from a mounted volume; a path on a volume that is
-not mounted is kept and refused, since the folder may come back. `gc --delete`
-prunes every such entry.
-
-`worktree remove` refuses a worktree that a `stim-server service` runs from,
-even with `--force` (`STIM_WORKTREE_SERVICE`): deleting the folder would delete
-the running server's code. Reinstall the service from another build with
-`stim-server service install`, or remove it with `stim-server service uninstall`,
-then retry. It also refuses, even with `--force`, a worktree that holds the
-running `stim` or the `stim` on your PATH, after resolving symlinks, so a
-`pnpm exec stim` or `npx stim` that resolves into the worktree's own
-`node_modules` cannot remove it; run the global `stim` instead. Stim does not
-detect other processes whose working directory is in the worktree.
-
-Windows cannot delete a directory another process holds open. The adb server
-inherits the working directory of the adb client that starts it, and the
-emulator launcher passes its own to qemu and its crash handler, so Stim runs
-its first adb command and the emulator from your home directory rather than
-the worktree. When removal still reports `Permission denied`, a server or
-another process was started from inside the worktree; `adb kill-server`
-releases the server.
-
-Named ports allocated by `stim ports get <label>` belong to the workspace.
-`worktree remove` releases the allocations without signalling their listeners;
-`gc --delete` does the same for missing workspaces. Run `stim ports stop` first
-to stop a server. `stim stop` leaves them alone. See [named server ports](./dev-server-and-logs.md#named-server-ports).
+From a linked worktree's app subdirectory, removal reclaims that app's environment and leaves the checkout. From the source checkout root, it reclaims the Stim environments and leaves the source checkout. If you deleted a worktree outside Stim, pass its missing path to `stim worktree remove` to reclaim its resources. Use `stim ports stop` separately to stop any server you started on a [named port](./dev-server-and-logs.md#named-server-ports).
 
 ## Remove finished worktrees in bulk
 
@@ -414,245 +69,21 @@ stim gc --delete
 stim gc --delete --worktrees --older-than 3`}
 />
 
-Automatic maintenance ([`daemon.mode`](./settings.md#stim-daemon), on by
-default) removes finished worktrees on its own, by the same rules as
-`gc --delete`. Turn that off with
-`maintenance.removeFinishedWorktrees false`.
+- **Preview.** `stim gc` lists what it would keep or remove. It uses local refs and cached pull request status. `--delete` can refresh them.
+- **Clean up finished work.** `--delete` can remove worktrees Stim has used after their branch merges or their pull request merges or closes. It can also remove clean, inactive worktrees based on the default branch with no commits of their own. Automatic maintenance does this by default.
+- **Include idle work.** `--worktrees --older-than 3` also includes clean, pushed worktrees unused by Stim for at least three days, even if unmerged. Deleting them drops ignored files such as `.env.local`.
 
-With `maintenance.removeIdleWorktrees true`, which is off by default, its daily
-age sweep also removes clean, pushed worktrees whose branch is not merged once
-they are unused for `maintenance.olderThanDays` (7 days), as
-`gc --delete --worktrees --older-than 7` does. Unused means no Stim command ran
-there, so a worktree you edit without running `stim` counts as unused once its
-git activity is older than `gc.worktreeGraceMinutes`, and removal takes its
-git-ignored files, such as `.env.local`, with it. Pin a worktree with
-`maintenance.keep`.
+Stim keeps active, locked and pinned worktrees. It also keeps unpushed commits unless it can verify they were covered by a merge, including a squash or rebase merge. The default grace period for finished work is two hours. Lock an important checkout with `git worktree lock` or pin it with `maintenance.keep`. To turn off automatic removal, set `maintenance.removeFinishedWorktrees` to `false`. [Cleanup options](./commands.md#gc)
 
-`gc` lists every linked worktree that has a Stim workspace, and every other
-linked worktree of a registered project's repository, and says why each one
-is removed or kept. A merged worktree where no stim command ever ran is
-removed by the same rules. A worktree is finished when its branch is merged into
-the default branch, or when its pull request was merged or closed, and plain
-`gc --delete` removes it. `--worktrees` also
-removes a worktree that is idle: no Stim command has used it for
-`--older-than` days, or 7 days without that option. Either way, gc keeps a
-worktree that is the source checkout, bare, not registered in a `STIM_HOME`-scoped
-home (the registry of a scratch home does not list the worktrees of other
-homes, so it does not remove them or clear their `node_modules` and build outputs), locked, holds another worktree
-(`stim worktree remove` refuses that too), in use, unpushed, or has
-initialized submodules. A dirty worktree (untracked files count, except
-watchman's `.watchman-cookie-*` files) is kept unless it is finished, in which
-case gc archives its uncommitted files first (see below). In use includes a
-running dev server, a Stim run or live build, a booted owned simulator or
-emulator, a held device lease, and a worktree that holds the running `stim`
-or the `stim` on your PATH; a device left booted keeps the worktree until
-`stim stop` or the [idle stage](./dev-server-and-logs.md#idle-stop) shuts it
-down. With `--delete`, gc runs
-`stim worktree remove` without `--force` on each removable worktree. That
-command checks the worktree again before removing it, parks or shuts down its
-devices, and handles branches as it does when you run it yourself. A worktree that fails is
-reported and the others still run. A worktree removed with
-`git worktree remove` or `rm -rf` leaves its Stim workspace directory behind;
-plain `gc --delete` removes those.
-
-Each worktree line shows its in-tree build state: the size of `node_modules`,
-`ios/Pods`, `android/app/build`, `.build` and the other
-directories automatic maintenance and the pressure ladder clear, plus a project-local `.pnpm-store`.
-A directory directly under a repository's `.worktrees/` that
-`git worktree list` no longer shows, and that no other repository claims, is listed with its size and the `rm -rf`
-command to remove it. gc never removes it, because git can no longer say
-whether it holds uncommitted work.
-
-To decide that a branch is merged, `gc --delete` and the maintenance worktree
-check take the default branch from `origin/HEAD` and run `git fetch origin <default>` once per
-repository, with a 30-second timeout. They skip the fetch when that checkout
-fetched in the last 10 minutes. The branch counts as merged when:
-
-- a merge commit brought its HEAD into the default branch, and the branch's
-  reflog shows a commit made on it that HEAD contains. A branch with no commits
-  of its own, such as one just created, cut from another branch, or reset onto
-  one, is not merged (see below).
-  The next two apply only to a branch that changes the tree:
-
-- it has no merge commits and each of its commits has the same
-  `git patch-id --verbatim` as a commit on the default branch, as after a
-  rebase merge.
-- its whole diff has the same verbatim patch id as a commit on the default
-  branch, compared on the files the branch changes, as after a squash merge.
-
-From git alone, a squash merge whose content changed while merging, such as a
-conflict resolution or even a whitespace edit, does not match; neither does a
-branch that was fast-forwarded, or a stacked pull request merged after the one
-below it. The pull request check covers those. When `origin/HEAD` is not set, the fetch fails, or git
-cannot answer, gc does not treat the branch as merged and reports why. After a
-squash or rebase merge whose remote branch was deleted and pruned locally, the
-branch's commits exist only locally; gc still removes the worktree, because
-their change is on the default branch, and keeps the branch.
-
-A clean, pushed worktree with no commits of its own beyond the default branch,
-such as a detached baseline or bench checkout of `main` or an abandoned branch
-that never got a commit, holds nothing git would lose. `gc --delete` and the
-maintenance worktree check remove it once its git and Stim activity (the same
-sources as the grace period below) is older than both `gc.worktreeGraceMinutes`
-and `maintenance.protectRecentHours`, 2 hours by default, unless it has an open
-pull request, and never sooner than 5 minutes. Before
-removing it, gc checks again that its HEAD did not move and that it is still
-idle. A program Stim does not track, such as a benchmark started from that
-checkout, does not keep it; lock such a checkout with `git worktree lock`.
-
-A finished worktree that is dirty only because of uncommitted or untracked
-files, such as a scratch file an agent left behind, is archived, then removed,
-by `gc --delete` and the maintenance worktree check. Stim saves
-`git diff --binary HEAD` as `tracked.patch` and the untracked files git does not
-ignore as `untracked.tar`, with a `manifest.json` naming the branch, HEAD, pull
-request and files, under
-`$STIM_HOME/archive/worktrees/<repository>/<branch-or-dir>-<timestamp>/`.
-Ignored files such as `node_modules` and build output are not saved. It checks
-the patch with `git apply --check -R`, checks the tarball lists every file, and
-checks again just before git removes the worktree that no archived file
-changed; any failure keeps the worktree. It also keeps the worktree when the
-archive would leave less free disk than `disk.hardFloorGb`. Archives are private to your user but not
-redacted: an untracked `.env` file that git does not ignore is saved with the
-rest, so set `archive.enabled false` for a sensitive repository. A `git status`
-or editor refresh that rewrites the index counts as activity and restarts the
-grace period. The removal line and the gc and
-maintenance logs name the archive and the commands that restore it. When the
-default branch does not contain HEAD, as after a squash merge, `head.bundle`
-holds the missing commits, so the restore works after the branch is deleted:
-
-```sh
-git -C <repository> bundle unbundle <archive>/head.bundle
-git -C <repository> worktree add --detach <path> <HEAD>
-git -C <path> apply <archive>/tracked.patch
-tar -xf <archive>/untracked.tar -C <path>
-```
-
-Worktree archives follow `archive.maxAgeDays` and `archive.maxTotalGb`. Archive
-retention, which runs around each new archive and after each worktree removal
-that archives its workspace, deletes the expired ones. A new archive that would
-not fit beside the others under the cap keeps its worktree instead, so the
-oldest go for size only after you lower the cap, and an archive whose removal is
-still running is never deleted. With `archive.enabled false`, for the worktree or
-a project registered inside it, or
-either limit at 0, dirty worktrees are kept as before. A worktree whose staged
-version of a file differs from its working tree is kept too, because the patch
-holds only the working tree. `stim worktree remove` itself never archives; it
-refuses uncommitted work unless you pass `--force`.
-
-`gc --delete` and the maintenance worktree check also ask GitHub, with one `gh api graphql` query per repository that
-looks up the 20 newest pull requests of each worktree's branch, as
-`gh pr list --head <branch> --state all` would. For each worktree it takes the pull
-request whose head is the worktree's HEAD, or contains it. A pull request from
-an older use of the same branch name, or one HEAD has moved past, does not
-count, and an open one never finishes a worktree. A merged or closed pull
-request finishes it, with the same clean-state rules. After a merge, commits
-whose remote branch was deleted do not keep the worktree, because GitHub keeps
-them in the pull request. After a close they do: gc reports the worktree as
-unpushed. When `gh` is not installed, not signed in, or fails, gc says so
-(`pullRequestUnknown` in `--json`) and decides from git alone.
-`stim worktree remove` makes the same check when local-only commits would
-refuse the removal, so a worktree whose pull request was squash-merged and
-whose branch was deleted is removed without `--force`.
-
-Plain `gc`, without `--delete`, runs no fetch and no `gh`. It checks merges
-against the `origin/<default>` ref already on disk, and reads pull requests
-from the cache that `stim status --watch` and the maintenance worktree check
-write, when that cache describes the worktree's current branch and HEAD. The
-worktree check runs every `maintenance.worktreeCheckMinutes` (15 by default)
-in a maintenance pass: on a `stim-daemon` tick, or, while no daemon holds the
-home, when `stim doctor`, `stim start`, `stim ios` or `stim android` (on Windows also the background process other top-level commands start) runs one;
-`gc` never starts one. The ref and the cache count as fresh while they are younger
-than twice that interval, and never less than 10 minutes. A merge found this
-way stays true as the default branch moves on, so the report calls a worktree
-removable only on facts that fresh state keeps. The exceptions are a
-force-push that dropped the merge from the default branch, a pull request
-reopened since the lookup, and the grace period of a pull request merged or closed
-after its merge commit was made. When fresher state could change a kept worktree's
-verdict, the report says "merge state not refreshed", and a worktree that is
-only not merged shows the reason `merge-unknown` instead of `not-merged`.
-With `daemon.mode` off or `maintenance.removeFinishedWorktrees` false,
-the worktree check never runs, and only `gc --delete` refreshes. `gc --delete`
-fetches (unless the checkout fetched in the last 10 minutes) and asks GitHub
-before it removes anything; a `stim worktree remove` run from the report
-checks only for uncommitted and unpushed work.
-
-gc also waits out a grace period, 2 hours by default, before it removes a
-finished worktree. The period starts at the worktree's latest activity: a
-change to its git index, HEAD or reflog, a Stim state or log write, or the
-merge of its branch into the default branch or of its pull request, and, for a
-dirty worktree it would archive, a change to one of its uncommitted files. An agent that just merged its
-pull request still has time to run `stim stop` and `stim worktree remove`
-itself. gc reports such a worktree as kept with the reason `recent-activity`
-and the time it becomes removable (`eligibleAt` in `--json`). With
-`daemon.mode` `on` and `maintenance.removeFinishedWorktrees` true, a merged or
-closed worktree that a maintenance worktree check kept for its grace period
-keeps the `stim-daemon` running until a check after that time removes it, so it
-goes even when nothing else runs. A pull request merged after the daemon exited
-waits for the next command that starts one. When gc cannot
-read that activity, it keeps the worktree (`activity-unknown`). Set the period
-in minutes with [`gc.worktreeGraceMinutes`](./settings.md); `0` turns it off.
-
-Ask your agent:
-
-```text
-Run `stim gc --json` and show me which merged worktrees it would remove and
-why it keeps the others. Do not pass --delete until I confirm.
-```
+A finished worktree with uncommitted changes can be removed after Stim saves a recovery archive. The archive includes tracked changes and unignored untracked files, which can contain secrets. Stim keeps the worktree if it cannot safely save the archive or archiving is disabled. The removal output gives the exact restore commands.
 
 ## Archived workspaces
 
-Removing a linked worktree keeps its workspace history under
-`$STIM_HOME/archive/<name>--<removedAtMs>/`: state, ended agents, the error
-index, logs, closed recording segments, and workspace-local agent-device
-sessions when present. Build outputs and open recording segments are deleted.
-An archive has no checkout, devices, ports, or processes. Recreating the path
-starts fresh; `status --json` links the earlier archive through `replacedBy`.
+Open **Archived** in Desktop or the phone app to view retained build history, logs and device replay. An archived workspace is read-only. Logs and recordings can contain secrets, and retention limits apply. [Archive retention settings](./settings.md#archive-retention)
 
-Paired clients with `read` can use an archive's `archived[].id` as `archive`
-in `archive.detail`, `logs.query`, `logs.subscribe`, `replay.range`, `replay.keyframe`, and
-`frames.subscribe` with `at` and `video: ["h264"]`. Omit `workspace`: exactly
-one selector is required. Older servers refuse `archive.detail` with
-`unknown-method` and archive selectors on existing reads with `bad-request`.
-Archived logs use the same filters as live logs; subscriptions
-send retained records and then `logs-ended`. Replay uses closed segments and
-markers from archived logs, reports recording disabled, and supports seeking.
-Archives are served on the machine that retains them, cannot be physical or go
-live, and do not need the original checkout or a replacement at its path.
+<StimTabs
+code={`stim gc --cache archived
+stim gc --delete --cache archived --older-than 14`}
+/>
 
-`archive.detail` takes `{ archive: id }` and returns `{ builds, recordings }`.
-`builds` has the same iOS and Android history shape as an active environment;
-`recordings` lists every retained device slot as `{ platform, slot, spans }`,
-using the replay ranges and omitting empty devices. Missing state or recordings
-returns `{}` or `[]` respectively. `status --json` keeps archive build summaries.
-
-Archives are enabled by default. Set `archive.enabled` to `false` at machine,
-workspace, repo, or committed scope to disable them. With `STIM_HOME`, they
-are disabled unless `STIM_ARCHIVE_ENABLED` is explicitly set. Archives are
-local, with directories mode 0700 and files 0600. Logs and agent actions can
-contain secrets; no redaction is applied.
-
-Retention keeps records for 30 days, at most 200 workspaces and 5 binary GB.
-Logs last 14 days with a 100 binary MB cap per workspace; recordings last
-3 days with a 2 binary GB total cap; agent actions last 7 days. Artifact expiry
-keeps the workspace record until its record limit. See [settings](./settings.md).
-Archiving is best effort: a failure prints `could not archive: <reason>` on
-stderr and removal continues. Removal stdout stays empty.
-
-Normal gc, `--cache all` and unscoped `--older-than` leave archives alone.
-Explicit archive selection lists ids, kinds, bytes, and expiry. Add `--delete`
-to act. `archived:<id>` selects one archive; `archived-logs`,
-`archived-recordings`, and `archived-agent` delete that kind while keeping records;
-add `:<id>` (`archived-logs:<id>`) to clear that kind from one archive.
-`--older-than` filters by removal age except with an explicit id, where it is ignored.
-
-<StimTabs code="stim gc --cache archived" />
-
-<StimTabs code="stim gc --delete --cache archived --older-than 14" />
-
-Choose **Archived** in Stim Desktop's sidebar or the phone app's Filters to
-open a removed workspace. Its read-only page shows retained build history,
-saved logs, ended agent sessions and replay for each retained recording slot.
-Logs and replay require a connection to the machine's stim-server; an older server
-shows an update hint, with the last-build summary still available. Archives have
-no run, reload, stop or live device controls. Stim Desktop also offers **Delete**,
-with confirmation, to permanently remove the archive and its retained content.
+The first command lists archives. The second deletes those removed more than 14 days ago. [Archive selectors](./commands.md#archive-cache-selectors)

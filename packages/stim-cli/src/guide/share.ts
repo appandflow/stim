@@ -45,9 +45,9 @@ generated.
 SHARE AGAIN AFTER A STOP
 
 stim share stop and stim stop end a share and its link stops working; a
-stim-server restart ends it only until the server starts again (see below). stim share ios|android saves the link's 256-bit URL token and its
+stim-server restart ends it only until the server starts again (see below). A share started by stim share ios|android or by Stim Desktop is saved: stim-server writes the link's 256-bit URL token and its
 passwords, in clear, in share-links.json in the workspace's directory under
-$STIM_HOME/workspaces (mode 0600; written when a share starts; deleted with the
+$STIM_HOME/workspaces (mode 0600; written when a share starts, whichever client started it; deleted with the
 workspace, by stim share stop --forget, and when stim share, starting, reusing or
 stopping in the workspace, finds it expired). stim share ios|android --reuse starts that
 target's saved link again (a share started with --slug is saved and started again
@@ -75,8 +75,9 @@ share.stop (also Stim Desktop's Stop) change it, so a stim-server restart or
 crash leaves it live. When a full stim-server starts (not the --share one) it
 starts every live, unexpired
 saved share again by itself, with the same link, passwords and expiry; one whose
-device is not there yet is stopped for now, like any share whose device is away. A share started from Stim Desktop is not
-saved, so it does not come back. Tell the
+device is not there yet is stopped for now, like any share whose device is away. A share
+started from Stim Desktop is saved the same way, so it comes back too and --reuse
+finds it. Tell the
 user that the saved file holds the token and passwords; when they want a link
 revoked for good, run stim share stop --forget.
 
@@ -126,8 +127,7 @@ project, workspace or branch name, and the viewer tab follows the app when it ch
 
 VIEWERS SEE EACH OTHER
 
-Every viewer has a name (the optional name field on the login page, or on first
-load for a share without a password; empty means Guest 1, Guest 2 and so on)
+Every viewer has a name (asked on first load, optional; empty means Guest 1, Guest 2 and so on)
 and a color. The names Host, Agent (also "Agent \u00b7 <command>") and Guest N
 are the server's own, so a viewer that picks one of them is shown as its Guest
 N. Viewers of one share see each other's touches live, with the name, and never
@@ -182,7 +182,9 @@ WHAT IT NEEDS
   server stops on its own when its last share ends (stim share stop, expiry,
   stim stop, worktree remove) or when no share starts within 2 minutes, and
   removes its Funnel route on the way out (it stays up, retrying, while that
-  removal fails); stim share stop also stops it. When the Stim home does not
+  removal fails); stim share stop also stops it, unless a share start is still
+  in flight (another workspace's may wait for its devices), which it leaves
+  running and says so. When the Stim home does not
   answer at its startup it exits at once with the reason in its log. A
   server Stim Desktop, the LaunchAgent or you started is never stopped. When
   no matching stim-server is installed, or it does not start, stim share
@@ -220,6 +222,15 @@ share. stim share stop or the share's expiry lets the idle stage proceed: a
 workspace with no activity for idle.minutes goes idle on the next tick. When
 stim-server cannot list its shares, the workspace stays up (guide lifecycle
 budget).
+
+A share start, and the restart of a saved share with stim-server, holds the
+workspace's native-run claim (native-run.lock) while it reads the device and
+registers the share, so an automatic shutdown or device deletion runs before or after it,
+never in between. It waits up to 30 seconds for a stim ios, android or stop run
+or an automatic shutdown that holds the claim, then fails with
+STIM_SHARE_REFUSED naming the claim; run stim share again once that run ends. A
+restart retries on its own for as long as its saved entry is live. stim stop and
+stim ios wait for a start to finish, including opening the share's route.
 
 CUSTOM DOMAIN (PROXY MODE)
 
@@ -310,6 +321,12 @@ $connection_upgrade comes from the usual map block):
     root /var/www/stim-share;
   }
 
+STATS PANEL
+Add ?stats to a viewer link to show a panel over the page with the video's round
+trip, frames per second, bitrate, delay (p50 and p95) and keyframe requests. The
+page measures them over its share socket; the round trip and delay need the
+page to ping the server every 2 s, which it does on a page opened with ?stats.
+
 SECURITY MODEL
 
 - stim-server serves shares on its own listener, on a loopback port separate
@@ -358,13 +375,23 @@ SECURITY MODEL
   share without a password) connects and stops about 10
   seconds after the last one leaves. A share never records: footage of share
   viewing is not written to disk.
-- Control goes through the same control session and device lease stim-server
-  uses for Desktop and the phone app. A viewer that can control starts the
+- Control goes through stim-server's control hub and device lease, which Desktop
+  and the phone app use too. A viewer that can control starts the share's
   session, and so takes the device lease, when it connects, and the session ends
   after 5 minutes without input or when the last viewer leaves. It carries taps, two-finger gestures, text, the arrow keys, Escape and keyboard shortcuts, rotation and the
   hardware buttons of the shared device, plus the device clipboard on an iOS simulator, an Android emulator or an
-  Android phone only. A device an agent or another client drives answers
-  busy instead of being taken over.
+  Android phone only. On a touch-first browser a Keyboard button in the device toolbar opens a "Type on the device" field above the phone's keyboard, because a phone cannot type through the canvas; a desktop browser types through the canvas. Viewers, Stim Desktop, the phone app and agents control
+  the device at the same time; none of them refuses or takes over the others' control. The device has
+  one touch pointer: whoever puts a finger down holds it until they lift it,
+  and a touch from anyone else meanwhile is dropped with "Name is using the
+  screen".
+- Device keyboard, with --control on a local iOS simulator: an iOS simulator Stim shares draws no on-screen keyboard
+  while a viewer types, because stim-server attaches the hardware keyboard to it. A viewer with control gets a Device
+  keyboard switch in the options menu, off by default, that detaches it so the simulator draws its own keyboard. The
+  setting belongs to the share: every viewer sees it, a viewer who connects later gets it, and it is sent again after
+  the frames helper restarts or control restarts. Stopping stim-server resets it to off. Android emulators, physical
+  devices, macOS apps and hosted sessions have no switch, and a view-only viewer cannot change it. Two live shares
+  of one simulator do not coordinate the switch, and ending one turns it off for the other.
 - Clipboard, with --control on an iOS simulator, Android emulator or Android phone: Command-V or Control-V while
   the screen has focus pastes the browser's clipboard text (up to 8 KiB) into the device's focused field; an iOS simulator types printable ASCII, line breaks and tabs, and pastes other text with Command-V, which lands without a prompt in an app Stim installed on an owned simulator (Stim allows its paste permission) and where iOS can ask first in any other app. The
   top bar's options menu has a Sync clipboard switch, on by default for control viewers and remembered in the

@@ -254,7 +254,7 @@ This API does not refresh the source or install dependencies. Use
 The bundled server exposes plain warming to its originating Desktop through
 the private `desktop-worktree-warm` subscription. It admits the resolved
 workspaces and drains cancellation before releasing them. Paired phones and
-adopted server connections cannot invoke it; Desktop buttons migrate separately.
+network connections cannot invoke it; Desktop buttons migrate separately.
 
 ## Remove a worktree
 

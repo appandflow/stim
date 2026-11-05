@@ -2,13 +2,14 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { RESERVED_SHARE_SLUGS, SHARE_SLUG_PATTERN, type Methods, type WebShareRow } from '@stim-cli/core/protocol';
-import { shareLinkKey, type SavedShare } from '@stim-cli/core/state';
+import { shareLinkKey, splitShareUrl, type SavedShare } from '@stim-cli/core/state';
 import {
   LocalServerUnavailable,
   requestLocalServer,
   resolveShareServer,
   startShareServer,
   stopIdleShareServer,
+  type ShareServerStop,
   type LocalServerAnswer,
   type ShareMethod,
   type ShareServerStart,
@@ -55,7 +56,7 @@ export interface ShareDeps {
   /** Starts a stim-server for this Stim home when none runs; null when no version-matched server is installed. */
   startServer: () => Promise<ShareServerStart | null>;
   /** Stops the stim-server `stim share` started, once it holds no share; returns its pid when it stopped one. */
-  stopServer: () => Promise<{ pid: number; exited: boolean } | null>;
+  stopServer: () => Promise<ShareServerStop | null>;
   /** Writes a line to stderr. */
   note: (line: string) => void;
   /** The host platform: stim-server serves its local socket everywhere but win32. */
@@ -202,14 +203,6 @@ function secretLines(
   ];
 }
 
-/** The URL's token or slug and the address it is served under, up to `/s/`. */
-function splitUrl(url: string, slug: string | undefined): { token?: string; origin: string } | null {
-  const [, origin, path] = /^(.*\/s\/)([^/?#]+)\/?$/.exec(url) ?? [];
-  if (origin === undefined || path === undefined) return null;
-  if (slug !== undefined) return path === slug ? { origin } : null;
-  return /^[A-Za-z0-9_-]{43}$/.test(path) ? { token: path, origin } : null;
-}
-
 const SAVED_MARGIN_MS = 5000;
 
 /**
@@ -283,21 +276,23 @@ async function reuseShare(
     true,
   );
   if ('code' in answer) return { ok: false, error: answer };
-  const started = answer.result;
+  const { saved: savedByServer, ...started } = answer.result;
   if (started.warning) deps.note(`Warning: ${started.warning}`);
-  const link = splitUrl(started.url, saved.slug);
+  const link = splitShareUrl(started.url, saved.slug);
   if (link && saved.origin && link.origin !== saved.origin) {
     deps.note(`The link is served under a different address than before; the link path is the same: ${link.origin}`);
   }
-  try {
-    saveShareLink(root, key, {
-      ...saved,
-      ...(link ? { origin: link.origin } : {}),
-      state: 'live',
-      expiresAt: started.expiresAt,
-    });
-  } catch (cause) {
-    deps.note(`Warning: could not update the saved link: ${cause instanceof Error ? cause.message : String(cause)}`);
+  if (savedByServer !== true) {
+    try {
+      saveShareLink(root, key, {
+        ...saved,
+        ...(link ? { origin: link.origin } : {}),
+        state: 'live',
+        expiresAt: started.expiresAt,
+      });
+    } catch (cause) {
+      deps.note(`Warning: could not update the saved link: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
   }
   const shared = { ...started, auth: saved.auth, viewAuth: saved.viewAuth };
   const passwords = {
@@ -353,7 +348,11 @@ async function stopShares(root: string, opts: ShareOptions, deps: ShareDeps, ver
     output: {
       stopped,
       ...(opts.forget ? { forgot } : { reusable }),
-      ...(server !== null ? { stoppedServer: server.pid, ...(server.exited ? {} : { stillStopping: true }) } : {}),
+      ...(server === null
+        ? {}
+        : 'starting' in server
+          ? { keptServer: server.pid, startingShares: server.starting }
+          : { stoppedServer: server.pid, ...(server.exited ? {} : { stillStopping: true }) }),
     },
     text: [
       stopped.length
@@ -370,13 +369,17 @@ async function stopShares(root: string, opts: ShareOptions, deps: ShareDeps, ver
       ...(!opts.forget && reusable.length
         ? ['To make the saved links unusable now, run: stim share stop --forget']
         : []),
-      ...(server !== null
-        ? [
-            server.exited
-              ? `Stopped the stim-server stim share started (pid ${server.pid}).`
-              : `Asked the stim-server stim share started (pid ${server.pid}) to stop; it has not exited yet, so wait a moment before sharing again.`,
-          ]
-        : []),
+      ...(server === null
+        ? []
+        : 'starting' in server
+          ? [
+              `Left the stim-server stim share started (pid ${server.pid}) running: ${server.starting === 1 ? 'a share start is' : `${server.starting} share starts are`} still in progress. It exits by itself if ${server.starting === 1 ? 'that start leaves' : 'those starts leave'} no share.`,
+            ]
+          : [
+              server.exited
+                ? `Stopped the stim-server stim share started (pid ${server.pid}).`
+                : `Asked the stim-server stim share started (pid ${server.pid}) to stop; it has not exited yet, so wait a moment before sharing again.`,
+            ]),
     ].join('\n'),
   };
 }
@@ -565,13 +568,14 @@ export async function runShare(
     true,
   );
   if ('code' in answer) return { ok: false, error: answer };
-  const started = answer.result;
+  const { saved: savedByServer, ...started } = answer.result;
   if (started.warning) deps.note(`Warning: ${started.warning}`);
-  const link = splitUrl(started.url, started.slug);
+  const link = splitShareUrl(started.url, started.slug);
   const password = chosen ?? started.password;
   const viewPassword = typeof view === 'string' ? view : started.viewPassword;
-  let saved = false;
+  let saved = savedByServer === true;
   if (
+    !saved &&
     link &&
     (started.auth === 'none' || password !== undefined) &&
     (!started.viewAuth || viewPassword !== undefined)

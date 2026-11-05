@@ -382,7 +382,34 @@ async function awaitBootCommand(args: string[], attemptMs: number, onLine: (line
   if (result.error) throw result.error;
   if (result.code === 0) return;
   const detail = lines.length ? `: ${lines.join(' | ')}` : '';
-  throw new Error(`${command} failed with exit code ${result.code ?? 'unknown'}${detail}`);
+  throw new BootCommandError(`${command} failed with exit code ${result.code ?? 'unknown'}${detail}`, result.code);
+}
+
+class BootCommandError extends Error {
+  exitCode: number | null | undefined;
+  constructor(message: string, exitCode: number | null | undefined) {
+    super(message);
+    this.exitCode = exitCode;
+  }
+}
+
+// `simctl boot` exits 22 (NSPOSIXErrorDomain code 22, EINVAL) when CoreSimulator rejects the request itself;
+// the simulator may still boot afterwards.
+const BOOT_REJECTED_EXIT_CODE = 22;
+const BOOT_REJECTED_RETRY_DELAY_MS = 2000;
+
+function bootRejected(error: unknown): boolean {
+  return error instanceof BootCommandError && error.exitCode === BOOT_REJECTED_EXIT_CODE;
+}
+
+async function simulatorState(udid: string): Promise<string | null> {
+  try {
+    return (
+      (await listAllIosSimsAsync({ timeoutMs: BOOT_STATE_LIST_TIMEOUT_MS })).find((s) => s.udid === udid)?.state ?? null
+    );
+  } catch {
+    return null;
+  }
 }
 
 export type IosBootEvent =
@@ -434,6 +461,8 @@ export async function bootIosSim(
   };
   const recovery =
     "Stop unused slots in workspaces you own with `stim stop --slot <name>`, reduce concurrent builds, and retry after pressure falls. Ask before closing other agents' devices or apps. Repeated reboots under unchanged pressure may stall again.";
+  const rejectedBootNote =
+    'CoreSimulator rejected the boot request (exit 22, EINVAL) and the simulator did not boot. Memory pressure was not read as high. Run `stim ios` again.';
   const coverage = () =>
     longestGapMs > 30000
       ? ` Observations were delayed: longest gap ${Math.round(longestGapMs / 1000)}s. Pressure during gaps is unobserved; blocking CLI work can also delay progress and timeout handling.`
@@ -467,7 +496,18 @@ export async function bootIosSim(
       await awaitBootCommand(['simctl', 'boot', udid], Math.max(1, deadline - Date.now()), onLine);
       phase = 'waiting for boot completion';
     } catch (e) {
-      if (!String((e as Error)?.message || e).includes('Booted')) throw e;
+      if (bootRejected(e)) {
+        const state = await simulatorState(udid);
+        if (state === 'Shutdown') {
+          await cancellableSleep(BOOT_REJECTED_RETRY_DELAY_MS);
+          await awaitBootCommand(['simctl', 'boot', udid], Math.max(1, deadline - Date.now()), onLine).catch(
+            (retryError: unknown) => {
+              if (!(retryError instanceof Error && retryError.message.includes('Booted'))) throw retryError;
+            },
+          );
+        } else if (state !== 'Booting' && state !== 'Booted') throw e;
+        phase = 'waiting for boot completion';
+      } else if (!String((e as Error)?.message || e).includes('Booted')) throw e;
     }
     // `simctl bootstatus -b` blocks until the boot finishes, and a first boot on a
     // CPU-starved host (a CI runner sharing cores with xcodebuild) can legitimately
@@ -512,8 +552,13 @@ export async function bootIosSim(
   } catch (error) {
     if (error === hookError) throw error;
     const named = memoryCulpritAdvice(await memoryCulpritsUnderAsync(sample(), exec));
+    const pressured = worst === 'warning' || worst === 'critical';
+    const advice =
+      pressured || !bootRejected(error)
+        ? `${recovery} These observations do not establish an OOM crash.`
+        : rejectedBootNote;
     throw new Error(
-      `${(error as Error)?.message || error} Last boot output: ${phase}. Highest observed memory pressure: ${worst ?? 'unknown'}; unavailable samples: ${unknown}.${coverage()}${named ? ` ${named}` : ''} ${recovery} These observations do not establish an OOM crash.`,
+      `${(error as Error)?.message || error} Last boot output: ${phase}. Highest observed memory pressure: ${worst ?? 'unknown'}; unavailable samples: ${unknown}.${coverage()}${named ? ` ${named}` : ''} ${advice}`,
       { cause: error },
     );
   } finally {
@@ -741,6 +786,14 @@ export async function resetIosKeychain(udid: string): Promise<void> {
   await getExecutor().runFileAsync('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_RESET_OPTIONS);
 }
 
+export async function terminateIosApp(udid: string, bundleId: string): Promise<void> {
+  try {
+    await getExecutor().runFileAsync('xcrun', ['simctl', 'terminate', udid, bundleId], SIMCTL_OPTIONS);
+  } catch (error) {
+    if (!/found nothing to terminate/.test(error instanceof Error ? error.message : String(error))) throw error;
+  }
+}
+
 const CLEARED_CONTAINER_DIRS = ['Documents', 'Library', 'tmp', 'SystemData'];
 
 export async function clearIosAppData(
@@ -749,11 +802,7 @@ export async function clearIosAppData(
   { defaultsPlist = null }: { defaultsPlist?: string | null } = {},
 ): Promise<void> {
   const exec = getExecutor();
-  try {
-    await exec.runFileAsync('xcrun', ['simctl', 'terminate', udid, bundleId], SIMCTL_OPTIONS);
-  } catch (error) {
-    if (!/found nothing to terminate/.test(error instanceof Error ? error.message : String(error))) throw error;
-  }
+  await terminateIosApp(udid, bundleId);
   if (defaultsPlist) {
     await exec.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'defaults', 'import', bundleId, '-'], {
       ...SIMCTL_OPTIONS,

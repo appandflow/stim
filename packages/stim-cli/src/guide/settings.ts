@@ -687,7 +687,9 @@ run waiting to boot, and automatic maintenance.
           and reclaims a device for a run waiting to boot. Automatic
           maintenance and the dormant stage's dependency deletion run beside
           the ticks, one pass at a time, so a slow git fetch, pull request
-          lookup or size scan never delays a tick or a waiting run. When one
+          lookup or size scan never delays a tick or a waiting run. The same
+          lane records the fingerprint of a running workspace whose git HEAD,
+          lockfile or install stamp changed (stim guide lifecycle). When one
           of those commands runs from an installed
           Stim (a global install or a node_modules dependency) with a newer
           version than the running daemon, or the daemon runs a development
@@ -847,6 +849,15 @@ overrides the file. Absent means 3. \`0\` turns parking and adoption off:
 that already exists stays where it is until \`gc --delete\`. A value that is
 not a whole number 0 or more is refused by name on \`worktree remove\` and
 \`ios\`, and warned about by \`status\`, \`gc\` and \`doctor\`.
+
+\`pool.bootedGraceMinutes\` (or STIM_POOL_BOOTED_GRACE_MINUTES) is how many
+minutes \`worktree remove\` keeps a simulator that is booted booted as it
+parks it, and \`stop\` keeps the workspace's own owned simulator booted, while
+memory pressure is normal and a device slot is free, so the next adoption or
+\`ios\` skips the boot. Absent means 15; \`0\` shuts it down at park and at
+\`stop\`.
+When \`STIM_HOME\` is set it is 0 unless the variable is set. See
+\`guide lifecycle pool\`.
 
 Android uses \`pool.androidParkedMax\` or STIM_POOL_ANDROID_PARKED_MAX with
 these same defaults and validation rules. \`android\` validates that bound;
@@ -1080,6 +1091,9 @@ access, and uncertain replies or unreadable credentials preserve the pin.
 An invalid remote.machines setting reports an error and preserves every saved credential.
 \`stim remote remove\` forgets the credentials of the machine it removes, and
 \`doctor --fix\` forgets those of entries removed from remote.machines otherwise.
+If the hosting credentials are unreadable, \`stim remote remove\` keeps the
+entry and credentials. Use a compatible Stim version, restore read access, or
+restore the file from a trusted backup, then retry.
 For a replaced machine, run \`stim remote remove <machine>\`, then
 \`stim remote add <machine>\` to request a new approval. A definite revoked or
 lapsed request can be requested again with \`stim remote add\` or --fix.
@@ -1172,14 +1186,37 @@ REMOVED SETTINGS below.
 
 A name never prompts for pairing, tries another remote machine or falls back here.
 remote-only refuses instead of building here for a build that cannot leave this
-machine (device, Android release, an unknown simulator runtime, the build cache
-off), and when no pairing or approval exists.
+machine (device, an unknown simulator runtime, the build cache off), and when no
+pairing or approval exists.
 Any refusal or failure is STIM_OFFLOAD_REFUSED with the remote machine and reason.
-Device, Android release variant, --remote, Android CAS compiler builds, builds
-with the build cache off, and an unknown simulator runtime cannot build there
+Device, --remote, Android CAS compiler builds, builds with the build cache off, and an unknown simulator runtime cannot build there
 and refuse on a cache miss, with a remedy to rerun with --remote-build local or
 auto. An iOS simulator Release or other non-Debug build can: the remote machine
 bundles the JS of the synced checkout into the app.
+An iOS offload leaves out *.p8, *.p12, *.mobileprovision and *.provisionprofile, which a
+simulator build never reads, unless an Xcode project, xcconfig, Podfile, podspec or
+shell script names the file. The rule is by name, so a tracked file is left out too.
+.env files, google-services.json, GoogleService-Info.plist and every other gitignored
+file are still sent.
+An Android release variant can too. A release offload leaves out keystores
+(*.keystore, *.jks, *.p12, *.pfx) other than debug.keystore and those under an APK's
+src/*/assets or src/*/res, and keystore.properties. A release build type signed with
+debug.keystore, as the React Native and Expo templates are, is signed there. Any
+other signing config builds as an unsigned APK, which this machine zipaligns and signs
+with android.keystore, or android/app/debug.keystore when that is unset; it needs the
+Android SDK build-tools and refuses without them. Gradle scripts that read a missing
+key or password while configuring fail there. A release offload refuses before
+uploading anything when the android.keystore or android.keystorePassword file has
+another name inside the repository, or a .properties, credentials.json or Gradle file
+sets a signing password. The remote machine's stim-server must have this release's
+Android release support, and it always rebundles the JS of the synced checkout. Any of
+these falls back to a local build unless a machine was named.
+A debug offload leaves out those same signing files unless a build.gradle or
+build.gradle.kts names one, because a script can need it to configure, and it is never
+refused over them. All other gitignored files the fingerprint reads, and .env files,
+are sent as before.
+An APK built on a remote machine has no asset list, so its JS cannot be swapped: a
+later run with the same fingerprint builds again there.
 Invalid values, unlisted names and unpaired names refuse
 at setup before consulting the cache; they create no build record or failed-run
 stats. A listed paired name with a cache hit compiles nothing, contacts no worker
@@ -1244,8 +1281,8 @@ every offloaded iOS build, pinned or not, it writes the first node on its PATH
 React Native and Expo Android builds keep a separate Gradle home for each
 selected Node executable and version, so a warm daemon cannot use a previous
 Node. Each Node choice starts with cold Gradle dependencies and can retain
-another warm daemon; switching back reuses its cache. The caches stay until the
-client is removed. Native Gradle projects keep their existing home.
+another warm daemon; switching back reuses its cache. The caches go with their
+repository area. Native Gradle projects keep their existing home.
 When no installed Node fits the pin, the steps run on the worker's node
 and a deps-failed or prebuild-failed reason names the pin and that Node's
 version. A change of the pinned Node's major reinstalls the dependencies.
@@ -1259,7 +1296,7 @@ machine counts as saturated: each machine applies its own value, and a remote
 machine past it is skipped like a full one. \`stim status\` shows this machine's
 load per core against it, as \`capacity.load\` in JSON.
 
-Device builds, Android release variants,
+Device builds,
 \`--remote eas|proxy\` builds, Android builds with the Apple Clang CAS compiler cache,
 and iOS/Android runs with the build cache off, always build here. Hosted iOS
 builds can use a separate --remote-build, targeting the hosting Mac's
@@ -1393,6 +1430,17 @@ While none of the client's builds runs, stim-server stops it sooner
 when a build is cancelled or the client is revoked. The low-memory sweep waits
 until no offloaded build is running and the machine has less than 2 GB of
 memory available. Deleting the client's directory under the worker root stops it too.
+The worker removes repository areas of approved clients by itself: any area with
+no build or cached artifact fetch for \`server.workerAreaMaxAgeDays\` (default 7,
+0 turns this off) and, while its volume has less than 50 GB free, the least
+recently used until it has that much, sparing areas used in the last 3 hours
+unless the volume is under its 10 GB floor. It keeps each client's most recently used
+area and retains an area with a running or unfetched build, a bundle a hosted
+session can take, an open connection sending it a manifest, a running Gradle
+daemon, or a held or unresolved claim; its log names each removal and why an
+area stays. The next build of a removed area starts cold.
+\`stim-server service status\` prints a \`worker root:\` line with the root's size
+as last measured, about every 6 hours (not measured on Windows).
 \`stim-server service install [--serve]\` on a remote machine keeps stim-server
 running as a login LaunchAgent on macOS, a systemd user service on Linux
 (\`sudo loginctl enable-linger <user>\` keeps it running after logout; install
@@ -1425,6 +1473,63 @@ the child, leaves the server listening and degraded, with the reason in
 watchers, native helpers or recorder; it reads again every 30 seconds and
 serves once a read returns. It preserves claims and recordings; it does not
 restore an inaccessible volume or grant filesystem access.
+
+STIM-SERVER SETUP CHECKS (stim doctor)
+\`stim doctor\` reads this machine's stim-server setup in any app directory and
+reports problems as findings with the exact command or step; it never stops,
+starts, updates or reconfigures a server. It reads the installed service (the
+LaunchAgent on macOS, the systemd user unit on Linux), the process list, each
+server's \`/health\` on 127.0.0.1 (1.5 seconds at most) and the Stim home's
+local socket, and does nothing beyond the process list when no service, server
+process or socket exists. Findings carry a code that starts with \`server-\`;
+a \`cost\` finding is shown as a problem and reaches Stim Desktop's needs-attention
+list, a \`note\` finding only the doctor report:
+  server-multiple        cost: several servers serve one Stim home (the service,
+                         Stim Desktop's bundled server, a server started by hand);
+                         it names the one to keep (the service, else the one holding
+                         the local socket) and how to stop each other
+  server-service-crash   cost: the service is installed but not running, or keeps
+                         exiting (run count and last exit code, the log path and
+                         \`stim-server service rollback\` when a previous server
+                         exists); note: it restarted but runs now
+  server-desktop-authority  cost: the server on the local socket (not Desktop's own)
+                         does not advertise desktop-local-authority, so Desktop
+                         cannot run actions through it; update it
+  server-version         note: a server's stim version differs from this stim; the
+                         service updates with \`stim-server service update --release
+                         <version>\`, Desktop's bundled server with the app
+  server-home            note: a server serves another Stim home than this stim's
+  server-leftover        note: servers started by hand, with pid, home and port
+  server-keep-awake      note: this Mac serves approved build or device-host clients
+                         with server.keepAwake off
+  server-tailscale       cost: Tailscale is off or signed out while a service has a tailnet
+                         route or approved clients depend on the tailnet
+  server-tailscale-route cost/note: no tailscale serve route reaches the server, or the
+                         route install recorded points at another port; it prints the
+                         exact tailscale serve --bg --https=<port> command
+  server-funnel          cost: a public Tailscale Funnel route reaches stim-server, or one is
+                         open while a share has no password (tailscale funnel --https=<port> off)
+  server-share-proxy     note: share.exposure resolves to proxy with share.publicUrl unset
+  server-tcp-lowat       note: on a Linux share host net.ipv4.tcp_notsent_lowat is unlimited;
+                         advice to set 16384, never changed by doctor
+  server-service-paths   cost/note: the service file names a launcher, node, server script or
+                         directory that no longer exists
+  server-socket-permissions  cost: the Stim home's local.sock is not mode 600 or its directory
+                         is not mode 700 and owned by this user (Desktop's write authority
+                         on a server without Desktop's key depends on it)
+  server-macos-permission  cost/note: the server's host app lacks Screen Recording or device
+                         control, or macOS blocks the Android SDK or AVDs on an external
+                         volume (Files & Folders > Removable Volumes); read from /health,
+                         a read of the volume and the service log, never a TCC change
+  server-linger          cost/note: a systemd user service stops at logout; run
+                         sudo loginctl enable-linger <user>
+The doctor toolchain section also lists, for each installed service, where it finds each
+tool the way the server does at start: tool discovery over launchd's default PATH with the
+service's own node, with its --env entries and --path-prepend directories. The tailscale checks read \`tailscale
+status --json\` and \`tailscale serve status --json\` (3 seconds each) only when a service,
+server process or socket exists. A build machine in build-machines.json that no longer proves
+its pinned stim-server key is the existing build-machine finding with state key-changed, and one
+that left the tailnet is not-on-tailnet; doctor adds nothing for them.
 
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
 \`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes

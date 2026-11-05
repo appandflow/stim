@@ -3781,8 +3781,8 @@ msgid "Slow Animations"
 msgstr "Slow Animations"
 
 #: src/lib/settings-options.ts
-msgid "Someone takes over your device"
-msgstr "Someone takes over your device"
+msgid "Someone else drives your device"
+msgstr "Someone else drives your device"
 
 #: src/app/_layout.tsx
 msgid "Something Went Wrong"

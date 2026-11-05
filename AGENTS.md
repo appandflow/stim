@@ -270,13 +270,18 @@ new checks.
 
 The fresh reviewer records the outcome with labels. When the review is clear, it
 adds `review: ai-approved` and marks the pull request ready with `gh pr ready`.
-When the diff contains a product decision that no maintainer has made, it adds
+When the diff contains a product decision the maintainer has not stated, it adds
 `review: needs-human` and removes any `review: human-approved`. A product
 decision is a new, removed or renamed command, flag or setting; a changed
 default; or a change to user-visible behavior beyond what the linked issue
 asked for. This is the "explicit product decision" that new commands and flags
-require. A decision recorded in the issue or in a maintainer comment counts as
-approved.
+require. Only a decision the maintainer stated counts as approved: an issue or
+comment that quotes the maintainer's words as a decision, in a line such as
+`Maintainer decision: "<words>", <date>`, or one the maintainer wrote directly.
+Every agent posts as the maintainer's account, so an agent's own proposal,
+design section or "Fix idea" never counts, whoever posted it. The reviewer looks
+for the quoted decision before treating a new command, flag, setting or default
+as approved.
 
 Other concerns do not add the label. The reviewer still names them in its
 review: a new or wider way for another machine to reach or act on this one (a
@@ -414,13 +419,20 @@ outside it moves to its own issue and pull request.
   remote machines in `remote.machines` and pins each one's stim-server key in
   `build-machines.json`; a worker that cannot prove that key is refused.
   `remote.build` places iOS simulator builds and Android emulator
-  debug builds and macOS SwiftPM Debug builds with the placement words every
+  builds and macOS SwiftPM Debug builds with the placement words every
   workload shares (`local`, `auto`, `remote`, `remote-only` or one machine),
   trying the machines of `remote.machines` in that order, each only while it
   has a free slot and a load under its own `server.maxLoadPerCore`;
   every offload failure falls back to a local build unless the selection is
   `remote-only` or one machine, and no failure path
-  writes the cache. Two machines build for each other, and reuse each other's
+  writes the cache. An Android offload leaves keystores other than
+  `debug.keystore`, and `keystore.properties`, out of the fingerprint and, unless a
+  debug build's Gradle script names one, out of the sync
+  (`packages/stim-cli/src/offload/signing-files.ts`); an iOS offload does the same for
+  `*.p8`, `*.p12`, `*.mobileprovision` and `*.provisionprofile` that no Xcode build file names. A release variant's worker
+  builds any other signing config unsigned
+  (`packages/stim-cli/shim/android-worker-release.gradle`) and the client signs it
+  with its `zipalign` then `apksigner` path, or refuses. Two machines build for each other, and reuse each other's
   completed React Native and SwiftPM artifacts, when their bundled Stim
   reports the same `STIM_BUILD_COMPAT`
   (`packages/stim-cli/src/offload/toolchain.ts`, in the `stim` package because
@@ -441,7 +453,17 @@ outside it moves to its own issue and pull request.
   stay child-pending because Gradle daemons leave that group; cancellation
   releases them only after this repository's verified daemon identities exit.
   Unknown cleanup or a server crash retains unresolved repository and build-slot
-  claims for manual inspection and recovery. Windows has no process groups:
+  claims for manual inspection and recovery. stim-server evicts areas of approved
+  clients unused for longer than `server.workerAreaMaxAgeDays` and, near the disk
+  floor, the least recently used not used in the last 3 hours, which under the
+  floor also go; it keeps each client's most recently used area and retains one
+  with a live build, unfetched output, a running Gradle daemon or a held or
+  unresolved claim. Under the area's claim it creates an empty record, whose name
+  alone carries the repository and id because a client's build can write there,
+  renames the area out of `repos/` and moves aside the short directories whose
+  `.owner` names the area, then deletes outside the claim, the record last, so a
+  later pass finishes a failed or interrupted deletion. Windows has no process
+  groups:
   cancel stops the worker tree with `taskkill /T`; each checkout and repository's
   Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
   because the NDK's ninja cannot open longer paths. The repository's daemon
@@ -477,7 +499,9 @@ outside it moves to its own issue and pull request.
   stim-server writes and prunes (it never creates a workspace directory). The CLI
   moves closed segments into `archive/` during removal under `native-run.lock`.
   stim-server never writes or prunes under `archive/` and reads archived segments
-  through core's recording readers. The other exceptions are
+  through core's recording readers. Another exception: stim-server takes the
+  workspace's native-run claim (`workspaceNativeRunClaim`) while a web share
+  starts, and releases it after. The other exceptions are
   the build worker root (`server.workerRoot`, default `build-worker/`),
   with its Windows short directories, which stim-server and the builds it runs own, and the build slot
   stim-server takes under `build-slots/` for each offloaded build it runs,
@@ -560,23 +584,27 @@ outside it moves to its own issue and pull request.
   `share.publicUrl`, and the frame socket accepts exactly that URL's origin,
   never Host or `X-Forwarded-*`. The CLI asks this Stim home's stim-server over its Unix socket
   (`share.start|stop|list`, refused on every network connection); a share
-  lives only in that server's memory and always expires. The CLI saves each
-  share it starts, with its URL token and passwords, in the workspace's
+  lives only in that server's memory and always expires. Each share started
+  through `share.start`, by the CLI or by Stim Desktop, is saved by stim-server
+  as soon as it starts (the CLI saves it itself only when the server's reply
+  lacks `saved: true`, an older server), with its URL token and passwords, in the workspace's
   `share-links.json` (mode 0600, written under the workspace state lock, removed
   with the workspace, by `share stop --forget` and once expired) so that
   `share ios|android --reuse` can start the same link again through
-  `share.start`'s `token` and `expiresAt`; stim-server writes nothing to disk and
-  an expired link is never extended or reused. Each saved entry has a `state`:
+  `share.start`'s `token` and `expiresAt`; stim-server writes this file only
+  through the CLI's own `saveShareLinkAsync` and `pauseShareLinks`, exported as
+  `stim/share-links`, and an expired link is never extended or reused. A start
+  of a link the file already holds with the same passwords keeps the entry's
+  `auth`, `viewAuth` and `createdAt`, and the restore start does not pass
+  through the saving path, so it never rewrites the expiry. Each saved entry has a `state`:
   `live` from when `share` starts or reuses it, `stopped` after a deliberate
   `share stop`, `stim stop` or reclaim of its workspace. A restart or crash
   leaves `live`, and a full stim-server (not the CLI's `--share` server) starts
   every live, unexpired entry of its home again when it starts, through
   `share.start`'s own path with the saved token or slug, passwords and expiry
   (`@stim-cli/core/state`'s `readLiveShareLinks`); one whose device is not there
-  yet starts stopped for now, a refused one is logged and stays `live`. The only write
-  stim-server makes is `share.stop` marking the entry stopped through the CLI's
-  own `pauseShareLinks`, exported as `stim/share-links`; a share started from
-  Desktop is not saved and does not come back. A share outlives its
+  yet starts stopped, a refused one is logged and stays `live`. `share.stop`
+  marks the entry stopped through the same module. A share outlives its
   device: when the device goes away on its own (frames fail, the device or hosted
   session changes or is not ready) the share shows as stopped, keeping its token,
   passwords, viewer sessions and expiry, and comes back on the slot's device when
@@ -727,6 +755,21 @@ disk pressure, or automatic maintenance's age sweep after
 `maintenance.olderThanDays`; erase them only with `gc --cache parked
 --delete`. Every route uses centralized teardown and ownership revalidation.
 `gc --delete` deletes parked hosted devices through their owning session home.
+Park keeps a simulator that is booted when it parks it booted for
+`pool.bootedGraceMinutes`, only while memory pressure is normal and a device slot
+is free, and records `bootedUntil`; adoption of it still resets and verifies as
+above, without the boot. The stim-daemon shuts a booted parked simulator down
+through teardown at expiry, under memory pressure before any workspace's device,
+and before it reclaims a workspace's device for a waiting run.
+`stop` applies the same gates to the workspace's owned iOS simulator: it ends
+the app and the agent-device sessions, leaves the simulator booted and assigned
+to the workspace, and records a deferred shutdown in the workspace state with the
+expiry. A later `ios` run uses the booted simulator and forgets the record; a
+later `worktree remove` parks it booted. The stim-daemon shuts a deferred
+simulator down through teardown at expiry or under memory pressure, under the
+workspace's native-run lock, unless the workspace serves again. A stopped
+workspace holding one is outside the idle stage until the expiry. Android
+emulators are shut down by `stop`.
 
 `stim web` launches the installed Chrome only with a profile Stim created under
 `$STIM_HOME/workspaces/<id>/web/`, listed under `web` in the created-devices
@@ -805,7 +848,9 @@ All shutdown and deletion flows must use `src/devices/teardown.ts`, and so do pa
 which is the flow that gives a simulator up without deleting it, and the erase
 and wipe of an owned device's data. Re-resolve
 ownership before each destructive command. Contain per-device failures so batch cleanup
-can continue. `stop` shuts down devices; it never deletes them.
+can continue. `stop` shuts down devices and never deletes them; the owned iOS
+simulator is shut down at the expiry of `pool.bootedGraceMinutes` or under memory
+pressure when the gates in invariant 2 hold, and at once otherwise.
 
 ### 5. Redirect test state
 

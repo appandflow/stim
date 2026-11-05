@@ -32,6 +32,8 @@ export interface AndroidSourcePreparation {
 }
 
 export interface AndroidArtifactRecipe {
+  /** The APK carries its builder's JS bundle, so a copy built elsewhere is never installed as-is. */
+  embedsJs?: boolean;
   providerCache?(provider: CacheProvider): BuildCacheCapability | undefined;
   identity(): Promise<AndroidArtifactIdentity | { cacheIneligible: string }>;
   /** The background check of a memoized fingerprint that identity() used, if any. */
@@ -60,6 +62,9 @@ export interface AndroidArtifactRecipe {
       | Promise<Parameters<typeof chooseBuildMachine>[0]['target']>;
     request: Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'android' }>;
     fingerprintInputs?: Parameters<typeof offloadBuild>[0]['fingerprintInputs'];
+    syncPlan?: Parameters<typeof offloadBuild>[0]['syncPlan'];
+    /** Signs here an APK the machine built without a key; the failure is a reason the machine's build cannot be used. */
+    signUnsigned?(unsignedPath: string): Promise<{ apkPath: string } | { failure: string }>;
     unchanged(): Promise<boolean>;
   } | null;
 }

@@ -400,7 +400,7 @@ describe.skipIf(process.platform === 'win32')(
       });
       expect(records('daemon_maintenance')[0]).toMatchObject({
         tookMs: 8000,
-        phases: { dependenciesMs: 3000, maintenanceMs: 5000 },
+        phases: { fingerprintMs: expect.any(Number), dependenciesMs: 3000, maintenanceMs: 5000 },
       });
       await vi.advanceTimersByTimeAsync(2 * 5 * MINUTE_MS);
       await daemon;

@@ -8,20 +8,18 @@ import { ownedAvdSerialResolver, ownedAvdSerialResolverAsync, type ResolvedAvdSe
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import { listAllIosSimsAsync, type IosSimRecord } from '../../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
-import { getExecutor, isTimeoutError, type ExecOptions } from '../../exec.ts';
+import { isTimeoutError, type ExecOptions } from '../../exec.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
-import {
-  MAINTENANCE_LOG_NAME,
-  readPullRequestCache,
-  settingDefinition,
-  type PullRequestCacheEntry,
-} from '@stim-cli/core/state';
+import { MAINTENANCE_LOG_NAME, settingDefinition } from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
 import { workspaceInUseAsync } from '../../workspace/in-use.ts';
-import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
+import { maintenancePinnedReader } from '../../maintenance/protect.ts';
+import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
+import { holdsDeferredShutdown } from '../../devices/deferred-shutdown.ts';
+import { agentKey, attributeAgentSessions, discoverAgentSessions } from '../../agent-sessions.ts';
 import {
   FETCH_FRESH_MS,
   fetchDefaultBranchAsync,
@@ -33,9 +31,8 @@ import {
 import {
   describePullRequest,
   endedPullRequest,
-  pullRequestLookups,
+  ghMissing,
   type PullRequestLookup,
-  type PullRequestQuery,
 } from '../../workspace/pull-request.ts';
 import {
   dirtyPathsAsync,
@@ -58,11 +55,11 @@ import {
   reclaimKeys,
   removeWorktreeTarget,
 } from '../worktree.ts';
-import { recordPullRequestLookup } from '../../status-measures.ts';
+import { cachedPullRequest, refreshPullRequests, type PullRequestRequest } from '../../pull-request-state.ts';
 import { worktreeArchiveLimits } from '../../archive.ts';
 import { stimCliEntries, stimCliUseOf } from '../../workspace/service-guard.ts';
 import { uncommittedActivityOf, type WorktreeArchive } from '../../workspace/worktree-archive.ts';
-import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from './devices.ts';
+import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
 import { eachLimited, readConcurrency } from './limited.ts';
@@ -94,7 +91,9 @@ export interface WorktreeFacts {
   source: 'source' | 'linked' | { refusal: string };
   bare: boolean;
   locked: boolean;
-  /** A scoped STIM_HOME does not list this worktree, so its registry cannot say the worktree is this home's. */
+  /** `maintenance.keep` pins one of the worktree's workspaces, or its pins could not be read. */
+  pinned?: boolean;
+  /** No project in the registry and no workspace record of this Stim home lies in the worktree, so Stim never ran in it. */
   unregistered?: boolean;
   nested?: string[];
   porcelain: string[] | null;
@@ -116,6 +115,7 @@ export type WorktreeSkipCode =
   | 'source-checkout'
   | 'not-registered'
   | 'locked'
+  | 'pinned'
   | 'nested-worktree'
   | 'in-use'
   | 'status-unreadable'
@@ -225,6 +225,30 @@ function noOwnCommitsActivityBlocker(
   };
 }
 
+async function anyPinned(keys: readonly string[], operation?: StimContext): Promise<boolean> {
+  const pinned = maintenancePinnedReader(operation);
+  for (const key of keys) if (await pinned(key)) return true;
+  return false;
+}
+
+/** The agent sessions whose process runs, or a recent Codex thread, in each worktree, as `in use` reasons. */
+export async function agentSessionUse(
+  paths: readonly string[],
+  now: number,
+  signal?: AbortSignal,
+): Promise<string[][]> {
+  signal?.throwIfAborted();
+  const workspaces = paths.map((path) => {
+    const canonical = canonicalPath(path);
+    return { path: canonical, root: canonical, recorded: null };
+  });
+  const sessions = await discoverAgentSessions({ now });
+  signal?.throwIfAborted();
+  return attributeAgentSessions(workspaces, sessions, now).map((found) =>
+    found.map((session) => `an agent session (${agentKey(session)}) is working in it`),
+  );
+}
+
 function dirtyLines(porcelain: string[] | null): string[] {
   return excludePodChurn(excludeWatchmanCookies(porcelain).lines).lines;
 }
@@ -283,9 +307,13 @@ function removalBlocker(
   }
   if (facts.source === 'source') return skip('source-checkout', 'source checkout');
   if (facts.unregistered) {
-    return skip('not-registered', 'not registered in this Stim home: STIM_HOME scopes this config');
+    return skip(
+      'not-registered',
+      'not registered in this Stim home: no project or workspace record names it, so no stim command ran in it; stim worktree warm in it makes it one Stim manages',
+    );
   }
   if (facts.locked) return skip('locked', LOCKED_REASON);
+  if (facts.pinned) return skip('pinned', 'pinned by maintenance.keep');
   if (facts.nested?.length) return skip('nested-worktree', `contains the worktree ${facts.nested.join(', ')}`);
   if (facts.inUse.length) return skip('in-use', `in use: ${facts.inUse.join('; ')}`);
   if (facts.porcelain === null) return skip('status-unreadable', 'git status could not be read');
@@ -447,13 +475,14 @@ function deviceUseOf(keys: readonly string[], devices: DeviceReads): string[] {
       reasons.push(`its device records cannot be read: ${(error as Error).message}`);
       continue;
     }
-    for (const { platforms } of slots) {
+    const state = readWorkspaceState(key);
+    for (const { slot, platforms } of slots) {
       const ios = platforms.ios;
       if (ios?.owned && ios.deviceUdid) {
         const sims = devices.sims(ios.deviceUdid);
         const sim = sims?.find((entry) => entry.udid === ios.deviceUdid);
         if (sims === null) reasons.push(`the state of its owned simulator ${ios.deviceUdid} cannot be read`);
-        else if (sim && sim.state !== 'Shutdown') {
+        else if (sim && sim.state !== 'Shutdown' && !holdsDeferredShutdown(state, slot, ios.deviceUdid)) {
           reasons.push(`its owned simulator ${sim.name} is ${sim.state}; \`stim stop\` in ${key} shuts it down`);
         }
       }
@@ -787,7 +816,6 @@ export async function collectWorktreeSweep({
     }
     groups.set(entry.path, [...(groups.get(entry.path) ?? []), root]);
   }
-  const scoped = deviceSweepIsScoped(operation?.env);
   const registry = new Set(listedRoots());
   const inspected: Inspected[] = [];
   await eachLimited([...[...groups].entries()], readConcurrency(operation), async ([index, [path, roots]]) => {
@@ -811,7 +839,8 @@ export async function collectWorktreeSweep({
       source: 'refusal' in source ? source : linked ? 'linked' : 'source',
       bare: Boolean(entry?.bare),
       locked: Boolean(entry?.locked),
-      unregistered: scoped && !roots.some((root) => registry.has(root)),
+      pinned: linked ? await anyPinned(keys, operation) : false,
+      unregistered: !roots.some((root) => registry.has(root)),
       nested: entry ? nestedWorktrees(entries, entry.path) : [],
       porcelain,
       unpushed: linked ? await unlessTimedOut(() => unpushedCommitsAsync(path, read), null) : null,
@@ -854,6 +883,16 @@ export async function collectWorktreeSweep({
   for (const { candidate, facts } of linked) {
     facts.inUse = [...new Set([...facts.inUse, ...deviceUseOf(candidate.keys, devices)])];
   }
+  const registered = linked.filter(({ facts }) => !facts.unregistered);
+  if (registered.length) {
+    operation?.signal.throwIfAborted();
+    const agents = await agentSessionUse(
+      registered.map(({ candidate }) => candidate.path),
+      now,
+      operation?.signal,
+    );
+    registered.forEach(({ facts }, i) => facts.inUse.push(...(agents[i] ?? [])));
+  }
   if (refresh) await lookUpPullRequests(inspected, operation);
   else readCachedPullRequests(inspected, now, freshMs);
   const worktrees: WorktreeCandidate[] = [];
@@ -888,26 +927,21 @@ export async function collectWorktreeSweep({
 }
 
 async function lookUpPullRequests(inspected: readonly Inspected[], operation?: StimContext): Promise<void> {
-  const repos = new Map<string, { facts: WorktreeFacts; query: PullRequestQuery }[]>();
+  const repos = new Map<string, { facts: WorktreeFacts; request: PullRequestRequest }[]>();
   for (const { candidate, facts, repo, branch } of inspected) {
     if (repo === null || branch === null || candidate.head === null) continue;
-    const query = { cwd: candidate.path, branch, head: candidate.head };
-    repos.set(repo, [...(repos.get(repo) ?? []), { facts, query }]);
+    const request = { path: candidate.path, cwd: candidate.path, branch, head: candidate.head };
+    repos.set(repo, [...(repos.get(repo) ?? []), { facts, request }]);
   }
-  const lookup = pullRequestLookups({ operation });
+  const refresh = refreshPullRequests({ maxAgeMs: 0, operation });
   const probes = [...repos].map(([repo, entries]) => async () => {
-    const answers = await lookup(
+    const answers = await refresh(
       repo,
-      entries.map(({ query }) => query),
+      entries.map(({ request }) => request),
     );
-    const at = new Date().toISOString();
-    entries.forEach(({ facts, query }, i) => {
+    entries.forEach(({ facts }, i) => {
       operation?.signal.throwIfAborted();
-      const answer = answers[i] ?? null;
-      facts.pullRequest = answer;
-      if (answer && 'pullRequest' in answer) {
-        recordPullRequestLookup({ path: query.cwd, branch: query.branch, head: query.head }, answer.pullRequest, at);
-      }
+      facts.pullRequest = answers[i] ?? null;
     });
   });
   if (operation)
@@ -919,43 +953,14 @@ async function lookUpPullRequests(inspected: readonly Inspected[], operation?: S
 }
 
 function readCachedPullRequests(inspected: readonly Inspected[], now: number, freshMs: number): void {
-  let gh: boolean | undefined;
+  const missing = ghMissing();
   for (const { candidate, facts, repo, branch } of inspected) {
     if (repo === null || branch === null || candidate.head === null) continue;
-    const cached = cachedPullRequest(readPullRequestCache(candidate.path), branch, candidate.head, now, freshMs);
-    if (!('pullRequest' in cached)) gh ??= getExecutor().findExecutable('gh') !== null;
-    facts.pullRequest = 'pullRequest' in cached || gh ? cached : { unavailable: 'gh is not installed' };
+    facts.pullRequest = cachedPullRequest(
+      { path: candidate.path, branch, head: candidate.head },
+      { maxAgeMs: freshMs, now: () => now },
+    ) ?? { unavailable: missing ?? PULL_REQUEST_NOT_CHECKED };
   }
-}
-
-function cachedPullRequest(
-  cached: PullRequestCacheEntry | null,
-  branch: string,
-  head: string,
-  now: number,
-  freshMs: number,
-): PullRequestLookup {
-  const notChecked = { unavailable: PULL_REQUEST_NOT_CHECKED };
-  if (!cached || cached.branch !== branch || cached.head !== head) return notChecked;
-  if (!(now - Date.parse(cached.checkedAt) < freshMs)) return notChecked;
-  const { pullRequest: pr, containsHead, endedAt } = cached;
-  if (pr === null) return { pullRequest: null };
-  if (containsHead === undefined || (pr.state !== 'open' && pr.state !== 'draft' && typeof endedAt !== 'number')) {
-    return notChecked;
-  }
-  const state = pr.state === 'draft' ? 'open' : pr.state;
-  const open = state === 'open';
-  return {
-    pullRequest: {
-      number: pr.number,
-      url: pr.url,
-      head,
-      containsHead,
-      state,
-      draft: pr.state === 'draft',
-      endedAt: open ? null : (endedAt ?? null),
-    },
-  };
 }
 
 async function noOwnCommitsRecheck(
@@ -978,6 +983,16 @@ export async function removeWorktrees(
   output: GcOutput = GC_OUTPUT,
 ): Promise<number> {
   let failures = 0;
+  const removable = sweep.worktrees.filter((candidate) => !candidate.skipped);
+  const agents = new Map<string, string[]>();
+  if (removable.length) {
+    const found = await agentSessionUse(
+      removable.map((candidate) => candidate.path),
+      Date.now(),
+      operation?.signal,
+    );
+    removable.forEach((candidate, i) => agents.set(candidate.path, found[i] ?? []));
+  }
   for (const candidate of sweep.worktrees) {
     operation?.signal.throwIfAborted();
     if (candidate.skipped) continue;
@@ -990,6 +1005,7 @@ export async function removeWorktrees(
         ...stimCliUseOf(candidate.path, canonicalPath, stimCliEntries(operation?.env)),
         ...(await inUseOf(lockedKeys, { managedLocks: false }, devices, operation?.signal, operation)),
         ...(await inUseOf(unlocked, { managedLocks: true }, devices, operation?.signal, operation)),
+        ...(agents.get(candidate.path) ?? []),
       ].map((r) => `in use: ${r}`);
       const mergedHead = candidate.merge?.merged
         ? candidate.merge.head

@@ -224,6 +224,7 @@ jobs:
           packages/stim-cli/src/__tests__/doctor-source-repair.integration.test.ts
           packages/stim-cli/src/__tests__/agent-device-command.integration.test.ts
           packages/server/__tests__/control-clipboard.integration.test.ts
+          packages/server/__tests__/build-area-eviction.integration.test.ts
 
       - name: Windows startup cancellation
         run: |

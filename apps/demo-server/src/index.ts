@@ -9,6 +9,7 @@ import { bundledFixtures } from './fixtures.ts';
 interface Env {
   DEMO: DurableObjectNamespace<DemoServer>;
   DEMO_TOKEN?: string;
+  VERSION: WorkerVersionMetadata;
 }
 
 const MACHINE_NAME = 'Demo Mac';
@@ -80,7 +81,9 @@ export class DemoServer extends DurableObject<Env> {
   override fetch(request: Request): Response {
     const url = new URL(request.url);
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
-      return Response.json(this.machine.pairingCode(`${url.protocol === 'https:' ? 'wss' : 'ws'}://${url.host}`));
+      return Response.json(this.machine.pairingCode(`${url.protocol === 'https:' ? 'wss' : 'ws'}://${url.host}`), {
+        headers: { 'X-Demo-Version': this.env.VERSION.id },
+      });
     }
     if (this.ctx.getWebSockets().length >= MAX_SOCKETS) return new Response('Too many connections.\n', { status: 503 });
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];

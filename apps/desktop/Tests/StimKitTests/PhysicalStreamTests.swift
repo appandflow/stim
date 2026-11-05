@@ -257,6 +257,30 @@ import Testing
     #expect(server.requests.contains { $0.method == "control.end" })
   }
 
+  @Test func sendsTheSecondFingerOfEveryPhaseAndLiftsBothWhenTheSessionEnds() async throws {
+    let (stream, server, _) = try await started()
+    #expect(stream.touch("down", x: 0.3, y: 0.5, second: (0.7, 0.5)))
+    #expect(stream.touch("move", x: 0.2, y: 0.5, second: (0.8, 0.5)))
+    stream.end()
+    await settle()
+    let touches = server.requests.filter { $0.method == "input.touch" }
+    #expect(touches.map { $0.params["phase"] } == [.string("down"), .string("move"), .string("up")])
+    for touch in touches {
+      #expect(touch.params["x2"] != nil && touch.params["y2"] != nil)
+    }
+    let up = try #require(touches.last)
+    #expect(up.params["x"] == .number(0.2) && up.params["x2"] == .number(0.8))
+    #expect(!stream.touch("down", x: 0.3, y: 0.5, second: (0.7, 0.5)))
+  }
+
+  @Test func sendsNoSecondFingerForAOneFingerTouch() async throws {
+    let (stream, server, _) = try await started()
+    stream.touch("down", x: 0.3, y: 0.5)
+    await settle()
+    let touch = try #require(server.take("input.touch"))
+    #expect(touch.params["x2"] == nil && touch.params["y2"] == nil)
+  }
+
   @Test func keepsWhyControlEndedWhenTheTileReleasesAfterwards() async throws {
     let (stream, server, session) = try await started()
     for observer in server.controlObservers {

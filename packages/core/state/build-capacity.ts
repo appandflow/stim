@@ -107,6 +107,13 @@ export function maxOffloadedBuilds(): number {
   return Number(settingDefinition('server.maxOffloadedBuilds')?.default ?? 0);
 }
 
+/** `server.workerAreaMaxAgeDays`: the days a repository area stays unused on a build worker, 0 when age removes none. */
+export function workerAreaMaxAgeDays(): number {
+  const value = loadConfig()?.server?.workerAreaMaxAgeDays;
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
+  return Number(settingDefinition('server.workerAreaMaxAgeDays')?.default ?? 0);
+}
+
 function liveNativeBuilds(): number {
   const dir = join(configDir(), 'workspaces');
   let names: string[];

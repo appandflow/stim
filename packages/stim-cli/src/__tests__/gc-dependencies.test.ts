@@ -1,4 +1,4 @@
-import { readJsonObject, workspaceLightenedFile } from '@stim-cli/core/state';
+import { diskUsageCacheFile, readJsonObject, workspaceLightenedFile } from '@stim-cli/core/state';
 import { execSync, spawn } from 'node:child_process';
 import {
   existsSync,
@@ -12,6 +12,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { writeCacheFile } from '../cache-file.ts';
+import { treeSignature } from '../private-size.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
@@ -116,6 +118,16 @@ function idleRepo(worktrees: { name: string; workspace: boolean }[]): Record<str
     write(join(root, 'ios', 'Pods', 'Manifest.lock'));
     ageTree(join(root, 'node_modules'), hourAgo);
     ageTree(join(root, 'ios'), hourAgo);
+    for (const path of [join(root, 'node_modules'), join(root, 'ios', 'Pods')]) {
+      const bytes = 512 * 1024 ** 2;
+      writeCacheFile(diskUsageCacheFile(path), {
+        path,
+        measuredAt: new Date().toISOString(),
+        bytes,
+        privateBytes: bytes,
+        signature: treeSignature(path),
+      });
+    }
     if (name === 'repo' || worktrees.find((entry) => entry.name === name)?.workspace) {
       upsertProject(root, { metroPort: null });
       recordWorkspaceUse(root, hourAgo);

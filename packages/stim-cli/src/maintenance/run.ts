@@ -26,6 +26,7 @@ import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devi
 import { measureOwnedDevices, type OwnedDeviceReads } from './devices.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
+import { skipKey } from './plan.ts';
 import { capChildLog } from './attempt.ts';
 import { measurePressure, measureSizes, pressureFromMeasurement, sizeScanDeferred } from './measure.ts';
 import { executeAction, type ActionOutcome } from './act.ts';
@@ -103,6 +104,10 @@ const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
   'would-delete-parked-device': 2,
   'would-delete-temp-leftovers': 2,
   'would-delete-trash': 2,
+  'would-delete-status-caches': 2,
+  'would-delete-process-locks': 2,
+  'would-delete-device-lease': 2,
+  'would-delete-expired-archives': 2,
   'would-trim-cache': 2,
   'would-clear-build-dirs': 3,
   'would-empty-cache': 3,
@@ -112,6 +117,7 @@ const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
   'would-delete-devices': 5,
   'would-delete-dependencies': 6,
   'would-stop-gradle-daemons': 7,
+  'would-stop-watchman': 7,
   'would-delete-gradle-version': 8,
 };
 
@@ -160,6 +166,14 @@ function describeDone(action: MaintenanceAction): string {
       return `Deleted the recognized leftovers in ${action.target}`;
     case 'would-delete-trash':
       return `Deleted the worktree trash in ${action.target}`;
+    case 'would-delete-status-caches':
+      return `Deleted the stale status cache entries in ${action.target}`;
+    case 'would-delete-process-locks':
+      return `Deleted the empty process lock directories in ${action.target}`;
+    case 'would-delete-device-lease':
+      return `Deleted the expired device lease ${action.target}`;
+    case 'would-delete-expired-archives':
+      return `Deleted the archives past their retention in ${action.target}`;
     case 'would-delete-devices':
       return `Deleted the owned devices of ${name}`;
     case 'would-clear-build-dirs':
@@ -168,6 +182,8 @@ function describeDone(action: MaintenanceAction): string {
       return `Deleted the installed dependencies ${action.target}`;
     case 'would-stop-gradle-daemons':
       return 'Stopped idle Gradle and Kotlin daemons';
+    case 'would-stop-watchman':
+      return 'Shut down the unused watchman daemon';
     case 'would-delete-gradle-version':
       return `Deleted the unpinned Gradle ${action.target} caches and distributions`;
     case 'would-stop-workspace':
@@ -208,7 +224,7 @@ function partsAfter(
       ...own.flatMap(({ outcome }) => (outcome.shortfall ? [outcome.shortfall] : [])),
     ];
     const skipKeys = [
-      ...(result.byCheck[part]?.skips ?? []).map((skip) => skip.target),
+      ...(result.byCheck[part]?.skips ?? []).map(skipKey),
       ...own.filter(({ outcome }) => outcome.status === 'kept').map(({ action }) => action.target),
     ];
     if (blocked.length || skipKeys.length) parts[part] = { blocked, skipKeys };
@@ -512,8 +528,8 @@ export async function runMaintenance(
     const previousSkips = new Set(state.skipKeys ?? []);
     const loggedSkips = new Set(previousSkips);
     for (const skip of result.skips) {
-      if (loggedSkips.has(skip.target)) continue;
-      loggedSkips.add(skip.target);
+      if (loggedSkips.has(skipKey(skip))) continue;
+      loggedSkips.add(skipKey(skip));
       record('maintenance_skip', 'info', `Kept ${skip.target}: ${skip.reason}`, skip);
     }
     if (writeError) failures.push(`Could not write the maintenance state or log: ${writeError}`);

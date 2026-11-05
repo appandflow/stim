@@ -278,7 +278,9 @@ DESTRUCTIVE COMMANDS -- ask the user first
 
 Permanent local deletion lives in exactly TWO commands: \`worktree remove\`
 (the workspace you name) and \`gc --delete\` (the machine). For a local device,
-\`stop\` shuts it down and never deletes it. For a recorded EAS session,
+\`stop\` shuts it down and never deletes it (an owned iOS simulator first stays
+booted for \`pool.bootedGraceMinutes\` when memory permits, \`guide lifecycle pool\`).
+For a recorded EAS session,
 \`stop\` irreversibly ends the session. Externally started servers are left
 alone, even when they use the reserved port, and the reservation is kept while
 one answers from the project. A dev server whose supervisor died is stopped
@@ -1416,7 +1418,9 @@ result as proof instead of requiring an unrelated screenshot.`,
     at park       shut down and renamed
                   \`stim-parked (<model> <runtime>) <4 hex>\`; nothing is
                   erased, and the pool record names the installed app's
-                  bundle id and build cache key
+                  bundle id and build cache key. A simulator that is booted
+                  when \`worktree remove\` parks it is kept booted, see
+                  KEEPING A PARKED SIMULATOR BOOTED
     at adoption   renamed for the adopting workspace, then, inside the boot
                   the run pays anyway, \`simctl privacy reset all\` and
                   \`simctl keychain reset\`; at install, every other user app
@@ -1446,11 +1450,61 @@ result as proof instead of requiring an unrelated screenshot.`,
   uses the Mac's disk, not a fixed partition, so there is no free-space check
   on iOS; \`stim gc\` lists each parked simulator's app and size.
 
-  Park takes only a simulator that reports Shutdown. It waits up to 15s for
+  Park takes only a simulator that reports Shutdown, or a booted one kept booted as above. It waits up to 15s for
   the shutdown to settle, retries the shutdown once, and waits up to 15s more.
   A simulator that is still booted after that is deleted instead, and
   \`worktree remove\` prints
   \`could not park <name>: ... -- deleted it instead\`.
+
+  KEEPING A PARKED SIMULATOR BOOTED
+  \`pool.bootedGraceMinutes\` (default 15; 0 shuts down at park) keeps a
+  simulator that is booted when \`worktree remove\` parks it booted for that
+  long, so the next adoption of the same model and runtime skips the boot. The
+  pool record carries \`bootedUntil\`. Stim keeps it booted only while macOS
+  memory pressure reads normal and a device slot besides this simulator is
+  free under \`concurrency.maxDevices\` and \`concurrency.maxIosDevices\`;
+  otherwise it shuts the simulator down as before. It also shuts it down
+  unless \`daemon.mode\` is \`on\` on a platform with a daemon, because only
+  the stim-daemon ends the grace period. The leftover app is
+  terminated at park. \`stim stop\` applies the same gates to the workspace's
+  own simulator (STOP AND THE GRACE PERIOD), so \`stop\` then \`worktree
+  remove\` keeps it booted too.
+  Adopting a booted parked simulator runs the same cleanup as any adoption
+  (privacy and keychain reset, other user apps removed, app data cleared, the
+  install verified by bytes) without the boot, and prefers it over a shut-down
+  one. The stim-daemon shuts a booted parked simulator down, through
+  teardown, when its grace period passes, under any macOS memory pressure
+  (before it touches a workspace's device), and before it reclaims another
+  workspace's device for a run waiting on a device slot; the simulator stays
+  parked. Booted parked simulators count against the device caps. \`stim
+  status\` shows how many are booted. Android emulators are shut down at park.
+
+  STOP AND THE GRACE PERIOD
+  While the same gates hold (\`pool.bootedGraceMinutes\` above 0, macOS memory
+  pressure normal, a device slot free, \`daemon.mode\` \`on\` on a platform with
+  a daemon), \`stim stop\` leaves the workspace's owned iOS simulator booted
+  instead of shutting it down. It still stops Metro, the collectors and the
+  app, and ends agent-device sessions on the simulator. The simulator stays
+  assigned to the workspace; \`stop\` records a deferred shutdown with its
+  expiry in the workspace state and makes sure the stim-daemon runs. \`stop\`
+  prints \`<name> stays booted for N minutes\`, and \`stop --json\` reports
+  \`device.ios\` as { status: "kept-booted", label, until } with \`ok\` true.
+  If any gate fails, \`stop\` shuts the simulator down as before.
+    - \`ios\` in the workspace before the expiry uses the booted simulator, with
+      no boot, and forgets the record.
+    - \`worktree remove\` parks it booted under the park gates, or shuts it
+      down.
+    - The stim-daemon shuts it down, through teardown under the workspace's
+      native-run lock, when the expiry passes or macOS memory pressure is not
+      normal. A workspace whose dev server runs again only loses the record.
+    - To shut it down now run \`STIM_POOL_BOOTED_GRACE_MINUTES=0 stim stop\`;
+      the setting at 0 turns the deferral off. There is no \`stop\` flag.
+  Until the expiry the idle stage leaves the stopped workspace alone, and
+  \`gc\` does not count the simulator as a reason to keep its worktree.
+  A repeated \`stop\` keeps the first expiry. Android emulators are shut down
+  by \`stop\`; \`stop --slot\` shuts the slot's simulator down at once, because
+  the dev server it leaves running ends the deferral; and the daemon's idle stop
+  and automatic maintenance never defer.
 
   Adoption matches the device type AND the runtime EXACTLY: a ticket that asks
   for an iPad never gets an iPhone, and a request for iOS 18.5 never gets 26.5.
@@ -2002,7 +2056,8 @@ THE BUILD CACHE HAS THREE LEVELS
   patches change; undo the edit with another --no-build-cache build.
 
   A KNOWN TREE SKIPS THE FULL FINGERPRINT. After a full fingerprint at the
-  first lookup of a React Native or Expo run, Stim records it in
+  first lookup of a React Native or Expo run, or ahead of the run by the daemon
+  (below), Stim records it in
   $STIM_HOME/fingerprint-memo (~/.stim by default) under a static digest of
   the tree: git blob ids of the native inputs git tracks, the contents of the
   untracked, modified and ignored ones, the app config's sources and the files
@@ -2021,6 +2076,30 @@ THE BUILD CACHE HAS THREE LEVELS
   warning naming both hashes at the end of the run and writes a
   fingerprint_memo_stale record to the build log; run the command again to use
   the current tree.
+
+  THE DAEMON RECORDS IT AHEAD OF THE RUN. While daemon.mode is on, the daemon
+  looks at each workspace that is running and not idle, and has an iOS or
+  Android device recorded, on every minute tick. When its git HEAD, its
+  lockfile (pnpm-lock.yaml, yarn.lock, package-lock.json or bun.lock) or the
+  install stamp in node_modules (.modules.yaml, .package-lock.json or
+  .yarn-integrity) changed since the last look, and a run's own digest finds no record, it computes the
+  digest and the full fingerprint in a low-priority child process, one at a
+  time and at most two per tick, and records them as a run would. The next
+  stim ios or stim android of that tree then reads the record and starts its
+  background check as above. A record is read only when the run's own digest
+  of the tree equals the recorded one, so a precompute never makes a run use a
+  fingerprint of other inputs: an edit made after it, a different .env, or an
+  environment variable the config reads that has another value in the
+  command's shell than in the daemon's leaves the record unread, and the run
+  fingerprints in full. Nothing starts while daemon.mode is report, the
+  pressure level is above normal or the host load exceeds 4 per core, and a
+  tree whose child ended, whether it recorded, skipped, failed or timed out
+  (2 minutes), is not looked at again until one of those changes. It never records for a pod install alone: a run
+  after one fingerprints in full once. The record written is the same one a
+  run writes, so the 256-record cap and gc pruning apply to it. The daemon
+  logs one daemon_fingerprint_precompute record to daemon.ndjson per child,
+  with its outcome (recorded, present, skipped or failed) and duration, and
+  one line when a hold starts or ends.
 
   A config the digest cannot follow always fingerprints in full: a dynamic
   require or import, process.env used other than by literal name, file,
@@ -2145,7 +2224,9 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   looks exactly like a cache that is not there.
 
   Stim ignores paths a fresh checkout never has and no native Debug build
-  reads: android/local.properties, android/.idea, *.xcodeproj/xcuserdata, .git (and its contents), .expo, and,
+  reads: android/local.properties, android/.idea, *.xcodeproj/xcuserdata, .git (and its contents), .expo,
+  on Android the signing files *.keystore, *.jks, *.p12, *.pfx and keystore.properties (but not debug.keystore or
+  an APK's own src/*/assets and src/*/res), which an Android offload does not send, on iOS *.p8, *.p12, *.mobileprovision and *.provisionprofile, which an iOS offload does not send, and,
   while a .gitignore pattern matches them (even when committed), the
   \`react-native bundle\` output ios/main.jsbundle and ios/assets. A project
   does not repeat those.
@@ -2406,13 +2487,15 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        install) goes after the measured ones, longest-idle first. The daemon
        measures each tree in the background, one walk at a time on the
        machine, after its install changes and at least every 6 hours
-    6. idle Gradle and Kotlin daemons, unpinned Gradle versions unmodified for
+    6. idle Gradle and Kotlin daemons, an unused watchman (over 2 GiB, or over
+       1 GiB under memory pressure), unpinned Gradle versions unmodified for
        maintenance.gradleVersionIdleDays, Stim TMPDIR leftovers unmodified for
        24 hours, and the worktree trash; automatic maintenance's daily sweep
        runs this rung at normal
 
   A level raised only by memory runs only what frees memory: the idle stage
-  of rung 1, which shuts devices down, and the Gradle daemons of rung 6.
+  of rung 1, which shuts devices down, and the Gradle daemons and watchman of
+  rung 6.
   Memory never refuses: it holds boots (\`guide lifecycle concurrency\`).
 
   Every action goes to $STIM_HOME/daemon/daemon.ndjson and to the workspace's
@@ -2919,7 +3002,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   \`stop\` releases this workspace's leases and stops its log collectors.
   On a physical iPhone that also closes the app, because its collector owns
-  the devicectl launch session. \`gc --delete\` removes expired lease files;
+  the devicectl launch session. \`gc --delete\` and the daily maintenance sweep remove expired lease files;
   neither command shuts down the phone or uninstalls the app.
 
   WATCHING THE PHONE: while this workspace holds the lease, stim-server
@@ -3224,6 +3307,12 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   when an EXPO_PUBLIC_ value, EXPO_NO_DOTENV, NODE_ENV or a .env* file in the
   project root differs from the previous swap's. A metro.config.js that sets
   its own cacheStores keeps its own cache location.
+
+  A release APK built on a remote machine (\`stim guide settings\`, remote.build)
+  carries the JS of the checkout this machine synced, including gitignored
+  .env.production files. A real release key stays on this machine: that machine
+  builds it unsigned and this one zipaligns and signs it as above. It has no asset
+  list, so a later cache hit does not swap it and builds again on that machine.
 
   Native Release bundling on Expo SDK 54-57 replaces ALL transform stores with
   a fresh build-private store and removes it when the build ends. Project

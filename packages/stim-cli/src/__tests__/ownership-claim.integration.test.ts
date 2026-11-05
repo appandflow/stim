@@ -126,12 +126,27 @@ describe('claim storage failures', () => {
     },
   );
 
-  test('a dangling shared-publication directory reports ENOENT without replacing it', () => {
+  test('a dangling shared-publication directory refuses without replacing it', () => {
     mkdirSync(root);
     const link = sharedClaimDir(root);
     symlinkSync(join(root, 'missing'), link);
-    expect(() => tryAcquireClaim({ root, mode: 'shared' })).toThrow(expect.objectContaining({ code: 'ENOENT' }));
+    expect(() => tryAcquireClaim({ root, mode: 'shared' })).toThrow(
+      expect.objectContaining({ code: 'STIM_CLAIM_REFUSED', claimPath: link }),
+    );
     expect(readlinkSync(link)).toBe(join(root, 'missing'));
+  });
+
+  test.each(['root', 'exclusive', 'shared'])('keeps orphan records through a linked %s claim directory', (mode) => {
+    const outside = join(dirname(root), 'outside');
+    const orphan = join(outside, ...(mode === 'root' ? ['exclusive'] : []), 'report.child');
+    mkdirSync(dirname(orphan), { recursive: true });
+    writeFileSync(orphan, 'keep');
+    const link = mode === 'root' ? root : join(root, mode);
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(outside, link, 'junction');
+
+    expect(clearFreeClaimSet({ root }).status).toBe('refused');
+    expect(readFileSync(orphan, 'utf8')).toBe('keep');
   });
 });
 

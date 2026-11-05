@@ -74,7 +74,7 @@ Desktop waits for a startup cancellation acknowledgement before stopping the sam
 an unresolved cleanup refusal includes the exact claim recovery remedy.
 The 120-second deadline cancels startup and waits for owned cleanup; an unresolved
 claim refusal takes precedence over the timeout so its recovery remedy remains visible.
-Requests have a 1 MiB output limit. Older or adopted servers show
+Requests have a 1 MiB output limit. Older servers show
 an error, and reconnect does not replay a start. The supervisor continues running
 after a successful handoff to its workspace.
 
@@ -92,35 +92,35 @@ server. Named slots, hosted machines, remote build selection, uncached test buil
 and headed web retain their selectors. Activity keeps ordered progress, flat
 platform facts and typed refusals. Cancellation waits for server cleanup; a
 retained claim refusal keeps its recovery remedy. A lost connection never replays
-the run. Older, adopted or unavailable servers report an error without a CLI fallback.
+the run. Older or unavailable servers report an error without a CLI fallback.
 
-Reload actions also use the matching-home bundled server's private authority,
+Reload actions also use the matching-home server's Desktop authority,
 through `desktop.reload.subscribe` with `desktop-reload` support. Activity keeps
 ordered progress and the flat CLI JSON or typed refusal. Cancellation,
 unsubscribe and disconnect stop pending work; reconnect never replays the action.
 A dispatched reload cannot be retracted and does not prove completion. Metro
 broadcasts can reach other connected clients. The in-process operation has a
 60 second execution budget and 35 second cleanup budget; an unresolved cleanup
-keeps its server admission reserved. Older or adopted servers report an error
+keeps its server admission reserved. Older servers report an error
 without falling back to a CLI process.
 
-Cleanup actions use `desktop.gc.subscribe` with private Desktop authority,
+Cleanup actions use `desktop.gc.subscribe` with Desktop authority,
 the matching Stim home and `desktop-gc` support. Cache, worktree, age and idle
 selectors retain their existing behavior. Activity keeps ordered progress and
 the complete JSON report, including partial failures. Cancellation waits for
 server cleanup and preserves an unresolved claim's recovery remedy. The
 operation has a 60-second execution budget and 35-second cleanup budget;
-the server's request deadline can cancel it earlier. Older, adopted or
+the server's request deadline can cancel it earlier. Older or
 unavailable servers report an error without a CLI fallback. Reconnect never
 repeats the cleanup.
 
 Worktree removal, including tutorial restart and sample teardown, uses the
-same-home bundled server's private `desktop.worktree.remove.subscribe` action.
+same-home server's `desktop.worktree.remove.subscribe` action.
 It preserves the CLI's dirty-worktree refusal and explicit force choice. Source
 checkout cleanup succeeds without deleting the source; linked-worktree deletion
 and a later branch-cleanup failure remain separate results. Cancellation waits
-for owned cleanup and preserves unresolved-claim remedies. An unavailable,
-adopted or older server fails the action without a CLI fallback; reconnect never
+for owned cleanup and preserves unresolved-claim remedies. An unavailable
+or older server fails the action without a CLI fallback; reconnect never
 repeats removal. Tutorial restart leaves the clone in place if stop or removal
 fails.
 
@@ -588,7 +588,7 @@ agent actions in the logs, at the selected action or the one on screen. The tool
 the list, and the app remembers it; a sheet too narrow for the list and a
 420-point canvas hides it too. Physical and remote devices have no list.
 
-Escape releases a device that is taken over, and otherwise closes the viewer;
+Escape releases a device you control, and otherwise closes the viewer;
 closing it releases the device too. While the viewer is open, the device's
 tile stops streaming and says "Open in the viewer". The stream on a workspace card of the Active Workspaces wall or the
 Overview is a preview too; clicking it opens its workspace with that device focused. The grid pauses previews after
@@ -678,8 +678,8 @@ section stops the plan, and nothing is checked while a build runs; the row
 shows the running build instead. **Check** runs the plan again, and the row
 shows when it was last checked.
 
-Preview reads require private Desktop authority and `desktop-plan` support. Unavailable,
-adopted, wrong-home or older servers report an error without a CLI fallback. Closing a
+Preview reads require Desktop authority and `desktop-plan` support. Unavailable,
+wrong-home or older servers report an error without a CLI fallback. Closing a
 check waits for its connection-scoped cancellation to drain without blocking other controls.
 A retained cleanup refusal keeps its code, message and remedy in Notifications even when a
 new check replaces the cancelled one or completion races cancellation. Desktop acknowledges
@@ -821,8 +821,9 @@ gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
   outputs `stim gc --delete` clears; a lock marks ones it keeps, with the
   reason. Scissors mark logs `stim gc --delete` trims to their newest 8 MiB; a
   lock marks logs over the cap it keeps. The lifecycle reads **Merged into
-  main** from `stim gc --json`, **PR #n open** from `gh pr list` in the
-  repository when the GitHub CLI is signed in, **Stale Nd** after 7 days without
+  main** from `stim gc --json`, **PR #n open** from the pull request
+  state in `stim gc --json`, which Stim reads through its shared pull request
+  cache, **Stale Nd** after 7 days without
   recorded use, **Active**, **Checkout** for a source checkout, or **Folder
   gone**. A row's menu reveals the worktree in Finder or runs `stim worktree
 remove` in it, with what that frees: its `node_modules`, build outputs and
@@ -1025,13 +1026,17 @@ While controlling a local iPhone simulator, drag up from the bottom edge and
 release to go Home, or pause before releasing to open the app switcher. iOS
 handles the gesture timing, including when the simulator is rotated.
 
-While controlling a local iOS simulator or Android emulator, hold **Option** and
+While controlling an iOS simulator or Android emulator, or an iOS or Android device that Desktop reaches
+through stim-server (hosted, paired or a leased Android phone), hold **Option** and
 drag to pinch or rotate two fingers around their center. Hold **Option-Shift**
 to move both fingers together. Trackpad pinch also sends a two-finger pinch.
 Two markers show the contact positions, including on a framed or folded screen.
 Releasing Option, ending the gesture, changing orientation or releasing Control
 lifts both contacts. Option and the gesture's Shift modifier stay on the Mac.
-These gestures are not available for physical devices, remote previews or web pages.
+A device reached through stim-server takes them as `input.touch` with a second finger, so the server must be a
+version that accepts it: an older paired server turns a pinch into a one-finger touch, and an older hosted worker
+refuses it. The gestures are not available for a physical iPhone, an iPhone Duo, macOS apps, remote previews or web
+pages.
 
 While **Control** is on, groups below the screen of a running simulator or emulator have its
 hardware buttons and rotation: **Home** and **Lock** on a simulator, sent
@@ -1123,7 +1128,7 @@ so the viewer takes that display's shape and touches address its pixels.
 Android input goes through the emulator's gRPC `sendMouse` and `sendKey` calls.
 Printable ASCII is sent as text; other keys, such as Delete, Return, Tab and the
 arrows, are sent as key presses. Control shortcuts are not sent, and an
-emulator without a gRPC endpoint cannot be taken over.
+emulator without a gRPC endpoint cannot be controlled.
 
 ## Web
 
@@ -1261,7 +1266,7 @@ Instead of a screen, the tile says:
   unreachable.
 - **The stim-server on this port is older than Stim Desktop** when the server's
   hello lacks `physical-ios` or `physical-android` for the device: Desktop adopted
-  a server it did not start. Updating or stopping that server lets Desktop start its own.
+  a server it did not start. Update that server, or stop it and reopen Stim Desktop so Desktop starts its own.
 - **Disconnected** when `stim status` reads the device as disconnected.
 - **The workspace's lease on this device ended**, with the `--device` command
   that leases it again, once the lease's end time passes, before `stim status`
@@ -1320,8 +1325,13 @@ runs, such as Metro or Gradle, never write there. A test copy can move the port 
 `defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
 the Mac's own server. While a server runs, **Settings > Connections > Using this machine** re-checks it every 5
 seconds and the app every 10 seconds while it is active, otherwise every 60
-seconds. When a server the app did not start misses two checks in a row, the app starts its
-own. With **Allow connections** on, whatever the Phone app flag says, Desktop starts its server without
+seconds. When a server the app adopted misses two checks in a row, the app shows it as
+degraded and keeps checking: it never starts its own server onto that port while the adopted
+server is gone, so a `stim-server service` LaunchAgent that restarts, updates or crashes keeps
+its port. The message names the `dev.stim.server` LaunchAgent when its plist is installed for this
+user. The app starts its own server only when it adopted none, no server answers on the port and nothing holds it:
+at launch, or later once a port a program that is not a stim-server held at launch is free. To use Desktop's own server instead, stop the adopted one and reopen Stim
+Desktop. With **Allow connections** on, whatever the Phone app flag says, Desktop starts its server without
 `--loopback-only`, so it also listens on this Mac's Tailscale addresses, and restarts the
 server it started when the setting changes. The pairing and device commands use the
 `STIM_HOME` its health reports, so they act on that server's pairing state. When that `STIM_HOME` is
@@ -1336,9 +1346,14 @@ adopted as not started by the app, whatever **Allow connections** says, so build
 device-host requests from other Macs reach the Allow / Deny dialog. If Desktop's own
 server fails and a LaunchAgent server comes up, the next retry (every 30 seconds or
 more) adopts it. Desktop's own actions, such as cleanup, settings changes and app runs,
-work only on the bundled server it started with its private key, so with an adopted
-server or a stim-server override each of them refuses with that reason, and
-**Settings > Advanced** and the Phones page say so under the server's version. A server with another Stim
+work on an adopted server too, with no approval step. Desktop reaches it through the Stim
+home's local socket (`server/local.sock`, mode 0600 in a directory only this user can enter), and a
+stim-server without a private key grants that socket's clients the same actions; a server reached only
+over TCP gets none (a network connection never receives them). Only the bundled server Desktop started demands its private key on that socket. A
+server older than Desktop, or one another Stim Desktop started, offers no actions: each of them
+refuses with that reason. Approving another machine's build or device-host request in Desktop still
+needs the bundled server's private key, so against an adopted server that sheet refuses and
+points to `stim-server setup` in Terminal. A server with another Stim
 home is not adopted: the sidebar footer
 shows the mismatch and Desktop keeps retrying. Before its environment is ready, Desktop
 adopts a ready server provisionally when the Stim home it runs with would adopt it, so the
@@ -1833,7 +1848,7 @@ marks the existing inbox read, once, and later entries are untouched. The first 
 notifying, except for Needs you, which notifies each item it has not notified
 before. Desktop does not look up pull requests, so it never notifies a pull
 request ready for review; a merged branch notifies once git finds it merged. The
-phone's "Someone takes over your device" is a push to a phone and never fires
+phone's "Someone else drives your device" is a push to a phone and never fires
 here. A phone controlling a simulator
 through stim-server counts as an agent driving it, because Desktop cannot read
 stim-server's leases. The phone app and stim-server do read them, and do not count such a phone as an agent.
@@ -1898,9 +1913,9 @@ value there overrides, an environment override when one is set, and a
 **Reset** that unsets the layer. A default `stim` picks per machine, such as
 `stim-desktop` for `iosSimulatorApp` while Stim Desktop is installed, shows the
 reason `stim` reports, for example `default (Stim Desktop installed)`. Edits use
-`desktop.settings.write` on the proved local connection of Desktop's bundled
-server, for the same canonical Stim home, with `desktop-settings-write` support.
-An unavailable, older, external or adopted server reports an error without a CLI
+`desktop.settings.write` on Desktop's authorized local connection,
+for the same canonical Stim home, with `desktop-settings-write` support.
+An unavailable or older server reports an error without a CLI
 fallback. A refusal's message and remedy show
 under the field. `android.keystorePassword` is never shown. Keys Stim does not
 read are listed read-only.
@@ -2237,7 +2252,7 @@ Sentry DSN or `stim-desktop` URL scheme. It has its own `UserDefaults`, login
 item, notification permission and notification history, and pairs with
 stim-server under its own name (see [Replay](#replay)). Both apps use port
 7787, so the one that starts second uses the other's server instead of starting
-one; when that app quits, the remaining one starts its own within two minutes. Paired phones and the `tailscale serve` route keep working
+one; when that app quits, the remaining one shows the server it adopted as unavailable and waits for it, and reopening it starts its own. Paired phones and the `tailscale serve` route keep working
 because they belong to the Stim home, not to either app. Both apps check disk
 pressure. `stim ios` and `stim android` open device links with `open -a Stim`,
 which reaches the release app, never Stim Dev.

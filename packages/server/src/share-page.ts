@@ -24,6 +24,7 @@ export const SHARE_ASSETS: Record<string, { body: string; type: string }> = {
   'people.js': { body: read('people.js'), type: 'text/javascript; charset=utf-8' },
   'reconnect.js': { body: read('reconnect.js'), type: 'text/javascript; charset=utf-8' },
   'viewer.js': { body: read('viewer.js'), type: 'text/javascript; charset=utf-8' },
+  'stats.js': { body: read('stats.js'), type: 'text/javascript; charset=utf-8' },
 };
 
 function escape(text: string): string {
@@ -50,8 +51,6 @@ export function viewerPage(options: {
   viewOnly: boolean;
   /** A view-only viewer is offered the control password. */
   upgrade: boolean;
-  /** The share has no login, so the page asks for a name. */
-  askName: boolean;
   platform: string;
   buttons: readonly string[];
   rotate: boolean;
@@ -61,7 +60,6 @@ export function viewerPage(options: {
     control: String(options.control),
     viewOnly: String(options.viewOnly),
     upgrade: String(options.upgrade),
-    askName: String(options.askName),
     platform: options.platform,
     buttons: options.buttons.join(' '),
     rotate: String(options.rotate),

@@ -153,7 +153,8 @@ hours suppress delivery; problems that still hold afterward can notify then,
 while work events during quiet hours are dropped.
 
 Categories cover work starting or finishing, an agent that looks stuck,
-repeated build failures, machine problems, device takeovers and problems that
+repeated build failures, machine problems, someone else driving a device you
+control and problems that
 need a person. A single failed build or new log error stays in **Needs
 attention** rather than notifying by itself.
 
@@ -196,11 +197,17 @@ the server's authorization, use the Mac-side action above.
 
 ## What the phone can do
 
-| With read access                                                | With control added                                                  |
-| --------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Watch builds and workspace status.                              | Reload the app and Stop the workspace.                              |
-| Read captured logs, build diagnostics and supported text diffs. | Tap, swipe, type and use supported buttons on controllable devices. |
-| View device screens and supported replay.                       | Control a leased Android phone while its lease is valid.            |
+| With read access                                                | With control added                                               |
+| --------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Watch builds and workspace status.                              | Reload the app and Stop the workspace.                           |
+| Read captured logs, build diagnostics and supported text diffs. | Tap, swipe, pinch, type and use buttons on controllable devices. |
+| View device screens and supported replay.                       | Control a leased Android phone while its lease is valid.         |
+
+With control on, two fingers on the screen of an iOS simulator, an Android emulator or an
+Android phone pinch or pan the app on the device. The phone waits 40 ms after the first finger
+lands for a second one, so a tap on these devices reaches the device that much later. A macOS
+app, a web page and an iPhone Duo take one finger, and a server or hosted worker older than
+two-finger input turns a pinch into a one-finger touch or refuses it.
 
 With control on, the viewer's **More** menu has **Paste from Phone** and **Copy
 Device Clipboard** for an iOS simulator, an Android emulator or an Android phone,

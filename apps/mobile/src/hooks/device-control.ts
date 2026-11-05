@@ -32,7 +32,8 @@ export interface DeviceControl {
   state: ControlState;
   begin: (takeOver?: boolean) => void;
   end: () => void;
-  touch: (phase: TouchPhase, x: number, y: number, duoRevision?: string) => void;
+  /** `second` adds a second finger; every phase of one gesture carries it or none does. */
+  touch: (phase: TouchPhase, x: number, y: number, duoRevision?: string, second?: { x: number; y: number }) => void;
   text: (text: string) => void;
   scroll: (x: number, y: number, deltaX: number, deltaY: number) => void;
   key: (key: InputKey, modifiers?: KeyModifier[]) => void;
@@ -163,8 +164,14 @@ export function useDeviceControl(
     [connection, session],
   );
   const touch = useCallback(
-    (phase: TouchPhase, x: number, y: number, duoRevision?: string) =>
-      send('input.touch', { phase, x, y, ...(duoRevision ? { duoRevision } : {}) }),
+    (phase: TouchPhase, x: number, y: number, duoRevision?: string, second?: { x: number; y: number }) =>
+      send('input.touch', {
+        phase,
+        x,
+        y,
+        ...(second ? { x2: second.x, y2: second.y } : {}),
+        ...(duoRevision ? { duoRevision } : {}),
+      }),
     [send],
   );
   const text = useCallback(

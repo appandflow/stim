@@ -26,6 +26,7 @@ import { cacheEntryProtectionFor } from '../maintenance/protect.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../maintenance/settings.ts';
 import { planRung6 } from '../maintenance/sweep.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
+import { runBootedParkedPass } from './booted-parked.ts';
 import { clearDependency, rankDependencies, selectDependencies } from './dependencies.ts';
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
@@ -203,6 +204,20 @@ async function run(
 
 function wouldDetail(context: Pick<RungContext, 'force'>): string {
   return context.force ? 'stim gc --delete would do this' : 'daemon.mode report acts on nothing';
+}
+
+/** Rung 0, before the idle stage: the parked simulators kept booted for a later adoption, which hold memory for nothing in use. */
+async function bootedParkedRung(context: RungContext): Promise<void> {
+  context.actions.push(
+    ...(await runBootedParkedPass({
+      sims: context.sims ?? null,
+      memory: context.level === 'critical' ? 'critical' : 'warning',
+      act: context.act,
+      log: context.log,
+      operation: context.operation,
+      all: true,
+    })),
+  );
 }
 
 /** Rung 1's disk half: the regenerable outputs of workspaces with nothing running, idle 2 minutes or more. */
@@ -507,11 +522,15 @@ async function dependenciesRung(context: RungContext): Promise<void> {
 }
 
 /**
- * Rung 6 now: idle Gradle and Kotlin daemons, and for disk the unpinned Gradle versions, TMPDIR leftovers and the
+ * Rung 6 now: idle Gradle and Kotlin daemons, an unused watchman over its threshold, and for disk the unpinned Gradle versions, TMPDIR leftovers and the
  * worktree trash. At normal the daily sweep runs the same plan.
  */
 async function sweepRung(context: RungContext, causes: readonly Cause[]): Promise<void> {
-  const plan = await planRung6(context.settings, { disk: causes.includes('disk'), operation: context.operation });
+  const plan = await planRung6(context.settings, {
+    disk: causes.includes('disk'),
+    memory: causes.includes('memory'),
+    operation: context.operation,
+  });
   for (const action of plan.actions) {
     if (!(await context.stillShort())) return;
     await run(context, action);
@@ -523,6 +542,7 @@ const RUNGS: {
   relieves: readonly Cause[];
   act: (context: RungContext, causes: Cause[]) => Promise<void>;
 }[] = [
+  { rung: 0, relieves: ['memory'], act: bootedParkedRung },
   { rung: 1, relieves: ['disk'], act: idleOutputsRung },
   { rung: 2, relieves: ['disk'], act: parkedRung },
   { rung: 3, relieves: ['disk'], act: cachesRung },
@@ -554,7 +574,7 @@ export async function runLadder(
   const { force } = input;
   if (force) {
     for (const { rung, act } of RUNGS) {
-      if (rung < (input.fromRung ?? 1)) continue;
+      if (rung < (input.fromRung ?? 0)) continue;
       const context: RungContext = {
         ...input,
         rung,
@@ -580,7 +600,7 @@ export async function runLadder(
   if (pressure.level === 'normal') return { actions, pressure };
   let current = pressure;
   for (const { rung, relieves, act } of RUNGS) {
-    if (rung < (input.fromRung ?? 1)) continue;
+    if (rung < (input.fromRung ?? 0)) continue;
     current = await input.remeasure();
     if (current.level === 'normal') break;
     const causes = causesOf(current, relieves);

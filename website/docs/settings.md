@@ -273,7 +273,7 @@ With `androidEmulatorApp` resolved to `"stim-desktop"` on macOS, Stim launches i
 `-no-window -gpu host`; see [Machine settings](#machine-settings).
 Every owned emulator starts its gRPC endpoint on the console port plus 3000
 with token authentication (`-grpc <port> -grpc-use-token`); Stim Desktop reads
-emulator frames from it and sends input through it while **Take over** is on.
+emulator frames from it and sends input through it while **Control** is on.
 Run `stim guide settings` for the complete key and value list.
 
 ## Machine settings
@@ -405,13 +405,23 @@ set always wins over that default. `stim settings` shows such a default as
 workspace to adopt. Absent means 3; `0` turns parking and adoption off. When
 `STIM_HOME` is set, parking is off unless `STIM_POOL_IOS_PARKED_MAX` is set too.
 `pool.androidParkedMax` and `STIM_POOL_ANDROID_PARKED_MAX` apply the same rules
-to Android emulators. The hosting Mac also uses these bounds for hosted devices
+to Android emulators.
+
+The hosting Mac also uses these bounds for hosted devices
 on stop, separately from its local pool and across all clients per platform.
 Hosted adoption is limited to the same client, clears app data and removes other
 apps. Parked hosted devices persist across a clean server restart; the oldest
 excess devices, unusable adoption candidates and a revoked client's devices are
 retired. See [hosted parking](./remote-machines.md#hosted-parking-and-restart)
 and [owned devices](/docs/owned-devices) for adoption cleanup.
+
+`pool.bootedGraceMinutes` is how many minutes `worktree remove` keeps a
+simulator that is booted booted as it parks it, and `stop` keeps the
+workspace's own owned simulator booted, so the next `stim ios` skips the boot.
+Absent means 15; `0` shuts it down at park and at `stop`. Stim keeps it booted
+only while macOS memory pressure is normal and a device slot is free.
+`STIM_POOL_BOOTED_GRACE_MINUTES` overrides it, and when `STIM_HOME` is set it is
+`0` unless that variable is set. Emulators are always shut down at park and at `stop`. It needs the stim-daemon: with `daemon.mode` `off` or `report`, or on Windows, `worktree remove` and `stop` shut the simulator down at once.
 
 `remote.buildPoolDisabled` and `remote.devicePoolDisabled` list members excluded
 from this requester's automatic build and simulator/emulator placement. Both default
@@ -529,11 +539,13 @@ a person on the worker approves this machine by running the `stim-server setup`
 command it printed. To change placement,
 rerun with `--remote-build auto`, `remote` or `local`.
 
-Device, Android release variant, `--remote`, Android CAS compiler,
+Device, `--remote`, Android CAS compiler,
 build-cache-off and unknown simulator runtime builds refuse a named worker on a
 cache miss, with a remedy to rerun with `--remote-build local` or `auto`. An iOS
 simulator Release or other non-Debug build can build on a worker, which bundles
-the JS of the synced checkout into the app.
+the JS of the synced checkout into the app. An Android release variant can too,
+and a real release key stays on this machine; see
+[Android release variants](./remote-machines.md#android-release-variants).
 Invalid values, unlisted names and unpaired names refuse at setup before the
 cache is consulted, without a build record or failed-run stats. A listed paired
 name with a cache hit needs no build and contacts no worker. Prebuild and pod
@@ -572,7 +584,7 @@ iOS, Android and macOS placement. It is the load per core at which a machine
 counts as saturated: each machine applies its own value, a remote machine
 declines offloaded builds past it, and automatic placement skips it.
 
-Device builds, Android release variants,
+Device builds,
 `--remote eas|proxy` builds, Android builds with the Apple Clang CAS compiler cache, and
 iOS/Android runs with the build cache off, always build here. Hosted iOS
 builds can use a separate `--remote-build`, targeting the hosting Mac's
@@ -660,10 +672,14 @@ its load per core is at or above its
 builds: `concurrency.maxBuilds` on the worker, derived as
 `max(1, floor(CPU cores / 6))` when `0`, so a worker with fewer than 12 cores
 runs one build at a time; set `concurrency.maxBuilds` there to allow more.
+It removes repository areas unused for longer than
+`server.workerAreaMaxAgeDays` (default 7, `0` turns this off) and, while that
+volume has less than 50 GB free, the least recently used not used in the last 3
+hours, always keeping each client's most recently used area
+(see [Worker disk](./remote-machines.md#worker-disk)).
 While an offloaded build runs, it holds one of the remote machine's build slots, so a local `stim ios` or
 `stim android` there waits for the slot and counts the machine as busy. The
-slot is freed when the build ends, is cancelled, or its process is gone. Delete
-a client's directory there to reclaim its space.
+slot is freed when the build ends, is cancelled, or its process is gone.
 
 For Android builds, the remote machine builds on an installed JDK of the same
 major version as the client (found in the system JVM directories, Homebrew,
@@ -915,7 +931,8 @@ Sizes use binary GB and MB; 0 means keep none.
 <ArchiveSettings />
 
 Retention runs on every worktree removal, archived or not, once an archive
-exists. It deletes records past their age or count limit first, then expires
+exists, and in the daily age sweep of [automatic maintenance](./build-caches.md#automatic-maintenance),
+so archives that outlive their limits go without another removal. It deletes records past their age or count limit first, then expires
 recordings, agent actions and logs by age from removal; trims logs by oldest
 rotated generation, then build logs, then oldest other files; and removes the
 largest kind of the oldest archive while total caps are exceeded. Artifact
@@ -968,7 +985,7 @@ the same cap. Under disk pressure the
 unused before that sweep removes it: workspace build outputs, shared cache
 entries, parked simulators and emulators, and clean, pushed linked worktrees
 (only with `maintenance.removeIdleWorktrees`, off by default). The age sweep
-also stops idle Gradle and Kotlin daemons, deletes Gradle versions no project
+also stops idle Gradle and Kotlin daemons, shuts down an unused watchman over 2 GiB, deletes Gradle versions no project
 pins once unmodified for `maintenance.gradleVersionIdleDays` (7; 0 keeps
 them), and deletes TMPDIR leftovers and the worktree trash.
 `maintenance.removeFinishedWorktrees` controls the worktree check. Manual
@@ -1029,7 +1046,9 @@ those idle for `idle.dormantDays` into the dormant stage, runs the pressure
 ladder above normal, and reclaims a device for a run waiting to boot. Automatic
 maintenance and the dormant stage's dependency deletion run beside the ticks,
 one pass at a time, so a slow `git fetch`, pull request lookup or size scan
-never delays a tick or a waiting run. It also wakes the oldest
+never delays a tick or a waiting run. The same lane records the
+[fingerprint](./build-caches.md) of a running workspace whose git HEAD,
+lockfile or install stamp changed. It also wakes the oldest
 run waiting for a build slot as soon as one is released. When one of those
 commands runs from an installed Stim (a global install or a `node_modules`
 dependency) with a newer version than the running daemon, for example after

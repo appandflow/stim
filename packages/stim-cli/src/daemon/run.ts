@@ -28,6 +28,7 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
+import { processContext } from '../cli-operation.ts';
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
@@ -40,16 +41,18 @@ import { readWebRecord, webFacts } from '../web/state.ts';
 import type { Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { askDaemon } from './client.ts';
-import { scheduleDependencyMeasures } from './dependencies.ts';
+import { measureDependencyTrees } from './dependencies.ts';
 import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from './mode.ts';
 import { ownedHere } from './idle.ts';
 import type { TickMeasurement } from './measure.ts';
 import { listWaiting } from '../engine/wait-queue.ts';
 import { createMaintenanceLane, runHomePasses, type HomePasses } from './passes.ts';
 import { reclaimForBootWaiters } from './reclaim.ts';
+import { bootedParkedPending } from './booted-parked.ts';
 import { pendingDormant } from './stages.ts';
 
 const TICK_MS = 60_000;
+const DEPENDENCY_SCAN_MS = 10 * 60_000;
 const SLOW_TICKS = 5;
 const CLAIM_TRIES = 30;
 const CLAIM_RETRY_MS = 100;
@@ -205,6 +208,7 @@ function homeAlive(config: Config | null, measured: TickMeasurement): string | n
   if (listBuildSlots().some((slot) => slot.alive || slot.unresolved)) return 'a build slot is held';
   const owned = measured.devices.filter(ownedHere);
   if (owned.length) return `${owned.length} owned device(s) running`;
+  if (bootedParkedPending()) return 'a parked simulator is kept booted';
   const ownsIos = Object.values(config?.projects ?? {}).some((project) =>
     projectDeviceSlots(project).some(({ platforms }) => platforms.ios?.owned === true),
   );
@@ -244,8 +248,8 @@ async function pendingWork(
  * after two ticks in a row with nothing running, no work pending (`pendingWork`), no slow pass running and no contact,
  * when `daemon.mode` turns off, or when a tick throws, releasing its claim so each supervisor's own idle timer takes
  * over. Asked to hand over, by a daemon a command from a newer installed Stim build started, it exits at once between
- * ticks, or after the tick in progress. Once it is closing it starts no slow pass, and one still running finishes
- * before the process ends.
+ * ticks, or after the tick in progress. During shutdown it cancels dependency measurements and waits for their cleanup
+ * and for any maintenance pass already running.
  */
 export async function runDaemon({
   tickMs = TICK_MS,
@@ -300,6 +304,10 @@ export async function runDaemon({
     return;
   }
   const lane = createMaintenanceLane(log);
+  const dependencyScan = new AbortController();
+  const dependencyOperation = processContext(process.cwd(), dependencyScan.signal);
+  let dependencyScanAt = -Infinity;
+  let dependencyWork: Promise<void> | undefined;
   const loopDelay = monitorEventLoopDelay();
   loopDelay.enable();
   const path = daemonSocket();
@@ -398,6 +406,8 @@ export async function runDaemon({
   const shutdown = (why: string, level: Level = 'info') => {
     if (closing) return;
     closing = true;
+    if (dependencyWork) log('debug', 'daemon_dependency_scan_cancelled', 'stopping the dependency size scan');
+    dependencyScan.abort();
     loopDelay.disable();
     interrupt?.();
     server.close();
@@ -407,7 +417,7 @@ export async function runDaemon({
     releaseClaim(claim);
     for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
-    void lane.settled().then(() => writer.close());
+    void Promise.all([lane.settled(), dependencyWork]).then(() => writer.close());
   };
   for (const signal of SIGNALS) process.once(signal, onSignal);
   try {
@@ -476,7 +486,17 @@ export async function runDaemon({
       });
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
       actions.push(...lane.take());
-      scheduleDependencyMeasures();
+      if (!closing && !handover && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
+        dependencyScanAt = Date.now();
+        dependencyWork = measureDependencyTrees(dependencyOperation)
+          .catch((error: unknown) => {
+            if (!dependencyScan.signal.aborted || (error instanceof Error && 'reportCleanup' in error))
+              log('warn', 'daemon_dependency_scan_failed', error instanceof Error ? error.message : String(error));
+          })
+          .finally(() => {
+            dependencyWork = undefined;
+          });
+      }
       const reclaimStarted = performance.now();
       const reclaimed = await reclaimForBootWaiters({
         devices: measured.devices,
@@ -581,7 +601,7 @@ export async function runDaemon({
     }
     if (ticked && !handover && !closing) lane.start(ticked, mode === 'on');
   }
-  await lane.settled();
+  await Promise.all([lane.settled(), dependencyWork]);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

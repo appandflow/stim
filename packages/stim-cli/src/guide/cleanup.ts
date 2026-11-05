@@ -152,9 +152,18 @@ In on mode a pass runs, cheapest to rebuild first:
      without activity for idle.dormantDays go with its dormant stage instead
      (stim guide lifecycle budget).
   8. the age sweep also runs pressure ladder rung 6: idle Gradle and Kotlin
-     daemons, unpinned Gradle versions unmodified for
+     daemons, an unused watchman over 2 GiB (\`guide cleanup memory\`), unpinned Gradle versions unmodified for
      maintenance.gradleVersionIdleDays, Stim TMPDIR leftovers unmodified for 24
      hours, and the worktree trash.
+  9. the age sweep also prunes what outlived the thing it describes, by the
+     rules gc --delete applies: status cache files (disk-usage, pull-request,
+     git-merge) of folders and worktrees that are provably gone, process lock
+     directories that hold no claim, expired device lease files, and archives
+     past the archive.* retention (guide settings). A lease whose workspace is
+     pinned with maintenance.keep or in use stays; so does anything Stim cannot
+     show stale, each logged as a kept record with its reason. These steps
+     run whatever maintenance.olderThanDays is; maintenance.sweepHours 0 turns
+     them off with the rest of the sweep.
 The age sweep runs every maintenance.sweepHours (24) on a stim-daemon tick, or,
 while no daemon holds the home, in stim doctor, start, ios or android (on
 Windows also in the background process other top-level commands start); never
@@ -205,6 +214,12 @@ In report mode actions and explaining skips are logged only when newly
 planned; in on mode every action taken, failure and explaining skip is logged
 with its bytes, and a pass record carries the bytes freed. Removal of a
 worktree or orphaned directory is logged to the machine log only.
+A merged or ended worktree the worktree check keeps, and with
+maintenance.removeIdleWorktrees any other linked worktree it keeps, gets a
+maintenance_skip line with its path, the reason, and a code (locked, dirty,
+unpushed, in-use, submodules, last-use-unknown, recent-activity for the grace
+window, and the other worktree skip codes), logged again when the code
+changes. stim gc lists every worktree's reason in its worktree section.
 An iOS build that fails on a corrupt compilation cache logs the emptying,
 or why Stim left the cache alone, with trigger "ios build", in every mode;
 see \`stim guide errors STIM_COMPILATION_CACHE_CORRUPT\`.
@@ -303,7 +318,7 @@ pressure ladder, trims oversized workspace logs
 (\`guide cleanup disk\`) and removes orphaned workspace directories, never a
 checkout. Device recordings can also go without either: stim-server prunes
 them, and turning recording.enabled off deletes them (\`guide cleanup disk\`). \`stim stop\` shuts a device
-DOWN and leaves it assigned, which is what makes returning to a branch cost a
+DOWN (an owned iOS simulator at the end of its booted grace period) and leaves it assigned, which is what makes returning to a branch cost a
 boot rather than a create, a provision and a reinstall.
 
 Before shutting down, parking or deleting an owned device, Stim best-effort
@@ -368,7 +383,9 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   beginning "could not archive:" and removal continues with empty stdout.
 
   Retention runs on every worktree removal, archived or not, once an archive
-  exists. It deletes records past their age or count limit first, then expires
+  exists, and in automatic maintenance's daily age sweep, so archives that
+  outlive their limits go without another removal (a worktree archive that a
+  claim holds stays). It deletes records past their age or count limit first, then expires
   recordings, agent actions and logs by age from removedAt; trims per-workspace
   logs (oldest rotated generations, then build logs, then oldest other files);
   and removes the largest kind of the oldest archive while over total caps.
@@ -582,9 +599,15 @@ IN USE
 SWEEPING FINISHED WORKTREES
   Every \`gc\` without --cache looks at every registered project root,
   every workspace.json root, and every linked worktree \`git worktree list\`
-  shows for a registered project's repository, whether or not a stim command
-  ever ran in it. It groups them by git worktree and reports each linked
-  worktree with the reason it is removed or kept. A worktree is finished when
+  shows for a registered project's repository. It groups them by git worktree
+  and reports each linked worktree with the reason it is removed or kept. Only
+  a worktree Stim has used is ever removed: a project is registered, or a
+  workspace.json names a root, inside it, which a stim command that records a
+  workspace (start, ios, android, web, macos, or worktree warm from the app
+  directory) leaves. Stim does not create worktrees, so use is the only record
+  it has. A linked worktree another tool created and manages is reported as
+  not-registered and kept, however merged or idle; \`worktree remove\` still
+  removes it on request. A worktree is finished when
   its branch is merged into the default branch, or its pull request was
   merged or closed (PULL REQUESTS below). A clean worktree with no commits
   of its own counts as finished once idle (NO COMMITS OF ITS OWN below).
@@ -593,11 +616,13 @@ SWEEPING FINISHED WORKTREES
   worktree whose last use is unknown is kept, unless it has no commits of its
   own beyond the default branch (NO COMMITS OF ITS OWN below). Each needs a
   clean state, except a finished one whose changes are archived;
-  a worktree is kept when it is the source checkout, bare, locked, holds
-  another worktree (worktree remove refuses it too), in use,
-  not registered in this Stim home while STIM_HOME is set (not-registered:
-  the registry and workspace.json roots of a scoped home do not list it, and
-  the repository's other worktrees may belong to another home),
+  a worktree is kept when it is the source checkout, bare, locked, pinned by maintenance.keep, holds
+  another worktree (worktree remove refuses it too), in use (the sweep also
+  counts a running Claude Code session, or a Codex thread active in the last
+  30 minutes, whose working directory is in the worktree),
+  not registered in this Stim home (not-registered: neither the registry nor
+  a workspace.json root of this Stim home lies in it, so no stim command ran
+  there, or the worktree belongs to another home),
   dirty and not finished, or dirty and finished when its changes cannot be
   archived (ARCHIVED CHANGES below; untracked files count; pod install churn and
   watchman's untracked \`.watchman-cookie-*\` files alone do not), unpushed
@@ -636,7 +661,8 @@ SWEEPING FINISHED WORKTREES
   an unexpired device lease. When the simulator or emulator list cannot be
   read, the worktree counts as in use. A device left booted keeps the
   worktree until \`stim stop\` in it, or its idle stage, shuts the device
-  down. A worktree that holds the running stim or the realpath of
+  down. A simulator that \`stim stop\` left booted for its grace period
+  (\`guide lifecycle pool\`) does not keep it. A worktree that holds the running stim or the realpath of
   the \`stim\` on PATH is in use too, and \`stim worktree remove\` refuses it
   even with --force, as it refuses an installed stim-server service's checkout.
 
@@ -764,7 +790,7 @@ SWEEPING FINISHED WORKTREES
   deleted do not block removal. Closed, they do: a closed pull request whose
   remote branch is gone keeps the worktree as unpushed. An open pull request
   never makes a worktree finished. When gh is
-  not installed, not signed in, or fails, the JSON pullRequestUnknown field
+  not installed, not signed in, rate limited, or fails, the JSON pullRequestUnknown field
   and the report say why, and gc judges from git alone. A detached HEAD is
   not looked up. \`stim worktree remove\` makes the same check when
   local-only commits alone would refuse the removal, and accepts a merged
@@ -795,8 +821,8 @@ THE PRESSURE LADDER
   runs the ladder to its end at high after its own sweep: the idle stage for every workspace
   idle 2 minutes or more, parked devices, the shared caches trimmed to half
   their caps, the dormant stage for workspaces idle 10 minutes or more, and
-  idle Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the
-  worktree trash. \`gc --delete --cache all\` runs it at critical, which also
+  idle Gradle daemons, an unused watchman, unpinned Gradle versions, TMPDIR
+  leftovers and the worktree trash. \`gc --delete --cache all\` runs it at critical, which also
   empties the Metro and compilation caches, takes every idle workspace
   dormant and deletes the node_modules and Pods of idle linked worktrees. It
   runs whatever daemon.mode says and covers every registered workspace,
@@ -967,19 +993,22 @@ BUILD LOCKS
   removing it would put a second workspace on the same compile.
   \`gc --delete\` also removes the empty directories under ~/.stim/process-locks
   that removed projects and worktrees leave behind; it never touches a lock
-  that holds a claim.
+  that holds a claim. The daily age sweep removes them too.
 
 DEVICE LEASES
   A workspace can hold a timed lease on a physical device. The lease is one
   file under ~/.stim/device-locks, and it expires on its own. \`gc\` reports
   the lease files whose expiry has passed; \`gc --delete\` removes those
   files, re-reading each one under its own lock first, so a lease renewed in
-  the meantime survives. Two kinds are reported and KEPT: a file that does
+  the meantime survives. The daily age sweep removes them the same way, and
+  keeps one whose workspace is pinned with maintenance.keep or in use. Two
+  kinds are reported and KEPT: a file that does
   not parse, which no run may take the device around, and an unexpired lease
   whose holder directory is gone. \`stim status\` lists every lease file with
   its holder and expiry, including holders no config knows. \`stop\` and
   \`worktree remove\` release the leases of the workspace they act on, and
-  nothing else deletes a lease file: never remove another workspace's.
+  nothing else deletes a lease file but the daily age sweep, for an expired
+  one: never remove another workspace's.
   They also remove the \`adb reverse\` that an \`android --device\` run added
   for this workspace's Metro port on that phone, using the serial and port the
   run recorded in its workspace state; any other reverse on the phone stays.
@@ -1130,7 +1159,11 @@ THE ONE CASE GC WILL NOT REAP
   the commands below would free now.
 
   Watchman is stopped by a plain \`gc --delete\` and by \`gc --delete --cache
-  watchman\`; \`--cache all\` and every other \`--cache\` value leave it alone.
+  watchman\`; no other \`--cache\` value runs that step. A plain \`gc --delete\` and
+  \`gc --delete --cache all\` also run the pressure ladder with memory
+  treated as under pressure, whose rung 6 stops an unused watchman of 1 GiB
+  or more by the same check; the plain step above stops one of any size
+  first.
   Manual \`--cache gradle-daemons\` requires fresh memory pressure and no
   local build, including iOS, whatever daemon.mode says; an unreadable macOS
   signal keeps daemons. Critical acts at once; warning needs 10 minutes of
@@ -1166,7 +1199,27 @@ THE ONE CASE GC WILL NOT REAP
   needs watchman starts it again and re-watches the roots in its state file.
   Every watchman call uses --no-spawn, so gc never starts the daemon.
   Shutting it down under a Metro that uses watchman would break that Metro's
-  file watching, which is why any connected client keeps it.
+  file watching, which is why any connected client keeps it. A Metro that
+  subscribed to watchman is always a connected client (\`debug-status\` lists
+  it with its pid and name), a Metro that does not use watchman is not and
+  loses nothing, so gc needs no signal for a bundle in flight. Bare React
+  Native Metro uses watchman whenever it is installed, but subscribes only
+  when it watches files: not when CI is set. Expo SDK 56 and later use it only
+  when metro.config.js sets resolver.useWatchman to true. A Metro that lost its
+  connection reconnects, but a file changed before it subscribes again is
+  never seen, and a Metro whose reconnect fails exits.
+
+  Automatic maintenance shuts down an unused watchman too, by pressure ladder
+  rung 6 in the age sweep and under memory pressure: when its footprint is over
+  2 GiB, or over 1 GiB while the host is under memory pressure, and the same
+  check gc --delete applies finds it unused again right before the shutdown.
+  A Stim dev server that started less than 60 seconds ago keeps it, since a
+  Metro connects some seconds after it starts. Maintenance removes the stale
+  roots first, waits for the daemon to exit (a large one took 3 to 20 seconds;
+  it is reported only once its process is gone), and does nothing while
+  STIM_HOME is set. The next client that needs watchman starts it again, and
+  it re-crawls every root in its state file. A tool outside Stim that kept no
+  connection open and used watchman starts it again the same way.
 
   gc finds a Gradle daemon's Gradle user home from the daemon log it holds
   open (lsof), and asks the daemon's own distribution for its status with

@@ -88,6 +88,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `build-compat` accepts `compat` on `build.start`, and in place of `stimBuild` in React Native and SwiftPM artifact
  * queries.
  * `build-reuse-artifact` accepts `reuseArtifact` with `podsOnWorker` on `build.start`.
+ * `build-android-release` builds an Android release variant with no signing key and a rebundled JS, and returns an
+ * unsigned APK for a client to sign.
  * `build-jdk` accepts `jdk` on `build.start`, the JDK major an Android build runs on; the machine finds an installed JDK of that
  * major when its default differs.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
@@ -109,6 +111,9 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
  * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
  * `share-reuse` is `share.start`'s `token` and `expiresAt`, which start a share under a URL token a stopped share had.
+ * `share-starting` is `share.list`'s `starting`: the `share.start` requests the server has not yet answered.
+ * `shared-control` is several clients controlling one device at once: `control.begin` and
+ * `device-host.control.begin` refuse no other client or driver, and no session ends with `taken-over`.
  * `share-waiting` is `share.stop`'s `slot`, which ends only that slot's shares: a share whose device goes away is
  * stopped for now instead of ending, so stopping a slot has to end its shares explicitly.
  * `share-slug` is `share.start`'s `slug` parameter and the rows' `slug`.
@@ -163,6 +168,7 @@ export const FEATURES = [
   'server-update',
   'build-compat',
   'build-jdk',
+  'build-android-release',
   'build-reuse-artifact',
   'desktop-reports',
   'desktop-machine-history',
@@ -187,6 +193,7 @@ export const FEATURES = [
   'desktop-worktree-warm',
   'desktop-plan',
   'desktop-setup',
+  'desktop-local-authority',
   'share-stop-id',
   'presence',
   'device-clipboard',
@@ -196,6 +203,8 @@ export const FEATURES = [
   'hosted-presence',
   'share-slug',
   'share-reuse',
+  'share-starting',
+  'shared-control',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -1784,13 +1793,24 @@ export interface WebShareStartParams {
 export interface Methods {
   'share.start': {
     params: WebShareStartParams;
-    result: WebShareRow & { url: string; password?: string; viewPassword?: string; warning?: string };
+    result: WebShareRow & {
+      url: string;
+      password?: string;
+      viewPassword?: string;
+      warning?: string;
+      /** `true` when the server saved the link and passwords for `--reuse` and restarts; an older server omits it. */
+      saved?: true;
+    };
   };
   'share.stop': {
     params: { workspace: string; id?: string; slot?: string };
     result: { stopped: WebShareRow[] };
   };
-  'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
+  'share.list': {
+    params?: Record<string, never>;
+    /** `starting` counts the starts not yet answered, which no row shows yet; a server without `share-starting` omits it. */
+    result: { shares: WebShareRow[]; starting?: number };
+  };
   'presence.publish': { params: PresencePublishParams; result: Record<string, never> };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };
   'device-host.sessions.stop': { params: { session: string }; result: { id: string; state: 'stopping' | 'stopped' } };

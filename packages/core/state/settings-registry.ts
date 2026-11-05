@@ -123,6 +123,10 @@ export const REPLACED_SETTINGS: Readonly<Record<string, RemovedSetting>> = {
     replacement: 'idle.minutes, which stops the dev server and the owned devices together',
     value: sameNumber,
   },
+  'share.webrtc': {
+    replacement: 'nothing replaced it; web share viewers take video over the share socket only',
+    env: 'STIM_WEBRTC_STUN',
+  },
   'devices.reclaimIdleMinutes': {
     replacement:
       "the stim-daemon's reclaim rule replaced it: while a run waits to boot, the daemon shuts down the longest-idle device of another workspace idle 2 minutes or more",
@@ -995,6 +999,16 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Parked emulators kept for adoption; 0 turns parking off',
   },
   {
+    key: 'pool.bootedGraceMinutes',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 15,
+    env: 'STIM_POOL_BOOTED_GRACE_MINUTES',
+    scopedHomeValue: 0,
+    description:
+      'Minutes a parked simulator stays booted when memory pressure is normal and a device slot is free, so the next ios adopts it without a boot; 0 shuts it down at once',
+  },
+  {
     key: 'daemon.mode',
     type: { kind: 'choice', choices: ['on', 'report', 'off'] },
     scopes: MACHINE,
@@ -1138,7 +1152,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 'auto',
     env: 'STIM_REMOTE_BUILD',
     description:
-      'Where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: local here; auto here while it has a free concurrency.maxBuilds slot and load under server.maxLoadPerCore, otherwise on a remote.machines entry; remote on a remote.machines entry in order, here only when none takes the build; remote-only the same but never here; a machine name exactly that machine without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
+      'Where iOS simulator, Android emulator and macOS SwiftPM Debug builds run: local here; auto here while it has a free concurrency.maxBuilds slot and load under server.maxLoadPerCore, otherwise on a remote.machines entry; remote on a remote.machines entry in order, here only when none takes the build; remote-only the same but never here; a machine name exactly that machine without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
   },
   {
     key: 'server.maxOffloadedBuilds',
@@ -1162,6 +1176,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     description:
       'Directory where stim-server keeps the checkouts, dependencies and build state of the machines that build here; default $STIM_HOME/build-worker',
+  },
+  {
+    key: 'server.workerAreaMaxAgeDays',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 7,
+    description:
+      "Days since its last build or cached artifact fetch after which stim-server removes a repository area under server.workerRoot, keeping each client's most recently used one; 0 turns this age removal off. Areas are still removed, least recently used first, while the volume nears its free disk floor",
   },
   {
     key: 'caches.buildCache',

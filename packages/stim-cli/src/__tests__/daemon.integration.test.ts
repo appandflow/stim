@@ -1,21 +1,24 @@
 import assert from 'node:assert';
-import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn as spawnChild, type SpawnOptions } from 'node:child_process';
+import { spawn as spawnChild, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import {
   daemonClaimRoot,
   daemonHandoverClaimRoot,
   daemonNdjsonFile,
   daemonSocket,
+  diskUsageWalkClaims,
   maintenanceNdjsonFile,
   readDaemonSnapshot,
+  readDiskUsage,
   readMaintenanceState,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import * as clonefile from '../clonefile.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { liveWaiters, takeWaitTicket } from '../engine/wait-queue.ts';
@@ -227,6 +230,64 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       waiting: [],
     });
   }, 20_000);
+
+  test('daemon handover stops the active dependency walk before the old daemon finishes', async () => {
+    const [, linked] = idleWorkspaces();
+    assert(linked);
+    const tree = join(realpathSync(linked), 'node_modules');
+    mkdirSync(tree);
+    normalMeasurement();
+    const helper = vi.spyOn(clonefile, 'privateSizeHelper').mockResolvedValue(null);
+    const maintenance = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
+    const build = vi
+      .spyOn(spawnEntry, 'stimBuild')
+      .mockReturnValue({ installed: false, digest: null, version: '1.40.0' });
+    const real = getExecutor();
+    let child: ChildProcess | undefined;
+    let walk: Promise<string> | undefined;
+    setExecutor({
+      ...real,
+      runFileAsync(file, args, options) {
+        if (file !== 'nice' || args.at(-1) !== tree) return real.runFileAsync(file, args, options);
+        walk = real.runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], {
+          ...options,
+          onSpawn(spawned) {
+            options.onSpawn?.(spawned);
+            child = spawned;
+          },
+        });
+        return walk;
+      },
+    });
+    onTestFinished(() => {
+      resetExecutor();
+      helper.mockRestore();
+      maintenance.mockRestore();
+      build.mockRestore();
+    });
+
+    const running = runDaemon({ mode: 'report' });
+    try {
+      await listening();
+      await expect(requestDaemonTick({ STIM_DAEMON: 'report' })).resolves.toBe(true);
+      await vi.waitFor(() => expect(child?.pid).toBeGreaterThan(1), { timeout: 10_000 });
+      assert(child);
+      expect(readClaimSet(diskUsageWalkClaims()).live[0]?.child?.pid).toBe(child.pid);
+      await expect(askDaemon('handover', 1000, { pid: process.pid, build: null })).resolves.toEqual({
+        op: 'handover',
+        accepted: true,
+      });
+      await running;
+      expect(child.signalCode).toBe('SIGKILL');
+      expect(readClaimSet(diskUsageWalkClaims()).live).toEqual([]);
+      expect(readDiskUsage(tree)).toBeNull();
+    } finally {
+      child?.kill('SIGKILL');
+      await walk?.catch(() => {});
+      if (existsSync(daemonSocket())) await askDaemon('handover', 1000, { pid: process.pid, build: null });
+      await running;
+    }
+  }, 25_000);
 
   test('exits after two ticks with nothing running in its home, releasing its claim and removing its socket', async () => {
     const measureTick = measure.measureTick;
@@ -938,10 +999,9 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
       env: { ...process.env },
       stdio: 'ignore',
     });
-    const legacyExited = new Promise<void>((done) => legacy.once('exit', () => done()));
-    onTestFinished(async () => {
-      legacy.kill('SIGKILL');
-      await legacyExited;
+    daemons.push({
+      child: legacy,
+      exited: new Promise<number | null>((done) => legacy.once('exit', (code) => done(code))),
     });
     await vi.waitFor(() => expect(readFileSync(record, 'utf8')).toContain('listening'), {
       timeout: 10_000,
@@ -953,11 +1013,12 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
         env: { ...process.env },
         stdio: 'ignore',
       });
-      return { child, exited: new Promise<void>((done) => child.once('exit', () => done())) };
-    });
-    onTestFinished(async () => {
-      for (const { child } of successors) child.kill('SIGTERM');
-      await Promise.all(successors.map(({ exited }) => exited));
+      const successor = {
+        child,
+        exited: new Promise<number | null>((done) => child.once('exit', (code) => done(code))),
+      };
+      daemons.push(successor);
+      return successor;
     });
 
     await vi.waitFor(

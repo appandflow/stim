@@ -6,6 +6,7 @@ import type { IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
 import { IOS_BOOT_TIMEOUT_MS, listAllIosSims, resolveOwnedIosSim, type IosSimSnapshot } from '../devices/ios.ts';
 import { avdStorageExists, configureNewOwnedAvd } from '../devices/android.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
+import { clearDeferredShutdown } from '../devices/deferred-shutdown.ts';
 import { clearDeviceIdleShutdown } from '../devices/idle-shutdown.ts';
 import { reconcileSimSlim } from './simslim.ts';
 import type { DeviceSlotWaitPolicy } from './device-capacity.ts';
@@ -174,6 +175,7 @@ export async function ensureOwnedDevice({
   const expected = flags.expectedDevice;
   if (expected !== undefined) requireRecordedDevice(platform, record, expected, simSnapshot);
   await clearDeviceIdleShutdown(projectPath, platform, slot);
+  if (platform === 'ios') await clearDeferredShutdown(projectPath, slot);
   if (slot && slot !== 'default') label = `${label}-${slot}`;
   const ensured =
     platform === 'ios'

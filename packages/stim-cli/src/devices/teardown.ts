@@ -5,6 +5,7 @@ import { cancellableSleep } from '../cancellation.ts';
 import { withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { closeOwnedDeviceSessions } from './agent-device-cleanup.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from './device-slots.ts';
+import { recordDeferredShutdown } from './deferred-shutdown.ts';
 import {
   forgetCreatedDevice,
   forgetCreatedDeviceAsync,
@@ -44,6 +45,7 @@ import {
   renameIosSim,
   resolveOwnedIosSim,
   shutdownIosSim,
+  terminateIosApp,
   type IosSimRecord,
   type ResolvedIosSim,
 } from './ios.ts';
@@ -67,7 +69,14 @@ import {
   ownedAvdSystemImage,
   wipeAvdUserData,
 } from './android.ts';
-import { eraseParkedAfter, parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
+import {
+  eraseParkedAfter,
+  keepParkedAfter,
+  parkSim,
+  readParked,
+  removeParkedAfter,
+  type ParkedSim,
+} from './sim-pool.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
 import {
   claimRemoveCommand,
@@ -95,6 +104,8 @@ export interface TeardownOutcome {
   evicted?: ParkedDevice[];
   evictionFailures?: string[];
   parkFallback?: string;
+  /** Set when the simulator was left booted: the stim-daemon shuts it down at this time. */
+  deferredUntil?: string;
 }
 
 export interface ParkRequest {
@@ -105,6 +116,8 @@ export interface ParkRequest {
   configuration?: string;
   appId?: string | null;
   cacheKey?: string | null;
+  /** Keeps a simulator that is booted now booted, until this time, instead of shutting it down before it is parked. */
+  bootedUntil?: string;
 }
 
 export async function teardownParkedAvd(
@@ -145,6 +158,51 @@ export async function teardownParkedIosSim(
     const removed = await removeParkedAfter(
       'ios',
       udid,
+      async (record) => {
+        await closeOwnedDeviceSessions(
+          { platform: 'ios', id: udid },
+          async () => Boolean((await resolveOwnedIosSimNow(udid, operation)).sim),
+          undefined,
+          undefined,
+          operation,
+        );
+        if (record.bootedUntil !== undefined) await shutDownParkedIosSimIfLive(udid, operation);
+        await deleteSim(udid, operation);
+      },
+      operation,
+    );
+    if (!removed) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
+    return { status: 'torn-down', label: label ?? removed.name };
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    operation?.signal.throwIfAborted();
+    return { status: 'failed', reason: String((error as Error)?.message || error) };
+  }
+}
+
+async function shutDownParkedIosSimIfLive(udid: string, operation?: StimContext): Promise<void> {
+  const resolved = await resolveOwnedIosSimNow(udid, operation);
+  if (resolved.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(resolved.notOwned)}`);
+  if (!resolved.sim || resolved.sim.state === 'Shutdown') return;
+  await shutdownIosSim(udid, operation);
+  const settled = await settleIosSimShutdown(udid, {}, operation);
+  if (settled.sim && settled.sim.state !== 'Shutdown')
+    throw new Error(iosShutdownFailureReason(udid, settled.sim.state));
+}
+
+/**
+ * Shuts down a parked simulator that was kept booted and keeps it parked, without the `bootedUntil` that marked it.
+ * A simulator that is gone or already shut down only loses the mark.
+ */
+export async function shutDownBootedParkedIosSim(
+  udid: string,
+  { label, operation }: { label?: string; operation?: StimContext } = {},
+): Promise<TeardownOutcome> {
+  try {
+    operation?.signal.throwIfAborted();
+    const kept = await keepParkedAfter(
+      'ios',
+      udid,
       async () => {
         await closeOwnedDeviceSessions(
           { platform: 'ios', id: udid },
@@ -153,12 +211,16 @@ export async function teardownParkedIosSim(
           undefined,
           operation,
         );
-        await deleteSim(udid, operation);
+        await shutDownParkedIosSimIfLive(udid, operation);
+      },
+      (record) => {
+        const { bootedUntil: _booted, ...rest } = record;
+        return rest;
       },
       operation,
     );
-    if (!removed) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
-    return { status: 'torn-down', label: label ?? removed.name };
+    if (!kept) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
+    return { status: 'torn-down', label: label ?? kept.name };
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError) throw error;
     operation?.signal.throwIfAborted();
@@ -175,7 +237,7 @@ export async function eraseParkedIosSim(
     const erased = await eraseParkedAfter(
       'ios',
       udid,
-      async (_record, eraseStarted) => {
+      async (record, eraseStarted) => {
         await closeOwnedDeviceSessions(
           { platform: 'ios', id: udid },
           async () => Boolean((await resolveOwnedIosSimNow(udid, operation)).sim),
@@ -183,6 +245,7 @@ export async function eraseParkedIosSim(
           undefined,
           operation,
         );
+        if (record.bootedUntil !== undefined) await shutDownParkedIosSimIfLive(udid, operation);
         const resolved = resolveOwnedIosSim(udid, await listAllIosSimsAsync({ signal: operation?.signal, operation }));
         if (resolved.missing) throw new Error(`simulator ${udid} is not on this machine`);
         if (resolved.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(resolved.notOwned)}`);
@@ -306,13 +369,16 @@ async function parkOwnedIosSim(
   settled: ResolvedIosSim,
   udid: string,
   park: ParkRequest,
+  keepBooted: boolean,
   operation?: StimContext,
 ): Promise<{ record: ParkedSim; evicted: ParkedSim[] }> {
   if (settled.missing) throw new Error(`simulator ${udid} disappeared after shutdown`);
   if (settled.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(settled.notOwned)}`);
   const sim = settled.sim as IosSimRecord;
-  if (sim.state !== 'Shutdown') {
-    throw new Error(iosShutdownFailureReason(udid, sim.state));
+  if (keepBooted ? sim.state !== 'Booted' : sim.state !== 'Shutdown') {
+    throw new Error(
+      keepBooted ? `simulator ${udid} is ${sim.state}, not Booted` : iosShutdownFailureReason(udid, sim.state),
+    );
   }
   const model =
     (await listIosDeviceTypesAsync({ operation, signal: operation?.signal })).find(
@@ -327,6 +393,7 @@ async function parkOwnedIosSim(
     deviceTypeIdentifier: sim.deviceTypeIdentifier,
     runtimeIdentifier: sim.runtime,
     parkedAt: new Date().toISOString(),
+    ...(keepBooted && park.bootedUntil ? { bootedUntil: park.bootedUntil } : {}),
     simslimManaged: Boolean(park.simslimManaged),
     ...(park.appId ? { bundleId: park.appId } : {}),
     ...(park.cacheKey ? { cacheKey: park.cacheKey } : {}),
@@ -343,6 +410,7 @@ export async function teardownOwnedIosSim(
     del = false,
     label,
     park,
+    deferShutdown,
     workspace,
     shutdownClock = {},
     operation,
@@ -350,6 +418,8 @@ export async function teardownOwnedIosSim(
     del?: boolean;
     label?: string;
     park?: ParkRequest;
+    /** Leaves a booted simulator booted until `until`, after ending its sessions and its app, and records it for the daemon. */
+    deferShutdown?: { until: string; slot: string; appId?: string | null };
     workspace?: string;
     shutdownClock?: ShutdownSettleClock;
     operation?: StimContext;
@@ -379,12 +449,24 @@ export async function teardownOwnedIosSim(
     if (current.missing) return { status: 'missing' };
     if (current.notOwned)
       return { status: 'skipped', kind: 'not-owned', reason: 'simulator ownership changed before shutdown' };
-    await shutdownIosSim(udid, operation);
+    if (deferShutdown && !del && workspace && current.sim?.state === 'Booted') {
+      if (deferShutdown.appId) await terminateIosApp(udid, deferShutdown.appId).catch(() => {});
+      const deferredUntil = await recordDeferredShutdown(workspace, deferShutdown.slot, {
+        udid,
+        until: deferShutdown.until,
+      });
+      return { status: 'torn-down', label: label ?? current.sim.name ?? udid, deferredUntil };
+    }
+    const keepBooted = Boolean(del && park && park.max > 0 && park.bootedUntil && current.sim?.state === 'Booted');
+    if (!keepBooted) await shutdownIosSim(udid, operation);
     const sim = resolved.sim as IosSimRecord;
     if (del && park && park.max > 0) {
       try {
-        const settled = await settleIosSimShutdown(udid, shutdownClock, operation);
-        const { record, evicted } = await parkOwnedIosSim(settled, udid, park, operation);
+        if (keepBooted && park.appId) await terminateIosApp(udid, park.appId).catch(() => {});
+        const settled = keepBooted
+          ? await resolveOwnedIosSimNow(udid, operation)
+          : await settleIosSimShutdown(udid, shutdownClock, operation);
+        const { record, evicted } = await parkOwnedIosSim(settled, udid, park, keepBooted, operation);
         const removed: ParkedDevice[] = [];
         const failures: string[] = [];
         for (const entry of evicted) {
@@ -406,6 +488,10 @@ export async function teardownOwnedIosSim(
         if (e instanceof WorkspaceProcessCleanupError) throw e;
         operation?.signal.throwIfAborted();
         parkFallback = String((e as Error)?.message || e);
+        if (keepBooted) {
+          await shutdownIosSim(udid, operation);
+          await settleIosSimShutdown(udid, shutdownClock, operation);
+        }
       }
     }
     if (del) {

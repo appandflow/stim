@@ -15,8 +15,8 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { fingerprintMemoDir } from '@stim-cli/core/state';
-import { fingerprintProject, type ProjectFingerprint } from '../cache/build-cache.ts';
-import { memoizedFingerprint, settleFingerprintCheck } from '../cache/fingerprint-memo.ts';
+import { fingerprintProject, refingerprintAfterMutation, type ProjectFingerprint } from '../cache/build-cache.ts';
+import { memoizedFingerprint, precomputeFingerprint, settleFingerprintCheck } from '../cache/fingerprint-memo.ts';
 import { staticFingerprint } from '../cache/static-fingerprint.ts';
 import { getExecutor, resetExecutor } from '../exec.ts';
 import { testContext } from './_context.ts';
@@ -349,6 +349,61 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
     expect((await lookup(app)).hit).toBe(false);
     expect(full).toBe(2);
     expect(existsSync(fingerprintMemoDir('ios')) ? readdirSync(fingerprintMemoDir('ios')) : []).toEqual([]);
+  });
+
+  describe('a fingerprint recorded ahead of the run', () => {
+    const precompute = (env?: NodeJS.ProcessEnv, fingerprint = computed) =>
+      precomputeFingerprint(app, { platform: 'ios' }, { operation: operation(env), fingerprint });
+
+    beforeEach(() => {
+      app = fixture('pnpm');
+    });
+
+    test('is read by the next run without computing it, and is left alone when the tree already has one', async () => {
+      expect(await precompute()).toEqual({ outcome: 'recorded' });
+      expect(full).toBe(1);
+      expect(await precompute()).toEqual({ outcome: 'present' });
+      expect(full).toBe(1);
+      expect(await lookup(app)).toMatchObject({ hit: true, hash: 'h1' });
+      expect(full).toBe(1);
+    });
+
+    test.each<[string, () => void]>([
+      ['a lockfile change', () => write(join(base, 'repo/pnpm-lock.yaml'), 'packages:\n  native-lib@1.1.0: {}\n')],
+      [
+        'a native edit in the committed ios/',
+        () => appendFileSync(join(app, 'ios/App/AppDelegate.swift'), '\n// edit'),
+      ],
+    ])('is not read after %s the precompute did not see', async (_change, change) => {
+      await precompute();
+      change();
+      next = 'h2';
+      expect(await lookup(app)).toMatchObject({ hit: false, hash: 'h2' });
+      expect(full).toBe(2);
+    });
+
+    test('is not written when an input changes while it is computed', async () => {
+      const result = await precompute(undefined, async () => {
+        appendFileSync(join(app, 'ios/App/AppDelegate.swift'), '\n// edit');
+        return computed();
+      });
+      expect(result).toEqual({ outcome: 'skipped', reason: 'an input changed while it was fingerprinted' });
+      expect((await lookup(app)).hit).toBe(false);
+    });
+
+    test('does not stand in for the fingerprint taken after prebuild or pod install', async () => {
+      await precompute();
+      next = 'h2';
+      await expect(
+        refingerprintAfterMutation({
+          projectRoot: app,
+          platform: 'ios',
+          previousHash: 'h1',
+          fingerprint: computed,
+        }),
+      ).resolves.toMatchObject({ hash: 'h2', moved: true });
+      expect(full).toBe(2);
+    });
   });
 });
 

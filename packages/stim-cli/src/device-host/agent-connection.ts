@@ -1,4 +1,5 @@
 import { ambientWrite, workspaceId } from '@stim-cli/core';
+import { isJsonObject, parseNdjsonLine } from '@stim-cli/core/state';
 import { realpathSync } from 'node:fs';
 import { phaseLine } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
@@ -55,6 +56,15 @@ export function closeAgentConnection(remoteConfig: string, session?: string): vo
       try {
         run(args);
       } catch (error) {
+        const reply =
+          args[0] === 'close' &&
+          isJsonObject(error) &&
+          typeof error.status === 'number' &&
+          error.status !== 0 &&
+          error.signal === null
+            ? parseNdjsonLine(error.stdout)
+            : null;
+        if (reply?.success === false && isJsonObject(reply.error) && reply.error.code === 'SESSION_NOT_FOUND') continue;
         failures.push((error as Error).message);
       }
     }

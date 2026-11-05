@@ -697,7 +697,7 @@ process-only app. Re-run `stim android` after an edit; `stop` keeps the existing
 scoped device cleanup and physical-device lease behavior.
 
 Builds or restores the Android app. Stim then boots an owned emulator, installs
-the app, opens it, and checks launch logs. A React Native emulator debug build
+the app, opens it, and checks launch logs. A React Native emulator build, debug or release,
 can compile on a paired remote machine instead: see `remote.build` in
 [machine settings](./settings.md#machine-settings).
 
@@ -961,7 +961,7 @@ How the message is addressed depends on the dev server, and `strategy` reports
 which you got. Where Metro can name its clients, Stim addresses every peer
 matching the platform and reports `metro-websocket`. A workspace Metro serves one
 app, so those peers are that app on however many devices are attached to the
-port; `targets` says how many peers the request addressed. Android peers carry the package
+port; `targets` says how many devices the request addressed: the peers Metro listed, capped at the devices Stim recorded for this app, because Metro keeps listing an app's earlier sockets after a reload. Android peers carry the package
 name and iOS peers carry only `role=ios`, which is enough to keep a reload on one
 platform but not to single out one iOS app among several.
 
@@ -1228,7 +1228,12 @@ stim stop [--slot <name>] [--json]
 
 Without `--slot`, stops the supervisor and all log collectors, shuts down every
 owned local device, ends an owned remote session, and frees the port. Owned
-local devices stay assigned for reuse. A dev server left behind by a supervisor
+local devices stay assigned for reuse. An owned iOS simulator stays booted for
+`pool.bootedGraceMinutes` when macOS memory pressure is normal, a device slot
+is free and `daemon.mode` is `on`: the stim-daemon shuts it down when the grace
+period passes or under memory pressure, and `--json` reports it as
+`device.ios.status` `kept-booted` with `until`. Run
+`STIM_POOL_BOOTED_GRACE_MINUTES=0 stim stop` to shut it down at once. A dev server left behind by a supervisor
 that died is stopped when its recorded process identity still matches. An
 external server on the reserved port is left running, the port stays reserved
 while that server runs from this project, and a process whose ownership cannot
@@ -1690,9 +1695,13 @@ its data folder. `buildBytes` is Stim's own folder for the workspace, with Xcode
 derived data, Gradle outputs and logs. `nodeModulesBytes` counts APFS clones in
 full; `nodeModulesPrivateBytes` is what deleting `node_modules` would free, the
 blocks no copy-on-write clone or outside hard link shares, and is `null` off
-APFS or without the Command Line Tools. The watcher runs `du` off its refresh path, at
-most every 5 minutes per folder while the environment is active and every hour
-otherwise, and one-shot `stim status` reads its cached sizes.
+APFS or without the Command Line Tools. Both `node_modules` figures are `null`
+again after a reinstall or a fresh clone until the tree is measured, and they
+are the measurement `stim gc` and the daemon's cleanup use. The watcher
+measures off its refresh path, at most every 5 minutes per folder while the
+environment is active and every hour otherwise, and measures `node_modules`
+when its install changes and at least every 6 hours. One-shot `stim status`
+reads the cached sizes.
 
 An environment carries `agents` when a coding-agent session works in it:
 `[{ tool, sessionId, title?, cwd, startedAt?, lastActiveAt?, pid?, openUrl?, webUrl? }]`,
@@ -2316,17 +2325,23 @@ shared watchman daemon with its watched roots, Gradle daemons with their Gradle
 version and Gradle home, and Kotlin compile daemons. Each shows its pid,
 physical footprint, uptime and whether it is idle, and the section ends with
 the memory that can be reclaimed. A plain `--delete` stops watchman, and
-`--cache watchman` does the same on its own. `--cache all` does not touch
-watchman, and Gradle and Kotlin daemons need `--cache gradle-daemons`:
+`--cache watchman` does the same on its own, whatever its size. A plain
+`--delete` and `--cache all` also run the pressure ladder with memory treated as under
+pressure, so `--cache all` stops an unused watchman of 1 GiB or more through
+rung 6. Gradle and Kotlin daemons need `--cache gradle-daemons`:
 
 - `stim gc --delete` and `stim gc --delete --cache watchman` remove the stale
   roots (a directory that is gone, or a linked worktree git pruned) that no
   subscription or trigger uses. They then shut watchman down only when no other
   client is connected, every root's subscriptions and triggers were readable
-  and no root has a trigger;
-  otherwise they keep the daemon and name each client, such as the Stim
-  workspace whose Metro uses it. Removing roots does not shrink watchman; only a
-  restart does, and the next client that needs watchman starts it again.
+  and no root has a trigger; otherwise they keep the daemon and name each
+  client, such as the Stim workspace whose Metro uses it. They report the
+  shutdown only once the daemon's process has exited. Removing roots does not
+  shrink watchman; only a restart does, and the next client that needs watchman
+  starts it again and re-crawls its roots. Automatic maintenance applies the
+  same check: the daily sweep and the memory-pressure ladder shut watchman down
+  when it is over 2 GiB (over 1 GiB under memory pressure) and no Stim dev
+  server started in the last minute.
 - `stim gc --delete --cache gradle-daemons` stops each Gradle daemon that its
   own `gradle --status` reports idle, then each Kotlin compile daemon with no
   client connection once no Gradle daemon is busy. Nothing stops while a Stim
@@ -2680,7 +2695,8 @@ Each entry's
 blocks no copy-on-write clone or outside hard link shares, and is `null` for
 other directories, off APFS and without the Command Line Tools. gc reuses a
 size for up to an hour while no entry was added to or removed from the
-directory (for `node_modules` and Pods, while their install is unchanged),
+directory (for `node_modules` and Pods, for up to six hours while their install
+is unchanged, the measurement `stim status` and the daemon share),
 measures the rest with one `du` or private-size walk per directory, 4 at a time with a
 10-second limit each, and reports a directory it could not measure in time as
 `null`.

@@ -98,7 +98,7 @@ struct SimulatorTouchSequence {
 final class SimulatorHID {
   private let transport: Transport
   private let device: NSObject
-  private let hardwareKeyboard: Bool
+  private var hardwareKeyboard: Bool
   private var lastInput = Date.distantPast
   private var touchSequence = SimulatorTouchSequence()
   private let legacyUntil = Date().addingTimeInterval(10)
@@ -123,6 +123,18 @@ final class SimulatorHID {
     }
     if hardwareKeyboard { SimulatorHardwareKeyboard.attach(to: device) }
     lastInput = Date()
+  }
+
+  func setHardwareKeyboard(_ enabled: Bool) {
+    hardwareKeyboard = enabled
+    let device = device
+    Self.keyboardQueue.async {
+      if enabled {
+        SimulatorHardwareKeyboard.attach(to: device)
+      } else {
+        SimulatorHardwareKeyboard.detach(from: device)
+      }
+    }
   }
 
   private func noteInput() {

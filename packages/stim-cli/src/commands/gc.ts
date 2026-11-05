@@ -1219,7 +1219,7 @@ async function runGcCore(
   }
 
   if (report.cacheScope === null) {
-    const emptyLockDirs = pruneEmptyProcessLockDirs();
+    const emptyLockDirs = await pruneEmptyProcessLockDirs(signal);
     if (emptyLockDirs > 0) output.log(chalk.dim(`Removed ${emptyLockDirs} empty process lock entries`));
   }
 
@@ -1319,7 +1319,7 @@ export default function gcCommand(program: Command): void {
   program
     .command('gc')
     .description(
-      "Report what Stim has left behind and what the stim-daemon's pressure ladder would reclaim: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, the build outputs and logs of each workspace, the memory of watchman, what the ladder would do at high and at critical with sizes, and each workspace's stage. Reports by default; pass --delete to act.",
+      "Report what Stim has left behind and what the stim-daemon's pressure ladder would reclaim: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees (ones a stim command ran in; a worktree another tool manages is kept) whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, the build outputs and logs of each workspace, the memory of watchman, what the ladder would do at high and at critical with sizes, and each workspace's stage. Reports by default; pass --delete to act.",
     )
     .option(
       '--worktrees',

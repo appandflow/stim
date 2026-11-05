@@ -240,36 +240,100 @@ private struct MenuList: View {
   @State private var highlighted: String?
   @State private var openSubmenu: String?
   @State private var subHighlighted: String?
+  @State private var hoveredParent: String?
+  @State private var hoveredSubmenu: String?
+  @State private var pendingClose: Task<Void, Never>?
   @FocusState private var focused: Bool
 
   private var submenu: [MenuItem]? { items.first { $0.id == openSubmenu }?.submenu }
 
   var body: some View {
-    MenuRows(
-      items: items, highlighted: $highlighted, pinned: openSubmenu, openSubmenu: $openSubmenu, activate: activate
-    ) { submenu in
-      MenuRows(
-        items: submenu, highlighted: $subHighlighted, pinned: nil, openSubmenu: .constant(nil), activate: activate
-      ) { _ in EmptyView() }
+    MenuRows(items: items, highlighted: $highlighted, pinned: openSubmenu, activate: activate, rowHover: rowHover)
+      .backgroundPreferenceValue(SubmenuAnchors.self) { anchors in
+        GeometryReader { geometry in
+          if let id = openSubmenu, let anchor = anchors[id] {
+            let row = geometry[anchor]
+            Color.clear
+              .frame(width: row.width, height: row.height)
+              .popover(isPresented: submenuPresented, attachmentAnchor: .point(.trailing), arrowEdge: .trailing) {
+                if let submenu {
+                  MenuRows(items: submenu, highlighted: $subHighlighted, activate: activate)
+                    .contentShape(Rectangle())
+                    .onHover { submenuHover(id, inside: $0) }
+                }
+              }
+              .position(x: row.midX, y: row.midY)
+          }
+        }
+      }
+      .focusable()
+      .focusEffectDisabled()
+      .focused($focused)
+      .onAppear { focused = true }
+      .task(id: hoveredParent) {
+        guard let target = hoveredParent, openSubmenu == nil else { return }
+        do {
+          try await Task.sleep(for: .milliseconds(200))
+        } catch { return }
+        guard hoveredParent == target, openSubmenu == nil else { return }
+        subHighlighted = nil
+        openSubmenu = target
+      }
+      .onDisappear { pendingClose?.cancel() }
+      .onChange(of: openSubmenu) {
+        if openSubmenu == nil {
+          pendingClose?.cancel()
+          hoveredSubmenu = nil
+        }
+      }
+      .onKeyPress(.downArrow) { move(1) }
+      .onKeyPress(.upArrow) { move(-1) }
+      .onKeyPress(.return) { activateHighlighted() }
+      .onKeyPress(.space) { activateHighlighted() }
+      .onKeyPress(.rightArrow) {
+        guard openSubmenu == nil, let item = items.first(where: { $0.id == highlighted }), item.submenu != nil
+        else { return .ignored }
+        activate(item)
+        return .handled
+      }
+      .onKeyPress(.leftArrow) {
+        guard openSubmenu != nil else { return .ignored }
+        openSubmenu = nil
+        return .handled
+      }
+  }
+
+  private var submenuPresented: Binding<Bool> {
+    Binding(get: { openSubmenu != nil }, set: { if !$0 { openSubmenu = nil } })
+  }
+
+  private func rowHover(_ item: MenuItem, inside: Bool) {
+    if inside {
+      hoveredParent = item.submenu == nil ? nil : item.id
+      if openSubmenu != nil, item.submenu != nil, openSubmenu != item.id {
+        openSubmenu = item.id
+        subHighlighted = nil
+      }
+    } else if hoveredParent == item.id {
+      hoveredParent = nil
     }
-    .focusable()
-    .focusEffectDisabled()
-    .focused($focused)
-    .onAppear { focused = true }
-    .onKeyPress(.downArrow) { move(1) }
-    .onKeyPress(.upArrow) { move(-1) }
-    .onKeyPress(.return) { activateHighlighted() }
-    .onKeyPress(.space) { activateHighlighted() }
-    .onKeyPress(.rightArrow) {
-      guard openSubmenu == nil, let item = items.first(where: { $0.id == highlighted }), item.submenu != nil
-      else { return .ignored }
-      activate(item)
-      return .handled
-    }
-    .onKeyPress(.leftArrow) {
-      guard openSubmenu != nil else { return .ignored }
-      openSubmenu = nil
-      return .handled
+    updateDismissal()
+  }
+
+  private func submenuHover(_ id: String, inside: Bool) {
+    guard openSubmenu == id else { return }
+    hoveredSubmenu = inside ? id : nil
+    updateDismissal()
+  }
+
+  private func updateDismissal() {
+    pendingClose?.cancel()
+    guard let id = openSubmenu, hoveredParent == nil, hoveredSubmenu != id else { return }
+    pendingClose = Task { @MainActor in
+      do {
+        try await Task.sleep(for: .milliseconds(220))
+      } catch { return }
+      if openSubmenu == id, hoveredParent == nil, hoveredSubmenu != id { openSubmenu = nil }
     }
   }
 
@@ -302,13 +366,12 @@ private struct MenuList: View {
   }
 }
 
-private struct MenuRows<Submenu: View>: View {
+private struct MenuRows: View {
   var items: [MenuItem]
   @Binding var highlighted: String?
   var pinned: String?
-  @Binding var openSubmenu: String?
   var activate: (MenuItem) -> Void
-  @ViewBuilder var submenu: ([MenuItem]) -> Submenu
+  var rowHover: ((MenuItem, Bool) -> Void)?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -324,10 +387,9 @@ private struct MenuRows<Submenu: View>: View {
         .buttonStyle(.hoverRow(selected: highlighted == item.id || pinned == item.id))
         .onHover { inside in
           if inside { highlighted = item.id } else if highlighted == item.id { highlighted = nil }
+          rowHover?(item, inside)
         }
-        .popover(isPresented: shown(item), arrowEdge: .trailing) {
-          if let children = item.submenu { submenu(children) }
-        }
+        .anchorPreference(key: SubmenuAnchors.self, value: .bounds) { item.submenu == nil ? [:] : [item.id: $0] }
       }
     }
     .padding(Space.xs)
@@ -335,10 +397,13 @@ private struct MenuRows<Submenu: View>: View {
     .fixedSize()
   }
 
-  private func shown(_ item: MenuItem) -> Binding<Bool> {
-    Binding(
-      get: { item.submenu != nil && openSubmenu == item.id },
-      set: { if !$0 && openSubmenu == item.id { openSubmenu = nil } })
+}
+
+private struct SubmenuAnchors: PreferenceKey {
+  static var defaultValue: [String: Anchor<CGRect>] { [:] }
+
+  static func reduce(value: inout [String: Anchor<CGRect>], nextValue: () -> [String: Anchor<CGRect>]) {
+    value.merge(nextValue(), uniquingKeysWith: { _, next in next })
   }
 }
 

@@ -261,6 +261,7 @@ body:not([data-control='true']) .pill.mode {
   align-items: center;
   justify-content: center;
   padding: 20px max(20px, env(safe-area-inset-right)) 12px max(20px, env(safe-area-inset-left));
+  position: relative;
   container-type: size;
 }
 .device {
@@ -439,6 +440,73 @@ body[data-away='true'] #screen {
     height: 44px;
   }
 }
+body.viewer.typing {
+  position: fixed;
+  top: var(--vv-top, 0);
+  left: 0;
+  right: 0;
+  height: calc(var(--vv-height, 100dvh) - 52px);
+}
+body.viewer.typing footer {
+  display: none;
+}
+.typebar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: calc(var(--vv-top, 0px) + var(--vv-height, 100dvh) - 52px);
+  height: 52px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+  background: var(--card);
+  border-top: 1px solid var(--line);
+}
+.typebar[hidden] {
+  display: none;
+}
+.typewrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.typehint {
+  position: absolute;
+  inset: 0 12px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 16px;
+  pointer-events: none;
+}
+.typehint[hidden] {
+  display: none;
+}
+.typefield {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--canvas);
+  color: var(--fg);
+  font-size: 16px;
+}
+.typedone {
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
 svg.symbol {
   fill: none;
   stroke: currentColor;
@@ -596,6 +664,11 @@ button.primary.small {
   padding: 5px 9px;
   border-radius: 7px;
 }
+@media (pointer: coarse) {
+  .name-card input.field {
+    font-size: 16px;
+  }
+}
 .people {
   flex: none;
 }
@@ -675,6 +748,7 @@ button.primary.small {
   flex: none;
 }
 .options[hidden],
+.options-group[hidden],
 .options-panel[hidden],
 .chip[hidden],
 .options-help[hidden],
@@ -733,6 +807,11 @@ input.switch:checked {
 input.switch:checked::after {
   transform: translateX(14px);
   background: var(--on-accent);
+}
+.options-group {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
 .options-help {
   margin: 8px 0 0;
@@ -920,4 +999,33 @@ input.switch:checked::after {
   .toolbar {
     padding: 0 8px 12px;
   }
+}
+
+.stats-panel {
+  position: fixed;
+  left: 8px;
+  bottom: 8px;
+  z-index: 50;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #e8ffe8;
+  font:
+    11px/1.35 ui-monospace,
+    Menlo,
+    monospace;
+}
+.stats-panel pre {
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+  font: inherit;
+}
+.stats-panel button {
+  margin-right: 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: transparent;
+  color: inherit;
+  font: inherit;
 }

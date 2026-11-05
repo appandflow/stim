@@ -6,8 +6,18 @@ const CAP_TARGET = 0.8;
 export interface MaintenancePlan {
   actions: MaintenanceAction[];
   blocked: string[];
-  skips: { target: string; reason: string; workspace?: string }[];
+  skips: MaintenanceSkip[];
 }
+
+export type MaintenanceSkip = {
+  target: string;
+  reason: string;
+  workspace?: string;
+  code?: string;
+};
+
+export const skipKey = (skip: Pick<MaintenanceSkip, 'target' | 'code'>): string =>
+  skip.code ? `${skip.target} (${skip.code})` : skip.target;
 
 /** The cap trims of the hourly size scan: workspace outputs and the shared caches over their caps, oldest first. */
 export function plan({

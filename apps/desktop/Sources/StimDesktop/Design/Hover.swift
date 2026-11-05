@@ -11,7 +11,7 @@ struct HoverFill: View {
   }
 }
 
-private enum HoverTint {
+enum HoverTint {
   static func color(hovering: Bool, pressed: Bool = false, dark: Bool = true) -> Color {
     let weight = dark ? 1.0 : 0.5
     if pressed { return Palette.accent.opacity(Opacity.tint * weight) }

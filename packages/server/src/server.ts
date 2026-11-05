@@ -81,6 +81,7 @@ import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
+import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   CLIPBOARD_INPUT_COST,
   ControlHub,
@@ -189,8 +190,10 @@ import {
   type StimStopOptions,
 } from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
-import { pauseShareLinkAsync, pauseShareLinksAsync } from 'stim/share-links';
+import { pauseShareLinkAsync, pauseShareLinksAsync, saveShareLinkAsync } from 'stim/share-links';
+import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
 import { restoreSavedShares } from './share-restore.ts';
+import { savedShareFor } from './share-save.ts';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
 import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions } from './push.ts';
@@ -245,7 +248,7 @@ import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DEFAULT_VIDEO_LIMITS, HOSTED_MAX_BITRATE, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
-import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
+import { SHARE_EXPIRY, ShareHub, type ShareRequest, type StartedShare } from './share.ts';
 import { androidScreen, simulatorScreen, type ScreenSize } from './device-screen.ts';
 import { LocalAgentPresence } from './local-agent-presence.ts';
 import { parsePresencePublish, PresenceHub, presenceKey } from './presence.ts';
@@ -429,6 +432,8 @@ interface ServerHealth {
   /** The local network addresses the server listens on now, from `server.lanAddresses`; absent when there are none. */
   lan?: { addresses: string[]; port: number };
   keepAwake: KeepAwakeStatus;
+  /** The last measurement of `server.workerRoot`; null before the first, and on Windows. */
+  workerRoot: WorkerRootUsage | null;
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -1266,6 +1271,25 @@ function leaseGrace(leaseFor: string): { leaseGraceMs?: number } {
   return { leaseGraceMs: Number(amount) * (unit === 's' ? 1000 : unit === 'm' ? 60_000 : 3_600_000) };
 }
 
+/** Saves a started share through the CLI's share-links module; false when it could not (nothing logs a password). */
+async function saveStartedShare(request: ShareRequest, started: StartedShare): Promise<boolean> {
+  try {
+    let saved = false;
+    await saveShareLinkAsync(request.workspace, shareLinkKey(request), (existing) => {
+      const entry = savedShareFor(request, started, existing);
+      if (!entry) throw new Error('its link or a password is not known');
+      saved = true;
+      return entry;
+    });
+    return saved;
+  } catch (cause) {
+    console.error(
+      `stim-server: could not save the web share ${started.id} for reuse and restart: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    return false;
+  }
+}
+
 /** A share stopped on purpose must not come back when stim-server starts: marks its saved link stopped; why it could not. */
 async function markSavedStopped(mark: () => Promise<void>): Promise<string | null> {
   try {
@@ -1881,6 +1905,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     lookup: { adbEmulators },
     limits: leaseGrace(controlLimits.leaseFor),
     recordingChanged: () => recorder?.refresh(),
+    holdWorkspace: (workspace, stop) => holdNativeRun(workspace, { waitMs: SHARE_CLAIM_WAIT_MS, stop }),
     ...(options.shareServer ? { idle: options.shareServer.idle } : {}),
   });
   const restoreShares = () =>
@@ -2091,6 +2116,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
    */
   function connection(socket: ServerSocket, peer: string | null, local: boolean, clientKey: string | null): void {
     const limitKey = peer ?? 'local';
+    const keyless = local && options.desktopBootstrap === undefined;
     const subscriptions = new Map<string, () => void | Promise<void | ProtocolError>>();
     const setupRuns = new Map<string, DesktopSetup>();
     const keyframes = new Map<string, () => void>();
@@ -2253,7 +2279,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-plan',
               'desktop-setup',
             ].includes(feature) ||
-              options.desktopBootstrap !== undefined) &&
+              keyless ||
+              desktopChallenge !== null) &&
+            (feature !== 'desktop-setup' || desktopChallenge !== null) &&
+            (feature !== 'desktop-local-authority' || keyless) &&
             (local ||
               ![
                 'desktop-plan',
@@ -2316,7 +2345,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         auditSafely({
           at: new Date().toISOString(),
           device: { id: session.id, name: session.name },
-          action: raw.takeOver === true ? 'control.take-over' : 'control.begin',
+          action: 'control.begin',
           workspace: clip(raw.workspace),
           ...(typeof raw.platform === 'string' ? { platform: clip(raw.platform)! } : {}),
           ...(raw.platform === 'ios' || raw.platform === 'android'
@@ -3563,13 +3592,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeGc(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket)) {
-        return error(
-          id,
-          'forbidden',
-          'Garbage collection requires the connection of the Stim Desktop that started this server.',
-        );
-      }
       if (
         !isJsonObject(params) ||
         Object.keys(params).some((key) => !['cwd', 'cache', 'olderThan', 'worktrees', 'delete'].includes(key)) ||
@@ -3601,8 +3623,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeRemedy(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket))
-        return error(id, 'forbidden', 'Repairs require the connection of the Stim Desktop that started this server.');
       const tool = isJsonObject(params) && params.action === 'device-tool' ? deviceToolRequest(params.request) : null;
       if (
         !isJsonObject(params) ||
@@ -3664,12 +3684,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeMachineAccess(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket))
-        return error(
-          id,
-          'forbidden',
-          'Requesting machine access requires the connection of the Stim Desktop that started this server.',
-        );
       if (
         !isJsonObject(params) ||
         Object.keys(params).some((key) => key !== 'cwd' && key !== 'ticket') ||
@@ -3687,12 +3701,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeWorktreeWarm(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket))
-        return error(
-          id,
-          'forbidden',
-          'Warming worktrees requires the connection of the Stim Desktop that started this server.',
-        );
       if (
         !isJsonObject(params) ||
         Object.keys(params).some((key) => key !== 'cwd') ||
@@ -3709,12 +3717,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function subscribeWorktreeRemove(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (!desktopSessions.has(socket))
-        return error(
-          id,
-          'forbidden',
-          'Removing worktrees requires the connection of the Stim Desktop that started this server.',
-        );
       if (
         !isJsonObject(params) ||
         Object.keys(params).some((key) => !['cwd', 'target', 'force'].includes(key)) ||
@@ -4404,34 +4406,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         ].includes(method)
       )
         return null;
-      // A server Desktop started holds its private key and admits only the socket that proved it; a server Desktop
-      // adopted or one run on its own has no key and keeps serving these methods to this user's local socket.
-      if (!local || (options.desktopBootstrap !== undefined && !desktopSessions.has(socket))) {
+      if (!keyless && !desktopSessions.has(socket)) {
         return Promise.resolve(
           error(
             id,
             'forbidden',
-            method === 'route.setup'
-              ? 'Phone connection setup requires the connection of the Stim Desktop that started this server.'
-              : method === 'desktop.doctor.run'
-                ? 'Running project doctor requires the connection of the Stim Desktop that started this server.'
-                : method === 'desktop.settings.write'
-                  ? 'Changing settings requires the connection of the Stim Desktop that started this server.'
-                  : method === 'desktop.reload.subscribe'
-                    ? 'Reloading apps requires the connection of the Stim Desktop that started this server.'
-                    : method === 'desktop.build.subscribe'
-                      ? 'Building artifacts requires the connection of the Stim Desktop that started this server.'
-                      : method === 'desktop.run.subscribe'
-                        ? 'Running apps requires the connection of the Stim Desktop that started this server.'
-                        : method === 'desktop.start.subscribe'
-                          ? 'Starting dev servers requires the connection of the Stim Desktop that started this server.'
-                          : method === 'desktop.stop.subscribe'
-                            ? 'Stopping workspaces requires the connection of the Stim Desktop that started this server.'
-                            : method.startsWith('desktop.')
-                              ? 'Desktop operations require the connection of the Stim Desktop that started this server.'
-                              : method.startsWith('device-host.sessions')
-                                ? 'Listing or stopping hosted sessions requires the connection of the Stim Desktop that started this server.'
-                                : 'Updating another machine requires the connection of the Stim Desktop that started this server.',
+            local
+              ? 'This stim-server holds the private key of the Stim Desktop that started it, which this connection did not prove.'
+              : `${method} works only on this machine's local Unix socket.`,
           ),
         );
       }
@@ -4449,38 +4431,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return Promise.resolve();
       }
       if (method === 'desktop.settings.write') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Changing settings requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         writeDesktopSetting(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.reload.subscribe') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Reloading apps requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         subscribeReload(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.plan.cancel') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Cancelling a plan requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         if (!isJsonObject(params) || Object.keys(params).length !== 1 || !validPlanRequest(params.request)) {
           error(id, 'bad-request', 'Choose the request of this connection to cancel.');
           return Promise.resolve();
@@ -4496,14 +4454,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return Promise.resolve();
       }
       if (method === 'desktop.plan.get') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Planning builds requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         if (
           !isJsonObject(params) ||
           Object.keys(params).some(
@@ -4556,34 +4506,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return Promise.resolve();
       }
       if (method === 'desktop.build.subscribe') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Building artifacts requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         subscribeBuild(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.run.subscribe') {
-        if (!desktopSessions.has(socket)) {
-          error(id, 'forbidden', 'Running apps requires the connection of the Stim Desktop that started this server.');
-          return Promise.resolve();
-        }
         subscribeRun(id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.start.subscribe') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Starting dev servers requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
         subscribeStart(id, params, owner);
         return Promise.resolve();
       }
@@ -5115,7 +5045,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (method === 'share.list') {
         if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length))
           return error(id, 'bad-request', 'share.list takes no parameters.');
-        return send(socket, { id, result: { shares: shares.list() } });
+        return send(socket, { id, result: { shares: shares.list(), starting: shares.startsInFlight } });
       }
       if (method === 'share.stop') {
         if (
@@ -5153,8 +5083,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
       const resolved = registeredWorkspace(parsed.workspace);
       if ('code' in resolved) return error(id, resolved.code, resolved.message);
-      const started = await shares.start({ ...parsed, workspace: resolved.dir });
-      return send(socket, 'code' in started ? { id, error: started } : { id, result: started });
+      const request = { ...parsed, workspace: resolved.dir };
+      const started = await shares.start(request);
+      if ('code' in started) return send(socket, { id, error: started });
+      const saved = await saveStartedShare(request, started);
+      if (saved && !shares.list().some((row) => row.id === started.id)) {
+        await markSavedStopped(() => pauseShareLinkAsync(request.workspace, shareLinkKey(request)));
+      }
+      return send(socket, { id, result: saved ? { ...started, saved: true } : started });
     }
 
     function publishPresence(id: RequestId, params: unknown): void {
@@ -5594,6 +5530,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ...(options.loopbackOnly ? { loopbackOnly: true as const } : {}),
       ...lanHealth(),
       keepAwake: keepAwake.status(),
+      workerRoot: builds.workerRootUsage(),
     };
     response
       .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })

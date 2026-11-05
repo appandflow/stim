@@ -357,8 +357,9 @@ Ask the user before these actions:
 - worktree remove --force, because it also discards uncommitted and untracked
   files.
 - gc --delete, because it deletes orphaned resources, removes clean linked
-  worktrees whose branch or pull request is merged (or whose pull request
-  was closed), and runs the pressure ladder to its end at high: every
+  worktrees that a stim command has run in (one another tool manages is kept
+  as not-registered) whose branch or pull request is merged (or whose pull
+  request was closed), and runs the pressure ladder to its end at high: every
   workspace idle 2 minutes or more goes idle (stim revive resumes it),
   parked devices are deleted, shared caches are trimmed, and workspaces idle
   10 minutes or more go dormant, losing their owned devices. That includes
@@ -381,8 +382,8 @@ Ask the user before these actions:
 - stop when the workspace owns an EAS session, because it irreversibly ends
   that remote session. For a local device, stop shuts it down but does not
   delete it. An explicit stop shuts down a Stim-owned simulator even when
-  another process uses it. It never shuts down an unowned simulator. It also
-  cancels an ios or android run still building for the device it stops
+  another process uses it, after the pool.bootedGraceMinutes grace period
+  when memory permits (guide lifecycle pool). It never shuts down an unowned simulator. It also cancels an ios or android run still building for the device it stops
   (guide lifecycle).
 
 LEAVE THE MACHINE CLEAN

@@ -100,7 +100,7 @@ export interface StimConfig {
     maxAndroidDevices?: unknown;
     maxMacosApps?: unknown;
   };
-  pool?: { iosParkedMax?: unknown; androidParkedMax?: unknown };
+  pool?: { iosParkedMax?: unknown; androidParkedMax?: unknown; bootedGraceMinutes?: unknown };
   parked?: { ios?: unknown; android?: unknown };
   caches?: { buildCache?: unknown; metroCache?: unknown };
   hosting?: { agentDriver?: unknown };
@@ -115,6 +115,7 @@ export interface StimConfig {
     maxLoadPerCore?: unknown;
     maxOffloadedBuilds?: unknown;
     workerRoot?: unknown;
+    workerAreaMaxAgeDays?: unknown;
   };
   share?: { exposure?: unknown; publicUrl?: unknown; port?: unknown };
   remote?: {

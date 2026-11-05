@@ -120,7 +120,10 @@ graphql lookup gc uses, one call per repository, for a worktree whose lookup
 is over 5 minutes old or whose branch or HEAD moved. It runs git in the
 repository, never in the worktree. It caches each answer
 under $STIM_HOME/pull-requests, which one-shot status only reads, and never
-warns when gh is unavailable.
+warns when gh is unavailable. That cache is the one every pull request lookup
+shares: stim-server's finished-worktree notifications read it while it is under
+5 minutes old and ask GitHub only for the rest, and gc and \`worktree remove\`
+write their answers to it.
 
 status's remoteDevices lists each environment's recorded EAS Simulator
 session. The session is billable while it runs, and it makes the environment
@@ -484,10 +487,17 @@ leased until <time>" for each one.`,
                   change, reload from the app's own error screen or dev menu
                   "cdp" -- web: Page.reload on the owned Chrome page, sent
                   over a DevTools connection verified to reach that Chrome
-  targets         how many peers the reload was addressed to, or null when
-                  broadcast. Greater than 1 means several devices are running
-                  this app on that Metro and the request addressed all of
-                  them, not only deviceId. Completion is not observed
+  targets         how many devices the reload was addressed to, or null when
+                  broadcast: the peers Metro listed for this platform, capped
+                  at the devices Stim recorded for this app on that Metro. Metro
+                  lists one device once per socket it opened and never closed,
+                  and iOS peers carry no device identity, so extra sockets are
+                  not extra devices; a device Stim did not launch is not
+                  counted. Greater than 1 means several of this workspace's
+                  devices are running this app and the request addressed all
+                  of them, not only deviceId. For apps Stim did not launch
+                  (appId null) it is the number of Metro clients addressed.
+                  Completion is not observed
   reverseRestored the Android serials whose adb reverse for metroPort was
                   missing and that Stim re-applied before reloading; [] when
                   none was, and always [] for iOS and web
@@ -676,7 +686,9 @@ ON FAILURE
   exits 130 with no payload.
 
   \`stop --json\` prints { root, ok, supervisor, collectors, metro, device,
-  port, metroTunnel, releasedLeases, macos? }. macos is { status: stopped | failed,
+  port, metroTunnel, releasedLeases, macos? }. device.ios is { status:
+  "kept-booted", label, until } when the owned simulator stays booted until
+  the ISO time \`until\` (guide lifecycle pool); ok stays true. macos is { status: stopped | failed,
   reason? } when a macOS app is recorded. When it cannot end the \`ios\` or
   \`android\` run holding the workspace, it prints the error contract with
   root and ok: false instead, plus device.remote when it ended a recorded EAS
@@ -933,7 +945,7 @@ RULES
                   what it would free where gc could measure it. kind is
                   idle-stage, delete-build-outputs, delete-parked-device,
                   trim-cache, empty-cache, dormant-stage, delete-dependencies
-                  (critical only), stop-gradle-daemons,
+                  (critical only), stop-gradle-daemons, stop-watchman,
                   delete-gradle-version, delete-temp-leftovers or
                   delete-trash. workspaces is each registered workspace's
                   { path, stage: "running" | "idle" | "dormant" | "stopped",
@@ -987,8 +999,10 @@ RULES
                               measured within 10 seconds; sizes are cached
                               for up to an hour while no entry of the
                               directory was added or removed (for
-                              node_modules and Pods, while their install
-                              signature is unchanged). null
+                              node_modules and Pods, for up to six hours
+                              while their install signature is unchanged,
+                              the same measurement status and the daemon
+                              use). null
                               for a root outside git. Without --worktrees,
                               the source checkout and roots outside git
                               are left out
@@ -1235,7 +1249,8 @@ RULES
                             stim-server
     linkedWorktrees         not-a-worktree | bare-repository |
                             source-checkout-unknown | source-checkout |
-                            not-registered | locked | nested-worktree |
+                            not-registered | locked | pinned |
+                            nested-worktree |
                             in-use |
                             status-unreadable | dirty |
                             unpushed-unchecked | unpushed | submodules |
@@ -1835,12 +1850,17 @@ RULES
                       workspace, node_modules included; the linked
                       worktrees nested inside a checkout are not counted
     nodeModulesBytes  node_modules at that root and at the workspace path;
-                      part of worktreeBytes; du counts APFS clones in full
+                      part of worktreeBytes; du counts APFS clones in full;
+                      null until measured, and again after a reinstall or
+                      a fresh clone until the next measurement
     nodeModulesPrivateBytes
                       what deleting that node_modules would free on APFS:
                       blocks no copy-on-write clone (worktree warm clones
                       it) or hard link outside it shares; null off APFS,
-                      without the Command Line Tools, or until measured
+                      without the Command Line Tools, or like
+                      nodeModulesBytes until measured. gc's node_modules
+                      privateBytes and the daemon's cleanup read the same
+                      measurement
     buildBytes        Stim's folder for the workspace: Xcode derived data,
                       Gradle outputs and logs
     measuredAt        the oldest of the three measurements; a figure not
@@ -1850,11 +1870,12 @@ RULES
 
   \`status --watch\` runs one disk walk at a time on the whole machine, at low
   priority, off its refresh path, and measures a folder at most every 5
-  minutes while its environment is active and every hour otherwise. A walk
-  that fails or times out is not repeated by any watcher for that period. It
-  caches each size under $STIM_HOME/disk-usage, which one-shot status only
-  reads, so the fields appear once a watcher, such as stim-server or Stim
-  Desktop, has measured.
+  minutes while its environment is active and every hour otherwise. A
+  node_modules is measured again when its install changes and after 6 hours,
+  as the daemon and gc do. A walk that fails or times out is not repeated by
+  any watcher for that period. It caches each size under $STIM_HOME/disk-usage,
+  which one-shot status only reads, so the fields appear once a watcher, such
+  as stim-server or Stim Desktop, has measured.
 
   An environment carries agents when coding-agent sessions work in it, most
   recently active first:

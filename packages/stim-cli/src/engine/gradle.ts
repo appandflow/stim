@@ -132,6 +132,20 @@ function apkInDir(dir: string): string | null {
   return listed ? join(dir, listed) : null;
 }
 
+/** The one APK this build's `output-metadata.json` names, signed or not: a retained build directory can hold an older one. */
+function builtApkInDir(dir: string): string | null {
+  let names: unknown[];
+  try {
+    names = JSON.parse(readOrNull(join(dir, 'output-metadata.json')) ?? '').elements.map(
+      (element: { outputFile?: unknown }) => element.outputFile,
+    );
+  } catch {
+    return null;
+  }
+  const apk = names.length === 1 && typeof names[0] === 'string' ? join(dir, names[0]) : null;
+  return apk && existsSync(apk) ? apk : null;
+}
+
 function listApkSubdirs(base: string, prefix: string[] = [], depth = 0): string[][] {
   if (depth > 3) return [];
   const dirs: string[][] = [];
@@ -179,7 +193,12 @@ export interface LocateApkResult {
   androidPackage?: string;
 }
 
-export function locateApk(project: ApkLayout, transcript = '', variant: string | null = null): LocateApkResult {
+export function locateApk(
+  project: ApkLayout,
+  transcript = '',
+  variant: string | null = null,
+  { unsigned = false }: { unsigned?: boolean } = {},
+): LocateApkResult {
   const fromTranscript = parseApkFromTranscript(transcript);
   if (fromTranscript) {
     const abs = isAbsolute(fromTranscript) ? fromTranscript : join(project.directory, fromTranscript);
@@ -188,7 +207,7 @@ export function locateApk(project: ApkLayout, transcript = '', variant: string |
 
   if (variant) {
     const dir = findVariantApkDir(project.outputsDir, variant);
-    const apk = dir ? apkInDir(dir) : null;
+    const apk = dir ? ((unsigned ? builtApkInDir(dir) : null) ?? apkInDir(dir)) : null;
     return { apkPath: apk };
   }
 
@@ -372,6 +391,14 @@ export type BuildAndroidResult = {
     }
 );
 
+function shimScript(name: string): string {
+  const script = [`../shim/${name}`, `../../shim/${name}`]
+    .map((path) => fileURLToPath(new URL(path, import.meta.url)))
+    .find((path) => existsSync(path));
+  if (!script) throw new Error(`Stim installation is missing shim/${name}.`);
+  return script;
+}
+
 export function gradleArgs(
   task: string,
   { buildCache = true, projectArgs = [] }: { buildCache?: boolean; projectArgs?: string[] } = {},
@@ -420,6 +447,7 @@ async function buildGradleWithEnv(
     cas = null,
     pch = 'auto',
     compilerCacheDisabled = false,
+    workerRelease = false,
     heartbeatMs = HEARTBEAT_INTERVAL_MS,
     estimateMs = null,
     onHeartbeat = (line: string) => console.error(line),
@@ -433,6 +461,8 @@ async function buildGradleWithEnv(
     cas?: AndroidCasSetup | null;
     pch?: 'auto' | 'on' | 'off';
     compilerCacheDisabled?: boolean;
+    /** For a machine that holds no key: builds any signing but a `debug.keystore` as unsigned, and always rebundles JS. */
+    workerRelease?: boolean;
     heartbeatMs?: number;
     estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
@@ -461,11 +491,9 @@ async function buildGradleWithEnv(
     args.push('--init-script', cas.initScript);
     onNote(chalk.dim(phaseLine('cache', `Apple Clang CAS on (${cas.dir})`)));
   }
-  const nativeScript = ['../shim/android-optimizations.gradle', '../../shim/android-optimizations.gradle']
-    .map((path) => fileURLToPath(new URL(path, import.meta.url)))
-    .find((path) => existsSync(path));
-  if (!nativeScript) throw new Error('Stim installation is missing shim/android-optimizations.gradle.');
+  const nativeScript = shimScript('android-optimizations.gradle');
   args.push('--init-script', nativeScript);
+  if (workerRelease) args.push('--init-script', shimScript('android-worker-release.gradle'));
   const nativeBackend = cas
     ? cas.id
     : ccache
@@ -590,7 +618,7 @@ async function buildGradleWithEnv(
     };
   }
 
-  const located = locate ? await locate() : locateApk(project, transcript, variant);
+  const located = locate ? await locate() : locateApk(project, transcript, variant, { unsigned: workerRelease });
   if ('code' in located)
     return {
       ok: false,

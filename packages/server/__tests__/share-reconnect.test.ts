@@ -24,7 +24,6 @@ describe('the viewer reconnect', () => {
       control: true,
       viewOnly: false,
       upgrade: false,
-      askName: false,
       platform: 'ios',
       buttons: [],
       rotate: false,

@@ -623,6 +623,7 @@ export async function acquireIosArtifact(
       expectedFingerprint: storeHash,
       request: recipe.offload!.request(runtime),
       fingerprintInputs: recipe.offload!.fingerprintInputs,
+      syncPlan: recipe.offload!.syncPlan,
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
       onEnter: (name) => {

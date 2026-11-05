@@ -16,7 +16,7 @@ public struct ServerWorktreeRemoveResult: Sendable {
   try Task.checkCancellation()
   let client = try desktopActionServer(connection, stimHome: stimHome, action: "remove worktrees from this Stim home")
   guard case .open(let hello) = client.state, hello.features?.contains("desktop-worktree-remove") == true else {
-    throw ServerError(code: "unsupported", message: "Update the bundled stim-server to remove worktrees from Desktop.")
+    throw ServerError(code: "unsupported", message: "Update stim-server to remove worktrees from Desktop.")
   }
   guard command.program == "stim", Array(command.arguments.prefix(2)) == ["worktree", "remove"] else {
     throw ServerError(code: "bad-request", message: "Unsupported Desktop worktree removal command.")

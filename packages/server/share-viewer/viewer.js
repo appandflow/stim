@@ -1,6 +1,7 @@
 'use strict';
 
 const body = document.body;
+const stats = window.stimStats;
 const control = body.dataset.control === 'true';
 const allowedButtons = (body.dataset.buttons || '').split(' ').filter(Boolean);
 const canRotate = control && body.dataset.canRotate === 'true';
@@ -183,10 +184,13 @@ function askForKeyframe() {
   waitingForKeyframe = true;
   if (Date.now() - keyframeAskedAt < KEYFRAME_ASK_MS) return;
   keyframeAskedAt = Date.now();
+  stats.keyframe();
   send({ type: 'keyframe' });
 }
 
-let undrawn = null;
+/** Decoded frames waiting for a refresh: two, drawing the oldest. ?queue=1 keeps only the newest. */
+const QUEUE_LIMIT = new URLSearchParams(location.search).get('queue') === '1' ? 1 : 2;
+const undrawn = [];
 let drawScheduled = 0;
 
 function closeDecoder() {
@@ -197,16 +201,16 @@ function closeDecoder() {
 }
 
 function dropUndrawn() {
-  undrawn?.close();
-  undrawn = null;
+  for (const frame of undrawn.splice(0)) frame.close();
 }
 
 function drawUndrawn() {
   drawScheduled = 0;
-  const frame = undrawn;
-  undrawn = null;
+  const frame = undrawn.shift();
   if (!frame) return;
+  if (undrawn.length) drawScheduled = requestAnimationFrame(drawUndrawn);
   renderFrame(frame, frame.displayWidth, frame.displayHeight);
+  stats.drawn(frame.timestamp / 1000);
   frame.close();
   if (!live && !finished) {
     live = true;
@@ -276,8 +280,8 @@ function configure(sps, pps) {
   decoder = new VideoDecoder({
     output: (frame) => {
       decoded = true;
-      undrawn?.close();
-      undrawn = frame;
+      while (undrawn.length >= QUEUE_LIMIT) undrawn.shift().close();
+      undrawn.push(frame);
       drawScheduled ||= requestAnimationFrame(drawUndrawn);
     },
     error: decoderFailed,
@@ -295,6 +299,7 @@ function showVideo(buffer) {
   const view = new DataView(buffer);
   if (buffer.byteLength < 21 || view.getUint8(0) !== 1) return;
   const keyframe = (view.getUint8(1) & VIDEO_KEYFRAME) !== 0;
+  stats.received(buffer.byteLength);
   const units = nalUnits(new Uint8Array(buffer, view.getUint16(2)));
   if (keyframe) {
     const sps = units.find((unit) => nalType(unit) === 7);
@@ -578,6 +583,14 @@ function connect(codec) {
   body.dataset.codec = codec;
   current.binaryType = 'arraybuffer';
   current.addEventListener('open', () => {
+    if (stats.visible) {
+      const clock = () => send({ type: 'clock', c: Date.now() });
+      clock();
+      const clockTimer = setInterval(
+        () => (current === socket && current.readyState === 1 ? clock() : clearInterval(clockTimer)),
+        2000,
+      );
+    }
     kickClipboard();
     if (chosenName) sendName(chosenName);
   });
@@ -607,7 +620,8 @@ function connect(codec) {
       copies.delete(message.id);
       if (waiting && typeof message.text === 'string') waiting.resolve(message.text);
       else if (waiting) waiting.reject(new Error(message.error || 'The device did not return its clipboard.'));
-    } else if (message.type === 'artwork') void setArtwork(message.artwork);
+    } else if (message.type === 'clock') stats.clock(message);
+    else if (message.type === 'artwork') void setArtwork(message.artwork);
     else if (message.type === 'delayed') {
       if (away) return;
       live = !message.delayed && hasFrame;
@@ -617,6 +631,7 @@ function connect(codec) {
       away = true;
       resuming = false;
       live = false;
+      releaseInput();
       body.dataset.away = 'true';
       refreshStatus();
     } else if (message.type === 'resumed') {
@@ -630,7 +645,8 @@ function connect(codec) {
       me = { id: message.id, name: message.name, color: message.color };
       roster.set(me.id, { ...me, self: true, viewOnly });
       renderRoster();
-    } else if (message.type === 'presence') showPresence(message.participants);
+    } else if (message.type === 'deviceKeyboard') showDeviceKeyboard(message);
+    else if (message.type === 'presence') showPresence(message.participants);
     else if (message.type === 'busy') {
       busy = true;
       if (me) overlay.fade(me.id);
@@ -760,8 +776,19 @@ const copyFallback = document.getElementById('copy-fallback');
 const pasteDevice = document.getElementById('paste-device');
 const copyDevice = document.getElementById('copy-device');
 const copyChip = document.getElementById('copy-chip');
+const keyboardGroup = document.getElementById('keyboard-group');
+const keyboardSwitch = document.getElementById('device-keyboard');
 const SYNC_KEY = 'stim-share-clipboard-sync';
 const COPY_TIMEOUT_MS = 15000;
+
+function showDeviceKeyboard(message) {
+  keyboardGroup.hidden = message.available !== true;
+  keyboardSwitch.checked = message.on === true;
+}
+
+keyboardSwitch.addEventListener('change', () => {
+  if (!send({ type: 'device-keyboard', on: keyboardSwitch.checked })) keyboardSwitch.checked = !keyboardSwitch.checked;
+});
 
 function setOptionsOpen(open, restoreFocus) {
   optionsPanel.hidden = !open;
@@ -1033,7 +1060,7 @@ document.getElementById('upgrade-open').addEventListener('click', () => {
 });
 const upgradeResult = new URLSearchParams(location.search).get('upgrade');
 if (upgradeResult) {
-  showNote(upgradeResult === 'limited' ? 'Too many wrong passwords. Try again later.' : 'Wrong password.');
+  showNote(upgradeResult === 'limited' ? 'Too many wrong access codes. Try again later.' : 'Wrong access code.');
   history.replaceState(null, '', location.pathname);
 }
 
@@ -1057,16 +1084,14 @@ function chooseName(name) {
   nameForm.hidden = true;
   if (name) sendName(name);
 }
-if (body.dataset.askName === 'true') {
-  const remembered = rememberedName();
-  if (remembered === null) nameForm.hidden = false;
-  else chosenName = remembered;
-  nameForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-    chooseName(nameInput.value);
-  });
-  document.getElementById('name-skip').addEventListener('click', () => chooseName(''));
-}
+const remembered = rememberedName();
+if (remembered === null) nameForm.hidden = false;
+else chosenName = remembered;
+nameForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  chooseName(nameInput.value);
+});
+document.getElementById('name-skip').addEventListener('click', () => chooseName(''));
 
 const fullscreen = document.getElementById('full');
 if (document.fullscreenEnabled) {
@@ -1165,7 +1190,9 @@ if (control) {
   };
   screen.tabIndex = 0;
   screen.addEventListener('pointerdown', (event) => {
-    screen.focus();
+    dropQueued();
+    if (typing()) resetField();
+    else screen.focus();
     screen.setPointerCapture(event.pointerId);
     event.preventDefault();
     if (!live) return;
@@ -1232,6 +1259,110 @@ if (control) {
     else if (request) showNote(request.note);
   });
   const apple = /Mac|iPhone|iPad/.test(navigator.userAgent);
+  const keyboardButton = document.getElementById('keyboard-button');
+  const typebar = document.getElementById('typebar');
+  const typeField = document.getElementById('type-field');
+  const touchFirst = window.matchMedia('(pointer: coarse)');
+  const viewport = window.visualViewport;
+  const typeHint = document.getElementById('type-hint');
+  const REST = '\u200b';
+  const CHUNK_CHARS = 7;
+  const CHUNK_MS = 200;
+  let typed = REST;
+  let queued = '';
+  let pump = 0;
+  const typing = () => !typebar.hidden;
+  const resetField = () => {
+    typeField.value = REST;
+    typed = REST;
+    typeHint.hidden = false;
+    typeField.setSelectionRange(REST.length, REST.length);
+  };
+  const dropQueued = () => {
+    queued = '';
+    clearTimeout(pump);
+    pump = 0;
+  };
+  const sendChunk = () => {
+    if (!live) {
+      dropQueued();
+      return;
+    }
+    if (queued) {
+      send({ type: 'text', text: queued.slice(0, CHUNK_CHARS) });
+      queued = queued.slice(CHUNK_CHARS);
+      pump = setTimeout(sendChunk, CHUNK_MS);
+    } else pump = 0;
+  };
+  const placeBar = () => {
+    const root = document.documentElement.style;
+    root.setProperty('--vv-top', `${viewport ? viewport.offsetTop : 0}px`);
+    root.setProperty('--vv-height', `${viewport ? viewport.height : window.innerHeight}px`);
+  };
+  const closeTyping = () => {
+    if (!typing()) return;
+    typebar.hidden = true;
+    body.classList.remove('typing');
+    keyboardButton.setAttribute('aria-pressed', 'false');
+    typeField.blur();
+  };
+  const openTyping = () => {
+    placeBar();
+    typebar.hidden = false;
+    body.classList.add('typing');
+    keyboardButton.setAttribute('aria-pressed', 'true');
+    resetField();
+    typeField.focus();
+  };
+  const typeText = (text) => {
+    if (!live) {
+      closeTyping();
+      dropQueued();
+      return;
+    }
+    queued += text;
+    if (!pump) sendChunk();
+  };
+  const refreshKeyboardButton = () => {
+    keyboardButton.hidden = !touchFirst.matches;
+    keyboardButton.closest('.group').hidden = keyboardButton.hidden;
+    if (keyboardButton.hidden) closeTyping();
+  };
+  touchFirst.addEventListener('change', refreshKeyboardButton);
+  refreshKeyboardButton();
+  if (viewport) {
+    viewport.addEventListener('resize', () => typing() && placeBar());
+    viewport.addEventListener('scroll', () => typing() && placeBar());
+  }
+  keyboardButton.addEventListener('click', () => (typing() ? closeTyping() : openTyping()));
+  document.getElementById('type-done').addEventListener('click', closeTyping);
+  typeField.addEventListener('blur', closeTyping);
+  for (const surface of [document.getElementById('toolbar'), typebar, screen]) {
+    surface.addEventListener('mousedown', (event) => typing() && event.preventDefault());
+  }
+  typeField.addEventListener('input', () => {
+    const value = typeField.value;
+    let delta = globalThis.stimKeys.keyboardDelta(typed, value);
+    if (value === '' && delta === '') delta = '\b';
+    if (delta) typeText(delta);
+    if (value === '' || value.length >= typeField.maxLength) resetField();
+    else {
+      typed = value;
+      typeHint.hidden = value !== REST;
+    }
+  });
+  typeField.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    resetField();
+    typeText('\n');
+  });
+  const closeInput = releaseInput;
+  releaseInput = () => {
+    closeInput();
+    closeTyping();
+    dropQueued();
+  };
   screen.addEventListener('keydown', (event) => {
     if (!live) return;
     const message = globalThis.stimKeys.keyMessage(event, apple);
@@ -1241,4 +1372,5 @@ if (control) {
   });
 }
 
-for (const group of document.querySelectorAll('.group')) group.hidden = !group.querySelector('button');
+if (!control) document.querySelector('[data-group="keyboard"]').remove();
+for (const group of document.querySelectorAll('.group')) group.hidden = !group.querySelector('button:not([hidden])');
