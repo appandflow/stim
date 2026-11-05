@@ -3,7 +3,6 @@ import { existsSync } from 'node:fs';
 import { sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import {
-  clearClaimChild,
   markClaimChildPending,
   releaseClaim,
   setClaimChild,
@@ -21,6 +20,7 @@ import {
 } from '@stim-cli/core/state';
 import { writeCacheFile } from './cache-file.ts';
 import { debugLog } from './debug-log.ts';
+import { declareSpawnsOn, stopDeclaringSpawnsOn } from './engine/spawn-claims.ts';
 import { measureTree, treeSignature } from './private-size.ts';
 import { ARTIFACT_DIRS } from './workspace/regenerable-dirs.ts';
 
@@ -123,6 +123,8 @@ export async function refreshMeasure(
   path: string,
   options: RefreshOptions,
 ): Promise<{ outcome: RefreshOutcome; measure: DiskMeasure | null }> {
+  const { operation } = options;
+  operation?.signal.throwIfAborted();
   const now = options.now ?? Date.now;
   const maxAgeMs = options.maxAgeMs ?? DEPENDENCY_MAX_AGE_MS;
   const dependency = isDependencyTree(path);
@@ -149,6 +151,7 @@ export async function refreshMeasure(
   }
   const claim = options.claim ? takeWalkClaim() : null;
   if (options.claim && !claim) return { outcome: 'busy', measure: null };
+  let cleanupUnverified = false;
   try {
     if (claim && skip()) return fresh();
     const startedAt = now();
@@ -157,27 +160,31 @@ export async function refreshMeasure(
     let size: { bytes: number; privateBytes: number | null } | null;
     if (targets && !targets.length) size = { bytes: 0, privateBytes: null };
     else {
-      if (claim) markClaimChildPending(claim);
-      try {
-        size = await measureTree(path, {
-          timeoutMs: options.timeoutMs,
-          operation: options.operation,
-          ...(claim ? { onSpawn: holdOn(claim) } : {}),
-          ...(targets ? { targets } : {}),
-          ...((options.private ?? dependency) ? {} : { private: false }),
-        });
-      } finally {
-        if (claim) clearClaimChild(claim);
+      if (claim) {
+        if (operation) declareSpawnsOn(operation, claim);
+        else markClaimChildPending(claim);
       }
+      size = await measureTree(path, {
+        timeoutMs: options.timeoutMs,
+        operation,
+        ...(claim ? { lowPriority: true } : {}),
+        ...(claim && !operation ? { onSpawn: holdOn(claim) } : {}),
+        ...(targets ? { targets } : {}),
+        ...((options.private ?? dependency) ? {} : { private: false }),
+      });
     }
-    options.operation?.signal.throwIfAborted();
+    operation?.signal.throwIfAborted();
     if (!size) {
       if (options.failures)
         writeCacheFile(diskUsageFailureFile(path), { path, failedAt: new Date(now()).toISOString() });
       return { outcome: 'failed', measure: null };
     }
     return { outcome: 'measured', measure: record(size.bytes, size.privateBytes, signature, startedAt) };
+  } catch (error) {
+    cleanupUnverified = error instanceof Error && 'reportCleanup' in error;
+    throw error;
   } finally {
-    if (claim) releaseClaim(claim);
+    if (operation) stopDeclaringSpawnsOn(operation, claim);
+    if (!cleanupUnverified) releaseClaim(claim);
   }
 }
